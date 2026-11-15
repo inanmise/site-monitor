@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen, fireEvent, within } from './test-utils.jsx'
-import MonitorSpark, { windowState } from '../components/ui/MonitorSpark.jsx'
+import MonitorSpark, { belowTarget, exactUpPct, shownUpPct, windowState } from '../components/ui/MonitorSpark.jsx'
 
 /**
  * Kart mini trendi + erişilebilirlik satırı. 2026-09-26 yeniden tasarım: dört "1 / 7 / 15 / 30 gün" hapı (yalnız
@@ -75,9 +75,10 @@ describe('MonitorSpark — erişilebilirlik satırı (tek düğme + Popover)', (
     const btn = trigger()
     expect(btn).toHaveAttribute('data-slot', 'availability-trigger')
     expect(btn).toHaveAttribute('data-verdict', 'below')
-    expect(btn).toHaveAccessibleName(/99\.77.*(hedefin \(%99\.9\) altında|below the 99\.9% target)/)
+    // Hedef altı değer kesin orandan aşağı kesilir (2026-11-15): 8620 / 8640 = %99,7685 → 99.76 (sunucu yuvarlaması 99.77)
+    expect(btn).toHaveAccessibleName(/99\.76.*(hedefin \(%99\.9\) altında|below the 99\.9% target)/)
     expect(btn.textContent).toMatch(/(Erişilebilirlik|Availability)/)
-    expect(btn.querySelector('[data-slot="availability-pct"]').textContent).toMatch(/99\.77.*↓/)
+    expect(btn.querySelector('[data-slot="availability-pct"]').textContent).toMatch(/99\.76.*↓/)
     expect([...btn.querySelectorAll('[data-slot="availability-dot"]')].map((d) => d.dataset.state)).toEqual(['none', 'ok', 'warn', 'bad'])
     // Bilgi artık hover'a bağlı değil: hiçbir öğe title/role="img" hilesiyle ayrıntı taşımıyor
     expect(container.querySelector('[title]')).toBeNull()
@@ -145,5 +146,49 @@ describe('MonitorSpark — erişilebilirlik satırı (tek düğme + Popover)', (
   it('yüzde yoksa (up_pct null) erişilebilirlik satırı çizilmez', () => {
     render(<MonitorSpark spark={undefined} sla={{ n: 10, fail: 0, up_pct: null }} slaTarget={99.9} />)
     expect(document.querySelector('[data-slot="monitor-spark"]')).toBeNull()
+  })
+})
+
+describe('MonitorSpark — hedef kararı kesin orandan (2026-11-15, prod kapısı)', () => {
+  // 43 200 kontrolde 44 hata: kesin %99,8981; sunucunun iki ondalığa YUKARI yuvarlanmış up_pct'si 99,90 → hedef 99,9
+  // eskiden "tutuldu" (yeşil ✓) görünüyordu
+  const SLA = { n: 43200, fail: 44, up_pct: 99.9, bad_hours: 30 }
+
+  it('hedef altı kesin oranla: up_pct 99.90 olsa da "altında" (↓, kırmızı) ve 99.89 yazılır', () => {
+    render(<MonitorSpark spark={undefined} sla={SLA} slaTarget={99.9} slaDays={30} />)
+    const btn = trigger()
+    expect(btn).toHaveAttribute('data-verdict', 'below')
+    const pct = btn.querySelector('[data-slot="availability-pct"]')
+    expect(pct.textContent).toMatch(/99\.89.*↓/)
+    expect(pct.textContent).not.toMatch(/99\.90/)
+    expect(pct.className).toMatch(/text-destructive/)
+  })
+
+  it('dönem noktaları da kesin oranla: hata var ve kesin oran hedefin altında → "bad"', () => {
+    expect(windowState({ days: 30, n: 43200, fail: 44, up_pct: 99.9 }, 99.9)).toBe('bad')
+    expect(windowState({ days: 30, n: 43200, fail: 43, up_pct: 99.9 }, 99.9)).toBe('warn')   // 43157/43200 = %99,9005
+    expect(windowState({ days: 30, n: 1000, fail: 1, up_pct: 99.9 }, 99.9)).toBe('warn')     // tam eşit = hedefte
+  })
+
+  it('kontrol / hata sayısı yoksa (eski sunucu) bugünkü kural: up_pct', () => {
+    expect(exactUpPct({ up_pct: 99.9 })).toBe(99.9)
+    expect(belowTarget({ up_pct: 99.9 }, 99.9)).toBe(false)
+    expect(belowTarget({ up_pct: 99.85 }, 99.9)).toBe(true)
+    expect(windowState({ days: 7, n: 10, up_pct: 99.95, fail: 1 }, 99.9)).toBe('bad')        // 9/10 kesin = %90
+    expect(belowTarget({ n: 10, fail: 0, up_pct: 100 }, null)).toBe(false)                     // hedef yok → iddia yok
+  })
+
+  it('gösterim: hedefte değer sunucununki, hedef altı aşağı kesilmiş', () => {
+    expect(shownUpPct({ n: 43200, fail: 44, up_pct: 99.9 }, 99.9)).toBe(99.89)
+    expect(shownUpPct({ n: 43200, fail: 0, up_pct: 100 }, 99.9)).toBe(100)
+    expect(shownUpPct({ n: 4320, fail: 2, up_pct: 99.95 }, 99.9)).toBe(99.95)
+  })
+
+  it('24 saatlik trend tonu kesin orandan; yuvarlanmış değer eşiği geçiyorsa aşağı kesilip yazılır', () => {
+    render(<MonitorSpark spark={{ n: 43200, fail: 44, up_pct: 99.9, buckets: [{ t: 'x', n: 1, fail: 0, ms: 1 }], last: [] }} />)
+    const up = document.querySelector('[data-slot="monitor-trend-up"]')
+    expect(up.dataset.tone).toBe('warn')
+    expect(up.textContent).toMatch(/99\.89/)
+    expect(up.textContent).not.toMatch(/99\.9(?!\d)/)
   })
 })

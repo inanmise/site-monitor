@@ -173,6 +173,14 @@ public class AlarmFeedService {
         this.nocConfig = nocConfig;
     }
 
+    /** Pasif alıcı süzgeci — yoksa (dar test) MAILS süzülmez. */
+    private com.sitemonitor.service.InactiveRecipientGuard inactiveGuard;
+
+    @Autowired(required = false)
+    void setInactiveGuard(com.sitemonitor.service.InactiveRecipientGuard inactiveGuard) {
+        this.inactiveGuard = inactiveGuard;
+    }
+
     /**
      * Alarm iletimi (2026-11-05, kullanıcı kararı 7): MAILS sütunu iletim alıcılarının adreslerini de içerir (sahiplerden
      * sonra). Yalnız bellek ({@code AlertForwardRouting}); sağlayıcı üzerinden çözülür. Yokken / iletim tanımsızken sütun
@@ -712,12 +720,29 @@ public class AlarmFeedService {
         if (notificationGroups != null) {
             try {
                 NotificationGroupService.Override ov = notificationGroups.overrideFor(teamId, stampedGroupId);
-                if (ov != null && ov.applies()) return emails(String.join(",", ov.emails()));
+                if (ov != null && ov.applies()) return withoutInactive(emails(String.join(",", ov.emails())));
             } catch (Exception ex) {
                 log.debug("Alarm akışı: bildirim grubu okunamadı (takım {}): {}", teamId, ex.toString());
             }
         }
-        return t == null ? List.of() : emails(t.getEmail());
+        return t == null ? List.of() : withoutInactive(emails(t.getEmail()));
+    }
+
+    /**
+     * Yalnız pasif hesaplara ait adresleri çıkarır (kapı incelemesi 2026-11-15): sahip postası bu adreslere GİTMEZ
+     * ({@code EmailNotificationService.doSend} süzer), MAILS sütunu da yazmasın. Süzgeç yoksa / pasif listesi
+     * okunamadıysa liste aynen döner (iletim kısmı zaten süzülmüş gelir).
+     */
+    private List<String> withoutInactive(List<String> mails) {
+        var g = inactiveGuard;
+        if (g == null || mails == null || mails.isEmpty()) return mails;
+        List<String> out = new ArrayList<>(mails.size());
+        for (String e : mails) {
+            boolean passive;
+            try { passive = g.isInactiveOnlyEmail(e); } catch (RuntimeException ex) { passive = false; }
+            if (!passive) out.add(e);
+        }
+        return out;
     }
 
     private Map<Long, Team> teams() {

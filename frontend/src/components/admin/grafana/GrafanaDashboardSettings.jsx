@@ -206,7 +206,11 @@ export default function GrafanaDashboardSettings({ readOnly: readOnlyProp = fals
         return
       }
       const name = res.name || data?.summary?.file_name || 'sitemonitor-grafana-dashboard.json'
-      downloadBlob(name, res.blob)
+      // Tarayıcı indirmeyi başlatamadıysa başarı DEĞİL (2026-11-15, prod kapısı: "indirildi" yazıyordu)
+      if (downloadBlob(name, res.blob) === false) {
+        toast.error(t('inv.downloadFailed'))
+        return
+      }
       toast.success(t('grafana.downloaded', name), { duration: 8000 })
     } catch (e) {
       toast.error(e?.message || t('grafana.downloadFailedText'))

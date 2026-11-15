@@ -53,13 +53,13 @@ export function DomainExpiringWidget({ frame, refreshKey }) {
       {s.hidden ? <Empty tone="muted" text={t('mydash.noAccessBody')} tv={frame.tv} /> : (<>
         <div className="grid min-w-0 grid-cols-2 gap-2 @md:grid-cols-4" data-slot="mydash-dexp-tiles">
           <Tile value={s.expired} label={t('mydash.dexp.expired')} tone={s.expired ? 'danger' : 'muted'} tv={frame.tv} slot="mydash-dexp-expired"
-            onClick={linkTo(frame, 'domain', { dx: 'expired' })} hint={t('mydash.linkHint')} />
+            onClick={linkTo(frame, 'domain', { dq: 'active', dx: 'expired' })} hint={t('mydash.linkHint')} />
           <Tile value={s.critical} label={t('mydash.dexp.critical')} tone={s.critical ? 'danger' : 'muted'} tv={frame.tv} slot="mydash-dexp-critical"
             onClick={open} hint={t('mydash.linkHint')} />
           <Tile value={s.warning} label={t('mydash.dexp.warning')} tone={s.warning ? 'warning' : 'muted'} tv={frame.tv} slot="mydash-dexp-warning"
             onClick={open} hint={t('mydash.linkHint')} />
           <Tile value={s.unknown} label={t('mydash.dexp.unknown')} tone="muted" tv={frame.tv} slot="mydash-dexp-unknown"
-            onClick={linkTo(frame, 'domain', { dx: 'unknown' })} hint={t('mydash.linkHint')} />
+            onClick={linkTo(frame, 'domain', { dq: 'active', dx: 'unknown' })} hint={t('mydash.linkHint')} />
         </div>
         {s.active === 0 && <Empty tone="muted" text={t('mydash.dexp.noneBody')} tv={frame.tv} />}
         {s.active > 0 && s.tone === 'success' && <Empty text={t('mydash.dexp.allClean')} tv={frame.tv} />}

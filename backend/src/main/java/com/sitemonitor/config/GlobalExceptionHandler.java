@@ -383,10 +383,33 @@ public class GlobalExceptionHandler {
     /** Bozuk JSON body. */
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, Object>> handleMalformedJson(HttpMessageNotReadableException e) {
+        if (bodyTooLarge(e)) {
+            // Gövde sınırı (kapı incelemesi 2026-11-15): Jackson okuma kısıtı (32 MiB belge / 16 MiB metin) ya da oturumsuz
+            // uç sınırı (PublicBodyLimitFilter) — biçim hatası değil, boyut: 413.
+            log.info("İstek gövdesi boyut sınırını aştı [istek={}]: {}", rid(), e.getMostSpecificCause().getClass().getSimpleName());
+            return respond(413, "PAYLOAD_TOO_LARGE", Msg.t(
+                    "Gönderilen veri izin verilen boyutu aşıyor. Veriyi küçültüp ya da parçalara bölüp tekrar deneyin.",
+                    "The data you sent is larger than allowed. Make it smaller or split it into parts, then try again."));
+        }
         log.debug("Okunamayan istek gövdesi [istek={}]: {}", rid(), e.getMessage());
         return respond(400, "MALFORMED_REQUEST", Msg.t(
                 "Geçersiz istek formatı: gönderilen veri okunamadı ya da bir alanın türü yanlış (ör. sayı yerine metin). Sayfayı yenileyip tekrar deneyin; sorun sürerse sistem yöneticilerine bildirin.",
                 "Invalid request format: the data sent couldn’t be read or a field has the wrong type (for example text instead of a number). Reload the page and try again; if it keeps happening, tell the system administrators."));
+    }
+
+    /** Neden zincirinde gövde boyutu sınırı var mı (Jackson okuma kısıtı ya da oturumsuz uç süzgeci) — tavanlı yürüyüş. */
+    static boolean bodyTooLarge(Throwable e) {
+        Throwable t = e;
+        for (int i = 0; t != null && i < com.sitemonitor.util.CauseChain.MAX_DEPTH; i++, t = t.getCause()) {
+            if (t instanceof PublicBodyLimitFilter.BodyLimitExceededException) return true;
+            if (t instanceof tools.jackson.core.exc.StreamConstraintsException sc) {
+                String m = sc.getMessage();
+                // Yalnız BOYUT kısıtları (belge / metin uzunluğu); iç içe derinlik, sayı uzunluğu gibi biçim kısıtları 400 kalır.
+                if (m != null && (m.contains("Document length") || m.contains("String value length"))) return true;
+            }
+            if (t.getCause() == t) break;
+        }
+        return false;
     }
 
     /** Query/form parametresi eksik. */

@@ -87,9 +87,12 @@ const REFRESH_INTERVAL = 60
 // (sorunlu → grup → ad) seçicide `default` adıyla duruyor.
 const SORTS = ['days_asc', 'default', 'days_desc', 'name', 'registrar', 'team', 'changed']   // registrar/takım/son değişiklik (2026-09-22, B)
 /** Hızlı süzgeç (2026-09-22, B): URL `dq`. 'all' | 'nolock' | 'unsigned' | 'soon' | 'rdap' | 'whois' | 'alarm' */
-const QUICK = ['all', 'soon', 'nolock', 'unsigned', 'alarm', 'rdap', 'whois']
+// 'active' (2026-11-15, prod kapısı): yalnız ETKİN izlemeler — Panom "Yakında bitecek alan adları" kutusu duraklatılanları
+// saymaz; "Dolmuş" / "Bitişi bilinmiyor" kutucukları bu süzgeçle açılır, kutucuktaki sayı açılan listeye eşit olur
+const QUICK = ['all', 'active', 'soon', 'nolock', 'unsigned', 'alarm', 'rdap', 'whois']
 const QUICK_PRED = {
   all: () => true,
+  active: m => m.active !== false,
   soon: m => m.days_remaining != null && m.days_remaining <= SOON_DAYS,
   nolock: m => m.transfer_lock === 'NONE',
   unsigned: m => m.dnssec === 'unsigned',

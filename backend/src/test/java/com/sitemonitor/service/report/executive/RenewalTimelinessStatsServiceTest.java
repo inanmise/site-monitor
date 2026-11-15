@@ -41,6 +41,14 @@ class RenewalTimelinessStatsServiceTest {
     }
 
     @Test
+    @DisplayName("2026-11-15 kapı: zamanında yenileme oranı geç kalan varken ASLA 100 (2 000'de 1 geç → 99,9); payda 0 → null")
+    void onTimePctNeverHundredWithLate() {
+        org.assertj.core.api.Assertions.assertThat(RenewalTimelinessStatsService.onTimePct(1999, 2000)).isEqualTo(99.9);
+        org.assertj.core.api.Assertions.assertThat(RenewalTimelinessStatsService.onTimePct(2000, 2000)).isEqualTo(100.0);
+        org.assertj.core.api.Assertions.assertThat(RenewalTimelinessStatsService.onTimePct(0, 0)).isNull();
+    }
+
+    @Test
     @DisplayName("3 / 6 / 12 ay: dolmadan / dolduktan sonra / son dakika yenileme, yenilenmeden dolan; görülemeyen takım dışarıda")
     void windowsAndScope() {
         RenewalForecastService forecast = mock(RenewalForecastService.class);

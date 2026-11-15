@@ -512,6 +512,20 @@ describe('Panom — 7 günlük erişilebilirlik', () => {
     expect(widget('availability_week')).toHaveTextContent('99.89%')
   })
 
+  it('kısmi yanıt (bir tür okunamadı, prod kapısı 2026-11-15): gri, "kısmi ölçüm", okunamayan türler adıyla; hüküm satırı yok', async () => {
+    api.monitoring.getAvailabilityWeek.mockResolvedValue({ success: true,
+      data: week({ partial: true, meets_target: null, unmeasured: null, unavailable_types: ['ping', 'dns'] }) })
+    render(<Shell initial={layout('availability_week', 'sm')}><MyDashPage /></Shell>)
+    await waitFor(() => expect(q('availability_week', 'mydash-avail-partial')).not.toBeNull())
+    const w = widget('availability_week')
+    expect(w).toHaveAttribute('data-tone', 'muted')
+    expect(w.querySelector('[data-slot="mydash-widget-tone"]')).toHaveTextContent(EN['mydash.avail.tone.partial'])
+    expect(q('availability_week', 'mydash-avail-verdict')).toBeNull()
+    expect(q('availability_week', 'mydash-avail-partial')).toHaveTextContent(/Ping/)
+    expect(q('availability_week', 'mydash-avail-partial')).toHaveTextContent(/DNS/)
+    expect(q('availability_week', 'mydash-gauge')).toHaveAttribute('data-tone', 'muted')
+  })
+
   it('ölçüm yok → gri "ölçüm yok" (yeşil değil), yay ve hedef çentiği çizilmez; izleme yoksa ayrı metin', async () => {
     api.monitoring.getAvailabilityWeek.mockResolvedValue({ success: true, data: week({ availability_pct: null, meets_target: null, monitors: 0, unmeasured: 3, checks: 0, failed: 0 }) })
     const r = render(<Shell initial={layout('availability_week', 'sm')}><MyDashPage /></Shell>)

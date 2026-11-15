@@ -96,6 +96,14 @@ class DbConnectionProfileServiceTest {
     }
 
     @Test
+    @DisplayName("2026-11-15 kapı: bağlantı başarı yüzdesi hata varken ASLA 100 (2 000 koşumda 1 hata → 99,9)")
+    void successPctNeverHundredWithFailure() {
+        org.assertj.core.api.Assertions.assertThat(DbConnectionProfileService.successPct(2000, 1)).isEqualTo(99.9);
+        org.assertj.core.api.Assertions.assertThat(DbConnectionProfileService.successPct(2000, 0)).isEqualTo(100.0);
+        org.assertj.core.api.Assertions.assertThat(DbConnectionProfileService.successPct(10, 5)).isEqualTo(50.0);
+    }
+
+    @Test
     @DisplayName("D4: düzenleme sırasında araya giren sağlık yazımı ve yeniden şifreleme EZİLMEZ; yalnız değişen kolon (açıklama) yazılır")
     void concurrentHealthAndReencryptionSurviveEdit() {
         DbConnectionProfile p = saved(1L, "enc:v1:ESKI-ANAHTAR");

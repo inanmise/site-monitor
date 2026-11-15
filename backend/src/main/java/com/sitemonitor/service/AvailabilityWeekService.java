@@ -52,8 +52,14 @@ import java.util.function.Predicate;
  * yuvarlanmış değerden DEĞİL, başarılı × 100 ≥ hedef × kontrol karşılaştırmasından (BigDecimal, kayan nokta kalıntısı yok)
  * çıkar — hedefin altındaki filo asla "hedefte" sayılmaz. Arayüz hedef altındaki değeri aşağı keserek gösterir.
  *
- * <p><b>Okunamayan veri sıfır DEĞİLDİR:</b> bir tür okunamazsa {@link UnavailableException} (denetleyici 503) — sekiz türün
- * toplamı "filonun tamamı" gibi gösterilmez; görüntü saklanmaz.
+ * <p><b>Okunamayan veri sıfır DEĞİLDİR — tür başına sınırlı iş (kapı incelemesi 2026-11-15):</b> türler küçük, sınırlı bir
+ * havuzda ({@link #POOL_THREADS} iş parçacığı, tür başına TEK uçuşta okuma) paralel okunur ve isteğin toplam bekleme süresi
+ * {@code site.monitor.availability-week.type-timeout-ms} (20 sn — istemcinin 90 sn GET sınırının çok altında) ile sınırlıdır.
+ * Süresinde gelmeyen ya da okunamayan tür ATLANIR ve yanıtta {@code unavailable_types} + {@code partial: true} ile söylenir;
+ * o türün izlemeleri toplamda YOKTUR, {@code meets_target} ve {@code unmeasured} bilinmiyor (null) olur — kısmi toplam asla
+ * "filonun tamamı" gibi hüküm vermez. Süresinde bitmeyen okuma arka planda sürer ve ortak SLA önbelleğini ısıtır; sonraki
+ * yoklama tamdır. Kısmi görüntü bellekte tutulmaz. Okunabilen hiçbir tür yoksa {@link UnavailableException} (denetleyici
+ * 503). Rollup tabanlı yeniden yazım (tür başına 30 günlük ham tarama yerine saatlik özet) ayrı bir izleme işidir.
  */
 @Service
 @RequiredArgsConstructor
@@ -94,7 +100,76 @@ public class AvailabilityWeekService {
                long checks, long failed, Double upPct, long badHours) { }
 
     /** Kurum geneli görüntü — kullanıcıdan bağımsız. */
-    record OrgWeek(List<Row> rows, String builtAt) { }
+    record OrgWeek(List<Row> rows, String builtAt, List<String> unavailableTypes) {
+        OrgWeek(List<Row> rows, String builtAt) { this(rows, builtAt, List.of()); }
+    }
+
+    /** Bir türün ham okuması: izleme kimlikleri + ortak SLA önbelleğinin 30 günlük sonucu. */
+    record TypeRead(Map<Long, MonitorSparklineService.MonitorRef> refs, Map<Long, Map<String, Object>> avail) { }
+
+    /** Tür okuma havuzunun iş parçacığı sayısı — veritabanı bağlantı havuzunu zorlamamak için küçük. */
+    static final int POOL_THREADS = 3;
+
+    /** İsteğin türleri bekleme süresi (ms); {@code new} ile kurulunca 20 sn. */
+    @Value("${site.monitor.availability-week.type-timeout-ms:20000}")
+    long typeTimeoutMs = 20_000;
+
+    /** Tür başına uçuştaki okuma (tek uçuş): süresinde bitmeyen okuma arka planda sürer, sonraki istek ona katılır. */
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.CompletableFuture<TypeRead>> inflight =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private volatile java.util.concurrent.ThreadPoolExecutor pool;
+
+    private java.util.concurrent.ThreadPoolExecutor pool() {
+        java.util.concurrent.ThreadPoolExecutor p = pool;
+        if (p != null) return p;
+        synchronized (this) {
+            if (pool == null) {
+                java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
+                // Kuyruk tür sayısını aşmaz (tek uçuş); dolarsa yeni okuma reddedilir → tür "okunamadı" (asla sınırsız birikim)
+                java.util.concurrent.ThreadPoolExecutor tp = new java.util.concurrent.ThreadPoolExecutor(POOL_THREADS, POOL_THREADS,
+                        60, java.util.concurrent.TimeUnit.SECONDS, new java.util.concurrent.ArrayBlockingQueue<>(32), r -> {
+                            Thread t = new Thread(r, "availability-week-" + n.incrementAndGet());
+                            t.setDaemon(true);
+                            return t;
+                        }, new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+                tp.allowCoreThreadTimeOut(true);
+                pool = tp;
+            }
+            return pool;
+        }
+    }
+
+    @jakarta.annotation.PreDestroy
+    void shutdownPool() {
+        java.util.concurrent.ThreadPoolExecutor p = pool;
+        if (p != null) p.shutdownNow();   // bekleme yok: iş parçacıkları daemon, okuma yalnız önbellek ısıtır
+    }
+
+    private java.util.concurrent.CompletableFuture<TypeRead> typeRead(String type) {
+        java.util.concurrent.CompletableFuture<TypeRead> f = inflight.get(type);
+        if (f != null) return f;
+        java.util.concurrent.CompletableFuture<TypeRead> mine = new java.util.concurrent.CompletableFuture<>();
+        java.util.concurrent.CompletableFuture<TypeRead> prev = inflight.putIfAbsent(type, mine);
+        if (prev != null) return prev;
+        try {
+            pool().execute(() -> {
+                try {
+                    Map<Long, MonitorSparklineService.MonitorRef> refs = sparklineService.monitorRefs(type);
+                    Map<Long, Map<String, Object>> avail = refs == null || refs.isEmpty() ? Map.of()
+                            : sparklineService.availabilityAll(type, SOURCE_DAYS);
+                    mine.complete(new TypeRead(refs == null ? Map.of() : refs, avail));
+                } catch (Throwable t) {
+                    mine.completeExceptionally(t);
+                } finally {
+                    inflight.remove(type, mine);
+                }
+            });
+        } catch (RuntimeException e) {   // havuz dolu / kapalı
+            inflight.remove(type, mine);
+            mine.completeExceptionally(e);
+        }
+        return mine;
+    }
 
     /** Tür başına biriktirici. */
     private static final class Acc {
@@ -118,7 +193,9 @@ public class AvailabilityWeekService {
     public Map<String, Object> build(Predicate<Long> canViewTeam) {
         // Kart SLA ucu (MonitorSparklineController.SLA_TARGET_KEY) ve İstatistikler SLA bloğuyla aynı canlı ayar
         double target = appSettings.getDouble("site.monitor.sla.target-pct", 99.9);
-        OrgWeek org = orgMemo.get(ORG_KEY, cacheMs, false, this::load);
+        // Kısmi görüntü (bir tür okunamadı / süresinde gelmedi) bellekte TUTULMAZ — sonraki yoklama yeniden dener
+        OrgWeek org = orgMemo.get(ORG_KEY, cacheMs, false, this::load, w -> w.unavailableTypes().isEmpty() ? Long.MAX_VALUE : 0L);
+        boolean partial = !org.unavailableTypes().isEmpty();
 
         Map<String, Acc> byType = new LinkedHashMap<>();
         for (String type : MonitorSparklineService.KINDS.keySet()) byType.put(type, new Acc());
@@ -145,14 +222,18 @@ public class AvailabilityWeekService {
         out.put("days", DAYS);
         out.put("target_pct", target);
         out.put("monitors", all.monitors);
-        out.put("unmeasured", unmeasuredUnknown ? null : unmeasured);   // null = envanter okunamadı, sayı bilinmiyor
+        // null = envanter okunamadı ya da bir tür okunamadı (kısmi): sayı bilinmiyor
+        out.put("unmeasured", unmeasuredUnknown || partial ? null : unmeasured);
+        out.put("partial", partial);
+        out.put("unavailable_types", org.unavailableTypes());
         out.put("checks", all.checks);
         out.put("failed", all.failed);
         // Hata varken asla %100 (AvailabilityMath); ölçüm yoksa null — "veri yok" %100 DEĞİLDİR
         Double pct = AvailabilityMath.pct(all.checks, all.checks - all.failed, 2);
         out.put("availability_pct", pct);
         // Hüküm KESİN orandan (yuvarlanmış gösterim değerinden değil): %99,8955 hedef 99,9'un altındadır, "99,90" görünse de
-        out.put("meets_target", meetsTarget(all.checks, all.failed, target));
+        // Kısmi görüntüde filo hükmü YOK (okunamayan tür hedefin altında olabilir) — bilinmiyor asla yeşil değil
+        out.put("meets_target", partial ? null : meetsTarget(all.checks, all.failed, target));
         out.put("below_target", all.below);
 
         List<Map<String, Object>> types = new ArrayList<>();
@@ -200,30 +281,53 @@ public class AvailabilityWeekService {
             activeHosts = null;
         }
         List<Row> rows = new ArrayList<>();
-        try {
-            for (String type : MonitorSparklineService.KINDS.keySet()) {
-                Map<Long, MonitorSparklineService.MonitorRef> refs = sparklineService.monitorRefs(type);
-                if (refs == null || refs.isEmpty()) continue;   // türde izleme yok — SLA taraması da gereksiz
-                Map<Long, Map<String, Object>> avail = sparklineService.availabilityAll(type, SOURCE_DAYS);
-                for (Map.Entry<Long, MonitorSparklineService.MonitorRef> e : refs.entrySet()) {
-                    MonitorSparklineService.MonitorRef ref = e.getValue();
-                    Map<String, Object> w = week(avail == null ? null : avail.get(e.getKey()));
-                    long n = num(w, "n"), fail = num(w, "fail");
-                    Double up = w != null && w.get("up_pct") instanceof Number p && n > 0 ? Double.valueOf(p.doubleValue()) : null;
-                    // Port / DNS dışında standalone null → kural uygulanmaz; türev satır = standalone false
-                    boolean derived = ref != null && Boolean.FALSE.equals(ref.standalone());
-                    boolean inactive = derived && activeHosts != null
-                            && MonitoringOverviewService.inventoryInactive(activeHosts, ref.standalone(), ref.host());
-                    boolean unknown = derived && activeHosts == null;
-                    rows.add(new Row(type, e.getKey(), ref == null ? null : ref.teamId(), ref == null ? null : ref.name(),
-                            ref == null || ref.active(), inactive, unknown, n, Math.min(fail, n), up, num(w, "bad_hours")));
-                }
+        List<String> unavailable = new ArrayList<>();
+        Map<String, java.util.concurrent.CompletableFuture<TypeRead>> reads = new LinkedHashMap<>();
+        for (String type : MonitorSparklineService.KINDS.keySet()) reads.put(type, typeRead(type));
+        long budget = typeTimeoutMs > 0 ? typeTimeoutMs : 20_000L;
+        long deadline = System.nanoTime() + budget * 1_000_000L;
+        int readable = 0;
+        for (Map.Entry<String, java.util.concurrent.CompletableFuture<TypeRead>> en : reads.entrySet()) {
+            String type = en.getKey();
+            TypeRead read;
+            try {
+                long left = Math.max(0L, deadline - System.nanoTime());
+                read = en.getValue().get(left, java.util.concurrent.TimeUnit.NANOSECONDS);
+            } catch (java.util.concurrent.TimeoutException e) {
+                log.info("7 günlük erişilebilirlik: {} türü {} ms içinde okunamadı — tür atlandı (okuma arka planda sürüyor)",
+                        type, budget);
+                unavailable.add(type);
+                continue;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new UnavailableException(e);
+            } catch (java.util.concurrent.ExecutionException | RuntimeException e) {
+                Throwable cause = e instanceof java.util.concurrent.ExecutionException && e.getCause() != null ? e.getCause() : e;
+                log.debug("7 günlük erişilebilirlik: {} türü okunamadı: {}", type, cause.toString());
+                unavailable.add(type);
+                continue;
             }
-        } catch (RuntimeException e) {
-            log.debug("7 günlük erişilebilirlik okunamadı: {}", e.toString());
-            throw new UnavailableException(e);
+            readable++;
+            Map<Long, Map<String, Object>> avail = read.avail();
+            for (Map.Entry<Long, MonitorSparklineService.MonitorRef> e : read.refs().entrySet()) {
+                MonitorSparklineService.MonitorRef ref = e.getValue();
+                Map<String, Object> w = week(avail == null ? null : avail.get(e.getKey()));
+                long n = num(w, "n"), fail = num(w, "fail");
+                Double up = w != null && w.get("up_pct") instanceof Number p && n > 0 ? Double.valueOf(p.doubleValue()) : null;
+                // Port / DNS dışında standalone null → kural uygulanmaz; türev satır = standalone false
+                boolean derived = ref != null && Boolean.FALSE.equals(ref.standalone());
+                boolean inactive = derived && activeHosts != null
+                        && MonitoringOverviewService.inventoryInactive(activeHosts, ref.standalone(), ref.host());
+                boolean unknown = derived && activeHosts == null;
+                rows.add(new Row(type, e.getKey(), ref == null ? null : ref.teamId(), ref == null ? null : ref.name(),
+                        ref == null || ref.active(), inactive, unknown, n, Math.min(fail, n), up, num(w, "bad_hours")));
+            }
         }
-        return new OrgWeek(rows, ISO.format(Instant.now()));
+        if (readable == 0 && !unavailable.isEmpty()) {
+            // Hiçbir tür okunamadı: kutu "okunamadı" der (asla %0 / %100)
+            throw new UnavailableException(new IllegalStateException("okunamayan türler: " + unavailable));
+        }
+        return new OrgWeek(rows, ISO.format(Instant.now()), List.copyOf(unavailable));
     }
 
     /** 30 günlük ortak sonucun 7 günlük dönemi ({@code windows[days = 7]}); yoksa (izleme sonradan eklendi) null. */

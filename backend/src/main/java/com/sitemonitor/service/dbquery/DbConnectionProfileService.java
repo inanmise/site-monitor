@@ -499,7 +499,8 @@ public class DbConnectionProfileService {
         // Bağlantı sağlamken biten hatalar (SQL hatası, güvenlik reddi, parola çözülemedi …) — bağlantı başarısızlığı değil
         out.put("other_failed_24h", statsRead ? otherFailed : null);
         Double pct = null;
-        if (statsRead && runs != null && runs > 0) pct = Math.round(1000.0 * (runs - failed) / runs) / 10.0;
+        // Bağlantı hatası varken ASLA 100 (AvailabilityMath; kapı incelemesi 2026-11-15)
+        if (statsRead && runs != null && runs > 0) pct = successPct(runs, failed == null ? 0L : failed);
         out.put("success_pct", pct);
         out.put("avg_duration_ms", statsRead && runs != null && runs > 0 ? avgMs : null);
         // Son başarı: izleme kullanımı ya da başarılı deneme — hangisi yeniyse
@@ -527,6 +528,11 @@ public class DbConnectionProfileService {
         out.put("last_error", lastError);
         out.put("unused", sorted.isEmpty());
         return out;
+    }
+
+    /** Bağlantı başarı yüzdesi (tek ondalık) — bağlantı hatası varken ASLA 100 ({@code AvailabilityMath}). */
+    static Double successPct(long runs, long failed) {
+        return com.sitemonitor.util.AvailabilityMath.pct(runs, Math.max(0L, runs - failed), 1);
     }
 
     // ── İç ───────────────────────────────────────────────────────────────────

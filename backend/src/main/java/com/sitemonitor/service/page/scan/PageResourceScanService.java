@@ -1868,7 +1868,7 @@ public class PageResourceScanService {
             if (f.status() < 200 || f.status() >= 300 || f.body() == null || f.truncated()) return null;
             MeasurePlan plan = measurePlan(it, f.body(), f.bytes());
             if (!plan.measurable()) {
-                log.debug("Kaynak analizi görsel kazancı ölçülmedi ({}): {}", plan.skipReason(), PageFetchCore.sanitize(it.url));
+                log.debug("Kaynak analizi görsel kazancı ölçülmedi ({}): {}", plan.skipReason(), com.sitemonitor.service.SecretMask.logUrl(it.url));
                 return null;
             }
             long wait2 = Math.max(1, Math.min(10_000L, phaseEnd - clock.getAsLong()));

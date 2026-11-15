@@ -280,6 +280,15 @@ describe('yıl arşivi — sıralı koşucu', () => {
     }
   })
 
+  it('istemcinin kendi son tarihi önce dolarsa (timedOut yükü, 2026-11-15) ay "zaman aşımı" sayılır, "başarısız" değil', async () => {
+    const fetchPdf = vi.fn((item) => Promise.resolve(item.id === 2
+      ? { success: false, status: 0, code: 'REQUEST_TIMEOUT', timedOut: true, error: 'x' }
+      : { success: true, bytes: pdf(String(item.id)) }))
+    const res = await runArchive(plan, { fetchPdf, sleep: noSleep })
+    expect(res.files.map((f) => f.item.id)).toEqual([1, 3])
+    expect(res.missing).toEqual([{ item: plan[1], reason: 'timeout', status: 0, error: null }])
+  })
+
   it('zaman aşımında istemcinin "iptal" yanıtı iptal sayılmaz (zaman aşımı); kullanıcının iptali sayılır', async () => {
     vi.useFakeTimers()
     try {

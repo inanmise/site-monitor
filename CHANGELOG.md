@@ -15,6 +15,407 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Changed (chart — prod kapısı 2026-11-15)
+- **⚠ Ingress sınırları uygulamanınkinden dar değil:** `nginx.ingress.kubernetes.io/proxy-body-size` **16m** (1m'di; uygulama
+  `spring.servlet.multipart.max-request-size=12MB`), `proxy-read-timeout` **135** (60'tı; en uzun istekler ≤ 130 sn) ve
+  `haproxy.router.openshift.io/timeout: "135s"` (OpenShift Route varsayılanı 30 sn). Prod trafiği NetScaler → OpenShift:
+  elle oluşturulmuş Route'ta `oc annotate route <ad> haproxy.router.openshift.io/timeout=135s --overwrite`; NetScaler'da gövde
+  ≥ 12 MB ve zaman aşımı ≥ 135 sn. `scripts/helm-template-check.sh` daha dar değerle render'ı reddeder.
+- **⚠ Davranış (yalnız chart):** `postgresql.enabled=true` artık `helm template`'i durdurur — paketli PostgreSQL alt chart'ı
+  kaldırılmıştı ve bu değer var olmayan bir `DB_HOST`'a işaret ediyordu (hiçbir ortam kullanmıyordu). Bütün ortamlar
+  dış veritabanı kullanır (`config.dbHost` …); `pg_stat_statements` dış sunucuda DBA işidir.
+
+> **20.121.0 – 20.208.0 operatör notları** 2026-11-15'te (prod kapısı) `git log`, `docs/releases/index.json` ve kod
+> tabanından geriye dönük dolduruldu: bu sürümler yayınlanırken CHANGELOG güncellenmedi. Burada YALNIZ operatörü / yöneticiyi
+> ilgilendirenler var (varsayılan / davranış değişikliği, yeni ortam değişkeni ve ayar, dağıtımda koşan tek seferlik işler,
+> veritabanı yükü, dış trafik, geri alma uyarıları). Özellik ayrıntısı: Yardım → Yenilikler ya da `docs/releases/index.json`.
+> Bu aralıkta BREAKING işaretli commit yoktur. Prod hangi sürümdeyse oradan itibaren okuyun; sürüme bağlı adımların
+> listesi: `docs/PROD_DEPLOY_CHECKLIST.md` → "0. Prod hangi sürümde?".
+
+## [20.208.0] — 2026-11-15
+
+### Changed
+- **Alan adı izlemesi:** kalan gün her ekranda bitiş tarihinden canlı hesaplanır; süresi dolmuş alan adının postası
+  "N GÜN ÖNCE DOLDU" der (konu, metin, 7/24 postası, push varsayılan şablonu).
+  - **⚠ Davranış:** "Veri yok" (`DOMAINMON_UNKNOWN`) alarmları, kayıt verisi yeniden okununca etkin kurtarma kontrolleriyle
+    (60 sn'de bir) kapanır; eskiden günlük taramada art arda 3 sağlıklı sonuç gerekiyordu (pod belleğinde, her yeniden
+    başlatmada sıfırlanan) ve çoğu hiç kapanmıyordu.
+    Dağıtımdan sonraki ilk saatlerde birikmiş alarmlar için **çözüm postası dalgası** beklenir.
+  - **Yeni yapılandırma:** `site.monitor.domain.recovery-interval-ms` (env `DOMAIN_RECOVERY_INTERVAL_MS`, 60000; `0` = eski
+    pasif davranış; 10000–3600000; canlı).
+  - **⚠ Davranış:** Kayıt sekmesindeki canlı sorgu ve "Şimdi kontrol et" izleme başına dakikada 6 (ikisi birlikte) — aşan 429.
+
+## [20.199.0 – 20.207.0] — 2026-11-14 / 2026-11-15
+
+### Added
+- **Kaynak analizi görsel aracı ve görsel indirme ucu (20.199.0).** Görseller tarayıcıda işlenir; sunucu yalnız taramanın
+  bulduğu görselin özgün baytlarını indirir (`POST /api/monitoring/page/{id}/resource-scans/{scanId}/image`; 20.205.0'dan
+  beri Sayfa Hızı için `POST /api/monitoring/pagespeed/{id}/image`).
+  - **⚠ Dış trafik:** her indirme izlenen siteye yeni bir GET'tir (≤ 25 MiB, toplam ≤ 130 sn, pod başına aynı anda 4, kişi
+    başına 2 ve dakikada 60, hedef host başına dakikada 30). Ingress / Route zaman aşımı ≥ 135 sn olmalı (aşağıda chart notu).
+- **Tüm site taraması (20.202.0, "Tüm siteyi tara").**
+  - **⚠ Dış trafik:** bir koşu hedef siteye en çok 2500 sayfa / 150 dk / 7500 MB / 75 000 nesne indirir (2026-11-15'te 1000 /
+    60 dk / 3000 MB / 30 000'den yükseltildi); önce `robots.txt`
+    (`Sitemap:` satırları) ve site haritası okunur. Yalnız kullanıcı isteyince çalışır; pod'un iki tarama yuvasından birini
+    koşu boyunca tutar.
+  - **Yeni yapılandırma** (canlı, Ayarlar → Genel → İzleme): `site.monitor.page.resource-scan.full-site-max-pages` (2500),
+    `…full-site-max-seconds` (9000), `…full-site-max-total-mb` (7500), `…full-site-max-objects` (75000). Kaydedilmiş eski
+    değerler yükseltmeyle değişmez.
+  - Yeni kolonlar `page_resource_scans.site_crawl`, `site_checkpoint` (sürdürme noktası, API'de dönmez).
+- **Sayfa Hızı ölçüm zamanlaması (20.206.0):** aralık ya da cron + izinli / yasak pencere + tatil (sentetik izlemeyle aynı).
+  Yeni kolonlar `pagespeed_monitors.schedule_mode … next_run_at`. Zamanlama tanımlanmayan izleme bugünkü gibi koşar.
+- **Sayfa Hızı şelale, hız notu, karşılaştırma, PDF / Excel (20.205.0):** yeni kolon `pagespeed_resources.start_ms`.
+- **Giriş sonrası eksikler penceresi (20.204.0, 20.207.0):** profil / takım / izleme eksikleri girişte bir kez gösterilir
+  (yalnız arayüz; kanal raporu genel bakışı `approver_count` / `can_approve` alanlarını ekler).
+- **7/24 onayı (20.201.0):** izleme kaydında "7/24 ekibine bildir" seçilmediyse sorulur (yalnız arayüz).
+
+### Changed
+- **Sayfa Hızı zenginleştirmesi (20.200.0).**
+  - **⚠ Davranış:** kart SLA'sı / erişilebilirlik yalnız sayfa AÇILMADIĞINDA düşer; eşik aşımı ayrı "bütçe uyumu"dur — SLA
+    rakamları yükselir, Grafana'da sayfa hızı SLA geçmişi bu sürümde kırılır.
+  - **⚠ Davranış:** TTFB eşiği son yönlendirme adımının sunucu süresine bakar (izlemenin başlıkları, kimliği ve vekiliyle,
+    her adımda yeni bağlantıyla ölçülür); ölçülemeyen TTFB "bilinmiyor" (alarm açmaz, kapatmaz).
+  - Yeni tür bütçeleri (JS / görsel / yazı tipi / üçüncü taraf KB, en küçük sayfa boyutu) — tanımlanmazsa davranış aynı.
+  - Grafana: `sitemonitor_pagespeed_*` aileleri; pano revizyonu **17** (16 → 17 aynı sürümde).
+
+## [20.196.0 – 20.198.0] — 2026-11-13 / 2026-11-14
+
+### Added
+- **Veritabanı büyümesi (20.196.0, Sistem Sağlığı).** Günlük boyut geçmişi (`db_size_daily`; saatlik iş 05:00 İstanbul'dan
+  sonra günde bir görüntü yazar), 30 / 90 / 180 gün tahmini, saklama önerileri, sağlık analizi.
+  - **Yeni yapılandırma:** `site.monitor.db.capacity-gb` (env `DB_CAPACITY_GB`, **0 = bilinmiyor**; GLOBAL_ONLY, ekrandan
+    girilir), `site.monitor.db.size-history.retention-days` (730, en az 90), `site.monitor.db.size-snapshot-enabled`.
+  - Kendi kendini izlemeye **9. kontrol** `db_capacity` ("Veritabanı doluluğu"; kapasite girilene dek "uygulanmaz";
+    ≥ %85 ya da ≤ 30 gün sorun, ≥ %95 ya da ≤ 7 gün yüksek önem). Grafana `sitemonitor_db_size_bytes`,
+    `sitemonitor_db_days_until_full`; pano revizyonu 14 / 15.
+  - **Operatör notu:** dağıtımdan sonra kapasiteyi GiB olarak girin (WAL ve diskteki başka dosyalar sayılmaz).
+- **Olaylar ekranı dışa aktarımı, İstatistikler günlük sağlık görüntüsü (`cert_health_daily`, saatlik "yoksa yaz" işi),
+  toplu kişi / grup işlemleri (20.196.0)** — yalnız yeni tablolar / uçlar.
+- **SQL Playground zenginleştirmesi (20.197.0).**
+  - **⚠ Davranış:** hassas kolonlar (parola, belirteç, şifreli değerler) sonuçta `••••`; bu kolonları WHERE / JOIN /
+    fonksiyon içinde kullanan sorgu çalıştırılmaz (400 `SQL_SENSITIVE_COLUMN`).
+  - **Operatör notu:** büyük dışa aktarım (CSV ≤ 50 000 / JSON ≤ 20 000 satır, ≤ 120 sn) havuz DIŞI, tek kullanımlık bir
+    veritabanı bağlantısı açar — pod başına en çok 2: `max_connections` payına ekleyin. Yeni tablolar
+    `sql_running_queries`, `sql_saved_queries`.
+- **Kişisel Panom zaman serisi kutuları (20.198.0)** — yalnız yeni uçlar (`/api/me/alert-trend`,
+  `/api/monitoring/availability-week`), bellekte önbellekli.
+
+### Changed
+- **Dinamik taban çizgisi budaması (20.196.2):** her gece 04:45 İstanbul (`baseline-sample-prune` kilidi;
+  `site.monitor.baseline.prune-enabled`, true) — mevsimsel tabanın geçmişini korur.
+- **AD'den eklenen kullanıcıların kilitli boş org rolü onarılır (20.197.3):** tek seferlik iş, açılıştan 5 dk sonra, başka
+  sürüm koşan canlı pod kalmayınca (nişan `2026-11-14-ad-org-role-lock-repair`); her onarım `USER_ORG_ROLE_UNLOCK` denetim
+  kaydı yazar. AD'ye bağlanmaz — rol kişinin sonraki girişinde türetilir.
+- Ön yüz bağımlılıkları aynı ana sürüm içinde güncellendi (20.197.2); `@uiw/react-md-editor` 4.1.1'de sabit (20.197.3).
+
+## [20.186.4 – 20.195.0] — 2026-11-11 / 2026-11-13
+
+### Added
+- **Dinamik yanıt süresi taban çizgisi (20.189.0)** — 7 izleme türü; izleme başına varsayılan KAPALI.
+  - **Yeni yapılandırma:** `site.monitor.baseline.enabled` (env `BASELINE_ENABLED`, true — kurum geneli ana anahtar;
+    kapalıyken sabit eşikler). Yeni tablolar `monitor_baseline_config`, `monitor_baseline_samples` (izleme başına en yeni 1500
+    satır + mevsimsel tabanın ihtiyacı kadarı tutulur). Grafana pano revizyonu 13.
+- **AD'den kullanıcı arama ve ekleme (20.187.0)** — yalnız global yönetici, LDAP açıkken.
+- Yönetim ekranları: kullanıcı dizini süzgeçleri, eskalasyon kapsam matrisi, eşik katman karşılaştırması, bildirim grubu
+  kullanım sayıları, değişiklik akışı, "Kim bilgilendirilir?" zinciri (20.190.0 – 20.195.0; yalnız arayüz / okuma uçları).
+
+### Changed
+- **Bağımlılıklar (20.186.4):** Spring Boot 4.1.0 → 4.1.1, BouncyCastle 1.81 → 1.86, PDFBox 3.0.5 → 3.0.8, jsoup 1.18.3 →
+  1.23.2, dnsjava 3.6.2 → 3.6.5, commonmark 0.24.0 → 0.30.1 (ana sürüm geçişi yok).
+- **Sayfa bütünlüğü (20.188.0):** alarm için en az kırık kaynak eşiği (`minBrokenResources`, varsayılan 1 = bugünkü);
+  tarama kaynaklı bütünlük alarmı sık taramada hedefli ölçümle kendiliğinden kapanır.
+
+## [20.186.3] — 2026-11-06
+
+### Added
+- **İndeks bakımı (yalnız PostgreSQL).**
+  - **⚠ Veritabanı:** açılıştan ~3 dk sonra (başka sürüm koşan canlı pod kalmayınca) eski kurulumlardaki **15 gereksiz
+    indeks** `DROP INDEX CONCURRENTLY` ile düşürülür (tek seferlik, nişan `2026-11-06-redundant-index-cleanup`); her gece
+    **04:40** İstanbul'da şişmiş indeksler `REINDEX INDEX CONCURRENTLY` ile yeniden kurulur (gece başına ≤ 6 indeks / 4 GB /
+    45 dk; yalnız saklamanın yaşa göre sildiği kontrol / geçmiş tabloları). Tablo sahibi uygulama kullanıcısı olmalı;
+    yeniden kurma bir indeks kopyası kadar ek disk ister. İşler havuz dışı bir oturum + DDL sürerken bir bekçi bağlantısı
+    açar. DBA'yı önceden bilgilendirin.
+  - **Yeni yapılandırma** (açılış): `site.monitor.index-maintenance.enabled` (env `INDEX_MAINTENANCE_ENABLED`, true — `false`
+    ikisini de kapatır), `site.monitor.index-maintenance.bloat-cron` (env `INDEX_MAINTENANCE_BLOAT_CRON`, `0 40 4 * * *`,
+    `-` = kapalı; geçersiz değer açılışı düşürmez, işi kapatır).
+  - **⚠ Geri alma:** 20.186.3'ten eski bir sürüme dönülürse eski sürüm bu 15 indeksi açılışta düz `CREATE INDEX` ile
+    (yazımları kilitleyerek) kurar — `helm rollback`'ten ÖNCE `docs/RUNBOOK.md` → İndeks bakımı → "Geri alma" deyimleri.
+- Türkçe sözlük açılış paketinden ayrı tembel parça (yalnız arayüz).
+
+## [20.186.2] — 2026-11-06
+
+### Changed
+- **Performans.**
+  - **⚠ Veritabanı:** yeni ertelenmiş indeksler (pod Ready olduktan sonra `CONCURRENTLY`): `idx_kwr_change_checked`,
+    `idx_dnsr_changed`, `idx_ae_domain_id`, `idx_ae_resolution_notify_open` ve hata kısmi indeksleri `idx_portc_fail`,
+    `idx_kwr_fail`, `idx_pingc_fail`, `idx_hc_fail`, `idx_pc_fail`, `idx_dnsr_fail`. Ekleme ağırlıklı kontrol tabloları ve
+    `activity_log`'a `autovacuum_vacuum_insert_scale_factor = 0.02` (kısa `ALTER TABLE … SET`, 20 sn kilit bekleme sınırı).
+  - **⚠ Davranış:** bazı ekranlar kısa süre önbellekli: bildirim kutusu ≤ 15 sn, "Bugün" paneli ≤ 30 sn (bir onaydan hemen
+    sonra da), yavaş kart taban çizgisi ≤ 10 dk, yenileme tahmini ≤ 15 dk.
+
+## [20.186.1] — 2026-11-06
+
+### Fixed
+- **⚠ Davranış — yönlendirme yöntemi:** bütün yönlendirme izleyicilerinde (HTTP, anahtar kelime, sayfa, tanılama,
+  sertifika HEAD, HSTS) 301 / 302 sonrası POST artık GET olarak sürer (tarayıcı gibi; 303 her zaman GET, 307 / 308 yöntemi
+  korur). Form gönderen HTTP / anahtar kelime izlemelerinin sonucu değişebilir (önceki yanlış 405 / 400 alarmları kalkar).
+- **⚠ Davranış — anahtar kelime kimlik bilgileri:** özel başlık / Basic auth / POST gövdesi yalnız ilk isteğin KÖKENİNE
+  (ve aynı host'un http:80 → https:443 yükseltmesine) gider. İçerik değişimi taban çizgisi isteğe bağlandı: eski satırlar
+  ilk sağlıklı zamanlanmış kontrolde bir kez, alarmsız yenilenir.
+- Alarm iletimi hata avı düzeltmeleri (özet birleştirme, UG fırtına push'u, sessiz saat izi, çözüm push'u, taşıma sınırı).
+
+## [20.186.0] — 2026-11-05
+
+### Added
+- **Alarm iletimi** — sahip takım alarmlarını başka bir takıma ya da üyelere iletir (takım başına isteğe bağlı; ayrı
+  e-posta + push). Yeni tablo `alert_forwards`, `alert_events.forward_emails` (TEXT, NULL olabilir) kolonu.
+  - **Operatör notu:** eklenen her iletim, alıcılara bir kez bilgi postası + push gönderir (`ALERT_FORWARD_ADDED`).
+
+## [20.183.0 – 20.185.0] — 2026-11-05
+
+### Changed
+- **Anahtar kelime izlemesi zenginleştirmesi (20.183.0).**
+  - **⚠ Davranış:** eşleşme herkes için Türkçe büyük / küçük harf katlamasıyla (İ / I / ı / i aynı) ve sayfanın gerçek
+    karakter kümesiyle (BOM > `Content-Type` > `<meta>`, iso-8859-9 → windows-1254) yapılır — mevcut izlemelerin kararı
+    değişebilir. Zaman aşımı kayıtta 1–60 sn (eski değer çalışmada 60'a kırpılır).
+  - Yeni alarm türü `KEYWORD_CHANGED` (iş alarmı, kesinti değil), tablo `keyword_change_baselines`, `keyword_monitors` /
+    `keyword_results`'a NULL olabilir kolonlar. Yeni bağımlılık RE2J 1.8 (kullanıcı desenleri için doğrusal düzenli ifade).
+- **⚠ Davranış — alarm akışı (20.185.0):** `site.monitor.alarm-feed.resolved-mode` varsayılanı **`none`** ("yalnız açık
+  alarmlar"): akış RESOLVED / Clear satırı göndermez; merkezi sistem alarmı akışta göremeyince kapatır. Kayıtlı `status` /
+  `clear` değeri korunur. Merkezi izleme ekibine haber verin.
+- İzleme menüsü alt grupları akordeon (20.184.0, yalnız arayüz).
+
+## [20.180.0 – 20.182.1] — 2026-11-05
+
+### Added
+- **Aktivite kaydı zenginleştirmesi (20.181.0):** ayrıntı sayfası, alarm zinciri, zaman çizelgesi, dışa aktarım
+  (`/api/activity/export`; aralık verilmezse son 30 gün, en çok 90 gün, kişi başına dakikada 6).
+  - **⚠ Veritabanı:** `activity_log`'a NULL olabilir 8 kolon (`ddl-auto` `ADD COLUMN` — yalnız katalog değişikliği ama
+    tabloyu tutan uzun bir işlemin arkasında bekler; büyük tablo, 365 gün) ve ertelenmiş indeksler `idx_act_alert`,
+    `idx_act_team_status_time`, `idx_act_reason_time` (PostgreSQL). Dağıtım sırasında `activity_log` üzerinde uzun sorgu
+    koşmayın.
+- **Veritabanı sorgu izleme deneyimi (20.180.0):** bağlantı testi adımları, hızlı ekleme, akıllı kurallar (ANOMALY / FROZEN).
+  - **⚠ Davranış:** bağlantı testi kişinin saatlik deneme kotasını harcar (`site.monitor.dbquery.test-per-hour`, 60).
+
+## [20.179.0] — 2026-11-05
+
+### Changed
+- **⚠ Davranış — alarm akışı yalnız 7/24 alarmlarını verir:** `site.monitor.alarm-feed.noc-only` (env
+  `ALARM_FEED_NOC_ONLY`, **true**). Akış açıksa, daha önce OPEN gönderilmiş 7/24 dışı her alarm bir kez RESOLVED (kapsam dışı)
+  gelir (20.185.0'dan beri `none` kipinde satır gelmez, alarm akıştan çıkar). Merkezi ekibe önceden haber verin.
+- **Kaynak analizi algoritma 3:** derin analiz, bütçe, eğilim, çok sayfalı analiz.
+  - **⚠ Dış trafik:** tarama başına sunucu başına bağlantı ölçümü (≤ 30 sunucu) ve ≤ 10 kaynak haritası HEAD isteği.
+  - **Yeni yapılandırma:** `site.monitor.page.resource-scan.max-pages` (10, 2–20), `…site-max-seconds` (900, 120–900).
+
+## [20.178.0 – 20.178.1] — 2026-10-31
+
+### Changed
+- **Sentetik izleme (k6) güvenliği.**
+  - **⚠ Davranış:** dosya okuyan / `handleSummary` / yerel import / sistem yolu kullanan senaryolar varsayılan olarak
+    **KOŞMAZ** (`site.monitor.scripted.file-read-policy`, env `SCRIPTED_FILE_READ_POLICY`, varsayılan **BLOCK**; `REPORT` eski
+    davranış). Dağıtımdan ÖNCE `GET /api/admin/scripted/file-read-report` okuyun.
+  - **⚠ Davranış:** işlem sertleştirmesi (`SCRIPTED_PROCESS_HARDENING`, true): JVM ve k6 süreçleri dökülemez — `kubectl exec
+    … jcmd 1` bağlanmaz (iş parçacığı dökümü `kill -3 1`), çekirdek dökümü yok; imajda k6 ikilisi yalnız çalıştırılabilir.
+    ENTRYPOINT `--enable-native-access=ALL-UNNAMED` taşır.
+  - **⚠ Davranış:** 15 senaryo sınır ayarı (`max-rps`, `mem-limit`, `pool-size` …) yalnız global yönetici; `mem-limit` Go
+    biçiminde değilse (`512MB` gibi) k6'ya verilmez.
+  - Senaryo zamanlaması (cron / pencere / tatil); Grafana `sitemonitor_scripted_runs_24h`, `…_k6_versions_24h`; pano revizyonu
+    11 / 12.
+
+## [20.175.0 – 20.177.0] — 2026-10-31
+
+### Added
+- **Veritabanı sorgu izleme — 11. izleme türü (20.176.0).** Kayıtlı bağlantıda (PostgreSQL / SQL Server / Oracle) salt okur
+  SELECT çalıştırır.
+  - **⚠ Dış trafik:** pod'lardan hedef veritabanlarına JDBC bağlantısı — çıkış (egress) kuralları ve hedefte salt okur bir
+    hesap gerekir. İmaj Oracle JDBC (ojdbc11) ve Microsoft SQL Server sürücülerini taşır.
+  - **Yeni yapılandırma:** ayar grubu `dbquery` (hepsi GLOBAL_ONLY; eşzamanlılık, zaman aşımı, satır / posta sınırları,
+    plan denetimi, `test-per-hour` 60), `site.monitor.dbquery.writable-account-mode` (20.177.0, `WARN`; `BLOCK` yazabilen
+    hesabı reddeder), `site.monitor.dbquery.local-timezone` (Europe/Istanbul). Saklama:
+    `site.monitor.metrics.dbquery.retention-days` (180), alarm satırları 90 gün.
+  - Tatil takvimi: tek seferlik tohum (2026–2027 resmî tatilleri, nişan `2026-10-31-holiday-calendar-seed`). Grafana pano
+    revizyonu 10.
+- **Sayfa kaynak analizi (20.175.0, algoritma 2 20.177.0)** — yalnız kullanıcı isteyince çalışır.
+  - **⚠ Dış trafik:** sayfanın bütün nesneleri sunucudan indirilir (≤ 300 sn, ≤ 1500 nesne, ≤ 200 MB; pod başına 2 tarama).
+  - **Yeni yapılandırma** (canlı): `site.monitor.page.resource-scan.max-seconds|concurrency|max-objects|max-total-mb|
+    request-timeout-ms|retention-days`.
+
+## [20.172.0 – 20.174.0] — 2026-10-29 / 2026-10-30
+
+### Changed
+- **k6 0.49 → 2.3.0.** 20.172.0 (Yayın A): imajda iki ikili (`/usr/bin/k6` 0.49, `/opt/k6-next/k6` 2.3), k6 motoru ayar
+  sayfası, gölge uyumluluk taraması. 20.173.0 (Yayın B + C): **tek k6 = v2.3.0**; 2.0'dan eski k6 "desteklenmiyor".
+  - **⚠ Davranış:** senaryo kontrolleri dağıtımla 2.3'e geçer; `site.monitor.scripted.k6-api-address` ayarı kaldırıldı (kayıtlı
+    değer yok sayılır). Tek seferlik ayar normalleştirmesi açılıştan 3 dk sonra (nişan `2026-10-30-k6-settings-normalize`;
+    etkin `k6-bin` değerine dokunmaz).
+  - **Yeni yapılandırma:** `site.monitor.scripted.godebug` (env `SCRIPTED_K6_GODEBUG`), `site.monitor.scripted.user-agent`
+    (`SCRIPTED_K6_USER_AGENT`), `…k6-bin-rollback` / `…k6-bin-candidate` (boş).
+  - Geri alma: `docs/PROD_DEPLOY_CHECKLIST.md` → "k6 sürüm geçişi".
+- **Sayfa kaynak tavanı ayar oldu (20.172.1):** `site.monitor.page.max-resources` (env `PAGE_MAX_RESOURCES`, **2000**; önceden
+  sabit 500) — **⚠ Dış trafik:** büyük sayfalarda sayfa bütünlüğü / sayfa hızı kontrolü kontrol başına daha çok kaynak
+  indirir. Yönlendirme `Location` başlığı tarayıcı gibi (UTF-8) okunur.
+
+### Added
+- **Merkezi izleme alarm akışı (20.173.0):** `GET /api/public/alarm-feed` — oturumsuz, belirteçsiz uç.
+  - **Yeni yapılandırma:** `site.monitor.alarm-feed.enabled` (env `ALARM_FEED_ENABLED`, **false**), `…allowed-ips` (env
+    `ALARM_FEED_ALLOWED_IPS`; boş = herkes), `…rate-per-minute` (30), saklama `…log-retention-days` (90) /
+    `…body-retention-days` (30). Hepsi GLOBAL_ONLY (Ayarlar → Platform → Alarm akışı).
+  - **Operatör notu:** izin listesi istemci IP'sini `X-Forwarded-For`'dan okur — yolu kenarda (NetScaler) da kısıtlayın.
+- **Alarm akışı otomatik IP engeli (20.174.0):** dakikada 120 çağrıyı aşan IP 15 dk engellenir (tekrarında süre ikiye
+  katlanır); `…block-enabled` (true), `…block-threshold-per-minute`, `…block-minutes`, `…block-exempt-ips`.
+
+## [20.169.0 – 20.171.0] — 2026-10-28 / 2026-10-29
+
+### Added
+- **Çok pod Sürüm 3-2 / 3-3 / 3-4** — üçü de kendi anahtarının arkasında, **varsayılan KAPALI**; kapalıyken davranış önceki
+  sürümle aynı. Açmak ayrı bir karardır (RUNBOOK "Çok pod").
+  - **Yeni yapılandırma:** `site.monitor.eval-state.read-enabled` (`EVAL_STATE_READ_ENABLED`, 3-2),
+    `site.monitor.checks.distributed.enabled|types` (`DISTRIBUTED_CHECKS_*`, 3-3; pod ayarları `CHECK_WORKER_*`,
+    `CHECK_DISPATCH_MS`, `CHECK_DRAIN_MS`, `CHECK_RESULT_STALE_MS`), `site.monitor.checks.cert-chunks.enabled`
+    (`CERT_CHUNKS_ENABLED`, 3-4; pod ayarları `CERT_CHUNK_*`).
+  - Açılışta boş tablolar: `monitor_check_jobs`, `monitor_check_workers` (3-3), `cert_sweep_runs`, `cert_sweep_chunks` (3-4);
+    `monitor_eval_type_state`'e üç NULL kolon (3-2). Kendi kendini izlemeye `check_queue` (anahtar kapalıyken "uygulanmaz").
+    Grafana pano revizyonu 7 (3-3), 8 / 9 (3-4).
+
+## [20.168.0 – 20.168.1] — 2026-10-23
+
+### Changed
+- **Çok pod Sürüm 3-1 (20.168.0).**
+  - **⚠ Veritabanı:** alarm değerlendirme durumu dört yeni tabloya aynalanır (`monitor_eval_state`, `monitor_last_status`,
+    `monitor_eval_type_state`, `monitor_confirmations`) — **varsayılan AÇIK** (`site.monitor.eval-state.mode` = `verify`, env
+    `EVAL_STATE_MODE`). Kararlar yine bellekten. Yazım yükü bugünkü ölçeğin 3 katında ≈ 100 upsert/sn, günde 3–5 GB WAL;
+    canlı kapatma `off` (yalnız global yönetici).
+  - **⚠ Davranış:** saatlik sertifika taraması, gece temizliği, raporlar ve hatırlatmalar başka canlı pod varken takipçide
+    koşar (tetiğe göre ≤ 20 sn gecikme). **Yeni yapılandırma:** `site.monitor.scheduler.leader-yield.enabled`
+    (`SCHEDULER_LEADER_YIELD_ENABLED`, true), `site.monitor.scheduler.side-jobs.threads` (`SCHEDULER_SIDE_JOBS_THREADS`, 8),
+    `…leader-yield.cron-defer-ms` (20000). Grafana pano revizyonu 6.
+- **Denetim zinciri düzeltmesi (20.168.1):** PostgreSQL'de NULLS FIRST hatası yüzünden bozulan hash zinciri için tek seferlik
+  yeniden başlatma (açılıştan 10 dk sonra, nişan `2026-10-23-audit-chain-restart`) ve `ux_audit_seq` tekil indeksi.
+  - **⚠ Geri alma:** 20.168.0 ya da öncesine dönülürse önce `DROP INDEX CONCURRENTLY IF EXISTS ux_audit_seq;`.
+
+## [20.167.0] — 2026-10-23
+
+### Changed
+- **Çok pod Sürüm 2b — chart sertleştirmesi.**
+  - **⚠ Kaynak:** pod `ephemeral-storage` request 1Gi / limit 4Gi ister, `/var/log` emptyDir `sizeLimit: 2Gi` — namespace
+    kotası / LimitRange rollout'taki 2 pod'u kaldırmalı.
+  - **Yeni yapılandırma (Helm):** `config.dbPoolMin` → `DB_POOL_MIN` **5** (uygulama varsayılanı 10'du), `config.extraEnv`
+    (chart'ın değeri olmayan sır dışı anahtarlar), `priorityClassName`, `topologySpreadConstraints.zone`, HPA şablonu
+    (kapalı), PDB korumaları, `storage.varLogSizeLimit` / `tmpSizeLimit`.
+  - İmaj önceki 5 sürümün sayfa dosyalarını taşır (`PREVIOUS_IMAGE` derleme argümanı), `boot-guard.js` boş sayfa yerine bir
+    kez yeniler. Sistem Sağlığı kümeyi gösterir (`scan_runs`, `cluster_observations`). Kendi kendini izlemeye `clock_skew`
+    ("Saat uyumu"). Sürüm geçişi bildirimi kümede bir kez. Grafana pano revizyonu 4.
+  - **⚠ Geri alma:** yalnız `helm rollback` (`kubectl rollout undo` sürüm geçmişini şaşırtır).
+
+## [20.165.0 – 20.166.0] — 2026-10-22
+
+### Changed
+- **Çok pod Sürüm 1 (20.165.0).**
+  - **⚠ Kapanış:** Helm `terminationGracePeriodSeconds` **120** (60'tı), `preStopSleepSeconds` **10**; uygulama
+    `SHUTDOWN_PHASE_TIMEOUT` 20s, `SCHEDULING_AWAIT_TERMINATION` 20s. Liderlik kirası kapanışın ilk anında bırakılır.
+  - **⚠ Helm koruması:** birden çok pod koşabiliyorsa (`replicaCount > 1` ya da HPA) `config.sessionStoreType` `jdbc`
+    değilse `helm template` başarısız olur. Staging sabit 2 replika; prod 1 replika.
+  - Yeni tekil indeksler (`ux_push_eventless_key_user`, `ux_noe_one_ongoing`) — ön kontroller kontrol listesinde.
+- **Hata düzeltme sürümü (20.165.1):** ECDSA / keyEncipherment'sız RSA zincirleri artık güvenilir (UNTRUSTED → TRUSTED
+  dalgası, çözüm postaları); anahtar kelime tekil indeksi `uq_kwm_team_url_kw`; gerçek sistem rolü değişikliği oturumu
+  kapatır; silinen kullanıcının oturumu düşer. Ayrıntı ve ön kontroller: kontrol listesi "20.165.1 öncesi kontroller".
+- **Çok pod Sürüm 2a (20.166.0):** pod'lar arası önbellek yolu (`cache_bus`, ~2 sn), giriş IP sınırı veritabanında
+  (`rate_limit_counters`), rapor / hatırlatma gönderimleri sahiplenmeli; tek seferlik izleme grubu takım doldurması (nişan
+  `2026-10-23-monitoring-group-team-backfill-v2`).
+  - **⚠ Davranış:** kanal raporu önceki gönderimi posta kuyruğundayken (20 dk) yeniden gönderilmez (409 `SEND_QUEUED`); elle
+    saklama temizliği gece işi sürerken 409.
+
+## [20.164.0] — 2026-10-21
+
+### Added
+- **Kullanıcı adı ön eki kuralı** (yalnız izinli ön ekle başlayan hesaplar girer) — varsayılan KAPALI
+  (`site.monitor.login.username-prefix.*`, GLOBAL_ONLY).
+- **OpenTelemetry Java ajanıyla birlikte çalışma:** ajan enjekte edilince uygulamanın kendi iz gönderimi ajana bırakılır
+  (`SITE_MONITOR_TRACING_DEFER_TO_AGENT`, true); Helm `config.otel.agent.{enabled,instrumentation,serviceName,extraEnv}`
+  (varsayılan kapalı).
+  - **Operatör notu:** OpenTelemetry Operator'ün `inject-java` ek açıklaması kullanılıyorsa önceki sürümler açılışta
+    düşüyordu; bu sürümden önceki bir imajda geçici çözüm env `MANAGEMENT_OPENTELEMETRY_MAP_ENVIRONMENT_VARIABLES=false`.
+
+### Changed
+- **⚠ Davranış:** aynı kişinin (aynı e-posta + aynı ad) iki hesabına artık tek push gider; öteki `SKIPPED_SAME_PERSON` izi
+  bırakır.
+
+## [20.153.0 – 20.163.0] — 2026-10-18
+
+### Added
+- **Grafana panosu ve iş ölçümleri (20.160.0).**
+  - **Yeni yapılandırma:** env `METRICS_EXPORT_TOKEN` (Helm `secret.metricsExportToken`; en az 32 karakter). İzleme / alarm /
+    sertifika ölçümleri YALNIZ `GET /metrics/sitemonitor` + `Authorization: Bearer <belirteç>` ile; belirteç yoksa uç 404 ve
+    aktarıcı iş parçacığı hiç başlamaz. `/metrics` eskisi gibi (JVM / HTTP / Hikari). Prometheus'a ikinci kazıma işi
+    gerekir (RUNBOOK "Grafana panosu ve Prometheus"). Ayarlar → Platform → Grafana panosu'ndan JSON indirilir.
+- **Kanal teknik hata raporu hatırlatmaları ve push bildirimleri (20.153.0, 20.160.0).**
+  - Hatırlatma varsayılan KAPALI (`site.monitor.tech-error-report.reminder-team-ids` boş); her gün 09:15 İstanbul.
+  - **⚠ Davranış:** push bildirimleri (onay isteği / hatırlatması, karar, gönderildi, gönderilemedi) varsayılan AÇIK
+    (`site.monitor.tech-error-report.push.*`, GLOBAL_ONLY).
+  - **Yeni yapılandırma:** posta sınırları canlı ayar: `site.monitor.tech-error-report.max-mail-mb` (15, 5–50),
+    `…mail-inline-mb` (6).
+- **Senaryo (k6) gizli değerini gösterme (20.163.0):** global yönetici ve izlemenin takımını yöneten yönetici bir gizli
+  değişkeni 30 sn görebilir; her gösterim `SCRIPTED_SECRET_REVEAL` güvenlik denetim kaydı yazar. Güvenlik ekibine bilgi verin.
+- Kanal raporu ek Bilgi (CC), gönderim günlüğü, kanallar arası analiz, değer dışa aktarımı (BI JSON / CSV), şablon
+  kütüphanesi (20.154.0 – 20.156.0).
+
+### Changed
+- **Kanal raporu şablon göçleri** — dağıtımda tek seferlik işler mevcut kanalların VARSAYILAN şablonlarını yeniden yazar
+  (değiştirilmiş şablonlara dokunmaz; açılmış raporlar kendi kopyasını tutar): `2026-10-16-tech-error-calc-and-charts`
+  (20.138.0), `…-summary-embed` (20.141.0), `…-sla-target-tiles` (20.142.0), `…-counts-in-figures` (20.145.0),
+  `2026-10-18-tech-error-anomaly-fields` (20.159.0), `2026-10-18-tech-error-outage-sentence` (20.160.0),
+  `2026-10-18-tech-error-report-template-version-v2` (20.156.0).
+  - **⚠ Geri alma — veri kaybı:** 20.159 / 20.158 / 20.142 / 20.136 / 20.134'ten eski bir sürüme dönülürse o sürüm yeni
+    rapor / şablon alanlarını bilmez ve kaydettiği rapordan / şablondan SİLER — geri alma süresince kanal raporları
+    düzenlenmez.
+- Kilit çatışması (PostgreSQL deadlock / serialization / lock wait) artık 409 değil **503 `LOCK_CONFLICT`** +
+  `Retry-After: 2` (20.159.0).
+
+## [20.132.0 – 20.152.0] — 2026-10-13 / 2026-10-17
+
+### Added
+- **Kanal teknik hata raporları (yeni modül, 20.132.0):** takım başına kanal, aylık rapor, PDF, takım e-postasına gönderim.
+  - **Operatör notu:** görseller veritabanında saklanır (görsel başına ≤ 5 MB, rapor başına ≤ 40 MB) — tablo büyümesini
+    izleyin. Gönderim takım adresine PDF ekiyle (≤ 15 MB).
+- **PO onayı, yönetici alıcıları, modül görünürlüğü (20.144.0):** onay bağlantısı oturumsuz uç
+  (`/api/tech-error-reports/approve-link?token=…`, 14 gün geçerli). **Yeni yapılandırma:**
+  `site.monitor.tech-error-report.team-ids` (boş = herkes görür, GLOBAL_ONLY).
+- E-posta önizlemesi, bana test gönder, PDF içindekiler, kanal sırası (20.148.0 – 20.152.0).
+
+## [20.123.0 – 20.131.0] — 2026-10-12 / 2026-10-13
+
+### Added
+- **Günlük biçimi ve izleme (20.123.0).**
+  - **⚠ Davranış:** prod profilinde günlükler **JSON** (`LOG_FORMAT`, Helm `config.logFormat` `json`; `text` eski düz metin;
+    `LOG_JSON_FORMAT` `ecs` | `logstash` | `gelf`). Her satırda istek kimliği (`requestId`) ve iz kimliği. Günlük toplayıcı JSON
+    okuyamıyorsa `--set config.logFormat=text`.
+  - OpenTelemetry iz dışa aktarımı yalnız `config.otel.endpoint` (tam `/v1/traces` URL'si) verilince; örnekleme 0.1.
+- **Kendi kendini izleme (20.123.0):** dakikada bir taramalar, bildirim, push kuyruğu ve veritabanı; doğrulanan sorun /
+  düzelme e-posta (+ isteğe bağlı webhook / push) ile bildirilir. Dış izleyici ucu `GET /api/public/health/watchdog`.
+  - **Yeni yapılandırma:** `WATCHDOG_ENABLED` (true), `WATCHDOG_INTERVAL_MS` (60000); alıcılar Ayarlar → Genel (boşsa sistem
+    yöneticisi adresi).
+- **Gizli anahtar döndürme (20.123.0):** env `SITE_MONITOR_SECRET_KEY_PREVIOUS` (Helm `secret.secretKeyPrevious`) yalnız
+  çözer; "Yeniden şifrele" Ayarlar → Gizli araçlar. Prosedür: RUNBOOK "Anahtar döndürme".
+- **TLS notu düşüş bildirimi (20.123.0):**
+  - **⚠ Davranış:** TLS yapılandırma notu düşen sertifikaların sorumlu takımlarına özet e-posta + push gider
+    (`site.monitor.tls-grade.drop-notify` **true**, `…drop-notify-min-grade` A; sistem bakımında susar).
+- **Postmortem ve aksiyon takibi (20.123.0):** aksiyon sahiplerine her gün 09:00 İstanbul hatırlatma postası
+  (`site.monitor.incident.action-reminder-enabled` true, `…-cron` `0 0 9 * * *`).
+- Nöbet rotasyonu (takım başına isteğe bağlı), Panom ve TV kipi, LDAP grup → rol eşlemesi (varsayılan KAPALI), Aktivite
+  sayfası yeniden tasarımı (20.123.0); ağ sertifikası hiyerarşisi (20.124.0); takım erişim paylaşımı (20.125.0).
+- **Sistem metrikleri sayfası (20.130.0):** her pod dakikada bir satır yazar (`system_metric_samples`, 7 gün;
+  `SYSTEM_METRICS_ENABLED`, true).
+
+### Changed
+- **Ping toparlamaları (20.124.0):** tek seferlik onarım + tam ping saatlik / günlük toparlama yeniden kurulumu arka planda
+  (nişan `2026-10-12-ping-rollup-rebuild-v2`, 120 dk kilit) — ilk açılışta `ping_checks` üzerinde okuma yükü.
+- **⚠ Davranış:** ping paket kaybı ondalıklı okunur — kısmi kayıpta yanlış "kapalı" kararları düzelir (20.123.0).
+
+## [20.121.0 – 20.122.0] — 2026-10-11
+
+### Changed
+- Takımlar sayfası (eksik bilgi süzgeci, sorumlularda sicil) — yalnız arayüz; operatör notu yok.
+
 ## [20.120.0] — 2026-10-10
 
 ### Added

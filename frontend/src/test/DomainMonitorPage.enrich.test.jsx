@@ -115,6 +115,20 @@ describe('DomainMonitorPage — C1 ek süzgeçler', () => {
     render(<DomainMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await waitFor(() => expect(cards()).toEqual(['unknown.com']))
   })
+
+  it('hızlı süzgeç "Yalnız etkin izlemeler" (dq=active) duraklatılanı listelemez — Panom kutucuğunun bağlantısı (2026-11-15)', async () => {
+    api.monitoring.getDomainMonitors.mockResolvedValue({ success: true, data: [
+      ...rows,
+      { ...base, id: 5, name: 'durdu', domain: 'durdu.com', active: false, registrar: 'X', source: 'RDAP', expiry_date: day(-30), days_remaining: -30 },
+    ] })
+    window.history.replaceState({}, '', '/?tab=domain&dx=expired')
+    const r = render(<DomainMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(cards()).toEqual(['durdu.com', 'godaddy-1.com']))   // süzgeçsiz: duraklatılan da listede
+    r.unmount()
+    window.history.replaceState({}, '', '/?tab=domain&dq=active&dx=expired')
+    render(<DomainMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(cards()).toEqual(['godaddy-1.com']))
+  })
 })
 
 describe('DomainMonitorPage — C3 takvim (.ics)', () => {

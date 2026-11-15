@@ -3002,11 +3002,11 @@ public class SchedulerService {
     }
 
     /** Ortak upsert hunisi — yalnız hedef tablo ve kova genişliği değişir (günlük 10, saatlik 13). */
-    private int rollupInto(String target, String bucketCol, int len, String type, String table,
+    private int rollupInto(String targetTable, String bucketCol, int len, String type, String table,
                            String upCol, String respCol, String from, String to) {
-        String sql = upsertSql(target, bucketCol, len, type, table, upCol, respCol);
+        String sql = upsertSql(targetTable, bucketCol, len, type, table, upCol, respCol);
         try { return jdbcTemplate.update(sql, from, to); }
-        catch (Exception e) { log.warn("Rollup {} ({}) failed: {}", type, target, e.getMessage()); return -1; }
+        catch (Exception e) { log.warn("Rollup {} ({}) failed: {}", type, targetTable, e.getMessage()); return -1; }
     }
 
     /** SQL üretimi ayrı: günlük ve saatlik yolun BİRE BİR aynı olduğunu test doğrudan kanıtlayabilsin
@@ -3029,10 +3029,10 @@ public class SchedulerService {
         return rollupUptimeInto("monitor_check_daily", "day", 10, from, to);
     }
 
-    private int rollupUptimeInto(String target, String bucketCol, int len, String from, String to) {
-        String sql = uptimeUpsertSql(target, bucketCol, len);
+    private int rollupUptimeInto(String targetTable, String bucketCol, int len, String from, String to) {
+        String sql = uptimeUpsertSql(targetTable, bucketCol, len);
         try { return jdbcTemplate.update(sql, from, to); }
-        catch (Exception e) { log.warn("Rollup UPTIME ({}) failed: {}", target, e.getMessage()); return -1; }
+        catch (Exception e) { log.warn("Rollup UPTIME ({}) failed: {}", targetTable, e.getMessage()); return -1; }
     }
 
     static String uptimeUpsertSql(String target, String bucketCol, int len) {
@@ -6206,7 +6206,7 @@ public class SchedulerService {
                 if (change != null) changeSweep.add(change);
                 checked++;
             } catch (Exception e) {
-                log.warn("Keyword check failed for {}: {}", m.getUrl(), e.getMessage());
+                log.warn("Keyword check failed for {}: {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
             }
         }
         feedKeywordSweep(sweep, slowSweep, changeSweep);   // R3-3 B: ayrıştırıldı (dağıtık değerlendiriciyle ortak)
@@ -6371,7 +6371,7 @@ public class SchedulerService {
             KeywordResult saved = keywordResultRepo.save(res);
             written = saved != null ? saved : res;
         } catch (Exception e) {
-            log.warn("Keyword kaydı yazılamadı: {} — {}", m.getUrl(), e.getMessage());
+            log.warn("Keyword kaydı yazılamadı: {} — {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
         }
         r.put("ok", ok);   // aktivite özeti için sağlıklı-mı bayrağı (found + adet koşulu)
         activityLog.recordCheck(ActivityLogService.KEYWORD, m.getId(), m.getName(),
@@ -6391,10 +6391,10 @@ public class SchedulerService {
         if (!Boolean.TRUE.equals(r.get("ok")) || r.get("error") != null) return;
         try {
             if (keywordBaselines.takeAuto(m.getId(), capture.snapshot(), capture.bytes(), capture.specHash())) {
-                log.info("Anahtar kelime içerik temeli otomatik alındı: {} (#{})", m.getUrl(), m.getId());
+                log.info("Anahtar kelime içerik temeli otomatik alındı: {} (#{})", SecretMask.logUrl(m.getUrl()), m.getId());
             }
         } catch (Exception e) {
-            log.warn("Anahtar kelime içerik temeli alınamadı: {} — {}", m.getUrl(), e.getMessage());
+            log.warn("Anahtar kelime içerik temeli alınamadı: {} — {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
         }
     }
 
@@ -6486,7 +6486,7 @@ public class SchedulerService {
                 if (slow != null) slowSweep.add(slow);
                 checked++;
             } catch (Exception e) {
-                log.warn("HTTP check failed for {}: {}", m.getUrl(), e.getMessage());
+                log.warn("HTTP check failed for {}: {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
             }
         }
         feedHttpSweep(sweep, slowSweep);   // R3-3 B: ayrıştırıldı (dağıtık değerlendiriciyle ortak)
@@ -6662,7 +6662,7 @@ public class SchedulerService {
             try {
                 b.baseline(keywordBaselines.view(m.getId()));
             } catch (Exception e) {
-                log.debug("Keyword içerik temeli okunamadı: {} — {}", m.getUrl(), e.getMessage());
+                log.debug("Keyword içerik temeli okunamadı: {} — {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
             }
         }
         return b.build();
@@ -6749,7 +6749,7 @@ public class SchedulerService {
                 monitoringOutageService.handleSweepResults(EscalationService.TYPE_KEYWORD_CHANGED, List.of(change), true);
             }
         } catch (Exception e) {
-            log.warn("Manuel keyword değerlendirmesi başarısız {}: {}", m.getUrl(), e.getMessage());
+            log.warn("Manuel keyword değerlendirmesi başarısız {}: {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
         }
     }
 
@@ -6771,7 +6771,7 @@ public class SchedulerService {
             monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_DOWN, down, true);
             monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_INTEGRITY, integrity, true);
         } catch (Exception e) {
-            log.warn("Manuel sayfa değerlendirmesi başarısız {}: {}", m.getUrl(), e.getMessage());
+            log.warn("Manuel sayfa değerlendirmesi başarısız {}: {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
         }
     }
 
@@ -6786,7 +6786,7 @@ public class SchedulerService {
             monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGESPEED_DOWN, down, true);
             monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGESPEED_SLOW, slow, true);
         } catch (Exception e) {
-            log.warn("Manuel sayfa-hızı değerlendirmesi başarısız {}: {}", m.getUrl(), e.getMessage());
+            log.warn("Manuel sayfa-hızı değerlendirmesi başarısız {}: {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
         }
     }
 
@@ -7676,7 +7676,7 @@ public class SchedulerService {
                 monitoringOutageService.handleSweepResults(EscalationService.TYPE_HTTP_SLOW, List.of(slowItem), true);
             }
         } catch (Exception e) {
-            log.warn("Manuel HTTP değerlendirmesi başarısız {}: {}", m.getUrl(), e.getMessage());
+            log.warn("Manuel HTTP değerlendirmesi başarısız {}: {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
         }
     }
 
@@ -7961,7 +7961,7 @@ public class SchedulerService {
             HttpCheck saved = httpCheckRepo.save(res);
             written = saved != null ? saved : res;
         } catch (Exception e) {
-            log.warn("HTTP kaydı yazılamadı: {} — {}", m.getUrl(), e.getMessage());
+            log.warn("HTTP kaydı yazılamadı: {} — {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
         }
         activityLog.recordCheck(ActivityLogService.HTTP, m.getId(), m.getName(),
                 m.getUrl(), m.getTeamId(), false, "scheduler", r, ActivityLogService.refs(written));
@@ -8005,7 +8005,7 @@ public class SchedulerService {
                 addPageSweepItems(m, r, downSweep, integritySweep, true);   // zamanlı sweep
                 checked++;
             } catch (Exception e) {
-                log.warn("Page check failed for {}: {}", m.getUrl(), e.getMessage());
+                log.warn("Page check failed for {}: {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
             }
         }
         feedPageSweep(downSweep, integritySweep);   // R3-3 B: ayrıştırıldı (dağıtık değerlendiriciyle ortak)
@@ -8085,7 +8085,7 @@ public class SchedulerService {
                 addPageSweepItems(m, r, downSweep, integritySweep, true);   // günlük crawl (bu dalda hedefli ölçüm zaten koşmaz)
                 crawled.add(Map.entry(m, r));
             } catch (Exception e) {
-                log.warn("Page crawl failed for {}: {}", m.getUrl(), e.getMessage());
+                log.warn("Page crawl failed for {}: {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
             }
         }
         try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_PAGE_DOWN, downSweep); }
@@ -8120,7 +8120,7 @@ public class SchedulerService {
             if (m.getTeamId() != null) owner.put("team_id", m.getTeamId());
             escalationService.refreshOpenAlertContext(m.getUrl(), EscalationService.TYPE_PAGE_INTEGRITY, owner, patch);
         } catch (Exception e) {
-            log.debug("Açık bütünlük alarmının kaynağı tazelenemedi {}: {}", m.getUrl(), e.getMessage());
+            log.debug("Açık bütünlük alarmının kaynağı tazelenemedi {}: {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
         }
     }
 
@@ -8259,7 +8259,7 @@ public class SchedulerService {
         try {
             return escalationService.openAlertContext(m.getUrl(), EscalationService.TYPE_PAGE_INTEGRITY);
         } catch (Exception e) {
-            log.debug("Açık bütünlük alarmı bağlamı okunamadı {}: {}", m.getUrl(), e.getMessage());
+            log.debug("Açık bütünlük alarmı bağlamı okunamadı {}: {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
             return null;
         }
     }
@@ -8357,7 +8357,7 @@ public class SchedulerService {
                 long started = p.startedAt().get();
                 if (started == 0L || now < started || now - started <= INTEGRITY_PROBE_STUCK_MS) return null;   // uçuşta
                 integrityProbes.remove(id, p);   // takılı: süre tavanlarını çok aştı → bırakılır, yenisi başlayabilir
-                log.warn("Hedefli kurtarma ölçümü {} dakikadır bitmedi, bırakıldı: {}", (now - started) / 60_000L, m.getUrl());
+                log.warn("Hedefli kurtarma ölçümü {} dakikadır bitmedi, bırakıldı: {}", (now - started) / 60_000L, SecretMask.logUrl(m.getUrl()));
             } else {
                 // Gerileme taraması 2026-11-13 (bulgu 2): biten sonucu YALNIZ girdiyi silen iş parçacığı tüketir. Elle
                 // değerlendirme (@Async) ile sık tarama tıkı aynı ölçümü görürse ikisi de "up" dönüp kurtarma sayacını tek
@@ -8379,7 +8379,7 @@ public class SchedulerService {
             integrityProbeExecutor().execute(() -> runIntegrityProbe(m, np));
         } catch (RuntimeException e) {   // kuyruk dolu / kapanıyor → bu tık ölçüm yok, sonraki tık yeniden dener
             integrityProbes.remove(id, np);
-            log.debug("Hedefli kurtarma ölçümü kuyruğa alınamadı {}: {}", m.getUrl(), e.toString());
+            log.debug("Hedefli kurtarma ölçümü kuyruğa alınamadı {}: {}", SecretMask.logUrl(m.getUrl()), e.toString());
             return null;
         }
         if (np.result().isDone()) {   // aynı iş parçacığında koşan yürütücü (test) ya da anında biten ölçüm
@@ -8400,7 +8400,7 @@ public class SchedulerService {
             try {
                 status = String.valueOf(recheckIntegrityPages(m, p.pages(), List.of()).get("status"));
             } catch (Throwable t) {
-                log.debug("Hedefli kurtarma ölçümü başarısız {}: {}", m.getUrl(), t.toString());
+                log.debug("Hedefli kurtarma ölçümü başarısız {}: {}", SecretMask.logUrl(m.getUrl()), t.toString());
                 status = "skipped";   // ölçülemedi → kalem yok (alarm açık kalır, günlük crawl doğrular)
             }
         }
@@ -8624,7 +8624,7 @@ public class SchedulerService {
                 pageResourceIssueRepo.saveAll(rows);
             }
         } catch (Exception e) {
-            log.warn("Sayfa kaydı yazılamadı: {} — {}", m.getUrl(), e.getMessage());
+            log.warn("Sayfa kaydı yazılamadı: {} — {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
         }
 
         Map<String, Object> activity = new LinkedHashMap<>();
@@ -8863,7 +8863,7 @@ public class SchedulerService {
                 addPageSpeedSweepItems(m, r, downSweep, slowSweep);
                 checked++;
             } catch (Exception e) {
-                log.warn("Sayfa hızı ölçümü başarısız {}: {}", m.getUrl(), e.getMessage());
+                log.warn("Sayfa hızı ölçümü başarısız {}: {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
             }
         }
         feedPageSpeedSweep(downSweep, slowSweep);   // R3-3 B: ayrıştırıldı (dağıtık değerlendiriciyle ortak)
@@ -9271,7 +9271,7 @@ public class SchedulerService {
             speedWritten = savedSpeed != null ? savedSpeed : pc;
             writeResourceBreakdown(m, pc, res, ts, wasBreached);
         } catch (Exception e) {
-            log.warn("Sayfa hızı kaydı yazılamadı: {} — {}", m.getUrl(), e.getMessage());
+            log.warn("Sayfa hızı kaydı yazılamadı: {} — {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
         }
 
         Map<String, Object> activity = new LinkedHashMap<>();
@@ -11280,7 +11280,7 @@ public class SchedulerService {
                     domainSweep.add(upItem(EscalationService.TYPE_DOMAIN_EXPIRY, m, "domain"));
                 }
             } catch (Exception e) {
-                log.warn("HTTP SSL/Domain check failed for {}: {}", m.getUrl(), e.getMessage());
+                log.warn("HTTP SSL/Domain check failed for {}: {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
             }
         }
         try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_HTTP_SSL, sslSweep); }
@@ -11523,7 +11523,7 @@ public class SchedulerService {
                     domainSweep.add(upItemKeyword(EscalationService.TYPE_KEYWORD_DOMAIN_EXPIRY, m, "domain"));
                 }
             } catch (Exception e) {
-                log.warn("Keyword SSL/Domain check failed for {}: {}", m.getUrl(), e.getMessage());
+                log.warn("Keyword SSL/Domain check failed for {}: {}", SecretMask.logUrl(m.getUrl()), e.getMessage());
             }
         }
         try { monitoringOutageService.handleSweepResults(EscalationService.TYPE_KEYWORD_SSL, sslSweep); }
@@ -13829,7 +13829,7 @@ public class SchedulerService {
                         if (slow != null) slowSweep.add(slow);
                         checkResultsApplied.incrementAndGet();
                     } catch (Exception ex) {
-                        log.warn("HTTP check failed for {}: {}", m.getUrl(), ex.getMessage());
+                        log.warn("HTTP check failed for {}: {}", SecretMask.logUrl(m.getUrl()), ex.getMessage());
                     }
                 }
                 noteClassicCadence(com.sitemonitor.service.checks.CheckJobTypes.HTTP);   // R3-3 B-MOS: pencere = klasik
@@ -13859,7 +13859,7 @@ public class SchedulerService {
                         if (change != null) changeSweep.add(change);
                         checkResultsApplied.incrementAndGet();
                     } catch (Exception ex) {
-                        log.warn("Keyword check failed for {}: {}", m.getUrl(), ex.getMessage());
+                        log.warn("Keyword check failed for {}: {}", SecretMask.logUrl(m.getUrl()), ex.getMessage());
                     }
                 }
                 noteClassicCadence(com.sitemonitor.service.checks.CheckJobTypes.KEYWORD);   // R3-3 B-MOS: pencere = klasik
@@ -13876,7 +13876,7 @@ public class SchedulerService {
                         addPageSweepItems(m, e.getValue(), downSweep, integritySweep, true);   // dağıtık zamanlı sonuç uygulama
                         checkResultsApplied.incrementAndGet();
                     } catch (Exception ex) {
-                        log.warn("Page check failed for {}: {}", m.getUrl(), ex.getMessage());
+                        log.warn("Page check failed for {}: {}", SecretMask.logUrl(m.getUrl()), ex.getMessage());
                     }
                 }
                 noteClassicCadence(com.sitemonitor.service.checks.CheckJobTypes.PAGE);   // R3-3 B-MOS: pencere = klasik
@@ -13895,7 +13895,7 @@ public class SchedulerService {
                         addPageSpeedSweepItems(m, e.getValue(), downSweep, slowSweep);
                         checkResultsApplied.incrementAndGet();
                     } catch (Exception ex) {
-                        log.warn("Sayfa hızı ölçümü başarısız {}: {}", m.getUrl(), ex.getMessage());
+                        log.warn("Sayfa hızı ölçümü başarısız {}: {}", SecretMask.logUrl(m.getUrl()), ex.getMessage());
                     }
                 }
                 noteClassicCadence(com.sitemonitor.service.checks.CheckJobTypes.PAGESPEED);   // R3-3 B-MOS: pencere = klasik

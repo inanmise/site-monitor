@@ -116,10 +116,11 @@ public interface PageSpeedCheckRepository extends JpaRepository<PageSpeedCheck, 
     @Query("SELECT MIN(c.checkedAt), MAX(c.checkedAt) FROM PageSpeedCheck c WHERE c.monitorId = :id")
     List<Object[]> historyBounds(@Param("id") Long id);
 
-    /** İzleme silinince ölçüm geçmişini de temizle. */
+    /** İzleme silinince ölçüm geçmişini de temizle — TOPLU silme (kapı incelemesi 2026-11-15): türetilmiş {@code deleteBy…} her satırı varlık olarak yükleyip tek tek siler; tek {@code DELETE}. */
     @Transactional
     @Modifying
-    int deleteByMonitorId(Long monitorId);
+    @Query("DELETE FROM PageSpeedCheck c WHERE c.monitorId = :id")
+    int deleteByMonitorId(@Param("id") Long monitorId);
 
     /** Haftalık izleme özeti: [monitorId, toplam, BAŞARILI, ort_yanıt_ms, ÖLÇÜMLÜ_satır] — ids ∩ [from,to]; başarı = ok=true.
      *  Beşinci kolon şart: AVG NULL'ları ATLAR, COUNT saymaz. Ağırlıklı ortalama paydası `toplam`

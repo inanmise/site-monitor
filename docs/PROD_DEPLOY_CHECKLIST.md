@@ -46,6 +46,82 @@ echo "$DEPLOY / $SECRET"                      # ikisi de dolu olmalı
 
 ## Öncesi (T-1 gün … T-15 dk)
 
+**[ENGEL]** işaretli maddeler tamamlanmadan dağıtılmaz. Sorgular salt okurdur (yazan sorgu ayrıca işaretlidir).
+
+### 0. Prod hangi sürümde? — sürüme bağlı bir kerelik adımlar [ENGEL]
+Bu listedeki "bir kerelik" bölümlerden hangilerinin geçerli olduğu prod'un **şu an çalışan** sürümüne bağlıdır. Tahmin
+etmeyin, okuyun (üçü aynı sürümü göstermeli):
+
+```bash
+helm list -A | grep -i monitor                                       # APP VERSION sütunu
+kubectl get deploy -n "$NS" -l app.kubernetes.io/instance="$REL" \
+  -o jsonpath='{..containers[0].image}{"\n"}'                        # imaj etiketi vX.Y.Z
+kubectl exec -n "$NS" "$DEPLOY" -- cat /app/VERSION                  # çalışan imajın sürümü
+export PROD_VERSION=X.Y.Z
+```
+Arayüzden: menüdeki sürüm çipi ya da Sistem Sağlığı → Sürüm & Dağıtım. Sonra [`CHANGELOG.md`](../CHANGELOG.md)'yi
+`PROD_VERSION`'dan `VERSION`'a kadar okuyun ve aşağıdaki tabloda **prod sürümünden SONRA gelen** her satırı uygulayın
+(prod sürümü eşikten eskiyse satır geçerlidir; bir satırı atlamak için prod'un o sürümü zaten koşmuş olması gerekir).
+
+| Prod sürümü | Yapılacak | |
+|---|---|---|
+| < 20.123.0 | Günlük biçimi JSON olur (`LOG_FORMAT=json`, ECS alanları) — günlük toplayıcı JSON satırlarını okuyabiliyor mu? Okuyamıyorsa komuta `--set config.logFormat=text` ekleyin | **ENGEL** |
+| ≤ 20.164.x | [İlk çok pod sürümüne geçiş](#ilk-çok-pod-sürümüne-geçiş-20164-ve-öncesi--bu-sürüm--bir-kerelik) (olaysız push çiftleri; Pazartesi ~10:00–12:00 haftalık erişilebilirlik penceresinde dağıtmayın) | **ENGEL** |
+| ≤ 20.165.0 | [20.165.1 öncesi kontroller](#201651-öncesi-kontroller-hata-düzeltme-sürümü--bir-kerelik) (anahtar kelime çiftleri; geçiş bitene dek elle "Şimdi kontrol et" yok) | **ENGEL** |
+| ≤ 20.165.x | [Çok pod Sürüm 2a öncesi kontroller](#çok-pod-sürüm-2a-öncesi-kontroller--bir-kerelik) | **ENGEL** |
+| ≤ 20.166.x | [Çok pod Sürüm 2b öncesi kontroller](#çok-pod-sürüm-2b-öncesi-kontroller--bir-kerelik) — kota / LimitRange `ephemeral-storage` 1Gi / 4Gi ve bellek 1.5Gi / 3Gi'yi rollout'taki 2 pod için kaldırıyor mu | **ENGEL** |
+| ≤ 20.167.x | [Çok pod Sürüm 3-1](#çok-pod-sürüm-3-1-öncesi--sonrası-kontroller--bir-kerelik) — değerlendirme durumu ikili yazımı varsayılan AÇIK (`verify`): DBA'ya yazım yükünü (≈ 100 upsert/sn 3 kat ölçekte, günde 3–5 GB WAL) bildirin; gerekirse dağıtımdan sonra `site.monitor.eval-state.mode` = `off` | |
+| ≤ 20.168.0 | [Denetim zinciri düzeltmesi öncesi](#denetim-zinciri-düzeltmesi-öncesi--bir-kerelik) (sayıları not edin) | |
+| ≤ 20.170.x | [3-2](#çok-pod-sürüm-3-2--bir-kerelik) (prod ≤ 20.168.x), [3-3](#çok-pod-sürüm-3-3--bir-kerelik) (≤ 20.169.x), [3-4](#çok-pod-sürüm-3-4--bir-kerelik) (≤ 20.170.x) — üç anahtar da KAPALI kalır (aşağıdaki "Çok pod anahtarları kapalı") | **ENGEL** |
+| ≤ 20.172.x | [k6 sürüm geçişi (0.49 → 2.3)](#k6-sürüm-geçişi-049--23) — 20.172.x'te gölge tarama yapılmadıysa 2.3'e taramasız geçilir; `site.monitor.scripted.k6-bin` değerini not edin | |
+| ≤ 20.177.x | [Sentetik izleme (k6) sertleştirmesi](#sentetik-izleme-k6-sertleştirmesi--bir-kerelik) — `file-read-report` boş olmalı (varsayılan BLOCK: listede kalan senaryolar KOŞMAZ), `mem-limit` Go biçiminde | **ENGEL** |
+| 20.173 – 20.184 ve alarm akışı AÇIK | [Alarm akışı 7/24 süzgeci](#alarm-akışı-724-süzgeci-ve-kaynak-analizi-algoritma-3--bir-kerelik) (< 20.179: 7/24'e bildirilmeyen açık alarmlar bir kez RESOLVED gelir) ve aşağıdaki "20.185 → 20.208" bölümü (< 20.185: akış artık RESOLVED satırı göndermez) — merkezi izleme ekibine ÖNCEDEN haber verin | **ENGEL** |
+| < 20.176.0 | Veritabanı sorgu izlemesi kullanılacaksa: pod'lardan hedef veritabanlarına çıkış (egress) kuralı ve hedefte salt okur hesap (ayrıntı RUNBOOK "Veritabanı sorgu izleme") | |
+| < 20.186.3 | [20.185 → 20.208](#20185--20208--bir-kerelik): 15 gereksiz indeksin düşürülmesi + gece `REINDEX CONCURRENTLY` (DBA bildirimi, tablo sahipliği, disk payı) | **ENGEL** |
+| < 20.208.0 | [20.185 → 20.208](#20185--20208--bir-kerelik): kullanıcı duyuruları (anahtar kelime eşleşmesi, POST yönlendirmesi, sayfa hızı SLA'sı, alan adı çözüm postaları) | |
+
+### Her dağıtımda — engelleyici ön kontroller
+- [ ] **[ENGEL] Çok pod anahtarları KAPALI** (sürüm değişikliğiyle birlikte açılmaz; açmak ayrı bir karardır):
+  ```sql
+  SELECT setting_key, setting_value FROM app_settings
+   WHERE setting_key IN ('site.monitor.checks.distributed.enabled', 'site.monitor.checks.cert-chunks.enabled',
+                         'site.monitor.eval-state.read-enabled');
+  ```
+  Satır yok ya da değer `false` olmalı; ConfigMap / `config.extraEnv`'de `DISTRIBUTED_CHECKS_ENABLED`, `CERT_CHUNKS_ENABLED`,
+  `EVAL_STATE_READ_ENABLED` yok (`kubectl get cm -n "$NS" -l app.kubernetes.io/instance="$REL" -o yaml | grep -E
+  "DISTRIBUTED_CHECKS_ENABLED|CERT_CHUNKS_ENABLED|EVAL_STATE_READ_ENABLED"` → boş). `master.yaml` `replicaCount: 1`.
+- [ ] **[ENGEL] Route / NetScaler sınırları.** Prod trafiği NetScaler → OpenShift; etkin sınırlar NetScaler'ınki ve OpenShift
+      Route'unkidir (Ingress'teki `nginx.ingress.kubernetes.io/*` ek açıklamaları yalnız bir NGINX ingress denetleyicisi Ingress'i
+      sunuyorsa — [`openshift-install.md`](../helm/site-monitor/docs/openshift-install.md) "Option B" — geçerlidir):
+  ```bash
+  oc get route -n "$NS" -o wide
+  oc get route -n "$NS" -o yaml | grep -E "haproxy.router.openshift.io/timeout|kind: Ingress"   # Ingress'ten mi üretilmiş?
+  oc get ingress -n "$NS"
+  oc get ingresscontroller -n openshift-ingress-operator
+  ```
+  Beklenen: Route zaman aşımı **≥ 135 sn**. Ek açıklama yoksa HAProxy yönlendiricisinin varsayılanı **30 sn**'dir ve uzun
+  istekler yarıda kesilir: elle sayfa bütünlüğü kontrolü (≤ 120 sn), SQL Playground dışa aktarımı (≤ 120 sn), anahtar kelime /
+  veritabanı sorgusu "Test", kaynak analizi görsel indirmesi (≤ 130 sn). Düzeltme (Route Ingress'ten üretildiyse Ingress'in
+  ek açıklamasını taşır — chart artık `haproxy.router.openshift.io/timeout: "135s"` yazar; elle oluşturulmuş Route'ta):
+  `oc annotate route <ad> -n "$NS" haproxy.router.openshift.io/timeout=135s --overwrite`.
+  **NetScaler (ağ ekibi):** en büyük istek gövdesi **≥ 12 MB** (uygulamanın `spring.servlet.multipart.max-request-size=12MB`'ı —
+  haftalık rapor görselleri, kanal raporu görselleri, sertifika dosyası yükleme) ve sunucu / boşta zaman aşımı **≥ 135 sn**.
+  Biri dar kalıyorsa ya düzeltilir ya da "uzun istekler kesilir / büyük yükleme reddedilir" bilinçli kabul edilip kaydedilir.
+- [ ] **[ENGEL] Dağıtımdan HEMEN önce (T-5 dk) uzun işlem yok.** Açılışta Hibernate `ddl-auto` yeni kolonları
+      `ALTER TABLE … ADD COLUMN` ile ekler — bu deyim **`lock_timeout` olmadan** koşar (şema yamalarının 20 sn sınırı ona
+      uygulanmaz): tabloyu tutan uzun bir işlemin arkasında süresiz bekler ve o sırada o tablonun BÜTÜN sorguları onun arkasında
+      sıraya girer (yeni pod Ready olmaz, eski pod'un istekleri de durur). Boş dönmeli:
+  ```sql
+  SELECT pid, usename, application_name, state, now() - xact_start AS sure, left(query, 80) AS sorgu
+    FROM pg_stat_activity
+   WHERE datname = current_database() AND xact_start IS NOT NULL AND now() - xact_start > interval '30 seconds'
+   ORDER BY xact_start;
+  ```
+  Satır varsa sahibiyle konuşun ya da bitmesini bekleyin. Kullanıcılara duyurun: **dağıtım bitene dek SQL Playground sorgusu,
+  büyük dışa aktarım (aktivite, olaylar, SQL, kanal raporu) ve elle / toplu "Şimdi kontrol et" yok.**
+- [ ] **Saat:** saat başı (`:00` saatlik sertifika taraması), 03:00 (gece temizliği), 04:40 (şişmiş indeks bakımı) ve 04:45
+      (taban çizgisi örnek budaması) çevresinde dağıtmayın.
+
 ### İlk çok pod sürümüne geçiş (20.164 ve öncesi → bu sürüm) — bir kerelik
 Bu bölüm yalnız prod çok pod sürüm 1'i (2026-10-21) İLK kez aldığında geçerlidir; sonraki dağıtımlarda atlanır.
 
@@ -480,15 +556,102 @@ kontrol edilir; yeniden 3-4'e geçilip anahtar açıkken ilk sertifika turu onu 
       RESOLVED (kapsam dışı) olarak gelir; sonra yalnız 7/24 alarmları gelir. Dağıtımdan ÖNCE merkezi izleme ekibine haber
       verin. Eski davranış gerekirse dağıtımdan sonra Ayarlar → Platform → Alarm akışı → "Yalnız 7/24'e bildirilen alarmlar"
       kapatılır (ya da env `ALARM_FEED_NOC_ONLY=false`). İzleme listesi ya da 7/24 ayarı okunamazsa akış 503 döner — hiçbir
-      alarm sahte RESOLVED ile kapatılmaz.
+      alarm sahte RESOLVED ile kapatılmaz. **20.185'ten beri** varsayılan kip "yalnız açık alarmlar"dır
+      (`site.monitor.alarm-feed.resolved-mode` = `none`): o kipte bu tek seferlik RESOLVED dalgası da GELMEZ — 7/24'e
+      bildirilmeyen alarm akıştan çıkar ve merkezi sistem onu kendisi kapatır (kayıtlı `status` / `clear` değeri korunur).
 - [ ] **Kaynak analizi:** yeni kolonlar (`page_resource_scans` 10 kolon, `page_monitors.resource_budget_json`) açılışta
       `patch()` ile eklenir, boş tablo / yedek gerekmez. Analiz yalnız istenince koşar; algoritma 3 tarama sırasında ek ağ
       isteği yapar (sunucu başına bağlantı ölçümü ≤ 30, kaynak haritası HEAD ≤ 10) — hedef sitelere giden trafik biraz artar.
       Karışık podlarda eski pod algoritma 2 üretir ve "Siteyi analiz et" isteğini tek sayfa koşar.
 
+### 20.185 → 20.208 — bir kerelik
+Prod 20.185'ten eskiyse geçerlidir (satırın sürümünden eskiyse o satır). Ayrıntı: [`CHANGELOG.md`](../CHANGELOG.md).
+
+**Öncesi**
+- [ ] **(< 20.186.3) [ENGEL] DBA bilgilendirildi — indeks bakımı:** açılıştan ~3 dk sonra (yalnız PostgreSQL, başka sürüm
+      koşan canlı pod kalmayınca) 15 gereksiz indeks `DROP INDEX CONCURRENTLY` ile düşürülür (`idx_act_type`,
+      `idx_act_type_mon`, `idx_*_monitor_id` × 9, `idx_pri_check`, `idx_mch_type_key_hour`, `idx_cc_domain`,
+      `idx_uc_domain_port`; tek seferlik, nişan `2026-11-06-redundant-index-cleanup`); her gece **04:40** İstanbul'da şişmiş
+      indeksler `REINDEX INDEX CONCURRENTLY` ile yeniden kurulur (gece başına ≤ 6 indeks / 4 GB / 45 dk). Ertelemek için
+      `config.extraEnv.INDEX_MAINTENANCE_ENABLED: "false"` (ikisi de koşmaz). Ön koşullar:
+  ```sql
+  -- tablo sahibi uygulama kullanıcısı olmalı (DROP INDEX / REINDEX sahiplik ister) — boş dönmeli
+  SELECT tablename, tableowner FROM pg_tables WHERE schemaname = current_schema() AND tableowner <> current_user;
+  -- en büyük indeksler: REINDEX CONCURRENTLY yeniden kurarken indeksin bir kopyası kadar ek disk ister
+  SELECT c.relname, pg_size_pretty(pg_relation_size(c.oid)) FROM pg_class c
+   WHERE c.relkind = 'i' ORDER BY pg_relation_size(c.oid) DESC LIMIT 5;
+  ```
+  Disk boşluğu en büyük indeksin en az iki katı olmalı (tahmin; iş gece başına en çok 4 GB yeniden kurar).
+- [ ] **(< 20.186.3) Geri alma hazırlığı:** bu sürümden 20.186.3 öncesine geri dönülürse eski sürüm 15 indeksi açılışta
+      KİLİTLEYEREK kurar — listenin sonundaki "Geri alma" bölümünün ilk maddesi.
+- [ ] **(< 20.185) Alarm akışı açıksa:** varsayılan "yalnız açık alarmlar" (`site.monitor.alarm-feed.resolved-mode` = `none`):
+      akış RESOLVED satırı GÖNDERMEZ; merkezi sistem alarmı akışta göremeyince kendisi kapatır. Daha önce Ayarlar'da `status` /
+      `clear` kaydedildiyse o değer kalır. Merkezi izleme ekibine önceden haber verin.
+- [ ] **(< 20.196) Veritabanı kapasitesi:** dağıtımdan sonra Sistem Sağlığı → Veritabanı büyümesi'nde kapasite (GiB) girilecek
+      (aşağıda Sonrası) — DBA'dan veritabanının kullanabileceği disk alanını önceden öğrenin.
+- [ ] **Kullanıcı duyuruları** (prod'un sürümünden sonra gelenler):
+  - (< 20.183) **Anahtar kelime izlemesi** Türkçe büyük / küçük harf katlamasıyla eşleşir (İ / I / ı / i aynı) ve sayfanın
+    karakter kümesini okur — bazı izlemelerin sonucu değişebilir (bulunmayan kelime bulunabilir ya da tersi).
+  - (< 20.186.1) **Yönlendirme:** POST isteği 301 / 302 yönlendirmesinden sonra GET olarak sürer (tarayıcı gibi; 303 her zaman
+    GET, 307 / 308 yöntemi korur) — HTTP ve anahtar kelime izlemelerinde form gönderen izlemelerin sonucu değişebilir.
+    Anahtar kelime izlemesinin özel başlık / Basic auth / gövdesi yalnız AYNI kökene (ve aynı host'un http:80 → https:443
+    yükseltmesine) gider. İçerik değişimi taban çizgisi bir kez alarmsız yenilenir.
+  - (< 20.200) **Sayfa hızı:** kart SLA'sı / erişilebilirlik artık yalnız sayfa AÇILMADIĞINDA düşer — eşik aşımı ayrı "bütçe
+    uyumu" olarak görünür (SLA rakamları YÜKSELİR); TTFB eşiği son adımın sunucu süresine bakar (yeni bağlantıyla ölçülür).
+    Grafana panolarında sayfa hızı SLA geçmişi bu tarihte kırılır.
+  - (< 20.208) **Alan adı izlemesinde "veri yok" (`DOMAINMON_UNKNOWN`) alarmları** artık etkin kurtarmayla kapanır
+    (`site.monitor.domain.recovery-interval-ms` 60000; `0` = eski davranış): ilk saatlerde birikmiş alarmlar için ÇÖZÜM
+    POSTASI DALGASI beklenir. Süresi dolmuş alan adının posta konusu "N GÜN ÖNCE DOLDU" olur (posta kuralları konuya
+    bakıyorsa).
+  - Açık alarm anlık görüntüsü (dağıtımdan ~1 saat sonra karşılaştırmak için):
+  ```sql
+  SELECT alert_type, count(*) FROM alert_events
+   WHERE resolved = false AND (alert_type LIKE 'KEYWORD%' OR alert_type LIKE 'PAGESPEED%' OR alert_type LIKE 'DOMAINMON%'
+                               OR alert_type LIKE 'HTTP%')
+   GROUP BY 1 ORDER BY 1;
+  ```
+- [ ] **Güvenlik / ağ ekibine dış trafik bilgisi:** (≥ 20.199) kaynak analizinin görsel indirme ucu her istekte izlenen siteye
+      yeni bir GET yapar (≤ 25 MiB, pod başına aynı anda 4, hedef host başına dakikada 30); (≥ 20.202) "Tüm siteyi tara" bir
+      koşuda hedef siteye en çok 2500 sayfa / 150 dk / 7500 MB / 75 000 nesne indirir (≥ 20.209; önce 1000 / 60 dk / 3000 MB /
+      30 000) ve pod'un iki tarama yuvasından birini 150 dk'ya dek tutar; önce `robots.txt` ve site haritasını
+      okur. İkisi de yalnız kullanıcı isteyince çalışır ([`RUNBOOK.md` → Sayfa kaynak analizi](RUNBOOK.md#sayfa-kaynak-analizi)).
+
+**Sonrası**
+- [ ] **(< 20.186.3)** ~3–15 dk sonra `kubectl logs $L | grep -E "Gereksiz indeks"` → `… tamamlandı … nişan yazıldı`; ertesi
+      sabah `kubectl logs $L | grep -E "Şişmiş indeks|İndeks bakımı"` (gece özeti). `Gereksiz indeks … şimdilik düşürülmedi`
+      kapsayan dizin henüz kurulmadıysa normaldir ([`RUNBOOK.md` → İndeks bakımı](RUNBOOK.md#indeks-bakımı)).
+- [ ] **(< 20.196)** Sistem Sağlığı → Veritabanı büyümesi → **Kapasite (GiB)** girin (yalnız GLOBAL admin; ya da env
+      `DB_CAPACITY_GB`). Girilmezse dolma tahmini yok ve kendi kendini izlemenin "Veritabanı doluluğu" kontrolü "uygulanmaz".
+      İlk tahmin en az 7 günlük görüntüden sonra.
+- [ ] Kendi kendini izleme **9 kontrol** gösterir (`check_queue` anahtar kapalıyken "uygulanmaz", `db_capacity` kapasite
+      girilene dek "uygulanmaz"); `curl -s -o /dev/null -w "%{http_code}\n" https://<host>/api/public/health/watchdog` → 200.
+- [ ] **Grafana panosu revizyon 17** (`GrafanaDashboardGenerator.DASHBOARD_REVISION`; sayfa hızı, taban çizgisi benimseme,
+      veritabanı boyutu / dolmaya kalan gün panelleri) — Ayarlar → Grafana panosu → JSON indir ve aynı UID ile içe aktarın.
+      İş ölçümleri yalnız `METRICS_EXPORT_TOKEN` tanımlıysa `/metrics/sitemonitor`'dadır.
+- [ ] **(< 20.208)** İlk saatte Bildirim Geçmişi'nde `DOMAINMON_UNKNOWN` çözüm postaları beklenir; ~1 saat sonra yukarıdaki açık
+      alarm sorgusunu yeniden koşup karşılaştırın (`DOMAINMON_UNKNOWN` düşer; `KEYWORD%` / `HTTP%` / `PAGESPEED%` sayılarında
+      açıklanamayan sıçrama → takımlarla bakın).
+- [ ] Bir kerelik işler bitti — açılıştan ~15 dk sonra (bir sorun yoksa hepsi yazılır; ilgili özellik hiç gerekmiyorsa bazıları
+      hiç yazılmaz, ör. zincir sağlamsa `audit-chain-restart`):
+  ```sql
+  SELECT patch_key, applied_at FROM schema_patch_markers
+   WHERE patch_key IN ('2026-10-30-k6-settings-normalize', '2026-10-23-audit-chain-restart',
+                       '2026-11-06-redundant-index-cleanup', '2026-10-31-holiday-calendar-seed',
+                       '2026-11-14-ad-org-role-lock-repair', '2026-10-18-tech-error-outage-sentence')
+   ORDER BY applied_at;
+  ```
+
 ### Kapsam ve sürüm
 - [ ] Dağıtılan şey **tag'lenmiş sürüm** (`git checkout v$VERSION`); çalışma ağacındaki commit'lenmemiş iş
-      bu dağıtıma dahil değildir. GitHub → Actions'ta o commit için `ci.yml` **dört işi de yeşil**.
+      bu dağıtıma dahil değildir.
+- [ ] **[ENGEL] Yayın kapısı yeşil:** GitHub → Actions'ta o commit için `ci.yml` ("CI — Build & Test") iş akışının **bütün
+      işleri** yeşil — Backend, Backend PostgreSQL IT, Backend k6 contract, Frontend, Frontend unit 1–4/4, Frontend coverage
+      gate, Frontend E2E 1–4/4, Helm Lint, Image assets.
+- [ ] **[ENGEL] İmaj açılış testi:** `release.yml`'in `v$VERSION` koşusunda **image-boot-test** işi yeşil (yayından SONRA koşar;
+      kırmızıysa sürüm yine yayınlanmıştır ama imaj prod'a gitmez). Artefakt `image-boot-log`'da: `[K6] ✅ k6 bulundu — sürüm
+      v2.3.0`, `[K6] İşlem sertleştirmesi uygulandı`, "Şema yamaları: … 0 başarısız", taşınan sayfa dosyaları (`carried`).
+- [ ] **Trivy raporu okundu:** aynı koşunun `release` işinde "Trivy image scan" adımı (HIGH / CRITICAL, düzeltmesi olanlar;
+      adım bilinçli olarak engellemez). Yeni bir CRITICAL varsa dağıtım kararı güvenlik ekibiyle verilir.
 - [ ] Prod'un şu anki sürümünden `$VERSION`'a kadar [`CHANGELOG.md`](../CHANGELOG.md) okundu; özellikle
       **⚠ Davranış**, **Yeni yapılandırma** ve **Operatör notu** işaretli satırlar. Örnek: v20.72.0'dan beri
       envanter erişilebilirlik (HTTP) süpürmesi **5 dk → 60 dk** — kullanıcılara duyurulmalı.
@@ -538,7 +701,9 @@ WARN satırıdır. Anahtar yayınla birlikte değiştirilmez; değişim ayrı bi
 - [ ] **Tercih edilen:** `secret.existingSecret="$SECRET"` — Secret'a helm hiç dokunmaz. İçinde şu anahtarlar
       bulunmalı (eksik anahtar pod'a env olarak gelmez):
       `ADMIN_USERNAME, ADMIN_PASSWORD, DB_PASSWORD, SPRING_MAIL_USERNAME, SPRING_MAIL_PASSWORD,
-      SITE_MONITOR_EMAIL_FROM, SITE_MONITOR_SECRET_KEY, HTTP_PROXY_USER, HTTP_PROXY_PASS`.
+      SITE_MONITOR_EMAIL_FROM, SITE_MONITOR_SECRET_KEY, HTTP_PROXY_USER, HTTP_PROXY_PASS`. İsteğe bağlı:
+      `METRICS_EXPORT_TOKEN` (Grafana iş ölçümleri `/metrics/sitemonitor`; ≥ 32 karakter, yoksa uç 404 döner) ve yalnız anahtar
+      döndürme sırasında `SITE_MONITOR_SECRET_KEY_PREVIOUS`.
       ```bash
       # yalnız anahtar ADLARINI listeler, değer basmaz
       kubectl get secret "$SECRET" -n "$NS" -o go-template='{{range $k, $v := .data}}{{$k}}{{"\n"}}{{end}}'
@@ -619,8 +784,8 @@ ulaşmadı. Bu dağıtım onu **ilk kez** uygular — aşağıdaki değişiklikl
 - [ ] Ayarlar → Genel: `site.monitor.system-admin.email` dolu; kurumsal CA paketi
       (`site.monitor.trust.ca-bundle-pem`) DB'de dolu (master.yaml'da `caBundlePem` yok).
 - [ ] Yapılandırma sağlığı kartı yeşil.
-- [ ] NetScaler / ingress zaman aşımı: manuel sayfa kontrolü 120 sn'ye kadar sürebilir; ingress 60 sn'de keser
-      (bilinen, P3-5). Kabul edildi ya da zaman aşımı ≥ 130 sn.
+- [ ] NetScaler / Route zaman aşımı ve gövde sınırı: yukarıdaki **"Route / NetScaler sınırları"** maddesi (≥ 135 sn, ≥ 12 MB).
+      Chart'ın Ingress'i v1.0.0'dan beri 1m / 60 sn yazıyordu; 2026-11-15'ten beri 16m / 135 sn + OpenShift Route zaman aşımı.
 
 ## Sırası — tek komut
 
@@ -636,7 +801,10 @@ helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
   --set image.tag="v${VERSION}" \
   --set secret.existingSecret="$SECRET" \
   --set config.logLevel=DEBUG \
-  --dry-run=server | grep -E 'image:|replicas:|terminationGracePeriodSeconds|sleep [0-9]|DB_POOL_MAX|NO_PROXY|CORS_ALLOWED|LOG_LEVEL|DB_HOST|SPRING_SESSION_STORE_TYPE'
+  --dry-run=server | grep -E 'image:|replicas:|terminationGracePeriodSeconds|sleep [0-9]|DB_POOL_MAX|DB_POOL_MIN|NO_PROXY|CORS_ALLOWED|LOG_LEVEL|LOG_FORMAT|DB_HOST|SPRING_SESSION_STORE_TYPE|ephemeral-storage|proxy-body-size|proxy-read-timeout|haproxy.router'
+# Beklenen (prod, tek pod): replicas: 1, terminationGracePeriodSeconds: 120, sleep 10, DB_POOL_MAX "30", DB_POOL_MIN "5",
+# SPRING_SESSION_STORE_TYPE "jdbc", LOG_FORMAT "json" (ya da bilinçli "text"), proxy-body-size 16m, proxy-read-timeout "135",
+# haproxy.router.openshift.io/timeout 135s
 
 # 2) Gerçek dağıtım — AYNI komut, --dry-run yerine --atomic --wait --timeout
 helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
@@ -663,7 +831,16 @@ helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
   (yukarıdaki bir kerelik bölüm). Bu pencerede çift bildirim görülürse not edin ve çift-iş dedektörünü koşun
   ([`RUNBOOK.md` → Çok pod](RUNBOOK.md#çok-pod)).
 - **İki ya da daha çok replikada** `--timeout 15m` kullanın: pod'lar sırayla değişir (her biri açılışta ≤ 300 sn
-  bekleyebilir); 10 dk yetmezse `--atomic` gereksiz yere geri alır.
+  bekleyebilir); 10 dk yetmezse `--atomic` gereksiz yere geri alır. Prod çok eski bir sürümdeyse (bu listede birçok
+  "bir kerelik" bölüm geçerliyse) tek pod'da da `--timeout 15m` (açılışta birçok kolon / tablo eklenir).
+- **Rollout boyunca kilit kuyruğunu izleyin** (ayrı bir oturumda, 10–20 sn'de bir):
+  ```sql
+  SELECT pid, now() - query_start AS sure, wait_event_type, wait_event, left(query, 80) AS sorgu
+    FROM pg_stat_activity WHERE wait_event_type = 'Lock' ORDER BY query_start;
+  ```
+  Bir `ALTER TABLE` bir dakikadan uzun bekliyorsa arkasındaki sorgular da bekliyordur: önünü tutan oturumu bulun
+  (`SELECT pg_blocking_pids(<pid>);`) ve sahibiyle konuşun; gerekirse `SELECT pg_cancel_backend(<engelleyen pid>);` (yalnız
+  uygulamaya ait olmayan, bilinen bir rapor / el sorgusu ise).
 
 ## Sonrası
 
@@ -684,12 +861,24 @@ helm upgrade --install "$REL" ./helm/site-monitor --namespace "$NS" \
 - [ ] Şema yamaları: `kubectl logs $L | grep -E 'Schema patch (applied|skipped)|Şema yamaları:'` —
       `applied` bu sürümün eklediklerini listeler; `skipped` satırları (DEBUG'ta görünür) tek tek okunur,
       beklenmeyen bir SQL hatası varsa geri almayı düşünün.
-- [ ] Eşzamanlı kurulan indeksler geçerli mi (`CREATE INDEX CONCURRENTLY` — `idx_ae_created_at`, `idx_push_dedupe`; yarıda
-      kalan derleme INVALID indeks bırakır ve `IF NOT EXISTS` onu bir daha kurmaz):
-      `SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE NOT i.indisvalid;` → boş olmalı.
-      Satır dönerse: `DROP INDEX CONCURRENTLY <ad>;` ve pod'u yeniden başlatın (yama indeksi yeniden kurar). **İstisna —
-      `ux_…` tekil indeksler:** INVALID / eksik kalmalarının nedeni çift satırdır; düşür-yeniden başlat döngüye girer. Önce
-      çiftleri giderin ("İlk çok pod sürümüne geçiş" bölümündeki sorgular), sonra TEK pod'u yeniden başlatın.
+- [ ] **Geçersiz (INVALID) indeks — önce bekleyin, sonra bakın.** Ertelenmiş indeksler pod Ready olduktan SONRA arka planda
+      `CREATE INDEX CONCURRENTLY` ile kurulur (aşağıdaki "Ertelenmiş indeksler" maddesi); kurulurken indeks katalogda
+      `indisvalid = false` görünür — bu hata değildir. Sıra:
+      1. Özet satırını bekleyin: `kubectl logs $L | grep 'Ertelenmiş indeksler:'` → `Ertelenmiş indeksler: N kuruldu, …`
+         (büyük tabloda dakikalar sürer; her şey zaten geçerliyse satır DEBUG düzeyindedir).
+      2. Kurulmakta olanı görün — burada görünen indeks **ASLA düşürülmez**:
+         `SELECT p.pid, c.relname AS tablo, i.relname AS indeks, p.phase FROM pg_stat_progress_create_index p
+          JOIN pg_class c ON c.oid = p.relid LEFT JOIN pg_class i ON i.oid = p.index_relid;`
+      3. Ancak ondan sonra: `SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE NOT i.indisvalid;`
+         → boş olmalı.
+      - `<ad>_ccnew` / `<ad>_ccold` (`_ccnew1` …) yarıda kalmış `REINDEX CONCURRENTLY` kalıntısıdır — indeks bakımı işi kendisi
+        düşürür (açılıştan ~3 dk sonraki kalıntı taraması ya da 04:40 gece koşusunun başı); elle düşürmeyin.
+      - Ertelenmiş katalogdaki bir indeks (ör. `idx_act_alert`, `idx_ae_domain_id`, `idx_dnsr_pending`, `idx_portc_fail`,
+        `idx_nl_te_channel`) INVALID kaldıysa bir sonraki açılış onu kendisi düşürüp yeniden kurar — elle müdahale gerekmez.
+        Acilse ve 2. adımda GÖRÜNMÜYORSA: `DROP INDEX CONCURRENTLY <ad>;` ve TEK pod'u yeniden başlatın.
+      - **İstisna — `ux_…` tekil indeksler:** INVALID / eksik kalmalarının nedeni çift satırdır; düşür-yeniden başlat döngüye
+        girer. Önce çiftleri giderin ("İlk çok pod sürümüne geçiş" / "Çok pod Sürüm 2a" bölümlerindeki sorgular), sonra TEK
+        pod'u yeniden başlatın.
 - [ ] **Çok pod sürüm 1'in tekil indeksleri** (açılıştan ~5 dk sonra) — ikisi de dolu dönmeli:
       `SELECT to_regclass('ux_push_eventless_key_user'), to_regclass('ux_noe_one_ongoing');`
       `ux_push_eventless_key_user` boşsa: günlükte `kubectl logs $L | grep ux_push_eventless_key_user` (CONCURRENTLY kurulum
@@ -739,6 +928,10 @@ kubectl get pod -n "$NS" -l app.kubernetes.io/instance="$REL" \
   geri koyup `kubectl rollout restart`. Sırları yeniden girmek son çaredir (RUNBOOK).
 
 ### İlk 24 saat
+- [ ] **Geri alma penceresi (24 sa):** eski sürümün okuyamadığı / kaydederken sildiği kayıtları bu sürede açtırmayın —
+      anahtar kelime çoklu kural / içerik değişimi, veritabanı sorgusu akıllı kuralları (ANOMALY / FROZEN), sayfa hızı tür
+      bütçeleri / zamanlama, kanal raporu şablonu / rapor alanları, alarm iletimi. Prod bu özelliklerin sürümünden eskiyse
+      takımlara "yarından itibaren" deyin.
 - [ ] `restartCount` 0, `OOMKilled` yok; bellek çalışma kümesi < limitin %85'i
       (`kubectl top pod -n "$NS"`); aşıyorsa RUNBOOK → Bellek.
 - [ ] 5xx oranı, sweep süreleri (Sistem Sağlığı), Bildirim Geçmişi'nde FAILED artışı yok, push outbox birikmiyor,
@@ -879,7 +1072,30 @@ k6 "desteklenmiyor" olarak koşmaz. Senaryo kontrolleri dağıtımla birlikte 2.
 ## Geri alma
 
 **Karar ölçütü:** 15 dk içinde readiness yeşil değil **ya da** e-posta / LDAP / `decrypt failed` kanaryası
-kırmızı → geri al. Tartışma sonra.
+kırmızı → geri al. Tartışma sonra. Yalnız `helm rollback` (`kubectl rollout undo` değil).
+
+**Önce — hedef sürüme göre [ENGEL] adımlar** (hedef = dönülecek sürüm):
+- [ ] **Hedef < 20.186.3 ve gereksiz indeks işi koştuysa** (`SELECT patch_key FROM schema_patch_markers WHERE patch_key =
+      '2026-11-06-redundant-index-cleanup';` dolu ya da günlükte `Gereksiz indeks düşürüldü`): `helm rollback`'ten ÖNCE
+      [`RUNBOOK.md` → İndeks bakımı → "Geri alma — önce dizinleri kurun"](RUNBOOK.md#indeks-bakımı)'daki 15
+      `CREATE INDEX CONCURRENTLY IF NOT EXISTS` deyimini `psql` ile tek tek koşun ve INVALID denetimini yapın. Yapılmazsa eski
+      sürüm bu indeksleri açılışta düz `CREATE INDEX` ile kurar: yapım boyunca o tablolara yazımlar bekler (`activity_log`'da
+      dakikalar), işlem içinden yazılan aktivite satırları 10 sn sonra kaybolur, geri dönen pod geç hazır olur.
+- [ ] **Hedef ≤ 20.168.0:** aşağıdaki `ux_audit_seq` maddesi.
+- [ ] **Kanal teknik hata raporu — veri kaybı:** hedef 20.159'dan eskiyse (anomali konu alanları, konu görselleri), 20.158'den
+      eskiyse (kısaltmalı sayıların birimi `values.units`), 20.142'den eskiyse (SLA hedefi, kutucuklar, `compare` hesabı, rapor
+      hedefleri), 20.136'dan eskiyse (trend bölümü) ya da 20.134'ten eskiyse (yönetici özeti, tablo bölümü): eski sürümde kanal
+      raporu / şablonu **DÜZENLENMEZ** ve "son şablonu uygula" kullanılmaz — eski pod o alanları bilmez, kaydettiği rapordan ya
+      da şablondan SİLER (göçler varsayılan şablonları zaten yeniden yazdı). Takımlara geri alma süresince rapor ekranını
+      kullanmamalarını duyurun; yeniden ileri gidilene dek yalnız okuma / PDF indirme.
+- [ ] **Alarm akışı açıksa:** hedef < 20.185 → akış yeniden RESOLVED satırı gönderir; < 20.179 → 7/24'e bildirilmeyen açık
+      alarmlar yeniden OPEN gelir; < 20.173 → uç yok (404). Merkezi izleme ekibine haber verin.
+- [ ] **k6:** hedef 20.172.x → sorun yok (etkin ayar `/opt/k6-next/k6` ise 2.3 koşar; `k6` ise 20.172.x'te k6 motoru →
+      "Adayı etkin yap"); hedef < 20.172 → ÖNCE `site.monitor.scripted.k6-bin` = `k6`; hedef < 20.178 → dosya okuyan senaryolar
+      yeniden koşar (dosya okuma politikası eski sürümde REPORT) — "k6 sürüm geçişi (0.49 → 2.3)" → "Geri alma".
+- [ ] Çok pod anahtarları açıksa (3-3, 3-4, 3-2 okuma) geri almadan ÖNCE kapatın.
+- [ ] Hedef chart'ın Ingress ek açıklamaları geri gelir (2026-11-15 öncesi: 1m / 60 sn, `haproxy.router.openshift.io/timeout`
+      yok); elle `oc annotate` ile verilmiş Route zaman aşımı kalır.
 
 ```bash
 helm history "$REL" -n "$NS"                                   # öncekini seçin (Öncesi'nde not edilen)

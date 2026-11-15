@@ -80,6 +80,7 @@ class IndexBloatMaintenanceTest {
             return new IndexBloatMaintenance(List.of("page_checks", "page_resource_issues"), () -> pg, () -> {
                 opens.incrementAndGet();
                 db.closed = false;
+                db.dead = false;   // yeni oturum
                 return db;
             }, provider(scheduler), enabled, 30_000, maxIndexes, 4096 * MB, budgetMs, 64 * MB, now::get, ms -> {
                 sleeps.incrementAndGet();
@@ -431,6 +432,79 @@ class IndexBloatMaintenanceTest {
         self.set(mm);
         mm.maintain();
         assertThat(r.db.markers).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Bağlantı kopması (08006) bütçenin ¾'ünden sonra: YENİ oturumda kilit alınır, 7 günlük atlama yazılır, kalıntı orada düşürülür, gece biter")
+    void connectionLostLate_reopensSkipsAndDropsLeftoverOnFreshSession() {
+        Rig r = new Rig();
+        r.db.stats.add(bloated("a", "page_checks", 900 * MB));
+        r.db.stats.add(bloated("b", "page_checks", 200 * MB));
+        r.db.failState = ddl -> ddl.endsWith(".a") ? "08006" : null;
+        r.db.beforeExecute = ddl -> {
+            if (ddl.endsWith(".a")) {
+                r.now.addAndGet(r.budgetMs * 4 / 5);   // istemci soketi 36. dakikada kesti
+                r.db.leftovers.add(new Leftover("a_ccnew", "public.a_ccnew", "page_checks", 10 * MB, false));
+            }
+        };
+        IndexBloatMaintenance.Report rep = r.build().maintain();
+        assertThat(r.opens.get()).as("kopan oturumun yerine yeni oturum").isEqualTo(2);
+        assertThat(r.db.ddls()).containsExactly("REINDEX INDEX CONCURRENTLY public.a",
+                "DROP INDEX CONCURRENTLY IF EXISTS public.a_ccnew");
+        assertThat(rep.failed()).containsExactly("a");
+        assertThat(rep.rebuilt()).isEmpty();
+        assertThat(rep.leftoversDropped()).isEqualTo(1);
+        assertThat(rep.stoppedEarly()).isTrue();
+        assertThat(r.db.markers).as("08006 bütçenin ¾'ünden sonra = bütçe aşımı").containsKey("index-bloat-skip:a");
+        assertThat(r.db.held).as("yeni oturumdaki kilit bırakıldı").isEmpty();
+        assertThat(r.db.closed).isTrue();
+    }
+
+    @Test
+    @DisplayName("Bağlantı erken koparsa atlama yazılmaz (ertesi gece yeniden denenir); yeni oturumda kilit alınamazsa kalıntıya dokunulmaz, koşu çökmez")
+    void connectionLostEarly_noSkip_andLockMissOnFreshSession() {
+        Rig r = new Rig();
+        r.db.stats.add(bloated("a", "page_checks", 900 * MB));
+        r.db.failState = ddl -> ddl.endsWith(".a") ? "08006" : null;
+        r.db.beforeExecute = ddl -> {
+            if (ddl.endsWith(".a")) {
+                r.now.addAndGet(5 * 60_000L);
+                r.db.leftovers.add(new Leftover("a_ccnew", "public.a_ccnew", "page_checks", 10 * MB, false));
+            }
+        };
+        IndexBloatMaintenance.Report rep = r.build().maintain();
+        assertThat(r.db.markers).isEmpty();
+        assertThat(rep.leftoversDropped()).isEqualTo(1);
+        assertThat(r.opens.get()).isEqualTo(2);
+
+        Rig w = new Rig();
+        w.db.stats.add(bloated("a", "page_checks", 900 * MB));
+        w.db.failState = ddl -> ddl.endsWith(".a") ? "08006" : null;
+        w.db.beforeExecute = ddl -> {
+            if (ddl.endsWith(".a")) {
+                w.db.leftovers.add(new Leftover("a_ccnew", "public.a_ccnew", "page_checks", 10 * MB, false));
+                w.db.heldElsewhere.add(DeferredIndexBuilder.LOCK_KEY);   // eski sunucu süreci kilidi hâlâ tutuyor
+            }
+        };
+        IndexBloatMaintenance.Report rep2 = w.build().maintain();
+        assertThat(w.db.ddls()).containsExactly("REINDEX INDEX CONCURRENTLY public.a");
+        assertThat(rep2.failed()).containsExactly("a");
+        assertThat(rep2.stoppedEarly()).isTrue();
+        assertThat(w.db.held).isEmpty();
+        assertThat(w.db.closed).isTrue();
+    }
+
+    @Test
+    @DisplayName("budgetTimeout: 08006 bütçenin ¾'ünden sonra bütçe aşımı sayılır, önce sayılmaz; 08000 (DDL koşmadı) asla")
+    void budgetTimeoutConnectionLoss() {
+        IndexBloatMaintenance m = new Rig().build();
+        long budget = 45 * 60_000L;
+        SQLException io = new SQLException("An I/O error occurred while sending to the backend.", "08006");
+        assertThat(m.budgetTimeout(io, budget * 3 / 4, budget)).isTrue();
+        assertThat(m.budgetTimeout(io, budget * 3 / 4 - 1, budget)).isFalse();
+        assertThat(m.budgetTimeout(io, budget, 10 * 60_000L)).as("deyime kısa süre kalmıştı").isFalse();
+        assertThat(m.budgetTimeout(new SQLException("bekçi", "08000"), budget, budget)).isFalse();
+        assertThat(IndexBloatMaintenance.timeoutKind(io)).contains("bağlantı");
     }
 
     @Test

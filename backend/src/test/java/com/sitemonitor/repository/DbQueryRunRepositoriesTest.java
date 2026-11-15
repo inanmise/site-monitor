@@ -158,7 +158,7 @@ class DbQueryRunRepositoriesTest {
     }
 
     @Test
-    @DisplayName("r177: geriye dönük deneme sayfası — zamanlanmış satırlar (hatalı dahil), id sırası, anahtar sayfalama, yalnız ölçü kolonları")
+    @DisplayName("r177 + kapı 2026-11-15: geriye dönük deneme sayfası — zamanlanmış satırlar (hatalı dahil), YENİDEN ESKİYE, checkedAt <= üst sınır (dahil), yalnız bu izleme, yalnız ölçü kolonları")
     void backtestPageKeyset() {
         long id = mon("Deneme").getId();
         DbQueryCheck a = check(id, "2026-11-01T10:00:00", true, false, false, "[1]");
@@ -166,16 +166,18 @@ class DbQueryRunRepositoriesTest {
         DbQueryCheck b = check(id, "2026-11-01T10:10:00", false, false, false, null);
         DbQueryCheck c = check(id, "2026-11-01T10:15:00", true, null, null, "[3]");
         check(id, "2026-10-01T10:00:00", true, false, false, "[eski]");
-        List<Object[]> p1 = checks.backtestPage(id, "2026-10-31T00:00:00", 0L, 2);
-        assertThat(p1).hasSize(2);
-        assertThat(((Number) p1.get(0)[0]).longValue()).isEqualTo(a.getId());
-        assertThat(p1.get(0)[1]).isEqualTo("2026-11-01T10:00:00");
-        assertThat(p1.get(0)[5]).isEqualTo("[1]");
-        assertThat(((Number) p1.get(1)[0]).longValue()).isEqualTo(b.getId());
+        long other = mon("Başka").getId();
+        check(other, "2026-11-01T10:20:00", true, false, false, "[başka]");
+        String top = DbQueryCheckRepository.BACKTEST_NO_UPPER;
+        List<Object[]> p1 = checks.backtestPageDesc(id, "2026-10-31T00:00:00", top, 2);
+        assertThat(p1).extracting(r -> ((Number) r[0]).longValue()).containsExactly(c.getId(), b.getId());
+        assertThat(p1.get(0)[1]).isEqualTo("2026-11-01T10:15:00");
+        assertThat(p1.get(0)[5]).isEqualTo("[3]");
         assertThat(p1.get(1)[2]).isEqualTo(Boolean.FALSE);
-        List<Object[]> p2 = checks.backtestPage(id, "2026-10-31T00:00:00", b.getId(), 2);
-        assertThat(p2).hasSize(1);
-        assertThat(((Number) p2.get(0)[0]).longValue()).isEqualTo(c.getId());
+        // üst sınır DAHİL: sonraki sayfa son satırın anından başlar (çağıran yinelenen kuyruğu bırakır)
+        List<Object[]> p2 = checks.backtestPageDesc(id, "2026-10-31T00:00:00", (String) p1.get(1)[1], 2);
+        assertThat(p2).extracting(r -> ((Number) r[0]).longValue()).containsExactly(b.getId(), a.getId());
+        assertThat(checks.backtestPageDesc(id, "2026-10-31T00:00:00", "2026-11-01T09:59:59", 2)).isEmpty();
     }
 
     @Test
@@ -194,13 +196,7 @@ class DbQueryRunRepositoriesTest {
                 .containsExactly("2026-11-01T09:10:00", "2026-11-01T09:05:00");
         assertThat(checks.backtestRunsBefore(id, "2026-11-01T10:00:00",
                 org.springframework.data.domain.PageRequest.of(0, 10))).hasSize(3);
-        // tavan: backtestPage kümesi (hatalı dahil, elle / teyit hariç) yeniden eskiye — 2. konumdaki satır
-        assertThat(checks.backtestNewestFrom(id, "2026-11-01T00:00:00",
-                org.springframework.data.domain.PageRequest.of(1, 1))).containsExactly("2026-11-01T09:10:00");
-        assertThat(checks.backtestNewestFrom(id, "2026-11-01T00:00:00",
-                org.springframework.data.domain.PageRequest.of(2, 1))).containsExactly("2026-11-01T09:09:00");
-        assertThat(checks.backtestNewestFrom(id, "2026-11-01T00:00:00",
-                org.springframework.data.domain.PageRequest.of(10, 1))).as("tavan altında").isEmpty();
+        // tavan (kapı 2026-11-15): deneme yeniden eskiye okur — tavan konumu sorgusu yok; okuma sırası backtestPageKeyset'te
     }
 
     @Test

@@ -49,7 +49,7 @@ describe('eksikler — yerinde düzeltme', () => {
     expect(onChanged).toHaveBeenCalledTimes(1)
   })
 
-  it('kişi listesi takılırsa üst sürede boş listeyle açılır (süresiz bekleme yok); bekleme penceresi kapatılabilir', async () => {
+  it('kişi listesi takılırsa üst sürede HATA penceresi (süresiz bekleme yok, boş seçici YOK); bekleme penceresi kapatılabilir', async () => {
     vi.useFakeTimers()
     api.admin.getUsers.mockReturnValue(new Promise(() => {}))
     const onClose = vi.fn()
@@ -59,7 +59,40 @@ describe('eksikler — yerinde düzeltme', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Kapat' }))
     expect(onClose).toHaveBeenCalledTimes(1)
     await act(async () => { await vi.advanceTimersByTimeAsync(LOAD_DEADLINE_MS + 10) })
-    expect(slot('stub-contact')?.getAttribute('data-users')).toBe('0')
+    // 2026-11-15 (prod kapısı): süre dolması "kullanıcı yok" DEĞİL — seçici boş listeyle açılmaz
+    expect(slot('stub-contact')).toBeNull()
+    expect(slot('gaps-fix-users-failed')).not.toBeNull()
+    expect(slot('gaps-fix-loading')).toBeNull()
+  })
+
+  it('kişi listesi okunamazsa (hata yanıtı) tehlike bandı + "Yeniden dene"; yeniden deneme listeyi okuyup seçiciyi açar', async () => {
+    api.admin.getUsers.mockResolvedValueOnce({ success: false, error: 'boom' })
+    render(<GapsFix fix={{ kind: 'contact', team: TEAM }} onClose={() => {}} onChanged={() => {}} />)
+    await waitFor(() => expect(slot('gaps-fix-users-failed')).not.toBeNull())
+    expect(slot('stub-contact')).toBeNull()
+    const band = slot('gaps-fix-users-failed').querySelector('[data-slot="alert"]')
+    expect(band).toHaveAttribute('data-tone', 'danger')
+    expect(band.textContent).toMatch(/Eklenebilecek kişilerin listesi okunamadı/)
+    expect(band.textContent).toMatch(/hiç kullanıcı olmadığı anlamına gelmez/)
+    const retry = screen.getByRole('button', { name: 'Yeniden dene' })
+    expect(retry.className).toMatch(/pointer-coarse:min-h-10/)
+    api.admin.getUsers.mockResolvedValueOnce({ success: true, data: [{ id: 1, active: true }] })
+    fireEvent.click(retry)
+    await waitFor(() => expect(slot('stub-contact')).not.toBeNull())
+    expect(slot('stub-contact').getAttribute('data-users')).toBe('1')
+    expect(slot('gaps-fix-users-failed')).toBeNull()
+    expect(api.admin.getUsers).toHaveBeenCalledTimes(2)
+  })
+
+  it('beklenmeyen gövde (dizi değil) ve ağ hatası da okuma hatasıdır', async () => {
+    api.admin.getUsers.mockResolvedValueOnce({ success: true, data: null })
+    const r = render(<GapsFix fix={{ kind: 'contact', team: TEAM }} onClose={() => {}} onChanged={() => {}} />)
+    await waitFor(() => expect(slot('gaps-fix-users-failed')).not.toBeNull())
+    r.unmount()
+    api.admin.getUsers.mockRejectedValueOnce(new Error('ağ'))
+    render(<GapsFix fix={{ kind: 'contact', team: TEAM }} onClose={() => {}} onChanged={() => {}} />)
+    await waitFor(() => expect(slot('gaps-fix-users-failed')).not.toBeNull())
+    expect(slot('stub-contact')).toBeNull()
   })
 
   it('varsayılan grup ve nöbet: kendi pencereleri; "grup oluştur" bildirim gruplarına götürür', async () => {

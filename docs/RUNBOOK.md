@@ -131,6 +131,17 @@ kubectl rollout status "$DEPLOY" -n "$NS"
 
 ## DB dolması
 
+0. **Erken uyarı (2026-11-13):** Sistem Sağlığı → **Veritabanı büyümesi** (`?sec=dbgrowth`) — günlük boyut geçmişi
+   (`db_size_daily`; saatlik iş 05:00 İstanbul'dan sonra günde bir görüntü yazar, `site.monitor.db.size-snapshot-enabled`),
+   30 / 90 / 180 günlük tahmin, en çok büyüyen tablolar, saklama önerileri ("Uygula" yalnız GLOBAL admin; yalnız süreyi
+   kısaltır, dosya küçülmez) ve istenince koşan sağlık analizi (ölü satır, şişmiş / kullanılmayan indeks). **Dolma tahmini
+   ve kendi kendini izlemenin "Veritabanı doluluğu" kontrolü (`db_capacity`) için kapasiteyi girin:** aynı sayfada
+   "Kapasite" (GiB, 1024³ bayt; yalnız GLOBAL admin, ayar `site.monitor.db.capacity-gb`) ya da env `DB_CAPACITY_GB`.
+   Varsayılan **0 = bilinmiyor** → tahminde "dolmaya kalan gün" yok, `db_capacity` "uygulanmaz". Kontrol kullanım ≥ %85 ya
+   da tahmin ≤ 30 gün (en az 7 günlük görüntü varken) → sorun; ≥ %95 ya da ≤ 7 gün → yüksek önem. Görüntüler 3 günden
+   eskiyse tahmin yok sayılır, yalnız kullanım karar verir. Kapasite yalnız veritabanı dosyalarını sayar (WAL ve diskteki
+   başka dosyalar sayılmaz) — DBA'nın verdiği kullanılabilir alanı yazın. Grafana: `sitemonitor_db_size_bytes`,
+   `sitemonitor_db_days_until_full` (PostgreSQL değilse / bilinmiyorsa seri yok).
 1. Ölç: Sistem Sağlığı → Veritabanı (tablo boyutları, büyüme; Prometheus `db_table_bytes`, `db_table_rows`) ya da:
    ```sql
    SELECT relname, pg_size_pretty(pg_total_relation_size(relid)) AS toplam
@@ -521,6 +532,36 @@ iç sayfa adayı olmaz. Sürerken "Site · sayfa n / N" ilerlemesi görünür (h
 
 Sürüm geçişinde eski pod algoritma 2 üretir, "Siteyi analiz et" isteğini tek sayfa analizi olarak koşar (arayüz bunu
 söyler) ve bütçe / eğilim uçlarına 404 döner. Geri almada yeni kolonlar kalır, kullanılmaz.
+
+**Tüm site taraması (2026-11-15, "Tüm siteyi tara").** Çok sayfalı analizin büyük kipi: ana sayfanın bağlantıları, site
+haritası ve taranan HER sayfanın bağlantıları (her derinlikte, genişlik önce) aynı sunucudaki sayfalarla taranır. **Hedef
+siteye giden trafik bir koşuda en çok 2500 sayfa, 150 dk, 7500 MB ve 75 000 nesneye çıkabilir** (2026-11-15'te 1000 sayfa /
+60 dk'dan yükseltildi) — büyük bir siteyi
+istemeden önce site sahibini / güvenlik ekibini bilgilendirin (WAF / hız sınırı tetiklenebilir). Önce `robots.txt` okunur
+(yalnız `Sitemap:` satırları, en çok 20); site haritası yoksa `/sitemap.xml` denenir; dizin dosyaları iki düzey açılır (en çok
+50 dosya, dosya başına 10 MB, gzip açılmış en çok 50 MB, dosya başına en çok 50 000 adres; site haritası evresi en çok 120 sn,
+yalnız izlenen host'tan). Bütçe dolarsa taranmayan sayfalar adıyla listelenir ve analiz "Kaldığı yerden sürdür" ile devam
+ettirilir (zincir en çok 5000 sayfa). Pod başına eşzamanlı tarama sınırı (2) bunu da sayar — tek koşu pod'un iki tarama
+yuvasından birini en çok 150 dk tutar (en çok 180 dk'ya ayarlanabilir). Eski sürümden kalan, değiştirilmiş (kaydedilmiş)
+ayar değerleri yükseltmeyle değişmez — Ayarlar'da yeni sınırlara elle çekin. Bellek: benzersiz nesne başına bir ölçüm kopyası
+tutulur (75 000 nesnede ≈ 150 MB üst sınır).
+
+| Anahtar | Varsayılan | Aralık |
+|---|---|---|
+| `site.monitor.page.resource-scan.full-site-max-pages` | 2500 | 20–2500 |
+| `site.monitor.page.resource-scan.full-site-max-seconds` | 9000 | 300–10800 |
+| `site.monitor.page.resource-scan.full-site-max-total-mb` | 7500 | 200–25000 |
+| `site.monitor.page.resource-scan.full-site-max-objects` | 75000 | 2000–150000 |
+
+**Görsel indirme ucu (2026-11-14, görsel aracı).** Kaynak analizinin bulduğu bir görselin özgün baytlarını kullanıcıya
+indirir (`POST /api/monitoring/page/{id}/resource-scans/{scanId}/image`; Sayfa Hızı için
+`POST /api/monitoring/pagespeed/{id}/image`): **her istek izlenen siteye giden yeni bir GET'tir** (izlemenin vekil kararıyla,
+her yönlendirme adımında güvenlik kuralı). Yalnız o taramanın (ya da Sayfa Hızı ölçümünün) kaydettiği görsel adresi kabul
+edilir — başka adres 404, dışarıya istek gitmez. Sınırlar: görsel başına 25 MiB (aşan 413), toplam süre ≤ 130 sn
+(ingress / Route zaman aşımı en az 135 sn olmalı), pod başına aynı anda 4, kişi başına aynı anda 2 ve dakikada 60, hedef
+host başına dakikada 30 (429). https → http yönlendirme izlenmez (502 `TLS_DOWNGRADE`). Başarılı her indirme
+`PAGE_RESOURCE_IMAGE_DOWNLOAD` denetim kaydı yazar. Görselin işlenmesi (küçültme, biçim) tamamen tarayıcıda yapılır;
+sunucuya dosya yüklenmez.
 
 **Sorun giderme.**
 - *Tarama "yarıda kaldı" (INTERRUPTED):* çalıştıran pod kapandı ya da 45 sn kalp atışı yazamadı. Yeniden çalıştırın.
@@ -1109,20 +1150,24 @@ groups:
 
 ## Kendi kendini izleme
 
-2026-10-11'den beri uygulama dakikada bir, kümede tek pod'da (`scheduler_lock` `watchdog`) kendi işleyişini ölçer ve iki
+2026-10-11'den beri uygulama dakikada bir, kümede tek pod'da (`scheduler_lock` `watchdog`) kendi işleyişini 9 kontrolle
+(aşağıdaki tablo — `WatchdogCheck` sırası; anahtarlar `sweep_leader`, `monitor_sweep`, `cert_sweep`, `notifications`,
+`push_outbox`, `database`, `clock_skew`, `check_queue`, `db_capacity`) ölçer ve iki
 ardışık ölçümde doğrulanan sorunu / düzelmeyi bildirir (e-posta: Ayarlar → Genel → Kendi kendini izleme alıcıları, boşsa
 sistem yöneticisi adresi; isteğe bağlı webhook ve doğrudan push). Ekran: Sistem Sağlığı → Kendi kendini izleme. Dış izleyici:
 `GET /api/public/health/watchdog` (oturumsuz; UP/DEGRADED 200, kritik sorun ya da 5 dk'dan eski değerlendirme 503).
 
 | Kontrol | Ne zaman sorun | İlk bakılacak yer |
 |---|---|---|
-| Tarama liderliği (kritik) | Liderlik kirası bir TTL'den uzun süredir dolu, kimse almadı | Pod'lar ayakta mı, `scheduler` günlüğü; Sistem Sağlığı → Zamanlayıcı |
-| İzleme taramaları | Bir türde etkin izlemelerin ≥ %50'si zamanında kontrol edilmiyor | Görev havuzu doygunluğu (Zamanlayıcı ve yürütücüler), vekil |
-| Sertifika taraması | Son sertifika sonucu 4 saatten eski | `scheduler_lock` `cert-check`, tarama günlüğü |
-| Bildirim gönderimi | Son 30 dk'da ≥ 3 e-postanın ≥ %50'si başarısız | [SMTP düştü](#smtp-düştü) |
-| Push kuyruğu | ≥ 10 push 10 dk'dan uzun gecikmede ya da son 30 dk'da ≥ 3 sonuçtan ≥ %50'si FAILED (ölü ağ geçidi; test gönderimleri sayılmaz) — devre kesicinin açık olması tek başına sorun değil, bilgi olarak gösterilir | Push ağ geçidi, Webhook Push Gönderim Logu |
-| Veritabanı (DOWN kritik) | Bağlantı / sorgu / yazılabilirlik DEGRADED/DOWN, ya da HERHANGİ bir canlı pod'un havuzu dolu ya da açılış şema yamalarında hatası var (son sistem metriği örneği; örnek yoksa değerlendiren pod'un kendi havuzu / yaması) | [DB dolması](#db-dolması), `/api/public/health/db`, Sistem Sağlığı → Metrikler (pod başına havuz), `Şema yamaları:` günlük satırı |
-| Saat uyumu (2026-10-23) | Canlı pod'ların saatleri ARASINDAKİ fark (en ileri − en geri) > 5 sn (uyarı) / > 30 sn (ciddi); veritabanı saatinin farkı yalnız bilgidir | Düğümün NTP / chrony durumu (ön koşul P2); `system_metric_samples.clock_skew_ms` |
+| Tarama liderliği (`sweep_leader`, kritik) | Liderlik kirası bir TTL'den uzun süredir dolu, kimse almadı | Pod'lar ayakta mı, `scheduler` günlüğü; Sistem Sağlığı → Zamanlayıcı |
+| İzleme taramaları (`monitor_sweep`) | Bir türde etkin izlemelerin ≥ %50'si zamanında kontrol edilmiyor | Görev havuzu doygunluğu (Zamanlayıcı ve yürütücüler), vekil |
+| Sertifika taraması (`cert_sweep`) | Son sertifika sonucu 4 saatten eski | `scheduler_lock` `cert-check`, tarama günlüğü |
+| Bildirim gönderimi (`notifications`) | Son 30 dk'da ≥ 3 e-postanın ≥ %50'si başarısız | [SMTP düştü](#smtp-düştü) |
+| Push kuyruğu (`push_outbox`) | ≥ 10 push 10 dk'dan uzun gecikmede ya da son 30 dk'da ≥ 3 sonuçtan ≥ %50'si FAILED (ölü ağ geçidi; test gönderimleri sayılmaz) — devre kesicinin açık olması tek başına sorun değil, bilgi olarak gösterilir | Push ağ geçidi, Webhook Push Gönderim Logu |
+| Veritabanı (`database`; DOWN kritik) | Bağlantı / sorgu / yazılabilirlik DEGRADED/DOWN, ya da HERHANGİ bir canlı pod'un havuzu dolu ya da açılış şema yamalarında hatası var (son sistem metriği örneği; örnek yoksa değerlendiren pod'un kendi havuzu / yaması) | [DB dolması](#db-dolması), `/api/public/health/db`, Sistem Sağlığı → Metrikler (pod başına havuz), `Şema yamaları:` günlük satırı |
+| Saat uyumu (`clock_skew`, 2026-10-23) | Canlı pod'ların saatleri ARASINDAKİ fark (en ileri − en geri) > 5 sn (uyarı) / > 30 sn (ciddi); veritabanı saatinin farkı yalnız bilgidir | Düğümün NTP / chrony durumu (ön koşul P2); `system_metric_samples.clock_skew_ms` |
+| Dağıtık kontrol kuyruğu (`check_queue`, 2026-10-29) | Dağıtık kontrol anahtarı AÇIKKEN: en eski bekleyen iş ya da en eski değerlendirilmemiş sonuç 120 sn'den eski, ya da kirası dolmuş sahiplenme var. Anahtar kapalıyken "uygulanmaz" (sorgu yok) | Sistem Sağlığı → Küme kartı → "Dağıtık kontroller" (işçiler, kuyruk); gerekirse ana anahtarı kapatın — [Dağıtık kontroller](#dağıtık-kontroller-çok-pod-sürüm-3-3) |
+| Veritabanı doluluğu (`db_capacity`, 2026-11-13) | Kapasite (`site.monitor.db.capacity-gb` / `DB_CAPACITY_GB`) tanımlıyken kullanım ≥ %85 ya da tahmin ≤ 30 gün (en az 7 günlük görüntüyle); ≥ %95 ya da ≤ 7 gün yüksek önem. Kapasite 0 (varsayılan) ya da veritabanı PostgreSQL değilse "uygulanmaz" | [DB dolması](#db-dolması), Sistem Sağlığı → Veritabanı büyümesi |
 
 Bildirimler `notification_logs`'ta tetik `WATCHDOG` (test `WATCHDOG_TEST`). Hiçbir kanaldan gidemeyen bildirim 15 dk'da
 bir yeniden denenir; sistem bakımı "bildirimler sussun" açıkken gönderilmez (iz `SKIPPED: sistem bakımı`). Veritabanı
@@ -2188,7 +2233,7 @@ bakımı, pasif / silinmiş hesap kapısı ve bildirim alıcı süzgeci bu yolda
   eski sürümlerin satırları kurulumu düşüremez.)
 - **Elle saklama temizliği 409 "Temizlik şu an çalışıyor".** Gece temizliği ya da başka bir elle koşu `nightly-cleanup`
   kilidini tutuyor; birkaç dakika sonra yeniden deneyin (kilidi tutan pod:
-  `SELECT * FROM scheduler_lock WHERE name = 'nightly-cleanup';`). Elle koşu gece işinin başladığı saate (03:30 Istanbul)
+  `SELECT * FROM scheduler_lock WHERE name = 'nightly-cleanup';`). Elle koşu gece işinin başladığı saate (03:00 Istanbul, `site.monitor.scheduler.cleanup-cron` `0 0 3 * * *`)
   denk gelirse gece işi kilidi 30 sn'de bir, en çok 15 dk yeniden dener ve elle koşu bitince çalışır (toparlama, temizlik,
   budama); 15 dk'da kilit boşalmazsa o gece atlanır (WARN "bu gece atlandı"). **503 `DB_UNAVAILABLE`** = kilit alınamadı ve
   tutan bir satır da yok / okunamadı (geçici veritabanı hatası): hiçbir şey silinmedi; veritabanı düzelince yeniden deneyin.

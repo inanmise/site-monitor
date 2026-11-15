@@ -247,6 +247,34 @@ describe('otomatik kayıt', () => {
     expect(screen.queryByText('Rapor siz düzenlerken değişti')).toBeNull()
   })
 
+  it('elle kayıt asılırsa istemcinin son tarihinde (120 sn) kayıt kilidi kalkar ve çevrilmiş "sonuç bilinmiyor" hatası görünür (2026-11-15)', async () => {
+    // GERÇEK istemci (süre sınırı api/client.js'te): bağlantı hiç yanıt vermez — eskiden yazma istekleri sınırsızdı, "Kaydet"
+    // sonsuza dek "Kaydediliyor"da kalıyordu
+    const actual = await vi.importActual('../api/client')
+    const realFetch = global.fetch
+    global.fetch = vi.fn(() => new Promise(() => {}))
+    te().saveReport.mockImplementation((...a) => actual.api.techErrors.saveReport(...a))
+    try {
+      render(<TechErrorReportsPage />)
+      await screen.findByRole('heading', { name: TITLE })
+      fireEvent.click(screen.getByRole('button', { name: SUMMARY }))
+      fireEvent.change(screen.getByRole('textbox', { name: 'Toplam işlem adedi' }), { target: { value: '2000' } })
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      fireEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+      expect(te().saveReport).toHaveBeenCalledTimes(1)
+      expect(global.fetch).toHaveBeenCalledTimes(1)
+      expect(screen.queryByText(/Sunucu zamanında yanıt vermedi/)).toBeNull()
+      await act(async () => { await vi.advanceTimersByTimeAsync(actual.DEFAULT_WRITE_TIMEOUT_MS) })
+      vi.useRealTimers()
+      expect(await screen.findByText(/Sunucu zamanında yanıt vermedi.*arka planda tamamlanmış olabilir/)).toBeInTheDocument()
+      // Kilit kalktı: yeniden kaydetmek mümkün (taslak hâlâ kaydedilmemiş)
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Kaydet' })).not.toBeDisabled())
+    } finally {
+      global.fetch = realFetch
+    }
+  })
+
   it('elle kayıt ve ayrılma süren otomatik kaydı bekler (aynı sürümle iki istek gitmez, boşuna onay sorulmaz)', async () => {
     const first = deferred()
     te().saveReport.mockImplementationOnce(() => first.promise)

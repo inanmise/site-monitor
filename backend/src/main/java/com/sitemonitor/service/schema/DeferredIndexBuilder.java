@@ -657,6 +657,11 @@ public final class DeferredIndexBuilder {
             return conn;
         }
 
+        /** Birim testleri: hazır (sahte) bağlantıyı oturum olarak sarar — açılış ayarları koşulmaz. */
+        static JdbcSession wrap(Connection conn, boolean pooled) {
+            return new JdbcSession(conn, pooled);
+        }
+
         static JdbcSession open(DataSource ds) throws SQLException {
             if (ds == null) throw new SQLException("DataSource yok");
             Connection c = null;

@@ -1972,7 +1972,7 @@ public class EscalationService {
         for (String d : orphanDomains) {
             resolveOpenAlertsSilently(d, types, "Sistem (öksüz alarm — eşleşen keyword izlemesi yok)");
         }
-        if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz keyword alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
+        if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz keyword alarmı temizlendi: {} domain {}", orphanDomains.size(), SecretMask.logUrls(orphanDomains));
         return orphanDomains.size();
     }
 
@@ -1985,7 +1985,7 @@ public class EscalationService {
         for (String d : orphanDomains) {
             resolveOpenAlertsSilently(d, types, "Sistem (öksüz alarm — eşleşen HTTP izlemesi yok)");
         }
-        if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz HTTP alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
+        if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz HTTP alarmı temizlendi: {} domain {}", orphanDomains.size(), SecretMask.logUrls(orphanDomains));
         return orphanDomains.size();
     }
 
@@ -1998,7 +1998,7 @@ public class EscalationService {
         for (String d : orphanDomains) {
             resolveOpenAlertsSilently(d, types, "Sistem (öksüz alarm — eşleşen sayfa izlemesi yok)");
         }
-        if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz sayfa alarmı temizlendi: {} domain {}", orphanDomains.size(), orphanDomains);
+        if (!orphanDomains.isEmpty()) log.info("🧹 Öksüz sayfa alarmı temizlendi: {} domain {}", orphanDomains.size(), SecretMask.logUrls(orphanDomains));
         return orphanDomains.size();
     }
 
@@ -2011,7 +2011,7 @@ public class EscalationService {
         for (String d : orphans) {
             resolveOpenAlertsSilently(d, types, "Sistem (öksüz alarm — eşleşen sayfa hızı izlemesi yok)");
         }
-        if (!orphans.isEmpty()) log.info("🧹 Öksüz sayfa hızı alarmı temizlendi: {} URL {}", orphans.size(), orphans);
+        if (!orphans.isEmpty()) log.info("🧹 Öksüz sayfa hızı alarmı temizlendi: {} URL {}", orphans.size(), SecretMask.logUrls(orphans));
         return orphans.size();
     }
 
@@ -4687,8 +4687,9 @@ public class EscalationService {
             Set<String> excluded = excludeEmails == null ? Set.of() : excludeEmails;
             Map<Long, List<String>> delivered = new LinkedHashMap<>();
             for (var t : targets) {
+                List<String> to = new ArrayList<>();
+                boolean logged = false;
                 try {
-                    List<String> to = new ArrayList<>();
                     boolean deselected = false, dup = false;
                     for (String raw : t.emails()) {
                         String e = raw == null ? "" : raw.trim();
@@ -4714,12 +4715,19 @@ public class EscalationService {
                                 daysRemaining, withForwardNote(sendCtx, note));
                     }
                     saveForwardLog(alertEventId, t.recipientTeamName(), String.join(", ", to), subject, html, status, trigger);
+                    logged = true;
                     if (!to.isEmpty() && mailDelivered(status)) {
                         delivered.computeIfAbsent(t.recipientTeamId(), k -> new ArrayList<>()).addAll(to);
                     }
                 } catch (Exception e) {
                     log.warn("İletim postası gönderilemedi (olay {}, alıcı takım {}): {}", alertEventId, t.recipientTeamId(),
                             e.toString());
+                    // Her karar bir satır bırakır (kapı incelemesi 2026-11-15): posta kurulurken / gönderilirken düşen iletim
+                    // sessiz kalıyordu. Yalnız istisna sınıfı — ileti metni (SMTP / iç ayrıntı) yazılmaz.
+                    if (!logged) {
+                        saveForwardLog(alertEventId, t.recipientTeamName(), String.join(", ", to), subject, "",
+                                "FAILED: " + e.getClass().getSimpleName(), trigger);
+                    }
                 }
             }
             log.info("Alarm iletimi: {} [{}] → {} alıcı takım | olay={} | trigger={}", domain, level, targets.size(),

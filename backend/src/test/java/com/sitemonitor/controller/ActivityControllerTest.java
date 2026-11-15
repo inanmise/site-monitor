@@ -195,6 +195,62 @@ class ActivityControllerTest {
     }
 
     @Test
+    @DisplayName("detail: mini-geçmiş yalnız görünen takımların satırları — izleme başka takıma taşındıysa yeni takımın kontrolleri sızmaz")
+    void detail_recentExcludesRowsOfOtherTeams() throws Exception {
+        ActivityLog open = row(7L, 1L);
+        open.setMonitorId(42L);
+        when(repo.findById(7L)).thenReturn(Optional.of(open));
+        // Taşımadan sonra: en yeni satırlar takım 2'nin (hedef / hata / aktör), eskiler takım 1'in.
+        List<ActivityLog> recentRows = new ArrayList<>();
+        for (long i = 0; i < 8; i++) {
+            ActivityLog r = row(100L + i, 2L);
+            r.setMonitorId(42L);
+            r.setTarget("https://yeni-takim.example/gizli");
+            r.setErrorMessage("yeni takim hata");
+            recentRows.add(r);
+        }
+        for (long i = 0; i < 3; i++) {
+            ActivityLog r = row(200L + i, 1L);
+            r.setMonitorId(42L);
+            recentRows.add(r);
+        }
+        when(repo.findRecentForMonitor(eq("HTTP"), eq(42L), any())).thenReturn(recentRows);
+
+        String body = mvc.perform(get("/api/activity/7").session(scopedUser(1L)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recent.length()").value(3))
+                .andExpect(jsonPath("$.recent[0].id").value(200))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body).doesNotContain("yeni-takim").doesNotContain("yeni takim hata");
+
+        // Okunan satır sayısı, elemeden sonra 6 satır kalabilmesi için mini-geçmişten büyüktür.
+        ArgumentCaptor<org.springframework.data.domain.Pageable> page =
+                ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
+        verify(repo).findRecentForMonitor(eq("HTTP"), eq(42L), page.capture());
+        assertThat(page.getValue().getPageSize()).isGreaterThan(6);
+    }
+
+    @Test
+    @DisplayName("detail: global görücü mini-geçmişte en yeni 6 satırı görür (kapsam süzgeci daraltmaz)")
+    void detail_recentGlobalViewer_sixNewest() throws Exception {
+        ActivityLog open = row(7L, 1L);
+        open.setMonitorId(42L);
+        when(repo.findById(7L)).thenReturn(Optional.of(open));
+        List<ActivityLog> recentRows = new ArrayList<>();
+        for (long i = 0; i < 10; i++) {
+            ActivityLog r = row(300L + i, i % 2 == 0 ? 1L : 2L);
+            r.setMonitorId(42L);
+            recentRows.add(r);
+        }
+        when(repo.findRecentForMonitor(eq("HTTP"), eq(42L), any())).thenReturn(recentRows);
+
+        mvc.perform(get("/api/activity/7").session(globalViewer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recent.length()").value(6))
+                .andExpect(jsonPath("$.recent[0].id").value(300));
+    }
+
+    @Test
     @DisplayName("2026-10-11 summary: tür sayıları (tür süzgeci hariç, durum dahil) + saatlik seri (sıfır dolgulu, TIMEOUT hata); 2026-11-05 grup sayıları + timeout")
     void summary_typeCountsAndHourlySeries() throws Exception {
         Map<String, Long> groups = new java.util.LinkedHashMap<>();

@@ -309,6 +309,55 @@ public final class SecretMask {
         return out.append(text, copied, text.length()).toString();
     }
 
+    /** Günlük adresinin üst uzunluğu ({@link #logUrl}). */
+    static final int LOG_URL_MAX = 300;
+
+    /**
+     * Uygulama GÜNLÜĞÜNE yazılacak izleme adresi (kapı incelemesi 2026-11-15): kimlik bilgisi ({@code user:pass@}) atılır, sorgu
+     * dizesi ve parça {@code ?…} ile kesilir (adı ne olursa olsun — {@code code=}, {@code sig=}, {@code X-Amz-Signature} …
+     * {@link #maskUrlQuery}'nin ad listesinde yok), satır sonları boşluk, en çok {@value #LOG_URL_MAX} karakter. Yol kalır
+     * (teşhis); yola gömülü sır ({@code /hooks/<belirteç>}) günlükte görünür. Doğrusal tarama; null → null.
+     */
+    public static String logUrl(String url) {
+        if (url == null) return null;
+        int n = url.length();
+        StringBuilder out = new StringBuilder(Math.min(n, LOG_URL_MAX) + 4);
+        int i = 0;
+        int sch = url.indexOf("://");
+        if (sch > 0 && sch <= 16 && isScheme(url, sch)) {
+            out.append(url, 0, sch + 3);
+            i = sch + 3;
+            int authEnd = i;
+            while (authEnd < n && url.charAt(authEnd) != '/' && url.charAt(authEnd) != '?' && url.charAt(authEnd) != '#') authEnd++;
+            for (int k = authEnd - 1; k >= i; k--) {
+                if (url.charAt(k) == '@') { i = k + 1; break; }   // kimlik bilgisi atılır
+            }
+        }
+        for (; i < n; i++) {
+            char c = url.charAt(i);
+            if (c == '?' || c == '#') return out.append("?…").toString();
+            if (out.length() >= LOG_URL_MAX) return out.append('…').toString();
+            out.append(c == '\n' || c == '\r' || c == '\t' ? ' ' : c);
+        }
+        return out.toString();
+    }
+
+    /** {@link #logUrl} — bir anahtar kümesinin her öğesi (öksüz alarm anahtarları). */
+    public static java.util.List<String> logUrls(java.util.Collection<String> urls) {
+        if (urls == null) return java.util.List.of();
+        java.util.List<String> out = new java.util.ArrayList<>(urls.size());
+        for (String u : urls) out.add(logUrl(u));
+        return out;
+    }
+
+    private static boolean isScheme(String s, int end) {
+        for (int k = 0; k < end; k++) {
+            char c = s.charAt(k);
+            if (!(Character.isLetterOrDigit(c) || c == '+' || c == '-' || c == '.')) return false;
+        }
+        return true;
+    }
+
     /** Değerin bittiği karakter: eski kalıbın {@code [^&#\s]} sınıfının tümleyeni ({@code \s} = boşluk, \t \n \x0B \f \r). */
     private static boolean isValueStop(char c) {
         return c == '&' || c == '#' || c == ' ' || c == '\t' || c == '\n' || c == 0x0B || c == '\f' || c == '\r';

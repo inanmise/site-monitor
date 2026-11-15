@@ -14,6 +14,8 @@ export function toCsv(headers, rows) {
 
 /** Tarayıcıda indir — dosya adı tarih damgalı; jsdom'da (test) sessizce çıkar. */
 export function downloadCsv(filename, csv) {
+  // Dönüş (2026-11-15, ek): indirme başlatıldıysa true, tarayıcı başlatamadıysa false — dönüşü okuyan çağıran başarı
+  // bildirimi göstermez (okumayanlar için davranış aynı)
   try {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
@@ -24,7 +26,10 @@ export function downloadCsv(filename, csv) {
     a.click()
     a.remove()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
-  } catch { /* indirme ortamı yok */ }
+    return true
+  } catch {
+    return false   // indirme ortamı yok
+  }
 }
 
 export function stampedName(base) {

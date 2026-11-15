@@ -22,17 +22,11 @@ against them below: a duplicate key would render an invalid ConfigMap or silentl
   {{- end }}
   {{- end }}
   SCHEDULING_POOL_SIZE: {{ .Values.config.schedulingPoolSize | default "8" | quote }}
-  {{- if .Values.postgresql.enabled }}
-  DB_HOST: {{ printf "%s-postgresql" .Release.Name | quote }}
-  DB_PORT: "5432"
-  DB_NAME: {{ .Values.postgresql.auth.database | quote }}
-  DB_USER: {{ .Values.postgresql.auth.username | quote }}
-  {{- else }}
+  {{- /* External PostgreSQL only — postgresql.enabled=true fails below (the bundled subchart was removed). */}}
   DB_HOST: {{ .Values.config.dbHost | quote }}
   DB_PORT: {{ .Values.config.dbPort | quote }}
   DB_NAME: {{ .Values.config.dbName | quote }}
   DB_USER: {{ .Values.config.dbUser | quote }}
-  {{- end }}
   DB_POOL_MAX: {{ .Values.config.dbPoolMax | quote }}
   # Hikari minimum-idle (2026-10-23): idle connections per pod; the pool still grows to DB_POOL_MAX under load.
   DB_POOL_MIN: {{ include "site-monitor.dbPoolMin" . | quote }}
@@ -83,6 +77,11 @@ against them below: a duplicate key would render an invalid ConfigMap or silentl
   TRUST_CA_BUNDLE_PEM: {{ .Values.config.caBundlePem | quote }}
   {{- end }}
 {{- end }}
+{{- /* postgresql.enabled (prod gate 2026-11-15): the Bitnami subchart was removed, so "true" would point DB_HOST at
+"<release>-postgresql", a host nothing deploys - the pod would start and fail every database call. */ -}}
+{{- if (.Values.postgresql | default dict).enabled -}}
+{{- fail "postgresql.enabled=true is no longer supported: the bundled PostgreSQL subchart was removed and nothing deploys a database. Use an external PostgreSQL: set config.dbHost / dbPort / dbName / dbUser and secret.dbPassword (or secret.existingSecret), and leave postgresql.enabled=false." -}}
+{{- end -}}
 {{- $data := include "site-monitor.configData" . -}}
 {{- $managed := $data | fromYaml -}}
 {{- if hasKey $managed "Error" -}}

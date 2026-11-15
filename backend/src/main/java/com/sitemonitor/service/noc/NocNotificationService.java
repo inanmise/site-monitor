@@ -841,7 +841,17 @@ public class NocNotificationService {
         return type.activityType;
     }
 
-    private static String errorOf(Map<String, Object> ctx, AlertEvent event) {
+    static String errorOf(Map<String, Object> ctx, AlertEvent event) {
+        String alertType = event == null ? null : event.getAlertType();
+        if (com.sitemonitor.service.EscalationService.isDbQuery(alertType)) {
+            // Sorgu alarmı (kapı incelemesi 2026-11-15): bağlamın "detail" / "last_error" alanı HAM kural özetidir — maskeli
+            // kolonun değerini taşıyabilir (DbQueryAlarmText.breachSummary). Sahip postası DbQueryMailMask'tan geçer; 7/24
+            // postası da geçmeli. Yalnız sorgu hatası metni ("error", DbQueryErrors.scrub'dan — hücre değeri taşımaz) ya da
+            // saklanan alarm iletisi (oluşturulurken maskelenir) kullanılır.
+            Object err = ctx == null ? null : ctx.get("error");
+            if (err != null && !err.toString().isBlank() && !"null".equals(err.toString())) return err.toString();
+            return event.getMessage();
+        }
         if (ctx != null) {
             for (String k : new String[]{"error", "detail", "error_message"}) {
                 Object v = ctx.get(k);

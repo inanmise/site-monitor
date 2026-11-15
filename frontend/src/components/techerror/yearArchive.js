@@ -331,7 +331,8 @@ export async function runArchive(plan, {
         req.done()
       }
       if (signal?.aborted) return ABORTED
-      if (!res?.success && req.timedOut()) {
+      // İstemcinin kendi son tarihi (fetchTechErrorPdf, 2026-11-15) önce dolarsa da "zaman aşımı" ("başarısız" değil)
+      if (!res?.success && (req.timedOut() || res?.timedOut === true)) {
         missing.push({ item, reason: 'timeout', status: 0, error: null })
         break
       }

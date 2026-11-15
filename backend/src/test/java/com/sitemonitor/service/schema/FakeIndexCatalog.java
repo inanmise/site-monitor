@@ -41,6 +41,12 @@ class FakeIndexCatalog implements IndexCatalog {
     static final String BLOCKING = "BLOCKING";
     final AtomicInteger cancels = new AtomicInteger();
     boolean closed;
+    /** Bağlantı koptu (bir DDL 08xxx ile bitti): bu oturumdaki sonraki her çağrı 08003 — yeni oturum ({@code dead = false}) gerekir. */
+    boolean dead;
+
+    private void alive() throws SQLException {
+        if (dead) throw new SQLException("This connection has been closed.", "08003");
+    }
     boolean markerReadFails;
 
     static IndexFacts idx(String table, String name, List<String> cols) {
@@ -66,7 +72,8 @@ class FakeIndexCatalog implements IndexCatalog {
         return this;
     }
 
-    @Override public boolean tryLock(long key) {
+    @Override public boolean tryLock(long key) throws SQLException {
+        alive();
         if (heldElsewhere.contains(key)) return false;
         held.add(key);
         return true;
@@ -91,6 +98,7 @@ class FakeIndexCatalog implements IndexCatalog {
     }
 
     @Override public void upsertMarker(String key, int rows) throws SQLException {
+        alive();
         if (markerWriteFails) throw new SQLException("nişan yazılamadı", "08006");
         markers.put(key, rows);
         markerTimes.put(key, iso(markerClock.getAsLong()));
@@ -117,7 +125,8 @@ class FakeIndexCatalog implements IndexCatalog {
         return stats.stream().filter(s -> t.contains(s.table())).toList();
     }
 
-    @Override public List<Leftover> leftovers(List<String> t) {
+    @Override public List<Leftover> leftovers(List<String> t) throws SQLException {
+        alive();
         leftoverQueries.add(List.copyOf(t));
         return leftovers.stream().filter(l -> t.contains(l.table())).toList();
     }
@@ -125,6 +134,7 @@ class FakeIndexCatalog implements IndexCatalog {
     @Override public long indexBytes(String q) { return bytesAfter.getOrDefault(q, -1L); }
 
     @Override public void executeBounded(String ddl, long lockMs, long stmtMs) throws SQLException {
+        alive();
         beforeExecute.accept(ddl);
         executed.add(ddl + " | lock=" + lockMs + " | stmt=" + stmtMs);
         String state = failState.apply(ddl);
@@ -132,7 +142,13 @@ class FakeIndexCatalog implements IndexCatalog {
             throw new BlockingOthersException("2 oturum bu DDL'i bekliyordu",
                     new SQLException("canceling statement due to user request", "57014"));
         }
-        if (state != null) throw new SQLException("simulated " + state, state);
+        if (state != null) {
+            if (state.startsWith("08") && !"08000".equals(state)) {
+                dead = true;
+                held.clear();   // ölü oturumun kilidi sunucu süreci bitince düşer
+            }
+            throw new SQLException("simulated " + state, state);
+        }
         if (ddl.startsWith("DROP INDEX CONCURRENTLY IF EXISTS ")) {
             String q = ddl.substring("DROP INDEX CONCURRENTLY IF EXISTS ".length());
             tables.values().forEach(l -> l.removeIf(f -> f.qualifiedName().equals(q)));

@@ -1,6 +1,7 @@
 import { Component, useState } from 'react'
 import { currentVersion } from '../utils/appVersion.js'
 import { reloadForStaleBundle } from '../utils/chunkReloadGuard.js'
+import { timedFetch } from '../utils/timedFetch.js'
 import { AlertOctagon, Bug, ChevronDown } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
 import IssueReportModal from './IssueReportModal.jsx'
@@ -165,8 +166,9 @@ export default class ErrorBoundary extends Component {
       .join('').slice(0, 10000)
     this.setState({ reportState: 'sending' })
     try {
-      // api/client bilinçli kullanılmıyor: 401-redirect mantığı çökme anında araya girmesin diye çıplak fetch.
-      fetch('/api/client-error-report', {
+      // api/client bilinçli kullanılmıyor: 401-redirect mantığı çökme anında araya girmesin diye çıplak fetch — ama süre
+      // sınırlı (2026-11-15, "zaman aşımsız istek yok"): istek VE gövde 15 sn; aşılırsa "gönderilemedi" (ekran asılı kalmaz)
+      timedFetch('/api/client-error-report', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },

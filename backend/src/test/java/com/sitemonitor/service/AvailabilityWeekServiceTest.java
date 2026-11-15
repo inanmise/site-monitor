@@ -39,7 +39,7 @@ import static org.mockito.Mockito.when;
  * izleme — duraklatılmış ve envanteri pasif türev Port / DNS satırı (İzleme Panosu kuralı) sayılmaz; (5) en kötüler hedefin
  * altındakiler, en düşük önce, tavanlı; (6) kurum geneli görüntü paylaşılır — iki kapsam TTL içinde tür başına TEK okuma; kaynak
  * kartların ısıttığı 30 GÜNLÜK ortak SLA önbelleğinin 7 günlük dönemi (ayrı 7 günlük tarama yok); (7) bir tür okunamazsa
- * istisna (kısmi toplam yok) ve saklanmaz.
+ * yalnız o tür atlanır ve söylenir (kısmi, hükümsüz; saklanmaz), hiçbiri okunamazsa istisna; yavaş tür süre sınırında atlanır (2026-11-15).
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -271,14 +271,69 @@ class AvailabilityWeekServiceTest {
     }
 
     @Test
-    @DisplayName("bir tür okunamazsa UnavailableException (sekiz türün toplamı filo gibi gösterilmez) ve görüntü saklanmaz")
-    void oneTypeUnreadable_isUnavailable() {
+    @DisplayName("2026-11-15 kapı: bir tür okunamazsa YALNIZ o tür atlanır ve söylenir (partial + unavailable_types), hüküm ve ölçülmemiş sayısı bilinmiyor; kısmi görüntü saklanmaz")
+    void oneTypeUnreadable_isPartial() {
         AvailabilityWeekService cached = service(60_000);
         monitor("http", 1, 5L, "A", 1_000, 0, 0);
         monitor("ping", 2, 5L, "B", 1_000, 0, 0);
         when(sparklineService.availabilityAll(eq("ping"), anyInt())).thenThrow(new IllegalStateException("db"))
                 .thenAnswer(i -> avail.get("ping"));
+        Map<String, Object> first = cached.build(ALL);
+        assertThat(first).containsEntry("monitors", 1L).containsEntry("partial", true)
+                .containsEntry("unavailable_types", List.of("ping"));
+        assertThat(first.get("meets_target")).as("kısmi toplam filo hükmü vermez").isNull();
+        assertThat(first.get("unmeasured")).isNull();
+        Map<String, Object> second = cached.build(ALL);   // aynı TTL: kısmi görüntü bellekte değil → tam
+        assertThat(second).containsEntry("monitors", 2L).containsEntry("partial", false)
+                .containsEntry("unavailable_types", List.of()).containsEntry("meets_target", true);
+    }
+
+    @Test
+    @DisplayName("2026-11-15 kapı: hiçbir tür okunamazsa UnavailableException (kutu \"okunamadı\" der, asla %0 / %100)")
+    void allTypesUnreadable_isUnavailable() {
+        AvailabilityWeekService cached = service(60_000);
+        // her türün okuması düşer (izleme kimlikleri dahil) — izlemesi olmayan tür "0 izleme" olarak OKUNMUŞ sayılırdı
+        when(sparklineService.monitorRefs(anyString())).thenThrow(new IllegalStateException("db"));
         assertThatThrownBy(() -> cached.build(ALL)).isInstanceOf(AvailabilityWeekService.UnavailableException.class);
-        assertThat(cached.build(ALL)).containsEntry("monitors", 2L);   // aynı TTL: başarısız görüntü bellekte değil
+    }
+
+    @Test
+    @DisplayName("2026-11-15 kapı: YAVAŞ tür diğerlerini bekletmez — süre sınırında atlanır ve söylenir; okuma arka planda sürer (tek uçuş), sonraki yoklama tam")
+    void slowTypeDoesNotBlockOthers() throws Exception {
+        AvailabilityWeekService s = service(60_000);
+        ReflectionTestUtils.setField(s, "typeTimeoutMs", 300L);
+        monitor("http", 1, 5L, "A", 1_000, 0, 0);
+        monitor("ping", 2, 5L, "B", 1_000, 10, 1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger pingReads = new java.util.concurrent.atomic.AtomicInteger();
+        when(sparklineService.availabilityAll(eq("ping"), anyInt())).thenAnswer(i -> {
+            pingReads.incrementAndGet();
+            release.await(10, java.util.concurrent.TimeUnit.SECONDS);   // soğuk önbellek: uzun tarama
+            return avail.get("ping");
+        });
+        try {
+            long t0 = System.nanoTime();
+            Map<String, Object> first = s.build(ALL);
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            assertThat(ms).as("istek tür süre sınırında döner").isLessThan(5_000);
+            assertThat(first).containsEntry("partial", true).containsEntry("unavailable_types", List.of("ping"))
+                    .containsEntry("monitors", 1L);
+            assertThat(first.get("meets_target")).isNull();
+            // İkinci istek uçuştaki okumaya katılır (yeni tarama başlatmaz)
+            Map<String, Object> again = s.build(ALL);
+            assertThat(again).containsEntry("partial", true);
+            assertThat(pingReads.get()).as("tek uçuş").isEqualTo(1);
+        } finally {
+            release.countDown();
+        }
+        // Arka plandaki okuma biter → sonraki yoklama tam
+        long until = System.currentTimeMillis() + 5_000;
+        Map<String, Object> full;
+        do {
+            full = s.build(ALL);
+            if (Boolean.FALSE.equals(full.get("partial"))) break;
+            Thread.sleep(20);
+        } while (System.currentTimeMillis() < until);
+        assertThat(full).containsEntry("partial", false).containsEntry("monitors", 2L);
     }
 }

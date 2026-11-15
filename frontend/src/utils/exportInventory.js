@@ -3,6 +3,7 @@ import { drawBrandHeader } from './pdfBrand.js'
 import { INVENTORY_FLAGS } from './inventoryFlags.js'
 import { csvCell } from './csv.js'
 import { downloadBlob } from './csvExport.js'
+import { timedFetch } from './timedFetch.js'
 
 
 const teamName = (id, teams) =>
@@ -144,9 +145,12 @@ function estimateDomainBlockHeight(it) {
   return h
 }
 
+/** Yerel varlık (yazı tipi) indirmesinin süre sınırı (2026-11-15, "zaman aşımsız istek yok"): istek VE gövde. */
+const ASSET_FETCH_TIMEOUT_MS = 30_000
+
 async function fetchAsBase64(url) {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`Failed to load ${url}`)
+  const res = await timedFetch(url, {}, ASSET_FETCH_TIMEOUT_MS)
+  if (!res.ok) { res.done(); throw new Error(`Failed to load ${url}`) }
   const buf = await res.arrayBuffer()
   // Chunked conversion to avoid call-stack overflow for large files
   const bytes = new Uint8Array(buf)

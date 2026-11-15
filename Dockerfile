@@ -144,7 +144,7 @@ LABEL org.opencontainers.image.title="Site Monitor" \
       org.opencontainers.image.revision="${GIT_COMMIT}" \
       org.opencontainers.image.source="https://github.com/inanmise/site-monitor" \
       org.opencontainers.image.vendor="Site Monitor" \
-      org.opencontainers.image.licenses="MIT"
+      org.opencontainers.image.licenses="NOASSERTION"
 
 RUN addgroup -g 1000 appgroup && adduser -u 1000 -G appgroup -s /bin/sh -D appuser
 

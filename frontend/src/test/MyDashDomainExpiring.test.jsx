@@ -94,6 +94,12 @@ describe('Panom — Yakında bitecek alan adları', () => {
     expect(w.querySelector('[data-slot="mydash-dexp-warning"]')).toHaveTextContent('1')
     fireEvent.click(within(rows[0]).getByRole('button'))
     expect(navs.at(-1)).toEqual({ tab: 'domain', params: { monitor: 2 } })
+    // Kutucuktaki sayı açılan listeye eşit (2026-11-15, prod kapısı): kutu duraklatılanı (durdu.com, dolmuş) saymaz →
+    // bağlantı da "Yalnız etkin izlemeler" (dq=active) süzgeciyle açar; süzgeçsiz liste duraklatılanı da gösterirdi
+    fireEvent.click(w.querySelector('[data-slot="mydash-dexp-expired"]'))
+    expect(navs.at(-1)).toEqual({ tab: 'domain', params: { dq: 'active', dx: 'expired' } })
+    fireEvent.click(w.querySelector('[data-slot="mydash-dexp-unknown"]'))
+    expect(navs.at(-1)).toEqual({ tab: 'domain', params: { dq: 'active', dx: 'unknown' } })
   })
 
   it('bitişi bilinmeyen varken asla yeşil değil; hepsi biliniyor ve eşikte değilse yeşil; yetki yoksa gri', async () => {

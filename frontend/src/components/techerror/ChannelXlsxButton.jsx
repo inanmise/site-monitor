@@ -79,6 +79,11 @@ export default function ChannelXlsxButton({ channel, year, blocked = false, onBu
         toast.error(t('te.xlsx.buildFailedText'), { details: { code: clientErrorCode('XLSX_BUILD_FAILED', e) } })
         return
       }
+      // Tarayıcı indirmeyi başlatamadıysa başarı DEĞİL (2026-11-15, prod kapısı)
+      if (out?.ok === false) {
+        toast.error(t('inv.downloadFailed'))
+        return
+      }
       toast.success(t('te.xlsx.done', out.name))
     } finally {
       busyRef.current = false

@@ -292,6 +292,17 @@ class StatusPageServiceTest {
     }
 
     @Test
+    @DisplayName("2026-11-15 kapı: 7 günlük kullanılabilirlik hata varken ASLA %100 (100 000 kontrolde 2 hata → 99,99)")
+    void uptimeNeverHundredWithFailure() {
+        rows.add(row("http", 1, "web", "https://pay.example.com", 14L, "SY", "Ödeme", "up"));
+        Map<String, Object> a = new LinkedHashMap<>(Map.of("monitor_type", "HTTP", "monitor_key", "1", "total", 100_000L, "up", 99_998L));
+        String today = java.time.LocalDate.now(ZoneOffset.UTC).toString();
+        String from = java.time.LocalDate.now(ZoneOffset.UTC).minusDays(7).toString();
+        when(jdbc.queryForList(anyString(), eq(from), eq(today))).thenReturn(List.of(a));
+        assertThat(service(all(), "14|ödeme")).containsEntry("uptime_7d", 99.99);
+    }
+
+    @Test
     @DisplayName("Rollup okunamazsa (H2 / tablo yok): available=false, hizmet uptime'ı null — sayfa yine çizilir")
     void uptimeUnavailable() {
         rows.add(row("http", 1, "web", "https://pay.example.com", 14L, "SY", "Ödeme", "up"));

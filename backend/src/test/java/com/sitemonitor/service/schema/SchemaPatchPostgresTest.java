@@ -122,6 +122,115 @@ class SchemaPatchPostgresTest {
         assertThat(PostgresIt.app().secondBoot().errorLogs()).as("açılış #2 ERROR günlükleri").isEmpty();
     }
 
+    // ── Alan şema yamaları (<Alan>SchemaPatch, kapı incelemesi 2026-11-15) ──────────────────────────────────────────
+    // SchemaPatchRunner'ın failed sayacı bunları GÖRMEZ: her biri kendi try/catch'iyle WARN yazar ve açılış sürer. Prod'da
+    // ilk görüldükleri yer pod günlüğüydü (ör. yarışı kaybeden CREATE, kilit bekleme 55P03, yanlış yazılmış indeks).
+
+    /** Alan şema yamalarının ve DDL sabitlerinin kaynakları (surefire çalışma dizini {@code backend/}). */
+    private static List<Path> areaPatchSources() throws IOException {
+        Set<String> ddlHolders = Set.of("EvalStateSql.java", "CheckJobSql.java", "CertSweepSql.java", "CacheBus.java",
+                "BaselineSampleStore.java", "ClusterHealthStore.java", "ManualEvalInbox.java");
+        try (var files = Files.walk(Path.of("src/main/java/com/sitemonitor"))) {
+            return files.filter(f -> {
+                String n = f.getFileName().toString();
+                boolean patch = n.endsWith("SchemaPatch.java") && !n.equals("SchemaPatchRunner.java");
+                return patch || ddlHolders.contains(n);
+            }).sorted().toList();
+        }
+    }
+
+    @Test
+    @DisplayName("Alan şema yamaları (<Alan>SchemaPatch) iki açılışta da WARN yazmaz — failed sayacının görmediği yamalar")
+    void areaSchemaPatches_logNoWarnOnEitherBoot() throws IOException {
+        Set<String> patchLoggers = new LinkedHashSet<>();
+        for (Path f : areaPatchSources()) {
+            String n = f.getFileName().toString();
+            if (n.endsWith("SchemaPatch.java")) patchLoggers.add(n.substring(0, n.length() - ".java".length()));
+        }
+        assertThat(patchLoggers).as("alan şema yaması sınıfları bulundu mu").hasSizeGreaterThanOrEqualTo(15);
+        for (PostgresIt.BootRun run : List.of(PostgresIt.app().firstBoot(), PostgresIt.app().secondBoot())) {
+            List<String> warns = run.warnLogs().stream()
+                    .filter(l -> patchLoggers.stream().anyMatch(c -> l.contains("." + c + " — ")))
+                    .toList();
+            assertThat(warns).as("alan şema yaması WARN satırları (iki açılışta da boş olmalı)").isEmpty();
+        }
+    }
+
+    @Test
+    @DisplayName("Alan şema yamalarının adı geçen her tablosu ve indeksi açılıştan sonra PostgreSQL'de VAR (ve geçerli)")
+    void areaSchemaPatchIndexesAndTablesExist() throws IOException {
+        // Tablo adı ya düz yazılır ya bir sabitle eklenir ("CREATE TABLE IF NOT EXISTS " + TABLE / Sınıf.TABLE): sabit aynı
+        // dosyada, Sınıf.SABİT ise Sınıf.java'da "static final String SABİT = "ad";" olarak aranır.
+        Pattern table = Pattern.compile(
+                "(?i)CREATE\\s+TABLE\\s+IF\\s+NOT\\s+EXISTS\\s+(?:([a-z_][a-z0-9_]*)\\b|\"\\s*\\+\\s*(?:(\\w+)\\.)?(\\w+))");
+        Pattern index = Pattern.compile(
+                "(?i)CREATE\\s+(?:UNIQUE\\s+)?INDEX\\s+(?:CONCURRENTLY\\s+)?(?:IF\\s+NOT\\s+EXISTS\\s+)?([a-z_][a-z0-9_]*)\\s+ON\\b");
+        Pattern drop = Pattern.compile("(?i)DROP\\s+(?:TABLE|INDEX)\\s+(?:CONCURRENTLY\\s+)?(?:IF\\s+EXISTS\\s+)?([a-z_][a-z0-9_]*)");
+        Map<String, Path> byClass = new LinkedHashMap<>();
+        try (var files = Files.walk(Path.of("src/main/java/com/sitemonitor"))) {
+            files.filter(f -> f.toString().endsWith(".java"))
+                    .forEach(f -> byClass.putIfAbsent(f.getFileName().toString().replace(".java", ""), f));
+        }
+        Set<String> tables = new LinkedHashSet<>();
+        Set<String> indexes = new LinkedHashSet<>();
+        Set<String> dropped = new LinkedHashSet<>();
+        List<String> unresolved = new ArrayList<>();
+        for (Path f : areaPatchSources()) {
+            String src = withoutComments(Files.readString(f, StandardCharsets.UTF_8));
+            Map<String, String> own = stringConstants(src);
+            Matcher m = table.matcher(src);
+            while (m.find()) {
+                if (m.group(1) != null) { tables.add(m.group(1).toLowerCase(Locale.ROOT)); continue; }
+                Map<String, String> where = m.group(2) == null ? own
+                        : byClass.containsKey(m.group(2))
+                                ? stringConstants(Files.readString(byClass.get(m.group(2)), StandardCharsets.UTF_8)) : Map.of();
+                String v = where.get(m.group(3));
+                if (v != null) tables.add(v); else unresolved.add(f.getFileName() + ":" + m.group(3));
+            }
+            m = index.matcher(src);
+            while (m.find()) indexes.add(m.group(1).toLowerCase(Locale.ROOT));
+            m = drop.matcher(src);
+            while (m.find()) dropped.add(m.group(1).toLowerCase(Locale.ROOT));
+        }
+        // Kalıcı değerlendirme durumu tabloları adı bir enum'dan alır (statik çözülemez) — sabitlerden eklenir
+        tables.addAll(List.of(com.sitemonitor.service.evalstate.EvalStateSql.EVAL_STATE,
+                com.sitemonitor.service.evalstate.EvalStateSql.LAST_STATUS,
+                com.sitemonitor.service.evalstate.EvalStateSql.TYPE_STATE,
+                com.sitemonitor.service.evalstate.EvalStateSql.CONFIRMATIONS));
+        unresolved.removeIf(u -> u.startsWith("EvalStateSql.java:"));
+        tables.removeAll(dropped);
+        indexes.removeAll(dropped);
+        assertThat(unresolved).as("adı çözülemeyen CREATE TABLE (yeni bir ad biçimi — testi genişletin)").isEmpty();
+        assertThat(tables).as("alan yamalarında CREATE TABLE bulundu mu (ayrıştırıcı canlı mı)").hasSizeGreaterThanOrEqualTo(14);
+        assertThat(indexes).as("alan yamalarında CREATE INDEX bulundu mu").hasSizeGreaterThanOrEqualTo(10);
+        List<String> missing = new ArrayList<>();
+        for (String t : tables) {
+            if (!Boolean.TRUE.equals(jdbc().queryForObject("SELECT to_regclass(?) IS NOT NULL", Boolean.class, t))) {
+                missing.add("tablo " + t);
+            }
+        }
+        for (String i : indexes) {
+            List<Boolean> valid = jdbc().queryForList("SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid"
+                    + " JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = ?",
+                    Boolean.class, i);
+            if (valid.isEmpty()) missing.add("indeks " + i);
+            else if (!Boolean.TRUE.equals(valid.get(0))) missing.add("INVALID indeks " + i);
+        }
+        assertThat(missing).as("alan şema yamalarının kurmadığı nesneler").isEmpty();
+    }
+
+    private static String withoutComments(String src) {
+        return src.replaceAll("(?s)/\\*.*?\\*/", " ").replaceAll("(?m)^\\s*//.*$", " ");
+    }
+
+    /** {@code static final String AD = "deger";} sabitleri (yalnız tablo adı biçimindeki değerler). */
+    private static Map<String, String> stringConstants(String src) {
+        Matcher m = Pattern.compile("static\\s+final\\s+String\\s+(\\w+)\\s*=\\s*\"([a-z_][a-z0-9_]*)\"\\s*;").matcher(src);
+        Map<String, String> out = new LinkedHashMap<>();
+        while (m.find()) out.put(m.group(1), m.group(2));
+        return out;
+    }
+
     @Test
     @DisplayName("Açılan uygulama PostgreSQL'le /health UP döner, /api/branding açık, oturumsuz /api 401")
     void bootedApp_servesHealthUp_andGatesApi() throws Exception {

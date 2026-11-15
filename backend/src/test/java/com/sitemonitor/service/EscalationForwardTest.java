@@ -190,6 +190,24 @@ class EscalationForwardTest {
     }
 
     @Test
+    @DisplayName("2026-11-15 kapı: iletim postası kurulurken / gönderilirken istisna → FAILED: <sınıf> satırı yazılır (sessiz kalmaz), ileti metni yazılmaz; sahip postası etkilenmez")
+    void forwardSendExceptionLeavesFailedRow() {
+        routing(Map.of(TEAM_A, List.of(toB(B_MAIL))));
+        when(emailService.sendAlert(ArgumentMatchers.<String[]>argThat(a -> a != null && Arrays.asList(a).contains(B_MAIL)),
+                anyString(), anyString(), anyString(), anyString(), anyString(), any(), any()))
+                .thenThrow(new IllegalStateException("smtp.internal:2525 gizli ayrıntı"));
+        service.processResults(List.of(hijacked()));
+
+        assertThat(sends().get(0)).containsExactly(A_MAIL);   // sahip postası gitti
+        List<NotificationLog> fwd = forwardLogs();
+        assertThat(fwd).hasSize(1);
+        assertThat(fwd.get(0).getEmailStatus()).isEqualTo("FAILED: IllegalStateException");
+        assertThat(fwd.get(0).getEmailStatus()).doesNotContain("smtp.internal");
+        assertThat(fwd.get(0).getRecipientEmail()).contains(B_MAIL);
+        assertThat(fwd.get(0).getRecipientName()).isEqualTo(B_NAME);
+    }
+
+    @Test
     @DisplayName("açılış: sahip postası aynen + alıcı takıma AYRI posta (bant bağlamı), FORWARD satırı, damga, push")
     void openingForwardedSeparately() {
         routing(Map.of(TEAM_A, List.of(toB(B_MAIL))));

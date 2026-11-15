@@ -10,6 +10,7 @@ import { claimExpiredRedirect, signalSessionExpired } from '../utils/sessionExpi
 import { isMaintenancePayload, signalMaintenance } from '../utils/systemMaintenance.js'
 import { isUsernamePrefixPayload, prefixesOf, signalUsernamePrefix } from '../utils/usernamePrefix.js'
 import { downloadBlob } from '../utils/csvExport.js'
+import { isAbortish, raceSignal, timedFetch, deadlineSignal } from '../utils/timedFetch.js'
 import { clearLogoutPending, holdLoginStart, settleLogoutsBeforeLogin } from '../utils/pendingLogout.js'
 import {
   ApiError, attachErrorInfo, errorInfoOf, networkMessage, nonJsonMessage, normalizeErrorBody, parseRetryAfter, rememberErrorInfo,
@@ -38,10 +39,20 @@ function headerOf(res, name) {
  * kişi başı sınır). Ağ hatası ve JSON olmayan hata yanıtı (proxy sayfası) çevrilmiş açıklayıcı metinle döner (inceleme
  * 2026-10-18: tarayıcının ham "Failed to fetch"i ya da "NETWORK" kullanıcıya gösteriliyordu); künye `errorInfo`'da.
  */
-async function fetchTechErrorPdf(id, signal = null) {
+async function fetchTechErrorPdf(id, signal = null, timeoutMs = REPORT_TIMEOUT_MS) {
+  // Süre sınırı (2026-11-15, "zaman aşımsız istek yok"): istek VE gövde tek son tarihle sınırlı ({@link timedFetch});
+  // çağıranın sinyali (yıl arşivi) korunur ve son tarihle bağlanır. Süre dolması `REQUEST_TIMEOUT` yüküdür (iptal değil).
+  let res
   try {
-    const res = await fetch(`${BASE}/tech-error-reports/reports/${id}/pdf`,
-      { credentials: 'include', headers: { 'X-Lang': uiLang() }, ...(signal ? { signal } : {}) })
+    res = await timedFetch(`${BASE}/tech-error-reports/reports/${id}/pdf`,
+      { credentials: 'include', headers: { 'X-Lang': uiLang() }, ...(signal ? { signal } : {}) }, timeoutMs)
+  } catch (e) {
+    // Son tarih dolması TimeoutError'dur (timedFetch); kaynağı bilinmeyen AbortError eskisi gibi iptal sayılır
+    if (signal?.aborted || e?.name === 'AbortError') return { success: false, status: 0, aborted: true, error: null }
+    if (isAbortish(e)) return { ...noResponsePayload('timeout'), timedOut: true }
+    return networkFailurePayload()
+  }
+  try {
     if (!res.ok) {
       let body = null
       try { body = await res.json() } catch { body = null }
@@ -65,8 +76,12 @@ async function fetchTechErrorPdf(id, signal = null) {
     try { name = star ? decodeURIComponent(star[1]) : (plain ? plain[1] : null) } catch { name = plain ? plain[1] : null }
     return { success: true, blob, name }
   } catch (e) {
-    if (e?.name === 'AbortError' || signal?.aborted) return { success: false, status: 0, aborted: true, error: null }
+    // Son tarih dolması TimeoutError'dur (timedFetch); kaynağı bilinmeyen AbortError eskisi gibi iptal sayılır
+    if (signal?.aborted || e?.name === 'AbortError') return { success: false, status: 0, aborted: true, error: null }
+    if (isAbortish(e)) return { ...noResponsePayload('timeout'), timedOut: true }
     return networkFailurePayload()
+  } finally {
+    res.done()
   }
 }
 
@@ -110,10 +125,11 @@ async function readResourceScanImage(path, url, signal, sig) {
   const ended = () => (signal?.aborted ? { success: false, status: 0, aborted: true, error: null } : { ...noResponsePayload('timeout'), timedOut: true })
   let res
   try {
-    res = await fetch(`${BASE}${path}`, {
+    // Yarış (2026-11-15): sinyali dinlemeyen taşıyıcı da son tarihte bırakılır
+    res = await raceSignal(fetch(`${BASE}${path}`, {
       method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-Lang': uiLang() },
       body: JSON.stringify({ url }), ...(sig ? { signal: sig } : {}),
-    })
+    }), sig)
   } catch (e) {
     if (e?.name === 'AbortError' || e?.name === 'TimeoutError' || sig?.aborted) return ended()
     return networkFailurePayload()
@@ -122,7 +138,7 @@ async function readResourceScanImage(path, url, signal, sig) {
     recordFailure(path, res.status)
     if (res.status === 401) pingSessionPath()
     let body = null
-    try { body = await res.json() } catch { body = null }
+    try { body = await raceSignal(res.json(), sig) } catch { body = null }
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       const raw = nonJsonErrorPayload(res.status, res)
       const wait = parseRetryAfter(headerOf(res, 'Retry-After'))
@@ -140,7 +156,7 @@ async function readResourceScanImage(path, url, signal, sig) {
   }
   let blob
   try {
-    blob = await res.blob()
+    blob = await raceSignal(res.blob(), sig)
   } catch (e) {
     if (e?.name === 'AbortError' || e?.name === 'TimeoutError' || sig?.aborted) return ended()
     return networkFailurePayload()
@@ -164,19 +180,30 @@ async function readResourceScanImage(path, url, signal, sig) {
  * `{ success: false, status, code, error }`. 401 oturum yolunu çalıştırır; JSON olmayan hata (proxy sayfası) ve ağ hatası
  * çevrilmiş metinle döner; tarayıcı indirmeyi başlatamadıysa `DOWNLOAD_FAILED` (başarı sayılmaz).
  */
-async function downloadAlarmFeedExport(qs) {
+async function downloadAlarmFeedExport(qs, timeoutMs = EXPORT_FETCH_TIMEOUT_MS) {
+  // Süre sınırı (2026-11-15, "zaman aşımsız istek yok"): istek VE gövde tek son tarihle ({@link timedFetch}); süre
+  // dolunca çevrilmiş "zaman aşımı" yükü döner, meşgul durum kalkar.
   let res
   try {
-    res = await fetch(`${BASE}/admin/alarm-feed/requests/export${qs ? `?${qs}` : ''}`,
-      { credentials: 'include', headers: { 'X-Lang': uiLang() } })
-  } catch {
-    return networkFailurePayload()
+    res = await timedFetch(`${BASE}/admin/alarm-feed/requests/export${qs ? `?${qs}` : ''}`,
+      { credentials: 'include', headers: { 'X-Lang': uiLang() } }, timeoutMs)
+  } catch (e) {
+    return isAbortish(e) ? noResponsePayload('timeout') : networkFailurePayload()
   }
+  try {
+    return await finishAlarmFeedExport(res)
+  } catch (e) {
+    return isAbortish(e) ? noResponsePayload('timeout') : networkFailurePayload()
+  } finally {
+    res.done()
+  }
+}
+
+async function finishAlarmFeedExport(res) {
   if (!res.ok) {
     recordFailure('/admin/alarm-feed/requests/export', res.status)
     if (res.status === 401) pingSessionPath()
-    let body = null
-    try { body = await res.json() } catch { body = null }
+    const body = await errorBodyOf(res)
     if (!body || typeof body !== 'object' || Array.isArray(body)) return nonJsonErrorPayload(res.status, res)
     const normalized = normalizeErrorBody(body, {
       status: res.status, requestId: headerOf(res, 'X-Request-Id'), retryAfter: headerOf(res, 'Retry-After'), lang: uiLang(), exposeStatus: false,
@@ -185,8 +212,7 @@ async function downloadAlarmFeedExport(qs) {
     normalized.status = res.status
     return normalized
   }
-  let blob
-  try { blob = await res.blob() } catch { return networkFailurePayload() }
+  const blob = await res.blob()   // ağ hatası / süre → çağıranın catch'i
   const disp = headerOf(res, 'Content-Disposition') || ''
   const star = /filename\*=UTF-8''([^;]+)/i.exec(disp)
   const plain = /filename="?([^";]+)"?/.exec(disp)
@@ -221,7 +247,8 @@ async function readPageSpeedResourcesCsv(id, qs, sig) {
   const path = `/monitoring/pagespeed/${encodeURIComponent(id)}/resources/export`
   let res
   try {
-    res = await fetch(`${BASE}${path}${qs ? `?${qs}` : ''}`, { credentials: 'include', headers: { 'X-Lang': uiLang() }, ...(sig ? { signal: sig } : {}) })
+    // Yarış (2026-11-15): sinyali dinlemeyen taşıyıcı da son tarihte bırakılır
+    res = await raceSignal(fetch(`${BASE}${path}${qs ? `?${qs}` : ''}`, { credentials: 'include', headers: { 'X-Lang': uiLang() }, ...(sig ? { signal: sig } : {}) }), sig)
   } catch (e) {
     if (e?.name === 'AbortError' || e?.name === 'TimeoutError' || sig?.aborted) return noResponsePayload('timeout')
     return networkFailurePayload()
@@ -230,7 +257,12 @@ async function readPageSpeedResourcesCsv(id, qs, sig) {
     recordFailure(path, res.status)
     if (res.status === 401) pingSessionPath()
     let body = null
-    try { body = await res.json() } catch { body = null }
+    try {
+      body = await raceSignal(res.json(), sig)
+    } catch (e) {
+      if (isAbortish(e) || sig?.aborted) return noResponsePayload('timeout')
+      body = null
+    }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return nonJsonErrorPayload(res.status, res)
     const normalized = normalizeErrorBody(body, {
       status: res.status, requestId: headerOf(res, 'X-Request-Id'), retryAfter: headerOf(res, 'Retry-After'), lang: uiLang(), exposeStatus: false,
@@ -241,7 +273,7 @@ async function readPageSpeedResourcesCsv(id, qs, sig) {
   }
   let blob
   try {
-    blob = await res.blob()
+    blob = await raceSignal(res.blob(), sig)
   } catch (e) {
     if (e?.name === 'AbortError' || e?.name === 'TimeoutError' || sig?.aborted) return noResponsePayload('timeout')
     return networkFailurePayload()
@@ -266,18 +298,28 @@ function activityQuery(params = {}) {
  * dışa aktarımıyla aynı (`downloadAlarmFeedExport`): 401 oturum yolu, 429 bekleme önerisi, JSON olmayan / ağ hatası
  * çevrilmiş metinle; tarayıcı indirmeyi başlatamadıysa `DOWNLOAD_FAILED` (başarı sayılmaz).
  */
-async function downloadActivityCsv(qs) {
+async function downloadActivityCsv(qs, timeoutMs = EXPORT_FETCH_TIMEOUT_MS) {
+  // Süre sınırı (2026-11-15): istek VE gövde tek son tarihle ({@link timedFetch}); süre dolunca "zaman aşımı" yükü
   let res
   try {
-    res = await fetch(`${BASE}/activity/export${qs ? `?${qs}` : ''}`, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
-  } catch {
-    return networkFailurePayload()
+    res = await timedFetch(`${BASE}/activity/export${qs ? `?${qs}` : ''}`, { credentials: 'include', headers: { 'X-Lang': uiLang() } }, timeoutMs)
+  } catch (e) {
+    return isAbortish(e) ? noResponsePayload('timeout') : networkFailurePayload()
   }
+  try {
+    return await finishActivityCsv(res)
+  } catch (e) {
+    return isAbortish(e) ? noResponsePayload('timeout') : networkFailurePayload()
+  } finally {
+    res.done()
+  }
+}
+
+async function finishActivityCsv(res) {
   if (!res.ok) {
     recordFailure('/activity/export', res.status)
     if (res.status === 401) pingSessionPath()
-    let body = null
-    try { body = await res.json() } catch { body = null }
+    const body = await errorBodyOf(res)
     if (!body || typeof body !== 'object' || Array.isArray(body)) return nonJsonErrorPayload(res.status, res)
     const normalized = normalizeErrorBody(body, {
       status: res.status, requestId: headerOf(res, 'X-Request-Id'), retryAfter: headerOf(res, 'Retry-After'), lang: uiLang(), exposeStatus: false,
@@ -288,8 +330,7 @@ async function downloadActivityCsv(qs) {
     if (ra != null) normalized.retryAfter = ra
     return normalized
   }
-  let blob
-  try { blob = await res.blob() } catch { return networkFailurePayload() }
+  const blob = await res.blob()   // ağ hatası / süre → çağıranın catch'i
   const disp = headerOf(res, 'Content-Disposition') || ''
   const star = /filename\*=UTF-8''([^;]+)/i.exec(disp)
   const plain = /filename="?([^";]+)"?/.exec(disp)
@@ -328,18 +369,28 @@ function incidentsQuery(params = {}) {
  * (`downloadBlob` — Safari / iPad). 401 oturum yolu, 429 bekleme önerisi, JSON olmayan / ağ hatası çevrilmiş metinle;
  * tarayıcı indirmeyi başlatamadıysa `DOWNLOAD_FAILED`. `X-Export-Truncated` → `truncated`.
  */
-async function downloadIncidentsCsv(qs) {
+async function downloadIncidentsCsv(qs, timeoutMs = EXPORT_FETCH_TIMEOUT_MS) {
+  // Süre sınırı (2026-11-15): istek VE gövde tek son tarihle ({@link timedFetch}); süre dolunca "zaman aşımı" yükü
   let res
   try {
-    res = await fetch(`${BASE}/monitoring/incidents/export${qs}`, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
-  } catch {
-    return networkFailurePayload()
+    res = await timedFetch(`${BASE}/monitoring/incidents/export${qs}`, { credentials: 'include', headers: { 'X-Lang': uiLang() } }, timeoutMs)
+  } catch (e) {
+    return isAbortish(e) ? noResponsePayload('timeout') : networkFailurePayload()
   }
+  try {
+    return await finishIncidentsCsv(res)
+  } catch (e) {
+    return isAbortish(e) ? noResponsePayload('timeout') : networkFailurePayload()
+  } finally {
+    res.done()
+  }
+}
+
+async function finishIncidentsCsv(res) {
   if (!res.ok) {
     recordFailure('/monitoring/incidents/export', res.status)
     if (res.status === 401) pingSessionPath()
-    let body = null
-    try { body = await res.json() } catch { body = null }
+    const body = await errorBodyOf(res)
     if (!body || typeof body !== 'object' || Array.isArray(body)) return nonJsonErrorPayload(res.status, res)
     const normalized = normalizeErrorBody(body, {
       status: res.status, requestId: headerOf(res, 'X-Request-Id'), retryAfter: headerOf(res, 'Retry-After'), lang: uiLang(), exposeStatus: false,
@@ -348,8 +399,7 @@ async function downloadIncidentsCsv(qs) {
     normalized.status = res.status
     return normalized
   }
-  let blob
-  try { blob = await res.blob() } catch { return networkFailurePayload() }
+  const blob = await res.blob()   // ağ hatası / süre → çağıranın catch'i
   const disp = headerOf(res, 'Content-Disposition') || ''
   const plain = /filename="?([^";]+)"?/.exec(disp)
   const p = (n) => String(n).padStart(2, '0')
@@ -391,22 +441,36 @@ export function maskedColumnsHeader(value) {
   }).filter(Boolean)
 }
 
-async function sqlExportFile(body, { signal } = {}) {
+async function sqlExportFile(body, { signal, timeoutMs = SQL_EXPORT_TIMEOUT_MS } = {}) {
+  // Süre sınırı (2026-11-15, "zaman aşımsız istek yok"): istek VE gövde tek son tarihle ({@link timedFetch}); çağıranın
+  // "Durdur" sinyali korunur (`ABORTED`), süre dolması çevrilmiş "zaman aşımı" yüküdür.
+  const ended = (e) => {
+    if (signal?.aborted) return { success: false, status: 0, code: 'ABORTED', error: null }
+    return isAbortish(e) ? noResponsePayload('timeout') : networkFailurePayload()
+  }
   let res
   try {
-    res = await fetch(`${BASE}/admin/sql/export`, {
+    res = await timedFetch(`${BASE}/admin/sql/export`, {
       method: 'POST', credentials: 'include', ...(signal ? { signal } : {}),
       headers: { 'Content-Type': 'application/json', 'X-Lang': uiLang() }, body: JSON.stringify(body),
-    })
+    }, timeoutMs)
   } catch (e) {
-    if (e?.name === 'AbortError') return { success: false, status: 0, code: 'ABORTED', error: null }
-    return networkFailurePayload()
+    return ended(e)
   }
+  try {
+    return await finishSqlExport(res, body)
+  } catch (e) {
+    return ended(e)
+  } finally {
+    res.done()
+  }
+}
+
+async function finishSqlExport(res, body) {
   if (!res.ok) {
     recordFailure('/admin/sql/export', res.status)
     if (res.status === 401) pingSessionPath()
-    let errBody = null
-    try { errBody = await res.json() } catch { errBody = null }
+    const errBody = await errorBodyOf(res)
     if (!errBody || typeof errBody !== 'object' || Array.isArray(errBody)) {
       const p = nonJsonErrorPayload(res.status, res)
       p.status = res.status
@@ -431,11 +495,15 @@ async function sqlExportFile(body, { signal } = {}) {
   }
   if (body?.format === 'json') {
     let json
-    try { json = await res.json() } catch { return nonJsonErrorPayload(res.status, res) }
+    try {
+      json = await res.json()
+    } catch (e) {
+      if (isAbortish(e)) throw e
+      return nonJsonErrorPayload(res.status, res)
+    }
     return { success: true, json, ...meta }
   }
-  let blob
-  try { blob = await res.blob() } catch { return networkFailurePayload() }
+  const blob = await res.blob()   // ağ hatası / süre → çağıranın catch'i
   const disp = headerOf(res, 'Content-Disposition') || ''
   const plain = /filename="?([^";]+)"?/.exec(disp)
   const p = (n) => String(n).padStart(2, '0')
@@ -451,6 +519,19 @@ async function sqlExportFile(body, { signal } = {}) {
  */
 function pingSessionPath() {
   Promise.resolve().then(() => request('/session/ping', { timeoutMs: DEFAULT_TIMEOUT_MS })).catch(() => { /* ağ yok: sonraki yoklama */ })
+}
+
+/**
+ * Hata yanıtının JSON gövdesi (dışa aktarım yardımcıları): okunamayan / JSON olmayan gövde → null; süre ya da iptal
+ * (son tarih) ise hata FIRLATILIR — çağıranın `catch`'i onu "zaman aşımı" yüküne çevirir (2026-11-15).
+ */
+async function errorBodyOf(res) {
+  try {
+    return await res.json()
+  } catch (e) {
+    if (isAbortish(e)) throw e
+    return null
+  }
 }
 
 /** Ağ hatası (sunucuya ulaşılamadı) → çevrilmiş metinli yumuşak yük; `code` NETWORK_ERROR | OFFLINE (künyede de). */
@@ -554,60 +635,60 @@ function isHttpError(res) {
  * Bağlantı açılıp hiç yanıt vermezse (OpenShift pod restart / HAProxy bağlantıyı
  * RST'siz düşürürse oluşan yarı-açık socket) `fetch` süresiz asılı kalır. AbortController
  * + timeout ile bunu sınırlandırırız; özellikle açılış akışında (getMe/login) sonsuz
- * "Yükleniyor…" ekranını (pratikte beyaz ekran) önler. timeoutMs <= 0 → timeout uygulanmaz.
+ * "Yükleniyor…" ekranını (pratikte beyaz ekran) önler. timeoutMs ≤ 0 da bu varsayılana düşer (sınırsız istek yok, 2026-11-15).
  */
 const DEFAULT_TIMEOUT_MS = 15000
 /**
  * Okuma isteklerinin (GET / HEAD) varsayılan üst süresi (2026-10-08, "zaman aşımı olmayan servis çağrısı" denetimi):
  * önceden `request()` varsayılanı 0'dı — yarı açık bir bağlantı (pod yeniden başladı, vekil RST göndermeden bıraktı)
  * döner simgeyi, kart kilidini ve uçuştaki-istek tekilleştirmesi olan yoklamaları (çevrimiçi sayısı, bakım rozeti, 7/24
- * durumu) SONSUZA dek dondurabiliyordu. Cömert seçildi; yazma istekleri (POST/PUT/PATCH/DELETE) etkilenmez, açıkça
- * `timeoutMs` veren çağrı (0 dahil) kendi değerini korur. Süre dolunca istek yumuşak `timeout` yüküyle döner.
+ * durumu) SONSUZA dek dondurabiliyordu. Cömert seçildi; açıkça pozitif `timeoutMs` veren çağrı kendi değerini korur.
+ * Yazma istekleri 2026-11-15'ten beri {@link DEFAULT_WRITE_TIMEOUT_MS} alır; sıfır `timeoutMs` artık "sınırsız" DEĞİL,
+ * yönteme göre varsayılan demektir (kaynak kapısı `clientTimeoutGate.test.js` sıfırı reddeder). Süre dolunca istek
+ * yumuşak `timeout` yüküyle döner — son tarih yanıt gövdesi okunana dek sürer ({@link timedFetch}).
  */
 export const DEFAULT_READ_TIMEOUT_MS = 90_000
 
-export async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
-  if (!(timeoutMs > 0) || typeof AbortController === 'undefined') {
-    return fetch(url, options)
-  }
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  // Çağıranın kendi iptal sinyali KORUNUR (2026-10-08): eskiden süre sınırı onu eziyordu — bileşen kapanınca iptal edilen
-  // istek iptal edilmiyordu. İkisi bağlanır; hangisi önce gelirse istek kesilir (request() ayrımı abortKind ile yapar).
-  const outer = options.signal
-  const onOuterAbort = () => controller.abort()
-  if (outer) {
-    if (outer.aborted) controller.abort()
-    else outer.addEventListener('abort', onOuterAbort, { once: true })
-  }
-  try {
-    return await fetch(url, { ...options, signal: controller.signal })
-  } finally {
-    clearTimeout(timer)
-    if (outer) outer.removeEventListener('abort', onOuterAbort)
-  }
-}
+/**
+ * Yazma isteklerinin (POST / PUT / PATCH / DELETE) varsayılan üst süresi (2026-11-15, kullanıcı kuralı "zaman aşımı
+ * olmayan istek yok" — 2026-10-08'deki "yazmalar sınırsız" kuralının yerini alır). Sunucuda meşru olarak uzun süren
+ * yazmalar aşağıdaki daha büyük, AÇIK değerlerden birini taşır. Süre dolunca istek yumuşak `timeout` yüküyle döner
+ * (`code: REQUEST_TIMEOUT`); metni "işlem arka planda tamamlanmış olabilir — sayfayı yenileyip sonucu kontrol edin" der,
+ * kör bir yeniden tıklamaya çağırmaz.
+ */
+export const DEFAULT_WRITE_TIMEOUT_MS = 120_000
+/** Dosya yükleme (FormData gövdesi): yavaş bağlantıda büyük görsel / sertifika / logo. */
+export const UPLOAD_TIMEOUT_MS = 300_000
+/**
+ * Canlı kontrol / deneme ("Şimdi kontrol et", formun "Test"i, canlı sertifika kontrolü, sertifika hiyerarşisi, veritabanı
+ * sorgusu denemesi): hedef başına süre 120 sn'ye dek ayarlanabilir, yönlendirme / yeniden deneme zinciri bunun katlarına
+ * çıkar (port HTTP 3 × 120 sn = 360 sn; k6 denemesi ≈ 210 sn; dbquery denemesi plan ile ≈ 180 sn).
+ */
+export const LIVE_CHECK_TIMEOUT_MS = 420_000
+/** Rapor üreten ya da çok kayıtlı yazma: PDF çizimi (izin bekleme 15 sn + küçültme merdiveni) + SMTP, toplu işlem (≤ 2000 kayıt). */
+export const REPORT_TIMEOUT_MS = 300_000
+/**
+ * Sunucuda kendi zaman bütçesi olmayan toplu işler: elle saklama çalıştırma / kuru çalıştırma / saatlik geri doldurma,
+ * gizli değer yeniden şifreleme (bütçe 8 dk), toplu pasifleştirme (≤ 5000), envanter içe aktarma (≤ 5000 satır), yönetici
+ * özeti gönderimi (taze ay hesabı + PDF + BCC parçaları), haftalık rapor hatırlatması, LDAP yeniden eşitleme.
+ */
+export const LONG_JOB_TIMEOUT_MS = 900_000
+/** SQL Playground büyük dışa aktarımı: yuva bekleme 5 sn + sorgu 120 sn + 256 MB'a dek akış. */
+export const SQL_EXPORT_TIMEOUT_MS = 600_000
 
 /**
- * Çağıranın iptal sinyali + üst süre sınırı TEK sinyalde (2026-10-02, HTTP tanılama). `request()` timeoutMs verildiğinde
- * kendi denetleyicisini kurup çağıranın sinyalini ezdiği için uzun ve iptal edilebilir çağrılar timeoutMs YERİNE bunu
- * kullanır: hangisi önce gelirse istek kesilir (AbortError → request'in yumuşak hata yükü). `done()` zamanlayıcıyı ve
- * dinleyiciyi söker.
+ * Geriye uyumlu dış ad: artık {@link timedFetch} — son tarih gövde okunana dek sürer; `timeoutMs` ≤ 0 sınırsız DEĞİL,
+ * {@link DEFAULT_TIMEOUT_MS} demektir. Çağıranın iptal sinyali korunur (2026-10-08).
  */
-function deadlineSignal(signal, ms) {
-  if (typeof AbortController === 'undefined') return { signal, done: () => {} }
-  const c = new AbortController()
-  // Neden taşınır (2026-10-08): süre dolması "zaman aşımı", çağıranın iptali "iptal edildi" metnini alsın (abortKind).
-  const timeoutReason = () => {
-    try { return new DOMException('deadline', 'TimeoutError') } catch { return Object.assign(new Error('deadline'), { name: 'TimeoutError' }) }
-  }
-  const timer = setTimeout(() => c.abort(timeoutReason()), ms)
-  const onAbort = () => c.abort(signal.reason)
-  if (signal) {
-    if (signal.aborted) c.abort(signal.reason)
-    else signal.addEventListener('abort', onAbort, { once: true })
-  }
-  return { signal: c.signal, done: () => { clearTimeout(timer); signal?.removeEventListener?.('abort', onAbort) } }
+export async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  return timedFetch(url, options, timeoutMs)
+}
+
+/** `request()`'in etkin süresi: açık pozitif değer kazanır; yoksa okuma 90 sn, yükleme 5 dk, öteki yazmalar 120 sn. */
+function effectiveTimeoutMs(explicit, method, isForm) {
+  if (explicit > 0) return explicit
+  if (method === 'GET' || method === 'HEAD') return DEFAULT_READ_TIMEOUT_MS
+  return isForm ? UPLOAD_TIMEOUT_MS : DEFAULT_WRITE_TIMEOUT_MS
 }
 
 /**
@@ -690,30 +771,27 @@ function historyQuery(params) {
 async function request(path, options = {}) {
   // FormData gönderiminde Content-Type'ı tarayıcı belirler (multipart boundary)
   const isForm = options.body instanceof FormData
-  // timeoutMs opsiyoneldir: varsayılan 0 (timeout yok) → uzun-süren çağrılar
-  // (scheduler/diagnostics/checkDomain/upload/sql) ETKİLENMEZ. Açılış çağrıları
-  // (getMe) açıkça bir timeout geçirir.
+  // timeoutMs (isteğe bağlı, 2026-11-15 — kullanıcı kuralı "zaman aşımsız istek yok"): HER istek sonlu bir süre taşır.
+  // Açık pozitif değer kazanır; yoksa okuma 90 sn (DEFAULT_READ_TIMEOUT_MS), yükleme 5 dk (UPLOAD_TIMEOUT_MS), öteki
+  // yazmalar 120 sn (DEFAULT_WRITE_TIMEOUT_MS). Sunucuda uzun süren uçlar açık değer verir (LIVE_CHECK / REPORT /
+  // LONG_JOB). Son tarih yanıt GÖVDESİ okunana dek sürer ({@link timedFetch}); `0` sınırsız değil, varsayılandır.
   // withStatus (isteğe bağlı): hata gövdesine HTTP durumu eklenir (`status`) — yalnız 403'ü ayırması gereken çağıranlar
   // için (7/24 arama listesi: 403 → salt okunur). Genel davranış DEĞİŞMEZ.
   // transport (isteğe bağlı, 2026-10-08): fetch yerine aynı sözleşmeli taşıyıcı (`xhrTransport` — yükleme ilerlemesi).
   // Yanıtın işlenişi (401 / bakım / pasif hesap / JSON / withStatus / başarısız çağrı halkası) AYNEN aşağıdaki yoldan geçer.
   const { timeoutMs: timeoutOpt, withStatus = false, transport = null, ...opts } = options
-  // Açık değer (0 dahil) kazanır; yoksa okuma istekleri DEFAULT_READ_TIMEOUT_MS, yazma istekleri sınırsız (eski davranış).
   const method = String(opts.method || 'GET').toUpperCase()
-  const timeoutMs = timeoutOpt != null ? timeoutOpt : (method === 'GET' || method === 'HEAD' ? DEFAULT_READ_TIMEOUT_MS : 0)
+  const timeoutMs = effectiveTimeoutMs(timeoutOpt, method, isForm)
   let res
   try {
     const init = requestInit(opts, method, isForm)
-    if (transport) {
-      res = await transport(`${BASE}${path}`, init)
-    } else {
-      try {
-        res = await fetchWithTimeout(`${BASE}${path}`, init, timeoutMs)
-      } catch (first) {
-        if (!isRetryableNetworkFailure(first, method, opts.signal)) throw first
-        await retryDelay(NETWORK_RETRY_DELAY_MS, opts.signal)   // TEK ek deneme (sınırlı; bkz. NETWORK_RETRY_DELAY_MS)
-        res = await fetchWithTimeout(`${BASE}${path}`, init, timeoutMs)
-      }
+    try {
+      res = await timedFetch(`${BASE}${path}`, init, timeoutMs, { transport })
+    } catch (first) {
+      // Taşıyıcı (XHR yükleme) yolu yeniden denenmez (2026-10-08 kuralı)
+      if (transport || !isRetryableNetworkFailure(first, method, opts.signal)) throw first
+      await retryDelay(NETWORK_RETRY_DELAY_MS, opts.signal)   // TEK ek deneme (sınırlı; bkz. NETWORK_RETRY_DELAY_MS)
+      res = await timedFetch(`${BASE}${path}`, init, timeoutMs)
     }
   } catch (e) {
     // Timeout (abort) → asılı kalmak yerine yumuşak hata payload'ı döndür; böylece
@@ -727,6 +805,15 @@ async function request(path, options = {}) {
     recordFailure(path, 0)
     throw e instanceof ApiError ? e : networkError(e)
   }
+  try {
+    return await handleResponse(path, res, opts, withStatus)
+  } finally {
+    res.done()   // gövde okunmayan yolda da son tarih zamanlayıcısı söker
+  }
+}
+
+/** `request()`'in yanıt işleyişi (2026-11-15'te ayrıldı: son tarih zamanlayıcısı her yolda `finally` ile söksün). */
+async function handleResponse(path, res, opts, withStatus) {
   rememberCacheGen(headerOf(res, CACHE_GEN_HEADER))
   if (!res.ok) recordFailure(path, res.status)
   if (res.status === 401) {
@@ -773,7 +860,13 @@ async function request(path, options = {}) {
   let json
   try {
     json = await res.json()
-  } catch {
+  } catch (e) {
+    // Gövde süre içinde gelmedi (başlıklardan sonra duran bağlantı) ya da çağıran iptal etti → yumuşak "timeout" /
+    // "iptal" yükü (2026-11-15: eskiden gövde okuması sonsuza dek bekleyebiliyordu)
+    if (isAbortish(e)) {
+      recordFailure(path, 0)
+      return noResponsePayload(e?.name === 'TimeoutError' ? 'timeout' : abortKind(opts.signal))
+    }
     // Non-JSON response (HTML error page from proxy / empty body) — graceful fallback
     return nonJsonErrorPayload(res.status, res)
   }
@@ -814,7 +907,7 @@ async function otpPost(path, payload) {
     })
   } catch (e) {
     recordFailure(path, 0)
-    const timeout = e?.name === 'AbortError'
+    const timeout = isAbortish(e)
     return {
       success: false, status: 0, networkError: true, timeout,
       error: networkMessage({ lang: uiLang(), kind: timeout ? 'timeout' : 'network' }),
@@ -822,7 +915,13 @@ async function otpPost(path, payload) {
   }
   if (!r.ok) recordFailure(path, r.status)
   let body
-  try { body = await r.json() } catch { body = nonJsonErrorPayload(r.status, r) }
+  try {
+    body = await r.json()
+  } catch (e) {
+    // Gövde süre içinde gelmedi → zaman aşımı yükü (2026-11-15; son tarih gövde okunana dek sürer)
+    if (isAbortish(e)) return { success: false, status: 0, networkError: false, timeout: true, error: networkMessage({ lang: uiLang(), kind: 'timeout' }) }
+    body = nonJsonErrorPayload(r.status, r)
+  }
   if (body == null || typeof body !== 'object' || Array.isArray(body)) body = nonJsonErrorPayload(r.status, r)
   return { ...body, status: r.status }
 }
@@ -840,10 +939,13 @@ async function otpPost(path, payload) {
 function xhrTransport({ onProgress, signal } = {}) {
   return (url, init = {}) => new Promise((resolve, reject) => {
     const abortError = () => { const e = new Error('aborted'); e.name = 'AbortError'; return e }
-    if (signal?.aborted) { reject(abortError()); return }
+    // İki sinyal (2026-11-15): kurucunun "Vazgeç"i ve request()'in son tarihi (`init.signal`, timedFetch) — hangisi önce
+    // gelirse yükleme kesilir; XHR artık sonsuza dek bekleyemez
+    const signals = [signal, init.signal].filter((s, i, all) => s && all.indexOf(s) === i)
+    if (signals.some((s) => s.aborted)) { reject(abortError()); return }
     const xhr = new XMLHttpRequest()
     const onAbortSignal = () => { try { xhr.abort() } catch { /* yok */ } }
-    const cleanup = () => { try { signal?.removeEventListener?.('abort', onAbortSignal) } catch { /* yok */ } }
+    const cleanup = () => { for (const s of signals) { try { s.removeEventListener?.('abort', onAbortSignal) } catch { /* yok */ } } }
     const report = (p) => { if (typeof onProgress === 'function') { try { onProgress(p) } catch { /* yok say */ } } }
     xhr.open(init.method || 'GET', url, true)
     xhr.withCredentials = init.credentials === 'include'
@@ -867,7 +969,7 @@ function xhrTransport({ onProgress, signal } = {}) {
     xhr.onerror = () => { cleanup(); reject(new TypeError('Network request failed')) }
     xhr.ontimeout = () => { cleanup(); reject(abortError()) }
     xhr.onabort = () => { cleanup(); reject(abortError()) }
-    signal?.addEventListener?.('abort', onAbortSignal, { once: true })
+    for (const s of signals) s.addEventListener?.('abort', onAbortSignal, { once: true })
     xhr.send(init.body ?? null)
   })
 }
@@ -911,7 +1013,7 @@ async function loginRequest(username, password, rememberMe, forceLogin) {
     })
   } catch (e) {
     // Login isteği asılır/başarısız olursa buton sonsuz "bekliyor"da kalmasın
-    const kind = e?.name === 'AbortError' ? 'timeout' : 'network'
+    const kind = isAbortish(e) ? 'timeout' : 'network'
     return {
       success: false,
       status: 0,
@@ -920,7 +1022,13 @@ async function loginRequest(username, password, rememberMe, forceLogin) {
     }
   }
   let body
-  try { body = await r.json() } catch { body = nonJsonErrorPayload(r.status, r) }
+  try {
+    body = await r.json()
+  } catch (e) {
+    // Gövde süre içinde gelmedi (2026-11-15) → zaman aşımı yükü; oturum bayrağı yazılmaz
+    if (isAbortish(e)) return { success: false, status: 0, networkError: false, error: networkMessage({ lang: uiLang(), kind: 'timeout' }) }
+    body = nonJsonErrorPayload(r.status, r)
+  }
   // Flag a successful login so the 401 handler in request() knows that any
   // subsequent 401 is a *lost* session (worth a hard reload to /?session=
   // expired), not the initial unauthenticated bootstrap.
@@ -1047,21 +1155,23 @@ export const api = {
       if (live) qs.set('live', '1')
       if (fresh) qs.set('fresh', '1')
       const s = qs.toString()
-      return request(`/executive-summary${s ? `?${s}` : ''}`, { withStatus: true })
+      // Canlı hesap (`live`) sunucuda süre bütçesizdir → 5 dk (2026-11-15); saklı görüntü okuma varsayılanı
+      return request(`/executive-summary${s ? `?${s}` : ''}`, { withStatus: true, ...(live ? { timeoutMs: REPORT_TIMEOUT_MS } : {}) })
     },
     // Takım özeti alıcıları (2026-10-10): global yönetici her takım, takım müdürü yönettiği takımlar.
     teams: () => request('/executive-summary/teams', { withStatus: true }),
     team: (teamId) => request(`/executive-summary/teams/${encodeURIComponent(teamId)}`, { withStatus: true }),
     saveTeam: (teamId, body) => request(`/executive-summary/teams/${encodeURIComponent(teamId)}`,
       { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+    // Gönderimler (2026-11-15): taze ay hesabı + PDF + BCC parçaları — sunucuda süre bütçesi yok → LONG_JOB
     sendTeamTest: (teamId, month) => request(`/executive-summary/teams/${encodeURIComponent(teamId)}/send-test`,
-      { method: 'POST', body: JSON.stringify({ month }), withStatus: true }),
+      { method: 'POST', body: JSON.stringify({ month }), withStatus: true, timeoutMs: LONG_JOB_TIMEOUT_MS }),
     runTeamNow: (teamId, month) => request(`/executive-summary/teams/${encodeURIComponent(teamId)}/run`,
-      { method: 'POST', body: JSON.stringify({ month }), withStatus: true }),
+      { method: 'POST', body: JSON.stringify({ month }), withStatus: true, timeoutMs: LONG_JOB_TIMEOUT_MS }),
     getSettings: () => request('/executive-summary/settings', { withStatus: true }),
     saveSettings: (body) => request('/executive-summary/settings', { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
-    sendTest: (month) => request('/executive-summary/send-test', { method: 'POST', body: JSON.stringify({ month }), withStatus: true }),
-    runNow: (month) => request('/executive-summary/run', { method: 'POST', body: JSON.stringify({ month }), withStatus: true }),
+    sendTest: (month) => request('/executive-summary/send-test', { method: 'POST', body: JSON.stringify({ month }), withStatus: true, timeoutMs: LONG_JOB_TIMEOUT_MS }),
+    runNow: (month) => request('/executive-summary/run', { method: 'POST', body: JSON.stringify({ month }), withStatus: true, timeoutMs: LONG_JOB_TIMEOUT_MS }),
     /**
      * PDF'i indirir (e-posta ekinin aynısı). Düz `<a href>` yerine blob: üretim hatası (503) ya da yetki (403) tarayıcıyı
      * JSON sayfasına götürmesin, kullanıcıya söylenebilsin.
@@ -1071,8 +1181,15 @@ export const api = {
       if (month) qs.set('month', month)
       if (team != null && team !== '') qs.set('team', String(team))
       if (live) qs.set('live', '1')
+      // Süre sınırı (2026-11-15): canlı hesap (`live`) sunucuda süre bütçesizdir → LONG_JOB; saklı anlık görüntü REPORT
+      let res
       try {
-        const res = await fetch(`${BASE}/executive-summary/pdf?${qs.toString()}`, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
+        res = await timedFetch(`${BASE}/executive-summary/pdf?${qs.toString()}`, { credentials: 'include', headers: { 'X-Lang': uiLang() } },
+          live ? LONG_JOB_TIMEOUT_MS : REPORT_TIMEOUT_MS)
+      } catch (e) {
+        return isAbortish(e) ? noResponsePayload('timeout') : { success: false, status: 0, error: e?.message || 'NETWORK' }
+      }
+      try {
         if (!res.ok) { if (res.status === 401) pingSessionPath(); return { success: false, status: res.status } }
         const blob = await res.blob()
         const disp = headerOf(res, 'Content-Disposition') || ''
@@ -1084,7 +1201,9 @@ export const api = {
         }
         return { success: true }
       } catch (e) {
-        return { success: false, status: 0, error: e?.message || 'NETWORK' }
+        return isAbortish(e) ? noResponsePayload('timeout') : { success: false, status: 0, error: e?.message || 'NETWORK' }
+      } finally {
+        res.done()
       }
     },
   },
@@ -1161,7 +1280,7 @@ export const api = {
     imageUrl: (imageId) => `${BASE}/tech-error-reports/images/${imageId}`,
     // R18 / C13: `body` = { extra_cc } yalnız ek Bilgi (CC) yazıldıysa — yoksa gövdesiz (eski çağrı aynen)
     send: (id, body = null) => request(`/tech-error-reports/reports/${id}/send`,
-      { method: 'POST', ...(body ? { body: JSON.stringify(body) } : {}), withStatus: true, timeoutMs: 0 }),
+      { method: 'POST', ...(body ? { body: JSON.stringify(body) } : {}), withStatus: true, timeoutMs: REPORT_TIMEOUT_MS }),
     // Kanal gönderim günlüğü (R18 / E22): sunucu sayfalı (page 0 tabanlı, size ≤ 100), tür / durum süzgeçli
     sendLog: (channelId, { page = 0, size = 25, kind = 'all', status = 'all' } = {}) => {
       const qs = new URLSearchParams({ page: String(page), size: String(size) })
@@ -1172,14 +1291,14 @@ export const api = {
     // E-posta önizlemesi (10. sürüm): gönderimle aynı gövde, gönderim yok; görseller yüklendiği için uzun sürebilir.
     // Pencere `techerror/mailPreviewFetch.js` üzerinden çağırır (süren isteğe katılır, `signal` ile iptal — 3. tur)
     mailPreview: (id, { signal } = {}) => request(`/tech-error-reports/reports/${id}/mail-preview`,
-      { withStatus: true, timeoutMs: 0, ...(signal ? { signal } : {}) }),
+      { withStatus: true, timeoutMs: REPORT_TIMEOUT_MS, ...(signal ? { signal } : {}) }),
     // Önizlenen postayı YALNIZ kendine gönderir (R13): sunucu PDF'i yeniden üretir — uzun sürebilir; 409 NO_EMAIL / 429 RATE_LIMITED
-    mailPreviewTest: (id) => request(`/tech-error-reports/reports/${id}/mail-preview/test`, { method: 'POST', withStatus: true, timeoutMs: 0 }),
+    mailPreviewTest: (id) => request(`/tech-error-reports/reports/${id}/mail-preview/test`, { method: 'POST', withStatus: true, timeoutMs: REPORT_TIMEOUT_MS }),
     // PO onayı (2026-10-17, S6): istek PDF üretip onaylayıcılara posta atar, karar yöneticilere gönderir — uzun sürebilir
     approval: (id) => request(`/tech-error-reports/reports/${id}/approval`, { withStatus: true }),
-    requestApproval: (id) => request(`/tech-error-reports/reports/${id}/approval/request`, { method: 'POST', withStatus: true, timeoutMs: 0 }),
+    requestApproval: (id) => request(`/tech-error-reports/reports/${id}/approval/request`, { method: 'POST', withStatus: true, timeoutMs: REPORT_TIMEOUT_MS }),
     decideApproval: (id, body) => request(`/tech-error-reports/reports/${id}/approval/decide`,
-      { method: 'POST', body: JSON.stringify(body), withStatus: true, timeoutMs: 0 }),
+      { method: 'POST', body: JSON.stringify(body), withStatus: true, timeoutMs: REPORT_TIMEOUT_MS }),
     /**
      * PDF'i indirir (e-posta ekinin aynısı); blob — hata JSON sayfasına götürmesin, kullanıcıya söylensin. İndirme
      * `utils/csvExport.downloadBlob` ile (inceleme 2026-10-18): bağlantı DOM'a eklenip tıklanır, adres 60 sn tutulur —
@@ -1199,28 +1318,36 @@ export const api = {
      * yazılmaz. Blob döner — açma / indirme çağıranda (yeni sekme). PDF üretimi uzun sürebilir: süre sınırı yok.
      * Hata: sunucu metni + kod + alan (400 VALIDATION_FAILED → `field: 'template'`); ağ hatasında metin yok (çağıran söyler).
      */
-    templatePreviewPdf: async (channelId, template) => {
+    templatePreviewPdf: async (channelId, template, { timeoutMs = REPORT_TIMEOUT_MS } = {}) => {
+      // Süre sınırı (2026-11-15, "zaman aşımsız istek yok"): PDF üretimi uzun sürebilir ama SONLUDUR — istek VE gövde tek
+      // son tarihle; süre dolması çevrilmiş "zaman aşımı" metniyle döner (yalnız okuma: yeniden denemek zararsız)
+      let res
       try {
-        const res = await fetch(`${BASE}/tech-error-reports/channels/${channelId}/template/preview-pdf`, {
+        res = await timedFetch(`${BASE}/tech-error-reports/channels/${channelId}/template/preview-pdf`, {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json', 'X-Lang': uiLang() },
           body: JSON.stringify({ template }),
-        })
+        }, timeoutMs)
+      } catch (e) {
+        return isAbortish(e) ? noResponsePayload('timeout') : { success: false, status: 0, error: null, code: 'NETWORK_ERROR' }
+      }
+      try {
         if (!res.ok) {
-          let body = null
-          try { body = await res.json() } catch { body = null }
+          const body = await errorBodyOf(res)
           return { success: false, status: res.status, error: body?.error || null, code: body?.code || null, field: body?.field || null }
         }
         const blob = await res.blob()
-        const disp = res.headers.get('Content-Disposition') || ''
+        const disp = headerOf(res, 'Content-Disposition') || ''
         const star = /filename\*=UTF-8''([^;]+)/i.exec(disp)
         const plain = /filename="?([^";]+)"?/.exec(disp)
         let name = 'sablon-onizleme.pdf'
         try { name = star ? decodeURIComponent(star[1]) : (plain ? plain[1] : name) } catch { /* ham ad */ }
         return { success: true, blob, name }
-      } catch {
-        return { success: false, status: 0, error: null, code: 'NETWORK_ERROR' }
+      } catch (e) {
+        return isAbortish(e) ? noResponsePayload('timeout') : { success: false, status: 0, error: null, code: 'NETWORK_ERROR' }
+      } finally {
+        res.done()
       }
     },
     /** PDF'i indirmeden Blob olarak okur (kanalın yıl arşivi — ZIP, 2026-10-17): `{ success, blob, name }`; iptal `{ aborted }`. */
@@ -1422,23 +1549,37 @@ export const api = {
   // Zengin sonuç döner: {success, status, reference?, error?, networkError?} — modal, sebebi +
   // "Detay gör" ile teknik hatayı (HTTP kodu/sunucu mesajı/ağ istisnası) gösterebilsin.
   sendLoginHelp: async (dto) => {
+    // Süre sınırı (2026-11-15): istek VE gövde tek son tarihle. Süre dolması ağ hatası DEĞİL: bildirim iletilmiş olabilir —
+    // `timeout: true` + çevrilmiş "arka planda tamamlanmış olabilir" metni (kör yeniden gönderime çağırmaz)
+    const timedOut = () => ({ success: false, status: 0, timeout: true, error: networkMessage({ lang: uiLang(), kind: 'timeout' }) })
+    let res
     try {
-      const res = await fetch(`${BASE}/login-help`, {
+      res = await timedFetch(`${BASE}/login-help`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-Lang': uiLang() },
         body: JSON.stringify(dto),
-      })
+      }, DEFAULT_WRITE_TIMEOUT_MS)
+    } catch (e) {
+      if (isAbortish(e)) return timedOut()
+      // Ağ hatası (sunucuya ulaşılamadı / yeniden başlatma / CORS) — status yok.
+      return { success: false, status: 0, networkError: true, error: String(e?.message || e?.name || e) }
+    }
+    try {
       let data = null
-      try { data = await res.json() } catch { /* gövde JSON değil (proxy HTML hata sayfası vb.) */ }
+      try {
+        data = await res.json()
+      } catch (e) {
+        if (isAbortish(e)) return timedOut()
+        /* gövde JSON değil (proxy HTML hata sayfası vb.) */
+      }
       return {
         success: !!(data && data.success),
         status: res.status,
         reference: data?.reference,
         error: data?.error,
       }
-    } catch (e) {
-      // Ağ hatası (sunucuya ulaşılamadı / yeniden başlatma / CORS) — status yok.
-      return { success: false, status: 0, networkError: true, error: String(e?.message || e?.name || e) }
+    } finally {
+      res.done()
     }
   },
 
@@ -1492,9 +1633,10 @@ export const api = {
 
   getDomainAlerts: (domain) => request(`/history/${encodeURIComponent(domain)}/alerts`),
 
-  // Canlı TLS kontrolü (OCSP/CRL/HSTS dahil) — sunucu tarafı süre sınırlı; istemci eskisi gibi beklemeyi kesmez.
-  checkDomain: (domain) => request(`/check/${encodeURIComponent(domain)}`, { timeoutMs: 0 }),
-  checkDomainPreview: (domain) => request(`/check-preview/${encodeURIComponent(domain)}`, { timeoutMs: 0 }),
+  // Canlı TLS kontrolü (OCSP/CRL/HSTS dahil): sunucuda tek bir toplam sınır yok (deneme başına 6–60 sn, OCSP 20 sn, CRL
+  // ≤ 3 × 60 sn, HSTS sekmeleri) — istemci 7 dk sonra bırakır (2026-11-15, "zaman aşımsız istek yok").
+  checkDomain: (domain) => request(`/check/${encodeURIComponent(domain)}`, { timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
+  checkDomainPreview: (domain) => request(`/check-preview/${encodeURIComponent(domain)}`, { timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
   // Ağ sertifikasının tarayıcı gibi hiyerarşisi (2026-10-12): canlı el sıkışma (sunucu tarafı süre sınırlı), kök güven
   // deposundan; salt okuma. 429 RATE_LIMITED / 502 HIERARCHY_UNREACHABLE / 409 MANUAL_CERT gövdeyle döner.
   // `route` (isteğe bağlı): SSL sekmesinin başarılı önizlemesinin yolu {tlsMode, via} — sunucu yalnız browser|default ve proxy|direct kabul eder.
@@ -1503,17 +1645,17 @@ export const api = {
     if (route?.tlsMode) q.set('tls_mode', route.tlsMode)
     if (route?.via) q.set('via', route.via)
     const qs = q.toString()
-    return request(`/certificates/${encodeURIComponent(domain)}/hierarchy${qs ? `?${qs}` : ''}`, { timeoutMs: 0, withStatus: true })
+    return request(`/certificates/${encodeURIComponent(domain)}/hierarchy${qs ? `?${qs}` : ''}`, { timeoutMs: LIVE_CHECK_TIMEOUT_MS, withStatus: true })
   },
   // Envanter formundaki "Test et": YAZILAN degerlerle canli el sikismasi, KAYIT YOK.
   // check-preview'dan farki portu/TLS modunu/proxy'yi envanterden degil GOVDEDEN almasi —
   // henuz kaydedilmemis bir kayitta formdaki 8443 ancak boyle test edilebiliyor.
-  testCertificate: (body) => request('/certificates/test', { method: 'POST', body: JSON.stringify(body) }),
+  testCertificate: (body) => request('/certificates/test', { method: 'POST', body: JSON.stringify(body), timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
   // Sertifika sağlık kontrol listesi: KALICI son kontrolden anında gelir (ağ beklemez).
   getCertificateHealth: (domain) => request(`/certificates/${encodeURIComponent(domain)}/health`),
   // "Şimdi kontrol et" — canlı el sıkışması koşar, sonucu kalıcılaştırır, listeyi tazeler.
   refreshCertificateHealth: (domain) =>
-    request(`/certificates/${encodeURIComponent(domain)}/health/refresh`, { method: 'POST' }),
+    request(`/certificates/${encodeURIComponent(domain)}/health/refresh`, { method: 'POST', timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
   // "Planlı yenilemeydi" onayı: sabitlenen parmak izi için kalıcı onay yazar, satır yeşile döner.
   confirmCertificateRenewal: (domain) =>
     request(`/certificates/${encodeURIComponent(domain)}/health/confirm-renewal`, { method: 'POST' }),
@@ -1521,7 +1663,7 @@ export const api = {
   getTlsGrade: (domain) => request(`/certificates/${encodeURIComponent(domain)}/tls-grade`),
   // TLS profilini ŞİMDİ yeniden tarar (protokol sürümleri, OCSP zımbalama) — uç başına ≤ 30 sn; sunucu süre sınırlı.
   rescanTlsProfile: (domain) =>
-    request(`/certificates/${encodeURIComponent(domain)}/tls-grade/rescan`, { method: 'POST', timeoutMs: 0 }),
+    request(`/certificates/${encodeURIComponent(domain)}/tls-grade/rescan`, { method: 'POST' }),
   // Son not düşüşleri + profil kapsaması (kullanıcının izleme kapsamında).
   getTlsGradeDrops: (days = 30) => request(`/tls-grade/drops?days=${encodeURIComponent(days)}`),
 
@@ -1604,9 +1746,9 @@ export const api = {
   // "Aynı anda ne oldu?" — satırın ± window sn içindeki hatalı kontroller + şüpheli neden / olgu kodları
   getActivityRelated: (id, windowS) => request(`/activity/${encodeURIComponent(id)}/related${windowS ? `?window=${encodeURIComponent(windowS)}` : ''}`, { withStatus: true }),
   // Tam dışa aktarım (liste süzgeçleriyle, TÜM sayfalar): `csv` sunucunun dosyası indirilir ({success, name, truncated});
-  // `json` en çok 20 000 satır döner (ön yüz Excel'i kurar). Uzun sürebilir — okuma zaman aşımı yok.
+  // `json` en çok 20 000 satır döner (ön yüz Excel'i kurar). Uzun sürebilir — dışa aktarım süresi (3 dk, 2026-11-15).
   exportActivity: (params = {}, format = 'csv') => (format === 'json'
-    ? request(`/activity/export?${activityQuery({ ...params, format: 'json' })}`, { timeoutMs: 0 })
+    ? request(`/activity/export?${activityQuery({ ...params, format: 'json' })}`, { timeoutMs: EXPORT_FETCH_TIMEOUT_MS })
     : downloadActivityCsv(activityQuery({ ...params, format: 'csv' }))),
 
   getSilentAlertDomains: () => request('/alerts/silent-domains'),
@@ -1725,7 +1867,7 @@ export const api = {
     unlock: (id) => request(`/weekly-reports/${id}/unlock`, { method: 'POST' }),
     remove: (id) => request(`/weekly-reports/${id}`, { method: 'DELETE' }),
     submit: (id) => request(`/weekly-reports/${id}/submit`, { method: 'POST' }),
-    triggerReminder: () => request('/weekly-reports/reminders/trigger', { method: 'POST' }),
+    triggerReminder: () => request('/weekly-reports/reminders/trigger', { method: 'POST', timeoutMs: LONG_JOB_TIMEOUT_MS }),
     reopen: (id) => request(`/weekly-reports/${id}/reopen`, { method: 'POST' }),
     resend: (id) => request(`/weekly-reports/${id}/resend`, { method: 'POST' }),
     approve: (id) => request(`/weekly-reports/${id}/approve`, { method: 'POST' }),
@@ -1863,7 +2005,7 @@ export const api = {
       /** → { affected_monitors }: bu grubu seçen izlemeler varsayılan gruplara düşer. */
       deleteGroup: (id) => request(`/admin/noc/groups/${encodeURIComponent(id)}`, { method: 'DELETE' }),
       /** → { sent, failed: [...] } */
-      testGroup:   (id) => request(`/admin/noc/groups/${encodeURIComponent(id)}/test`, { method: 'POST' }),
+      testGroup:   (id) => request(`/admin/noc/groups/${encodeURIComponent(id)}/test`, { method: 'POST', timeoutMs: REPORT_TIMEOUT_MS }),
       /** 7/24 izleme ekibi takımları (2026-10-04) → { team_ids, teams, operator_count, updated_at, updated_by_name, max_teams } */
       getOperatorTeams: () => request('/admin/noc/operator-teams'),
       /** Kaydetmeden önizleme → { teams: [{id, name, active, member_count}], user_count, users: [...], truncated } */
@@ -1890,7 +2032,7 @@ export const api = {
     // Envanter zenginleştirme (2026-09-12): hijyen bandı + CSV içe aktarma (dry_run varsayılan true)
     getInventoryHygiene: () => request('/admin/inventory/hygiene'),
     importInventory: (rows, dryRun = true) =>
-      request('/admin/inventory/import', { method: 'POST', body: JSON.stringify({ rows, dry_run: dryRun }) }),
+      request('/admin/inventory/import', { method: 'POST', body: JSON.stringify({ rows, dry_run: dryRun }), timeoutMs: LONG_JOB_TIMEOUT_MS }),
     getInventoryByDomain: (domain) => request(`/admin/inventory/by-domain?domain=${encodeURIComponent(domain)}`),
     // Platform kataloğu (2026-09-22): aktifler her oturuma (form seçicisi); all=true + yazma Ayarlar yetkisi
     listPlatforms: (all = false) => request('/admin/platforms' + (all ? '?all=true' : '')),
@@ -1905,7 +2047,7 @@ export const api = {
     deleteInventory: (id) => request(`/admin/inventory/${id}`, { method: 'DELETE' }),
     /** extra: yalniz set-contacts icin — GONDERILEN alanlar yazilir, otekilere dokunulmaz. */
     bulkInventory: (ids, action, extra) => request('/admin/inventory/bulk', {
-      method: 'POST', body: JSON.stringify({ ids, action, ...(extra ?? {}) }),
+      method: 'POST', body: JSON.stringify({ ids, action, ...(extra ?? {}) }), timeoutMs: REPORT_TIMEOUT_MS,
     }),
     runDiagnostics: (domain, port = 443) => request('/admin/diagnostics', {
       method: 'POST', body: JSON.stringify({ domain, port }),
@@ -1955,8 +2097,14 @@ export const api = {
       { method: 'POST', body: JSON.stringify(body || {}), withStatus: true, ...(signal ? { signal } : {}) }),
     /** Kayıtlı ayarlarla pano JSON'u (Blob + sunucunun dosya adı). HTTP hatası JSON gövdesinin `error` / `code`'unu taşır. */
     downloadGrafanaDashboard: async () => {
+      // Süre sınırı (2026-11-15): istek VE gövde tek son tarihle (okuma varsayılanı); süre dolması "zaman aşımı" yükü
+      let res
       try {
-        const res = await fetch(`${BASE}/admin/grafana/dashboard`, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
+        res = await timedFetch(`${BASE}/admin/grafana/dashboard`, { credentials: 'include', headers: { 'X-Lang': uiLang() } }, DEFAULT_READ_TIMEOUT_MS)
+      } catch (e) {
+        return isAbortish(e) ? noResponsePayload('timeout') : { success: false, status: 0, error: null, code: 'NETWORK_ERROR' }
+      }
+      try {
         if (res.status === 401) {
           // Oturum bitti / pasif / bakım: ortak oturum yolu (request() 401 dalı → /?session=expired, pasif ya da bakım
           // penceresi) bir oturum yoklamasıyla tetiklenir — ham fetch bu ayrımı yapamaz
@@ -1964,8 +2112,7 @@ export const api = {
           return { success: false, status: 401, error: null, code: 'SESSION_EXPIRED' }
         }
         if (!res.ok) {
-          let body = null
-          try { body = await res.json() } catch { body = null }
+          const body = await errorBodyOf(res)
           return { success: false, status: res.status, error: body?.error || null, code: body?.code || null }
         }
         const blob = await res.blob()
@@ -1975,9 +2122,12 @@ export const api = {
         let name = null
         try { name = star ? decodeURIComponent(star[1]) : (plain ? plain[1] : null) } catch { name = plain ? plain[1] : null }
         return { success: true, blob, name }
-      } catch {
+      } catch (e) {
+        if (isAbortish(e)) return noResponsePayload('timeout')
         // Ağ hatası: teknik metin ("Failed to fetch") kullanıcıya gösterilmez — sayfa kendi açıklayıcı iletisini kullanır
         return { success: false, status: 0, error: null, code: 'NETWORK_ERROR' }
+      } finally {
+        res.done()
       }
     },
     // Hatırlatmalar + posta sınırları (12. sürüm) AYRI uçta: eski pod bu yolu tanımaz (404 / 405) ve görünürlüğe dokunmaz
@@ -1995,8 +2145,8 @@ export const api = {
       request(`/admin/retention/overview${estimate ? '?estimate=true' : ''}`),
     saveRetentionSettings: (values) =>
       request('/admin/retention/settings', { method: 'PUT', body: JSON.stringify({ values }) }),
-    retentionDryRun: () => request('/admin/retention/dry-run', { method: 'POST' }),
-    retentionRunNow: () => request('/admin/retention/run', { method: 'POST' }),
+    retentionDryRun: () => request('/admin/retention/dry-run', { method: 'POST', timeoutMs: LONG_JOB_TIMEOUT_MS }),
+    retentionRunNow: () => request('/admin/retention/run', { method: 'POST', timeoutMs: LONG_JOB_TIMEOUT_MS }),
     /** Koşum listesi — sayı verilirse eski `limit` biçimi; nesne verilirse sunucu-taraflı süzgeç/sayfa param'ları. */
     getRetentionRuns: (params = 10) => {
       if (typeof params === 'number') return request(`/admin/retention/runs?limit=${params}`)
@@ -2034,7 +2184,7 @@ export const api = {
       request(`/admin/retention/changes?limit=${limit}${policyId ? `&policyId=${encodeURIComponent(policyId)}` : ''}`),
     // Saatlik özeti geriye doldur — ham seri kısaltılmadan ÖNCE çalıştırılır (yalnız yazar, silmez).
     retentionBackfillHourly: (days = 0) =>
-      request(`/admin/retention/backfill-hourly${days > 0 ? `?days=${days}` : ''}`, { method: 'POST' }),
+      request(`/admin/retention/backfill-hourly${days > 0 ? `?days=${days}` : ''}`, { method: 'POST', timeoutMs: LONG_JOB_TIMEOUT_MS }),
     saveRetentionApproval: (policyId, note) =>
       request('/admin/retention/approval', { method: 'PUT', body: JSON.stringify({ policy_id: policyId, note }) }),
 
@@ -2079,13 +2229,12 @@ export const api = {
     addLoginIssueComment: (id, dto) =>
       request(`/admin/login-issues/${id}/comments`, { method: 'POST', body: JSON.stringify(dto) }),
 
-
     // Anahtar çözümleme aracı — verilen SITE_MONITOR_SECRET_KEY ile şifreli alanları çöz
     secretToolsInfo: () => request('/admin/secret-tools/info'),
     decryptSecrets: (key) => request('/admin/secret-tools/decrypt', { method: 'POST', body: JSON.stringify({ key }) }),
     // Gizli anahtar döndürme (2026-10-11): konum başına güncel / önceki / okunamayan sayıları + önceki anahtardakileri yeniden şifrele
     secretRotationStatus: () => request('/admin/secret-tools/rotation'),
-    reencryptSecrets: () => request('/admin/secret-tools/rotation/reencrypt', { method: 'POST', body: JSON.stringify({ confirm: true }) }),
+    reencryptSecrets: () => request('/admin/secret-tools/rotation/reencrypt', { method: 'POST', body: JSON.stringify({ confirm: true }), timeoutMs: LONG_JOB_TIMEOUT_MS }),
 
     // Veritabanı bilgileri (admin-only Settings sayfası) — bağlı PostgreSQL meta verisi
     getDatabaseInfo: () => request('/admin/database/info'),
@@ -2155,8 +2304,14 @@ export const api = {
       const url = `${BASE}/admin/system/weekly-availability/outage-pdf`
         + `?teamId=${encodeURIComponent(teamId)}`
         + (weekOffset != null ? `&weekOffset=${encodeURIComponent(weekOffset)}` : '')
+      // Süre sınırı (2026-11-15): istek VE gövde tek son tarihle (PDF üretimi → REPORT)
+      let res
       try {
-        const res = await fetch(url, { credentials: 'include', headers: { 'X-Lang': uiLang() } })
+        res = await timedFetch(url, { credentials: 'include', headers: { 'X-Lang': uiLang() } }, REPORT_TIMEOUT_MS)
+      } catch (e) {
+        return isAbortish(e) ? noResponsePayload('timeout') : { success: false, error: e?.message || 'NETWORK' }
+      }
+      try {
         if (!res.ok) {
           if (res.status === 401) pingSessionPath()
           return { success: false, status: res.status,
@@ -2172,7 +2327,9 @@ export const api = {
         }
         return { success: true }
       } catch (e) {
-        return { success: false, error: e?.message || 'NETWORK' }
+        return isAbortish(e) ? noResponsePayload('timeout') : { success: false, error: e?.message || 'NETWORK' }
+      } finally {
+        res.done()
       }
     },
     sendWeeklyAvailTest: (teamId, email) => request('/admin/system/weekly-availability/send-test', {
@@ -2282,7 +2439,7 @@ export const api = {
     // Toplu işlem: action ∈ {acknowledge, resolve, re-notify}, ids = alarm id listesi
     // note yalnız acknowledge/resolve için gerekli; re-notify'da null geçilir (sunucu da aramaz).
     bulkAlertAction: (action, ids, note) => request('/admin/alerts/bulk', {
-      method: 'POST', body: JSON.stringify({ action, ids, ...(note ? { note } : {}) }),
+      method: 'POST', body: JSON.stringify({ action, ids, ...(note ? { note } : {}) }), timeoutMs: REPORT_TIMEOUT_MS,
     }),
     getAlertNotifications: (id) => request(`/admin/alerts/${id}/notifications`),
     getAlertNoise: (days = 7, teamId) => request(`/admin/alerts/noise?days=${days}${teamId ? `&team=${encodeURIComponent(teamId)}` : ''}`),
@@ -2312,8 +2469,8 @@ export const api = {
     bulkUsers: (body) => request('/admin/users/bulk', { method: 'POST', body: JSON.stringify(body) }),
     // Sistem geneli toplu pasife alma (2026-10-02, yalnız global yönetici): önizleme → uygula (409 BULK_LIST_CHANGED) → geri al
     bulkDeactivatePreview: (criteria) => request('/admin/users/bulk-deactivate/preview', { method: 'POST', body: JSON.stringify({ criteria }) }),
-    bulkDeactivate: (body) => request('/admin/users/bulk-deactivate', { method: 'POST', body: JSON.stringify(body) }),
-    bulkDeactivateUndo: (opId) => request(`/admin/users/bulk-deactivate/${opId}/undo`, { method: 'POST' }),
+    bulkDeactivate: (body) => request('/admin/users/bulk-deactivate', { method: 'POST', body: JSON.stringify(body), timeoutMs: LONG_JOB_TIMEOUT_MS }),
+    bulkDeactivateUndo: (opId) => request(`/admin/users/bulk-deactivate/${opId}/undo`, { method: 'POST', timeoutMs: LONG_JOB_TIMEOUT_MS }),
     bulkOperations: () => request('/admin/users/bulk-operations'),
     // Takım sayaçları / etki / taşıma / üyelik (2026-09-20)
     teamStats: () => request('/admin/teams/stats'),
@@ -2326,8 +2483,9 @@ export const api = {
     userTeamMembership: (id) => request(`/admin/users/${id}/team-membership`),
     userLdapCheck: (id) => request(`/admin/users/${id}/ldap-check`),
     userLdapResync: (id) => request(`/admin/users/${id}/ldap-resync`, { method: 'POST' }),
-    teamLdapCheck: (id) => request(`/admin/teams/${id}/ldap-check`),
-    teamLdapResync: (id) => request(`/admin/teams/${id}/ldap-resync`, { method: 'POST' }),
+    // Takım AD karşılaştırması: üye başına bir LDAP araması (≤ 200), yeniden eşitleme sınırsız üye → uzun süreler (2026-11-15)
+    teamLdapCheck: (id) => request(`/admin/teams/${id}/ldap-check`, { timeoutMs: REPORT_TIMEOUT_MS }),
+    teamLdapResync: (id) => request(`/admin/teams/${id}/ldap-resync`, { method: 'POST', timeoutMs: LONG_JOB_TIMEOUT_MS }),
 
     // Users
     getUsers: () => request('/admin/users'),
@@ -2582,7 +2740,7 @@ export const api = {
         return request(`/monitoring/incidents/summary${qs ? '?' + qs : ''}`, { withStatus: true })
       },
       /** Dışa aktarım (2026-11-13): JSON satırları (istemci Excel'i kurar) — liste süzgeçleriyle aynı, en çok 10 000 satır. */
-      exportJson: (params = {}) => request(`/monitoring/incidents/export${incidentsQuery({ ...params, format: 'json' })}`, { timeoutMs: 0, withStatus: true }),
+      exportJson: (params = {}) => request(`/monitoring/incidents/export${incidentsQuery({ ...params, format: 'json' })}`, { timeoutMs: EXPORT_FETCH_TIMEOUT_MS, withStatus: true }),
       /** Dışa aktarım CSV — sunucunun dosyası indirilir ({ success, name, truncated }). */
       exportCsv: (params = {}) => downloadIncidentsCsv(incidentsQuery({ ...params, format: 'csv' })),
       // Tekil olay — e-posta derin linki (?incident=<id>) sayfalı listede olmayan olayı da açabilsin.
@@ -2640,8 +2798,8 @@ export const api = {
     createPortMonitor: (data) => request('/monitoring/port', { method: 'POST', body: JSON.stringify(data) }),
     updatePortMonitor: (id, data) => request(`/monitoring/port/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deletePortMonitor: (id) => request(`/monitoring/port/${id}`, { method: 'DELETE' }),
-    triggerPortCheck:  (id) => request(`/monitoring/port/${id}/check`, { method: 'POST' }),
-    testPortMonitor:   (data) => request('/monitoring/port/test', { method: 'POST', body: JSON.stringify(data) }),
+    triggerPortCheck:  (id) => request(`/monitoring/port/${id}/check`, { method: 'POST', timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
+    testPortMonitor:   (data) => request('/monitoring/port/test', { method: 'POST', body: JSON.stringify(data), timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
     // Vekil bilgisi (2026-09-24): tanımlı mı + CONNECT tüneline izin verilen portlar (form notları)
     getPortProxyInfo:  () => request('/monitoring/port/proxy-info'),
     getPortResponseSeries: (id, { from, to, days } = {}) => {
@@ -2699,8 +2857,8 @@ export const api = {
     createKeywordMonitor: (data) => request('/monitoring/keyword', { method: 'POST', body: JSON.stringify(data) }),
     updateKeywordMonitor: (id, data) => request(`/monitoring/keyword/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteKeywordMonitor: (id) => request(`/monitoring/keyword/${id}`, { method: 'DELETE' }),
-    triggerKeywordCheck:  (id) => request(`/monitoring/keyword/${id}/check`, { method: 'POST' }),
-    testKeyword:          (data) => request('/monitoring/keyword/test', { method: 'POST', body: JSON.stringify(data) }),
+    triggerKeywordCheck:  (id) => request(`/monitoring/keyword/${id}/check`, { method: 'POST', timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
+    testKeyword:          (data) => request('/monitoring/keyword/test', { method: 'POST', body: JSON.stringify(data), timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
     // Aynı URL'yi izleyen diğer keyword izlemeleri (kw 2026-11-05): görebildikleri (≤ 20, ad + takım + kelime) + göremediği
     // takımlardaki SAYI. `withStatus`: 404 / 405 = eski sunucu (uyarı gösterilmez, "yok" denmez).
     keywordSameUrl: (url, excludeId) => {
@@ -2751,8 +2909,8 @@ export const api = {
     createPageMonitor: (data) => request('/monitoring/page', { method: 'POST', body: JSON.stringify(data) }),
     updatePageMonitor: (id, data) => request(`/monitoring/page/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deletePageMonitor: (id) => request(`/monitoring/page/${id}`, { method: 'DELETE' }),
-    triggerPageCheck:  (id) => request(`/monitoring/page/${id}/check`, { method: 'POST' }),
-    testPage:          (data) => request('/monitoring/page/test', { method: 'POST', body: JSON.stringify(data) }),
+    triggerPageCheck:  (id) => request(`/monitoring/page/${id}/check`, { method: 'POST', timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
+    testPage:          (data) => request('/monitoring/page/test', { method: 'POST', body: JSON.stringify(data), timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
     getPageResponseSeries: (id, { from, to, days } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
@@ -2812,8 +2970,8 @@ export const api = {
     createPageSpeedMonitor: (data) => request('/monitoring/pagespeed', { method: 'POST', body: JSON.stringify(data) }),
     updatePageSpeedMonitor: (id, data) => request(`/monitoring/pagespeed/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deletePageSpeedMonitor: (id) => request(`/monitoring/pagespeed/${id}`, { method: 'DELETE' }),
-    triggerPageSpeedCheck:  (id) => request(`/monitoring/pagespeed/${id}/check`, { method: 'POST' }),
-    testPageSpeed:          (data) => request('/monitoring/pagespeed/test', { method: 'POST', body: JSON.stringify(data) }),
+    triggerPageSpeedCheck:  (id) => request(`/monitoring/pagespeed/${id}/check`, { method: 'POST', timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
+    testPageSpeed:          (data) => request('/monitoring/pagespeed/test', { method: 'POST', body: JSON.stringify(data), timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
     getPageSpeedSeries: (id, { from, to, days, metric } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ from, to, days, metric }).filter(([, v]) => v != null && v !== '')),
@@ -2872,8 +3030,8 @@ export const api = {
     createDbQueryMonitor: (data) => request('/monitoring/dbquery', { method: 'POST', body: JSON.stringify(data), withStatus: true }),
     updateDbQueryMonitor: (id, data) => request(`/monitoring/dbquery/${id}`, { method: 'PUT', body: JSON.stringify(data), withStatus: true }),
     deleteDbQueryMonitor: (id) => request(`/monitoring/dbquery/${id}`, { method: 'DELETE' }),
-    triggerDbQueryCheck:  (id) => request(`/monitoring/dbquery/${id}/check`, { method: 'POST', withStatus: true }),
-    testDbQuery:          (data) => request('/monitoring/dbquery/test', { method: 'POST', body: JSON.stringify(data), withStatus: true, timeoutMs: 0 }),
+    triggerDbQueryCheck:  (id) => request(`/monitoring/dbquery/${id}/check`, { method: 'POST', withStatus: true, timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
+    testDbQuery:          (data) => request('/monitoring/dbquery/test', { method: 'POST', body: JSON.stringify(data), withStatus: true, timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
     dbQuerySqlCheck:      (sql, dbType, { signal } = {}) => request('/monitoring/dbquery/sql-check', {
       method: 'POST', body: JSON.stringify({ sql, db_type: dbType }), withStatus: true, ...(signal ? { signal } : {}),
     }),
@@ -2881,7 +3039,7 @@ export const api = {
     // SQL sunucuda güvenlik denetiminden geçmiştir. 404 / 405 = sunucu desteklemiyor (eski sürüm).
     dbQuerySqlFix:        (body) => request('/monitoring/dbquery/sql-fix', { method: 'POST', body: JSON.stringify(body), withStatus: true }),
     dbQueryPlanCheck:     (profileId, sql) => request('/monitoring/dbquery/plan-check', {
-      method: 'POST', body: JSON.stringify({ profile_id: profileId, sql }), withStatus: true, timeoutMs: 0,
+      method: 'POST', body: JSON.stringify({ profile_id: profileId, sql }), withStatus: true, timeoutMs: LIVE_CHECK_TIMEOUT_MS,
     }),
     dbQuerySchedulePreview: (schedule, { signal } = {}) => request('/monitoring/dbquery/schedule-preview', {
       method: 'POST', body: JSON.stringify(schedule), withStatus: true, ...(signal ? { signal } : {}),
@@ -2899,8 +3057,8 @@ export const api = {
     createDbConnection:   (data) => request('/monitoring/dbquery/connections', { method: 'POST', body: JSON.stringify(data), withStatus: true }),
     updateDbConnection:   (id, data) => request(`/monitoring/dbquery/connections/${id}`, { method: 'PUT', body: JSON.stringify(data), withStatus: true }),
     deleteDbConnection:   (id) => request(`/monitoring/dbquery/connections/${id}`, { method: 'DELETE', withStatus: true }),
-    testDbConnection:     (id) => request(`/monitoring/dbquery/connections/${id}/test`, { method: 'POST', withStatus: true, timeoutMs: 0 }),
-    testDbConnectionDraft: (data) => request('/monitoring/dbquery/connections/test', { method: 'POST', body: JSON.stringify(data), withStatus: true, timeoutMs: 0 }),
+    testDbConnection:     (id) => request(`/monitoring/dbquery/connections/${id}/test`, { method: 'POST', withStatus: true, timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
+    testDbConnectionDraft: (data) => request('/monitoring/dbquery/connections/test', { method: 'POST', body: JSON.stringify(data), withStatus: true, timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
     // Bağlantı sağlık özeti (son 24 sa: çalışma / hata sayısı, kullanan izlemeler) — takım belgesi, paylaşımla açılmaz.
     // 404 / 405 = sunucu desteklemiyor (eski sürüm).
     dbConnectionHealth:   (id) => request(`/monitoring/dbquery/connections/${id}/health`, { withStatus: true }),
@@ -2922,7 +3080,7 @@ export const api = {
     // withStatus (2026-10-31): 403 / 404 / 409 SECRET_UNREADABLE / 429 ret gövdeleri (`field`, `file_reads`, `code`)
     // test panelinde ayrı anlatılır. Gövde: script, timeoutSeconds, useProxy, env [{name, value, secret, keep?}],
     // monitorId (düzenlemede — `keep` satırları izlemenin kayıtlı şifreli değeriyle koşar).
-    testScripted:          (data) => request('/monitoring/scripted/test', { method: 'POST', body: JSON.stringify(data), withStatus: true }),
+    testScripted:          (data) => request('/monitoring/scripted/test', { method: 'POST', body: JSON.stringify(data), withStatus: true, timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
     // Zamanlama önizlemesi (dbquery ile aynı gövde / yanıt; en kısa aralık sentetik izlemeninki)
     scriptedSchedulePreview: (schedule, { signal } = {}) => request('/monitoring/scripted/schedule-preview', {
       method: 'POST', body: JSON.stringify(schedule), withStatus: true, ...(signal ? { signal } : {}),
@@ -2935,7 +3093,7 @@ export const api = {
     // Bağlantı teşhisi: aynı hedefe vekil/CA kombinasyonlarıyla k6 sondası — "Java çekiyor,
     // k6 çekmiyor" ayrımını ÖLÇER. İzleme havuzunu tüketmez (ayrı semafor), bacaklar sırayla koşar.
     diagnoseScripted:      (id, url) => request(`/monitoring/scripted/${id}/diagnose`,
-                             { method: 'POST', body: JSON.stringify(url ? { url } : {}) }),
+                             { method: 'POST', body: JSON.stringify(url ? { url } : {}), timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
     // Gizli env değerini GÖSTER (2026-10-19): yalnız global yönetici / takımı yöneten yönetici (satırın `can_reveal`).
     // POST + no-store; yanıt { name, value } yalnız çağıranın bileşen durumunda yaşar — hiçbir depoya yazılmaz.
     revealScriptedSecret:  (id, name) => request(`/monitoring/scripted/${id}/env/${encodeURIComponent(name)}/reveal`,
@@ -3015,8 +3173,8 @@ export const api = {
     createHttpMonitor: (data) => request('/monitoring/http', { method: 'POST', body: JSON.stringify(data) }),
     updateHttpMonitor: (id, data) => request(`/monitoring/http/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteHttpMonitor: (id) => request(`/monitoring/http/${id}`, { method: 'DELETE' }),
-    triggerHttpCheck:  (id) => request(`/monitoring/http/${id}/check`, { method: 'POST' }),
-    testHttp:          (data) => request('/monitoring/http/test', { method: 'POST', body: JSON.stringify(data) }),
+    triggerHttpCheck:  (id) => request(`/monitoring/http/${id}/check`, { method: 'POST', timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
+    testHttp:          (data) => request('/monitoring/http/test', { method: 'POST', body: JSON.stringify(data), timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
     // HTTP uçtan uca tanılama (2026-10-02): izlemenin kendi yolu + vekil tanımlıysa öteki yol, adım adım. Sunucu tüm
     // çalıştırmayı 60 sn'de keser → istemci 75 sn bekler (çağıranın `signal`'i İptal için; ikisi tek sinyalde birleşir).
     // withStatus: 429 / 403 / 404 hata gövdesinde ayırt edilsin (pencere hız sınırı şeridini buna göre çizer).
@@ -3046,11 +3204,11 @@ export const api = {
     createDomainMonitor: (data) => request('/monitoring/domain', { method: 'POST', body: JSON.stringify(data) }),
     updateDomainMonitor: (id, data) => request(`/monitoring/domain/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteDomainMonitor: (id) => request(`/monitoring/domain/${id}`, { method: 'DELETE' }),
-    triggerDomainCheck:  (id) => request(`/monitoring/domain/${id}/check`, { method: 'POST' }),
-    testDomain:          (data) => request('/monitoring/domain/test', { method: 'POST', body: JSON.stringify(data) }),
+    triggerDomainCheck:  (id) => request(`/monitoring/domain/${id}/check`, { method: 'POST', timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
+    testDomain:          (data) => request('/monitoring/domain/test', { method: 'POST', body: JSON.stringify(data), timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
     // Domain Kaydı (registration) — DB'deki son bilgi; live=true → anlık RDAP sorgusu.
     getDomainRegistration: (id, { live } = {}) =>
-      request(`/monitoring/domain/${id}/registration${live ? '?live=true' : ''}`),
+      request(`/monitoring/domain/${id}/registration${live ? '?live=true' : ''}`, live ? { timeoutMs: LIVE_CHECK_TIMEOUT_MS } : {}),
     // Kalan-gün trendi (2026-09-22): günlük seri + değişiklik işaretleri
     getDomainTrend: (id, days = 90) => request(`/monitoring/domain/${id}/trend?days=${days}`),
     // Gönderilen süre-bitişi hatırlatmaları (2026-09-22): eşikler + kayıtlar
@@ -3068,8 +3226,8 @@ export const api = {
     createPingMonitor: (data) => request('/monitoring/ping', { method: 'POST', body: JSON.stringify(data) }),
     updatePingMonitor: (id, data) => request(`/monitoring/ping/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deletePingMonitor: (id) => request(`/monitoring/ping/${id}`, { method: 'DELETE' }),
-    triggerPingCheck:  (id) => request(`/monitoring/ping/${id}/check`, { method: 'POST' }),
-    testPingMonitor:   (data) => request('/monitoring/ping/test', { method: 'POST', body: JSON.stringify(data) }),
+    triggerPingCheck:  (id) => request(`/monitoring/ping/${id}/check`, { method: 'POST', timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
+    testPingMonitor:   (data) => request('/monitoring/ping/test', { method: 'POST', body: JSON.stringify(data), timeoutMs: LIVE_CHECK_TIMEOUT_MS }),
     getPingResponseSeries: (id, { from, to, days } = {}) => {
       const q = new URLSearchParams(
         Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
@@ -3175,7 +3333,6 @@ export function formatTime(iso) {
     return iso.substring(11, 19)
   }
 }
-
 
 export function formatDateOnly(iso) {
   if (!iso) return '—'

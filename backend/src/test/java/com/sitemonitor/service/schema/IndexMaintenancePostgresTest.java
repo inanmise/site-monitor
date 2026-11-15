@@ -354,6 +354,54 @@ class IndexMaintenancePostgresTest {
     }
 
     @Test
+    @DisplayName("Soket sınırı (socketTimeout=2 sn) deyim süresinden kısa olsa da REINDEX istemcide 08006 ile kesilmez: deyim kendi"
+            + " statement_timeout'unda (57014) biter, oturum sağlam kalır")
+    void rebuildLongerThanSocketTimeout() throws Exception {
+        String t = "it_ixm_socket";
+        PostgresIt.Config cfg = PostgresIt.config();
+        com.zaxxer.hikari.HikariConfig hc = new com.zaxxer.hikari.HikariConfig();
+        hc.setJdbcUrl(cfg.url());
+        hc.setUsername(cfg.user());
+        hc.setPassword(cfg.password());
+        hc.setMaximumPoolSize(2);
+        hc.addDataSourceProperty("socketTimeout", "2");   // Helm DB_SOCKET_TIMEOUT_SECONDS'ın kısa eşi
+        try (com.zaxxer.hikari.HikariDataSource ds = new com.zaxxer.hikari.HikariDataSource(hc)) {
+            bloatedTable(t);
+            jdbc().execute("DROP TABLE IF EXISTS it_ixm_other5");
+            jdbc().execute("CREATE TABLE it_ixm_other5 (x INT)");
+            try (Connection blocker = PostgresIt.app().newSession()) {
+                blocker.setAutoCommit(false);
+                blocker.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+                try (Statement st = blocker.createStatement()) { st.execute("SELECT count(*) FROM it_ixm_other5"); }
+                try (JdbcIndexCatalog db = JdbcIndexCatalog.open(ds)) {
+                    long t0 = System.nanoTime();
+                    java.sql.SQLException err = null;
+                    try {
+                        db.executeBounded("REINDEX INDEX CONCURRENTLY " + t + "_mc", 60_000, 5_000);
+                    } catch (java.sql.SQLException e) {
+                        err = e;
+                    }
+                    long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+                    assertThat((Object) err).as("anlık görüntü REINDEX'i bekletir — deyim süresinde biter").isNotNull();
+                    assertThat(err.getSQLState()).as("istemci soketi (2 sn) değil, sunucudaki statement_timeout (5 sn): %s", err)
+                            .isEqualTo("57014");
+                    assertThat(ms).as("deyim süresi kadar sürdü").isBetween(4_000L, 30_000L);
+                    // Oturum sağlam: kalıntı aynı oturumda okunup düşürülür
+                    for (IndexCatalog.Leftover l : db.leftovers(List.of(t))) {
+                        db.executeBounded("DROP INDEX CONCURRENTLY IF EXISTS " + l.qualifiedName(), 10_000, 60_000);
+                    }
+                }
+                blocker.rollback();
+            }
+            assertThat(leftovers(t)).isEmpty();
+            assertThat(validity(t + "_mc")).isTrue();
+        } finally {
+            jdbc().execute("DROP TABLE IF EXISTS " + t);
+            jdbc().execute("DROP TABLE IF EXISTS it_ixm_other5");
+        }
+    }
+
+    @Test
     @DisplayName("Bekçi: REINDEX (lock_timeout 5 dk) açık anlık görüntüyü beklerken ALTER TABLE onu bekler → ≈ 6 sn'de REINDEX iptal"
             + " edilir, ALTER biter, _ccnew hemen temizlenir")
     void watchdogCancelsRebuildThatBlocksAnotherSession() throws Exception {

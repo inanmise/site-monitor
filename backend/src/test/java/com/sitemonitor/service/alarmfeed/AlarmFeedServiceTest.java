@@ -151,6 +151,22 @@ class AlarmFeedServiceTest {
     }
 
     @Test
+    @DisplayName("2026-11-15 kapı: MAILS yalnız pasif hesaplara ait adresleri YAZMAZ (sahip postası onlara gitmez)")
+    void mailsDropPassiveOnlyAddresses() {
+        com.sitemonitor.service.InactiveRecipientGuard guard = org.mockito.Mockito.mock(com.sitemonitor.service.InactiveRecipientGuard.class);
+        org.mockito.Mockito.when(guard.isInactiveOnlyEmail(org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(i -> "ops@example.com".equalsIgnoreCase(i.getArgument(0)));
+        svc.setInactiveGuard(guard);
+        alarm("host-a", "PING_DOWN", "WARNING", teamA);
+        Map<String, Object> r = svc.feed(DEF).rows().get(0);
+        assertThat(r.get("MAILS")).isEqualTo("dijital@example.com");
+        // Süzgeç yoksa (eski davranış) iki adres de yazılır
+        AlarmFeedService plain = service();
+        jdbc.update("DELETE FROM alarm_feed_events");
+        assertThat(plain.preview(DEF).rows().get(0).get("MAILS")).isEqualTo("dijital@example.com; ops@example.com");
+    }
+
+    @Test
     @DisplayName("Envanter gibi yönlenen alarm (sertifika) SY + UG takımını envanterden alır; takım süzgeci UG'yi de sayar")
     void inventoryRoutedTeams() {
         CertificateInventory inv = new CertificateInventory();

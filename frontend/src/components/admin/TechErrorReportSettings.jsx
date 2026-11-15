@@ -251,7 +251,8 @@ export default function TechErrorReportSettings({ readOnly = false }) {
   const [exporting, setExporting] = useState(false)
   function exportCsv() {
     const { header, rows } = exportTable(visible, t)
-    downloadCsv(exportFileName(period, 'csv'), toCsv(header, rows))
+    // Tarayıcı indirmeyi başlatamadıysa söylenir (2026-11-15, prod kapısı: sessizce hiçbir şey olmuyordu)
+    if (downloadCsv(exportFileName(period, 'csv'), toCsv(header, rows)) === false) toast.error(t('inv.downloadFailed'))
   }
   async function exportXlsx() {
     if (exporting) return
@@ -261,7 +262,7 @@ export default function TechErrorReportSettings({ readOnly = false }) {
       const { buildXlsx, XLSX_MIME } = await loadXlsxWriter()
       const bytes = buildXlsx([{ name: t('te.set.export.sheet'), rows: [header, ...rows], freezeHeader: true, autoFilter: true,
         widths: [42, 34, 9, 18, 28, 14, 14, 34, 34] }])
-      downloadBlob(exportFileName(period, 'xlsx'), new Blob([bytes], { type: XLSX_MIME }))
+      if (downloadBlob(exportFileName(period, 'xlsx'), new Blob([bytes], { type: XLSX_MIME })) === false) toast.error(t('inv.downloadFailed'))
     } catch (e) {
       // API dışı hata (bayat paket "Failed to fetch dynamically imported module", bellek, çalışma kitabı): tostta yalnız
       // çevrilmiş metin, teknik metin "Teknik ayrıntı"da (hata sözleşmesi)

@@ -89,9 +89,12 @@ oc create route edge site-monitor \
   --service=site-monitor-sitemonitor-chart \
   --hostname=site-monitor.apps.<cluster-domain> \
   -n site-monitor
-# The HAProxy router cuts requests after 30 s by default; a manual page-integrity check can take
-# up to 120 s. Raise the route timeout above that:
-oc annotate route site-monitor haproxy.router.openshift.io/timeout=130s -n site-monitor
+# The HAProxy router cuts requests after 30 s by default; the longest requests take up to ~130 s
+# (manual page-integrity check and SQL Playground export up to 120 s, resource-analysis image
+# download up to 130 s, keyword / database-query tests). Raise the route timeout above that:
+oc annotate route site-monitor haproxy.router.openshift.io/timeout=135s --overwrite -n site-monitor
+# NetScaler (or any proxy in front of the router) needs the same: request body >= 12 MB (the app's
+# multipart max-request-size) and server / idle timeout >= 135 s (docs/PROD_DEPLOY_CHECKLIST.md).
 ```
 
 ### Option B — NGINX Ingress Operator
@@ -102,7 +105,10 @@ If the NGINX Ingress Operator is installed on your cluster, the default Helm val
 oc get ingresscontroller -n openshift-ingress-operator
 ```
 
-Use `ingressClassName: nginx` in values (already the default).
+Use `ingressClassName: nginx` in values (already the default). The chart's Ingress carries
+`nginx.ingress.kubernetes.io/proxy-body-size: "16m"`, `proxy-read-timeout: "135"` and
+`haproxy.router.openshift.io/timeout: "135s"` (the last one only matters when the OpenShift router serves
+the Ingress and generates a Route from it — the Route takes over the Ingress annotations).
 
 ---
 

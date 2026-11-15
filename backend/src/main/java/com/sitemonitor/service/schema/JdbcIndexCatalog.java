@@ -25,6 +25,7 @@ import java.util.Map;
  */
 final class JdbcIndexCatalog implements IndexCatalog {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(JdbcIndexCatalog.class);
     private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
     /** Tablonun indeksleri — anahtar + INCLUDE sütun adları {@code indkey} sırasıyla (ifade konumu boş dize). */
@@ -114,22 +115,60 @@ final class JdbcIndexCatalog implements IndexCatalog {
     @FunctionalInterface
     interface WatchStarter { DdlBlockWatch start(int pid, long maxMs) throws SQLException; }
 
+    /** Bağlantısı kopan oturumun sunucuda süren DDL'ini YENİ bir bağlantıdan iptal eder ({@code pg_cancel_backend}). */
+    @FunctionalInterface
+    interface OrphanCanceller { void cancel(int pid) throws SQLException; }
+
+    /**
+     * İstemci soket sınırının DDL'in {@code statement_timeout}'undan fazlası (kapı incelemesi 2026-11-15). Havuz dışı oturum
+     * veri kaynağının özelliklerini (Helm {@code DB_SOCKET_TIMEOUT_SECONDS} → {@code socketTimeout=1800}) kopyalar; 45 dk'lık
+     * bir REINDEX 30. dakikada istemcide 08006 ile kesiliyor, bekçi duruyor ve sunucu DDL'i (SHARE UPDATE EXCLUSIVE +
+     * SMIDXBLD tutarak) gözetimsiz sürdürüyordu. Her {@link #executeBounded} soket sınırını deyim süresi + bu pay yapar ve
+     * sonra eski değere döndürür: deyim önce sunucuda biter (57014) ya da bekçi iptal eder — istemci soketi önce kesmez.
+     */
+    static final long NETWORK_SLACK_MS = 60_000L;
+
+    private static final java.util.concurrent.Executor DIRECT = Runnable::run;
+
     private final DeferredIndexBuilder.JdbcSession session;
     private final Connection conn;
     private final WatchStarter watches;
+    private final OrphanCanceller orphans;
     /** Süren DDL deyimi — kapanışta {@link #cancel()} başka iş parçacığından iptal eder. */
     private volatile Statement running;
     private int backendPid = -1;
 
-    private JdbcIndexCatalog(DeferredIndexBuilder.JdbcSession session, WatchStarter watches) {
+    private JdbcIndexCatalog(DeferredIndexBuilder.JdbcSession session, WatchStarter watches, OrphanCanceller orphans) {
         this.session = session;
         this.conn = session.connection();
         this.watches = watches;
+        this.orphans = orphans;
     }
 
     static JdbcIndexCatalog open(DataSource ds) throws SQLException {
         return new JdbcIndexCatalog(DeferredIndexBuilder.JdbcSession.open(ds),
-                (pid, maxMs) -> DdlBlockWatch.start(JdbcProbe.open(ds), pid, maxMs));
+                (pid, maxMs) -> DdlBlockWatch.start(JdbcProbe.open(ds), pid, maxMs),
+                pid -> {
+                    JdbcProbe p = JdbcProbe.open(ds);
+                    try { p.cancel(pid); } finally { p.close(); }
+                });
+    }
+
+    /** Birim testleri: verilen bağlantı (sahte) üzerinde katalog. */
+    static JdbcIndexCatalog of(Connection conn, WatchStarter watches, OrphanCanceller orphans) {
+        return new JdbcIndexCatalog(DeferredIndexBuilder.JdbcSession.wrap(conn, false), watches, orphans);
+    }
+
+    /** {@code executeBounded} süresince istemci soket sınırı: deyim süresi + {@link #NETWORK_SLACK_MS} (int'e sığdırılır). */
+    static int networkTimeoutMs(long statementMs) {
+        long s = Math.max(1L, statementMs);
+        return (int) Math.min(Integer.MAX_VALUE, s >= Integer.MAX_VALUE ? Integer.MAX_VALUE : s + NETWORK_SLACK_MS);   // taşmaz
+    }
+
+    /** Bağlantı koptu mu (08xxx; 08000 = bekçi / soket sınırı kurulamadı, DDL hiç koşmadı — kopma değil). */
+    static boolean connectionLost(SQLException e) {
+        String st = e == null ? null : e.getSQLState();
+        return st != null && st.startsWith("08") && !"08000".equals(st);
     }
 
     /** Bekçinin ayrı bağlantısı (havuz dışı, otomatik commit, 3 sn deyim süresi). */
@@ -333,7 +372,16 @@ final class JdbcIndexCatalog implements IndexCatalog {
             throw new SQLException("indeks DDL bekçisi başlatılamadı — DDL koşulmadı: " + DeferredIndexBuilder.firstLine(e),
                     "08000", e);
         }
+        int previousNetworkMs = -1;
         try (Statement st = conn.createStatement()) {
+            // Soket sınırı deyim süresinden uzun (NETWORK_SLACK_MS): kurulamazsa DDL KOŞULMAZ (istemci erken kesebilirdi)
+            try {
+                previousNetworkMs = conn.getNetworkTimeout();
+                conn.setNetworkTimeout(DIRECT, networkTimeoutMs(stmtMs));
+            } catch (SQLException | RuntimeException e) {
+                throw new SQLException("indeks DDL soket sınırı ayarlanamadı — DDL koşulmadı: " + DeferredIndexBuilder.firstLine(e),
+                        "08000", e);
+            }
             st.execute("SET lock_timeout = " + Math.max(1L, lockTimeoutMs));
             st.execute("SET statement_timeout = " + stmtMs);
             running = st;
@@ -343,6 +391,7 @@ final class JdbcIndexCatalog implements IndexCatalog {
                 watch.stop();
                 String fired = watch.firedReason();
                 if (fired != null) throw new BlockingOthersException(fired, e);
+                if (connectionLost(e)) cancelOrphan(e);
                 throw e;
             } finally {
                 running = null;
@@ -355,6 +404,27 @@ final class JdbcIndexCatalog implements IndexCatalog {
             } catch (SQLException ignore) {
                 // bağlantı koptuysa oturum zaten kapanıyor
             }
+            if (previousNetworkMs >= 0) {
+                try { conn.setNetworkTimeout(DIRECT, previousNetworkMs); } catch (SQLException ignore) { /* kopuk oturum */ }
+            }
+        }
+    }
+
+    /**
+     * Bağlantı koptu ama sunucu süreci DDL'i sürdürüyor olabilir (istemci soketi kapandı, sunucu bunu ancak yazınca görür):
+     * kilitleri ve SMIDXBLD'yi gözetimsiz tutmasın diye YENİ bir bağlantıdan iptal edilir. Başarısızlık yutulur (sunucudaki
+     * {@code statement_timeout} yine sınırlar). Kalıntı (_ccnew) çağıranın yeni oturumunda düşürülür.
+     */
+    private void cancelOrphan(SQLException cause) {
+        int pid = backendPid;
+        if (pid <= 0) return;
+        try {
+            orphans.cancel(pid);
+            log.warn("İndeks DDL'i sürerken veritabanı bağlantısı koptu ({}) — sunucuda süren deyim yeni bağlantıdan iptal"
+                    + " edildi (pid {})", DeferredIndexBuilder.firstLine(cause), pid);
+        } catch (SQLException | RuntimeException e) {
+            log.warn("İndeks DDL'i sürerken bağlantı koptu; sunucudaki deyim iptal edilemedi (pid {}): {} — kendi"
+                    + " statement_timeout'unda biter", pid, DeferredIndexBuilder.firstLine(e));
         }
     }
 

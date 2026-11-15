@@ -137,10 +137,11 @@ public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedReso
         insertAll(rows);   // JDBC toplu INSERT (500'lük öbekler) — aynı transaction
     }
 
-    /** İzleme silinince tüm kırılımını temizle. */
+    /** İzleme silinince tüm kırılımını temizle — TOPLU silme (kapı incelemesi 2026-11-15): türetilmiş {@code deleteBy…} her satırı varlık olarak yükleyip tek tek siler; tek {@code DELETE}. */
     @Transactional
     @Modifying
-    int deleteByMonitorId(Long monitorId);
+    @Query("DELETE FROM PageSpeedResource r WHERE r.monitorId = :id")
+    int deleteByMonitorId(@Param("id") Long monitorId);
 
     /** Retention: YALNIZ donmuş ihlal delilleri yaşa göre temizlenir; LATEST satırları zaten üzerine yazılıyor. */
     @Transactional

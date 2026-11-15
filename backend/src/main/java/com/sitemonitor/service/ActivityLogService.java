@@ -230,7 +230,7 @@ public class ActivityLogService {
             applyCheckRefs(a, result, refs);
             save(a);
         } catch (Exception e) {
-            log.debug("activity-log kayıt atlandı (type={} target={}): {}", type, target, e.toString());
+            log.debug("activity-log kayıt atlandı (type={} target={}): {}", type, SecretMask.logUrl(target), e.toString());
         }
     }
 

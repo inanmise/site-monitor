@@ -358,8 +358,10 @@ export function AvailabilityWeekWidget({ frame, refreshKey }) {
     : s.unsupported ? t('mydash.series.unsupported')
     : !s.valid ? null
     : !known ? t('mydash.avail.tone.noData')
+    : s.partial ? t('mydash.avail.tone.partial')
     : s.meets ? t('mydash.avail.tone.ok') : t('mydash.avail.tone.below')
-  const gap = known && !s.meets ? Math.max(0, s.target - s.pct) : 0
+  const gap = known && s.meets === false ? Math.max(0, s.target - s.pct) : 0
+  const missingTypes = s.unavailableTypes.map((x) => typeLabel(x, t)).join(', ')
   const center = (<>
     <span className={cn('font-semibold tabular-nums leading-none', frame.tv ? 'text-4xl' : 'text-3xl',
       !known ? 'text-muted-foreground' : s.tone === 'success' ? 'text-success' : s.tone === 'danger' ? 'text-destructive'
@@ -393,6 +395,11 @@ export function AvailabilityWeekWidget({ frame, refreshKey }) {
           {!known ? (
             <Empty tone="muted" icon={CircleHelp} tv={frame.tv}
               text={t(s.monitors === 0 && s.unmeasured === 0 ? 'mydash.avail.noMonitors' : 'mydash.avail.noData')} />
+          ) : s.partial ? (
+            <p className={cn('m-0 text-muted-foreground [overflow-wrap:anywhere]', frame.tv ? 'text-base' : 'text-sm')}
+              data-slot="mydash-avail-partial">
+              {missingTypes ? t('mydash.avail.partial', missingTypes) : t('mydash.avail.partialUnknown')}
+            </p>
           ) : (
             <p className={cn('m-0 [overflow-wrap:anywhere]', frame.tv ? 'text-base' : 'text-sm',
               s.meets ? 'text-success' : gap > AVAIL_DANGER_GAP ? 'text-destructive' : 'text-amber-700 dark:text-amber-300')}

@@ -182,7 +182,7 @@ opt-in'dir, gece temizlik/rollup dağıtık-kilitlidir → çok-pod'da tek pod �
 ### DEPLOY SONRASI (smoke doğrulama)
 - Monitör-liste sayfaları açılıyor (LATERAL en-güncel sorguları) + Denetim/Aktivite ekranları.
 - `/metrics` içinde `db_table_rows{table=...}` gauge'ları görünüyor.
-- İlk gece (03:30) `cleanupOldLogs` günlüğü: yalnız **tek pod** "Gece temizliği: N politika, …" (INFO) yazar; diğerleri
+- İlk gece (03:00) `cleanupOldLogs` günlüğü: yalnız **tek pod** "Gece temizliği: N politika, …" (INFO) yazar; diğerleri
   DEBUG düzeyinde (saatte en çok bir kez) "Gece temizlik/rollup — bu gecenin turu başka pod'da sahiplenildi, atlanıyor" ya
   da kilit meşgulken "… lock başka pod'da, yeniden denenecek" yazar (tüm pod'ların günlüğü:
   `kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1`); rollup satırları `monitor_check_daily` ve

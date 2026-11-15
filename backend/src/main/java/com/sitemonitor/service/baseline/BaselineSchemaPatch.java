@@ -60,6 +60,9 @@ public class BaselineSchemaPatch {
     }
 
     private int createTable() {
+        // Tablo zaten varsa 0 (kapı incelemesi 2026-11-15): IF NOT EXISTS her açılışta hatasız koştuğu için "1 değişiklik
+        // uygulandı" her açılışta INFO yazılıyordu.
+        if (tableReadable()) return 0;
         try {
             jdbc.execute(BaselineSampleStore.DDL_TABLE);
             return 1;

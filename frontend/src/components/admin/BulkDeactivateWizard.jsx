@@ -127,6 +127,9 @@ export default function BulkDeactivateWizard({ open, onClose, onDone, teams = []
         setError({ message: t('ubd.listChanged', res.current_count ?? '?'), listChanged: true })
       } else {
         setError({ message: res?.error || 'Error' })
+        // Süre doldu (2026-11-15): işlem sunucuda tamamlanmış olabilir — metin "kontrol edin" der; geçmiş tazelenir ki
+        // tamamlanan işlem listede görünsün (yeniden "Uygula" sunucuda listenin değiştiğini söyler, iki kez uygulanmaz)
+        if (res?.code === 'REQUEST_TIMEOUT') loadHistory()
       }
     } catch (e) {
       setError({ message: e?.message || 'Error' })
