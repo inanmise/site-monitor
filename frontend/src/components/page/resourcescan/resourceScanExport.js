@@ -11,7 +11,7 @@ import {
 import {
   budgetExportRows, categoryBytesChart, categoryScoreRows, categoryScoreText, compareExportRows, compareNotes, deepSheets,
   executiveSections, executiveSheetRows, pageStatusText, priorityActions, actionRow, siteModel, sitePageSheetRows, siteSharedSheetRows,
-  withObjectDeepColumns,
+  withObjectDeepColumns, crawlReasonText, crawlSourceText,
 } from './resourceScanReportModel.js'
 
 /**
@@ -69,6 +69,10 @@ export function exportResourceScanXlsx({ monitor, scan, analysis, items, t, loca
     sheets.push({ name: t('prs.pdf.sheet.pages'), rows: sitePageSheetRows(site, t), freezeHeader: true, autoFilter: true,
       widths: [70, 16, 8, 8, 12, 14, 10, 10, 10, 10, 14, 10, 50, 40] })
     sheets.push({ name: t('prs.pdf.sheet.shared'), rows: siteSharedSheetRows(site, t), freezeHeader: true, widths: [80, 16, 14, 10] })
+    if (site.unscanned.length) {
+      // Tüm site taraması (2026-11-15): bulunan ama taranmayan sayfalar, adıyla
+      sheets.push({ name: t('prs.export.sheet.unscanned'), rows: unscannedSheetRows(site, t), freezeHeader: true, autoFilter: true, widths: [90, 18, 34] })
+    }
   }
   sheets.push({ name: t('prs.export.sheet.notes'), rows: noteSheetRows(analysis, t, locale), freezeHeader: true, widths: [120] })
   const bytes = buildXlsx(sheets)
@@ -338,4 +342,11 @@ function drawExecutive(doc, { autoTable, base, table, cell, scan, analysis, budg
     after()
   }
   return y
+}
+
+/** Taranmayan sayfalar sayfası: adres, kaynak, neden (ham kod yazılmaz). */
+export function unscannedSheetRows(site, t) {
+  const rows = [[t('prs.export.unscanned.url'), t('prs.export.unscanned.source'), t('prs.export.unscanned.reason')]]
+  for (const u of site.unscanned) rows.push([u.url, crawlSourceText(u.source, t), crawlReasonText(u.reason, t)])
+  return rows
 }

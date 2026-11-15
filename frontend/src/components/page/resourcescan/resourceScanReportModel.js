@@ -388,6 +388,87 @@ export const SITE_MIN_PAGES = 2
 export const SITE_DEFAULT_MAX_PAGES = 10
 export const SITE_MAX_PAGES_CAP = 20
 export const SITE_DEFAULT_MAX_SECONDS = 900
+/**
+ * Tüm site taraması (2026-11-15): sunucu `limits.full_site_max_pages|full_site_max_seconds` gönderiyorsa sunulur (eski sunucu
+ * göndermez → seçenek gizli). Sayfa ≤ 1000, süre ≤ 3600 sn.
+ */
+export const FULL_SITE_DEFAULT_MAX_PAGES = 1000
+export const FULL_SITE_MAX_PAGES_CAP = 1000
+export const FULL_SITE_DEFAULT_MAX_SECONDS = 3600
+/** Taranmayan sayfanın nedeni (sunucu `unscanned[].reason`) ve kaynağı (`source`); bilinmeyen değer genel metin. */
+export const CRAWL_STOP_REASONS = ['PAGES', 'TIME', 'BYTES', 'OBJECTS', 'KNOWN_CAP']
+export const CRAWL_SOURCES = ['link', 'sitemap', 'resume']
+
+export function fullSiteLimits(limits) {
+  const mp = int(limits?.full_site_max_pages)
+  const ms = num(limits?.full_site_max_seconds)
+  return {
+    supported: mp !== null && mp > 0,
+    maxPages: Math.min(FULL_SITE_MAX_PAGES_CAP, Math.max(SITE_MIN_PAGES, mp ?? FULL_SITE_DEFAULT_MAX_PAGES)),
+    maxSeconds: ms !== null && ms > 0 ? ms : FULL_SITE_DEFAULT_MAX_SECONDS,
+  }
+}
+
+/** Taramanın durma nedeni / taranmayan sayfanın nedeni metni (ham kod gösterilmez). */
+export function crawlReasonText(reason, t) {
+  return t(CRAWL_STOP_REASONS.includes(reason) ? `prs.crawl.reason.${reason}` : 'prs.crawl.reason.other')
+}
+
+/** Adresin nereden bulunduğu metni. */
+export function crawlSourceText(source, t) {
+  return t(CRAWL_SOURCES.includes(source) ? `prs.crawl.source.${source}` : 'prs.crawl.source.other')
+}
+
+/** Tüm site taramasının özet bilgisi (`analysis.site.crawl`); yoksa null (sayfa sayısı seçilen tarama / eski sunucu). */
+function crawlModel(c) {
+  if (!isObj(c) || c.mode !== 'full') return null
+  const sm = isObj(c.sitemap) ? c.sitemap : {}
+  return {
+    complete: typeof c.complete === 'boolean' ? c.complete : null,
+    stopReason: typeof c.stop_reason === 'string' && c.stop_reason ? c.stop_reason : null,
+    maxPages: num(c.max_pages),
+    maxSeconds: num(c.max_seconds),
+    discovered: num(c.discovered),
+    fromLinks: num(c.from_links),
+    fromSitemap: num(c.from_sitemap),
+    dropped: num(c.dropped) ?? 0,
+    droppedAtLeast: c.dropped_at_least === true,
+    // Kuyruk bitti ama keşif kesildi (site haritası evresi tavana / süreye takıldı ya da listelenen harita okunamadı)
+    discoveryIncomplete: c.discovery_incomplete === true,
+    priorPages: num(c.prior_pages) ?? 0,
+    resumedFrom: num(c.resumed_from),
+    resumeFailed: c.resume_failed === true,
+    sitemap: {
+      found: typeof sm.found === 'boolean' ? sm.found : null,
+      fromRobots: sm.from_robots === true,
+      files: num(sm.files),
+      filesRead: num(sm.files_read),
+      urls: num(sm.urls),
+      added: num(sm.added),
+      truncated: sm.truncated === true,
+      otherHost: num(sm.other_host) ?? 0,
+      errors: arr(sm.errors).filter((e) => typeof e === 'string' && e).slice(0, 10),
+    },
+  }
+}
+
+/**
+ * Tüm site taraması kaldığı yerden sürdürülebilir mi: bitmiş (DONE) tüm site taraması, kuyruk bitmedi (`complete` false)
+ * ve taranmayan sayfa var. Eksik bilgi (eski yanıt) → false.
+ */
+export function canResumeCrawl(scan, model) {
+  if (!model?.crawl || scan?.status !== 'DONE') return false
+  return model.crawl.complete === false && (model.unscannedTotal ?? 0) > 0
+}
+
+/**
+ * Yarıda kalan (pod durdu / iptal / eskime) ya da başarısız tüm site taraması denetim noktasından sürdürülebilir mi: sunucu
+ * özet satırında `resumable: true` der (denetim noktası var). Kuyruk boşsa sunucu yine reddeder (ileti gösterilir).
+ */
+export function canResumeInterrupted(scan) {
+  return scan?.crawl === 'full' && scan?.resumable === true && (scan?.status === 'INTERRUPTED' || scan?.status === 'FAILED')
+}
+
 /** Sayfa tablosu ↔ kart eşiği (KAP genişliği, px). jsdom 0 → tablo. */
 export const SITE_TABLE_MIN_PX = 760
 export const SITE_SORTS = ['grade_asc', 'load_desc', 'size_desc', 'url']
@@ -485,6 +566,8 @@ export function siteModel(site) {
       unique: num(p.unique_bytes), shared: num(p.shared_count), main: i === 0,
       // Sayfa kısmi ölçüldü (sunucu `capped`): notu ve güvenlik puanı kesin değil — soluk + "Kısmi ölçüm" (bh-prs3 D-3)
       capped: status === 'ok' && p.capped === true,
+      // Tüm site taramasının sürdürülmesinde önceki taramadan devralınan satır (kimliği)
+      fromScan: num(p.from_scan),
     }
   })
   const scanned = pages.filter((p) => p.status === 'ok' && p.grade !== null)
@@ -502,12 +585,19 @@ export function siteModel(site) {
     skipped: num(tt.skipped) ?? pages.filter((p) => p.status === 'skipped').length,
     avgGrade: num(tt.avg_grade),
     uniqueBytes: num(tt.total_unique_bytes),
+    // Sürdürülen taramada tekil boyut yalnız BU taramanın sayfalarından (devralınan satırlar ayrı taramada ölçüldü)
+    uniqueThisRun: tt.unique_scope === 'this_run',
     // Sunucu ortak nesnelerin TAMAMINI sayar, listeyi 50'de keser (`totals.shared`)
     sharedCount: Math.max(arr(site.shared).length, num(tt.shared) ?? 0),
   }
   // Eksiklik: bir sayfa bütçe yüzünden taranmadı ya da kısmi ölçüldü (`incomplete`; eski yanıtta alan yok → null)
   const incomplete = typeof site.incomplete === 'boolean' ? site.incomplete : null
-  return { pages, worst, shared, totals, incomplete }
+  // Tüm site taraması (2026-11-15): tarama özeti + taranmayan sayfalar (adıyla, ≤ 2000; toplam ayrıca)
+  const crawl = crawlModel(site.crawl)
+  const unscanned = arr(site.unscanned).filter((u) => isObj(u) && typeof u.url === 'string' && u.url)
+    .map((u, i) => ({ i, url: u.url, source: typeof u.source === 'string' ? u.source : null, reason: typeof u.reason === 'string' ? u.reason : null }))
+  const unscannedTotal = Math.max(unscanned.length, num(site.unscanned_total) ?? 0)
+  return { pages, worst, shared, totals, incomplete, crawl, unscanned, unscannedTotal }
 }
 
 /**
@@ -529,11 +619,14 @@ export function siteCountText(totals, t, locale) {
  * `pages_count` yoksa yalnız "Site".
  */
 export function siteRowText(row, t, locale) {
+  const full = row?.crawl === 'full'
   const n = num(row?.pages_count)
-  if (n === null || n <= 0) return t('prs.site.chipNoCount')
+  if (n === null || n <= 0) return t(full ? 'prs.crawl.chipNoCount' : 'prs.site.chipNoCount')
   const total = num(row?.progress?.pages_total)
-  if (total !== null && total > n) return plural(t, 'prs.site.chipOf', total, formatNumber(n, locale), formatNumber(total, locale))
-  return plural(t, 'prs.site.chip', n, formatNumber(n, locale))
+  if (total !== null && total > n) {
+    return plural(t, full ? 'prs.crawl.chipOf' : 'prs.site.chipOf', total, formatNumber(n, locale), formatNumber(total, locale))
+  }
+  return plural(t, full ? 'prs.crawl.chip' : 'prs.site.chip', n, formatNumber(n, locale))
 }
 
 /** Sayfa sıralaması: not artan (en kötü önce; notsuz sona), süre / boyut azalan, adres. Eşitlikte tarama sırası. */

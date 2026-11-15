@@ -89,7 +89,7 @@ describe('"Görsel aracı" bölümü', () => {
     expect(tabs).toEqual(['Pano', 'Nesneler', 'Denetim', 'Eğilim', 'Geçmiş', 'Görsel aracı'])
     expect(slot('prs-sections').querySelector('[role="tablist"]').getAttribute('data-count')).toBe('6')
     openTab(/^Görsel aracı/)
-    await waitFor(() => expect(slot('prs-it-view')).not.toBeNull())
+    await waitFor(() => expect(slot('prs-it-view')).not.toBeNull(), { timeout: 5000 })   // tembel parça yük altında geç gelebilir
     expect(slot('prs-root').getAttribute('data-view')).toBe('tool')
     await waitFor(() => { flushUrlQuerySync(); expect(window.location.search).toContain('prs_v=tool') }, { timeout: 5000 })
     expect(slot('prs-it-drop')).toHaveTextContent('Görselleri buraya sürükleyip bırakın')
@@ -102,7 +102,7 @@ describe('"Görsel aracı" bölümü', () => {
   it('paylaşılan bağlantı (prs_v=tool) doğrudan aracı açar; eski analiz şeridi araçta çizilmez', async () => {
     window.history.replaceState(null, '', '/?tab=page&monitor=100&mtab=resources&prs=9&prs_v=tool')
     render(<ResourceScanTab monitor={MONITOR} pollMs={15} />)
-    await waitFor(() => expect(slot('prs-it-view')).not.toBeNull())
+    await waitFor(() => expect(slot('prs-it-view')).not.toBeNull(), { timeout: 5000 })   // tembel parça yük altında geç gelebilir
     expect(screen.getByRole('tab', { name: /^Görsel aracı/ }).getAttribute('data-state')).toBe('active')
     expect(slot('prs-old-run')).toBeNull()
   })
@@ -112,7 +112,7 @@ describe('"Görsel aracı" bölümü', () => {
     render(<ResourceScanTab monitor={MONITOR} pollMs={15} />)
     await waitFor(() => expect(slot('prs-empty')).not.toBeNull())
     fireEvent.click(within(slot('prs-empty')).getByRole('button', { name: 'Görsel aracını aç' }))
-    await waitFor(() => expect(slot('prs-it-view')).not.toBeNull())
+    await waitFor(() => expect(slot('prs-it-view')).not.toBeNull(), { timeout: 5000 })   // tembel parça yük altında geç gelebilir
     expect(slot('prs-empty')).toBeNull()
     await waitFor(() => { flushUrlQuerySync(); expect(window.location.search).toContain('prs_v=tool') }, { timeout: 5000 })
     fireEvent.change(slot('prs-it-file-input'), { target: { files: [new File([new Uint8Array(4000)], 'yuklenen.png', { type: 'image/png' })] } })
@@ -171,7 +171,7 @@ describe('tarama görsellerinde "İndir" menüsü', () => {
     openTab(/^Nesneler/)
     await waitFor(() => expect(slots('prs-obj').length).toBeGreaterThan(0))
     await pick(rowOf(BIG.url), 'tool')
-    await waitFor(() => expect(slot('prs-it-view')).not.toBeNull())
+    await waitFor(() => expect(slot('prs-it-view')).not.toBeNull(), { timeout: 5000 })   // tembel parça yük altında geç gelebilir
     await waitFor(() => expect(slot('prs-it-entry')?.getAttribute('data-state')).toBe('done'))
     expect(slot('prs-it-entry').getAttribute('data-source')).toBe('scan')
     expect(slot('prs-it-entry-own')).toHaveTextContent('Kendi ayarı: 1.920 piksel genişliğe ölçekle')

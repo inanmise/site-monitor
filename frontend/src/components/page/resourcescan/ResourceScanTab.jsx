@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChartSpline, CircleAlert, FileSpreadsheet, FileText, Globe, History, Hourglass, Images, Info, Layers, LayoutDashboard, Link2, List,
-  ListChecks, RefreshCw, RotateCw, ScanSearch, Square, TriangleAlert,
+  ListChecks, Play, RefreshCw, RotateCw, ScanSearch, Square, TriangleAlert,
 } from 'lucide-react'
 import { api, formatDate } from '../../../api/client'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
@@ -33,7 +33,7 @@ import { CHIP, Section, TOUCH, WRAP } from './ResourceScanParts.jsx'
 import { BudgetBand, BudgetDialog, useResourceBudget } from './ResourceScanBudget.jsx'
 import ResourceScanStart from './ResourceScanStart.jsx'
 import ResourceScanSite from './ResourceScanSite.jsx'
-import { isEndpointUnsupported, isSiteScan, sectionTabCols, siteCountText, siteModel, siteScopeIgnored } from './resourceScanReportModel.js'
+import { canResumeInterrupted, fullSiteLimits, isEndpointUnsupported, isSiteScan, sectionTabCols, siteCountText, siteModel, siteScopeIgnored } from './resourceScanReportModel.js'
 // Görsel aracı (2026-11-14): depo + bağlam sekmede; araç görünümü, karşılaştırma ve duyarlı set pencereleri tembel
 import { ImageToolProvider, useImageToolStore } from './imagetool/ImageToolContext.jsx'
 import { ImageBulkStatus } from './imagetool/ImageBulk.jsx'
@@ -357,11 +357,18 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
    */
   async function start(sitePages = null) {
     if (starting || running) return false
-    const site = Number.isInteger(sitePages) && sitePages > 0 ? sitePages : null
+    // Tüm site taraması (2026-11-15): `{ full: true, resumeFrom? }` → `{ scope:'site', crawl:'full', max_pages, resume_from? }`
+    const opts = sitePages !== null && typeof sitePages === 'object' ? sitePages : null
+    const full = opts?.full === true
+    const site = full ? null : Number.isInteger(sitePages) && sitePages > 0 ? sitePages : null
+    const resumeFrom = full && Number.isInteger(opts?.resumeFrom) && opts.resumeFrom > 0 ? opts.resumeFrom : null
+    const body = full
+      ? { scope: 'site', crawl: 'full', max_pages: fullSiteLimits(hist.data?.limits).maxPages, ...(resumeFrom ? { resume_from: resumeFrom } : {}) }
+      : site ? { scope: 'site', max_pages: site } : null
     setStarting(true)
     let res = null
     try {
-      res = site ? await api.monitoring.startResourceScan(monitorId, { scope: 'site', max_pages: site })
+      res = body ? await api.monitoring.startResourceScan(monitorId, body)
         : await api.monitoring.startResourceScan(monitorId)
     } catch (e) {
       if (alive.current) toast.error(e?.message || t('prs.startFailed'), { details: e })
@@ -374,7 +381,11 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       markStartedHere(monitorId, res.data.id)
       follow(res.data, res.timestamp)
       if (!hasFinished) changeSelection(res.data.id)
-      if (siteScopeIgnored(Boolean(site), res.data)) {
+      if (full && res.data.crawl !== 'full') {
+        // Eski sunucu `crawl`'u bilmiyor: sayfa sayısı seçilen site taraması (ya da tek sayfa) başlattı
+        if (res.data.scope !== 'site') setSiteIgnoredId(res.data.id)
+        toast.info(t('prs.crawl.ignored'))
+      } else if (siteScopeIgnored(Boolean(site), res.data)) {
         setSiteIgnoredId(res.data.id)
         toast.info(t('prs.site.ignored'))
       }
@@ -391,6 +402,8 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     return false
   }
   const startPage = () => start(null)
+  // Tüm site taramasını denetim noktasından sürdür (bitmiş ya da yarıda kalmış satırdan)
+  const resumeCrawl = (id) => start({ full: true, resumeFrom: id })
 
   async function cancel() {
     const r = running
@@ -696,7 +709,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
   // prs3 G: bölünmüş başlat düğmesi — ana düğme bugünkü tek sayfa analizi, ok "Siteyi analiz et (N sayfa)"
   const startBtn = canRun && (
     <ResourceScanStart hasFinished={hasFinished} running={running} starting={starting} limits={hist.data?.limits}
-      onStartPage={startPage} onStartSite={(n) => start(n)} />
+      onStartPage={startPage} onStartSite={(n) => start(n)} onStartFull={() => start({ full: true })} />
   )
   const finished = selScan && !isRunning(selScan)
   const showOld = done && latestDone != null && selectedId !== latestDone
@@ -814,7 +827,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
           )}
 
           <TabsContent value="overview" className="min-w-0">
-            <SelectedView detail={detail} selectedId={selectedId} t={t} canRun={canRun} running={running}
+            <SelectedView detail={detail} selectedId={selectedId} t={t} canRun={canRun} running={running} onResumeCrawl={resumeCrawl}
               onRetryDetail={() => loadDetail(selectedId)} onStart={startPage} starting={starting}
               latestDone={latestDone} onLatest={() => { select(latestDone); requestFocus('hero') }}>
               {done && <div className="mb-3 empty:hidden"><BudgetBand budget={sel.budget} scan={selScan} canEdit={budget.canEdit} onOpen={() => setBudgetOpen(true)} /></div>}
@@ -831,7 +844,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
           </TabsContent>
 
           <TabsContent value="objects" className="min-w-0">
-            <SelectedView detail={detail} selectedId={selectedId} t={t} canRun={canRun} running={running}
+            <SelectedView detail={detail} selectedId={selectedId} t={t} canRun={canRun} running={running} onResumeCrawl={resumeCrawl}
               onRetryDetail={() => loadDetail(selectedId)} onStart={startPage} starting={starting} compact
               latestDone={latestDone} onLatest={() => select(latestDone)}>
               {done && (
@@ -843,7 +856,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
           </TabsContent>
 
           <TabsContent value="audit" className="min-w-0">
-            <SelectedView detail={detail} selectedId={selectedId} t={t} canRun={canRun} running={running}
+            <SelectedView detail={detail} selectedId={selectedId} t={t} canRun={canRun} running={running} onResumeCrawl={resumeCrawl}
               onRetryDetail={() => loadDetail(selectedId)} onStart={startPage} starting={starting} compact
               latestDone={latestDone} onLatest={() => select(latestDone)}>
               {done && (
@@ -858,10 +871,11 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
 
           {(siteAvailable || shownSection === 'pages') && (
             <TabsContent value="pages" className="min-w-0">
-              <SelectedView detail={detail} selectedId={selectedId} t={t} canRun={canRun} running={running}
+              <SelectedView detail={detail} selectedId={selectedId} t={t} canRun={canRun} running={running} onResumeCrawl={resumeCrawl}
                 onRetryDetail={() => loadDetail(selectedId)} onStart={startPage} starting={starting} compact
                 latestDone={latestDone} onLatest={() => select(latestDone)}>
-                {siteAvailable && <ResourceScanSite scan={selScan} analysis={sel.analysis} />}
+                {siteAvailable && <ResourceScanSite scan={selScan} analysis={sel.analysis} canRun={canRun} busy={starting || Boolean(running)}
+                  onResume={resumeCrawl} />}
               </SelectedView>
             </TabsContent>
           )}
@@ -1062,7 +1076,7 @@ function Elapsed({ sighting, t, locale }) {
 }
 
 /** Seçili analizin durumu: yükleniyor / okunamadı / başarısız / yarıda kaldı → aksi hâlde çocuklar (pano ya da nesneler). */
-function SelectedView({ detail, selectedId, t, canRun, running, onRetryDetail, onStart, starting, compact = false, latestDone, onLatest, children }) {
+function SelectedView({ detail, selectedId, t, canRun, running, onRetryDetail, onStart, starting, compact = false, latestDone, onLatest, onResumeCrawl, children }) {
   if (selectedId == null) return null
   if (running && selectedId === running.id) return null
   if (detail.id !== selectedId || detail.state === 'loading' || detail.state === 'idle') {
@@ -1089,7 +1103,13 @@ function SelectedView({ detail, selectedId, t, canRun, running, onRetryDetail, o
       <History aria-hidden="true" />{t('prs.old.latestOk')}
     </Button>
   )
-  const actions = (retry || latest) ? <>{latest}{retry}</> : undefined
+  // Yarıda kalan / başarısız tüm site taraması: denetim noktasından sürdür (pod durduysa asıl amaç bu)
+  const resumeCrawl = canRun && !running && typeof onResumeCrawl === 'function' && canResumeInterrupted(scan) && (
+    <Button type="button" className={TOUCH} onClick={() => onResumeCrawl(scan.id)} disabled={starting} data-slot="prs-interrupted-resume">
+      <Play aria-hidden="true" />{t('prs.crawl.resume')}
+    </Button>
+  )
+  const actions = (retry || latest || resumeCrawl) ? <>{latest}{resumeCrawl}{retry}</> : undefined
   if (scan?.status === 'FAILED') {
     // Sayfaya ulaşılamadıysa (PAGE_FAILED) sunucu nedeni ham kod olarak gönderir — çevrilmiş metin gösterilir
     const failCause = scan.error_reason ? problemText(scan.error_reason, t) : ''
@@ -1112,6 +1132,7 @@ function SelectedView({ detail, selectedId, t, canRun, running, onRetryDetail, o
         <AlertBanner tone={cancelled ? 'info' : 'warning'} className="mb-0" icon={cancelled ? Square : TriangleAlert}
           title={t(cancelled ? 'prs.cancelled.title' : 'prs.interrupted.title')} actions={actions}>
           {scan.error || t(cancelled ? 'prs.cancelled.body' : 'prs.interrupted.body')}
+          {resumeCrawl && <span data-slot="prs-interrupted-resume-hint" className="mt-1 block">{t('prs.crawl.resumeInterruptedHint')}</span>}
         </AlertBanner>
       </div>
     )

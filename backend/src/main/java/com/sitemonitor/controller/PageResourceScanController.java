@@ -91,6 +91,14 @@ public class PageResourceScanController {
                     "The monitor's address is invalid (no scheme or host name); the analysis cannot run. Edit the monitor first."));
         }
         PageResourceScanService.SiteOptions site = siteOptions(reqBody);
+        if (site != null && site.resumeFrom() != null) {
+            // Sürdürme önce denetlenir: uygun değilse tarama hiç başlamaz (koşu içinde yeniden okunur, arada bozulursa baştan)
+            try {
+                scans.loadResume(m.getId(), site.resumeFrom());
+            } catch (PageResourceScanService.ResumeException e) {
+                return resumeRefused(e.code);
+            }
+        }
         PageResourceScanService.Start r = site == null ? scans.start(m, userKey(session), displayName(session))
                 : scans.start(m, userKey(session), displayName(session), site);
         return switch (r.outcome()) {
@@ -101,7 +109,8 @@ public class PageResourceScanController {
                                 "via", r.scan() == null ? null : r.scan().get("via"))
                         : AuditDetail.of("name", m.getName(), "url", AuditDetail.safeTarget(m.getUrl()), "scan_id", scanId,
                                 "via", r.scan() == null ? null : r.scan().get("via"), "scope", PageResourceScanService.SCOPE_SITE,
-                                "max_pages", site.maxPages());
+                                "max_pages", site.maxPages(), "crawl", site.full() ? PageResourceScanService.CRAWL_FULL : null,
+                                "resume_from", site.resumeFrom());
                 auditService.recordAction("PAGE_RESOURCE_SCAN_RUN", session, "PAGE_MONITOR", String.valueOf(m.getId()),
                         detail, null);
                 yield ResponseEntity.status(202).body(ok(r.scan()));
@@ -317,9 +326,43 @@ public class PageResourceScanController {
         return body;
     }
 
+    /** Sürdürme reddi → 404 (tarama yok) ya da 409 (çalışıyor / sürdürülemez / kuyruk boş / sınır). */
+    private ResponseEntity<Map<String, Object>> resumeRefused(String code) {
+        String tr;
+        String en;
+        int status = 409;
+        switch (code) {
+            case "RESOURCE_SCAN_NOT_FOUND" -> {
+                status = 404;
+                tr = "Sürdürülecek analiz bulunamadı ya da bu izlemenin değil.";
+                en = "The analysis to resume was not found or does not belong to this monitor.";
+            }
+            case "RESOURCE_SCAN_RUNNING" -> {
+                tr = "Bu analiz hâlâ çalışıyor; bitince sürdürebilirsiniz.";
+                en = "This analysis is still running; you can resume it when it ends.";
+            }
+            case "RESOURCE_SCAN_NOTHING_TO_RESUME" -> {
+                tr = "Bu analizde taranmayı bekleyen sayfa kalmadı — bulunan bütün sayfalar tarandı.";
+                en = "No page is left to scan in this analysis — every page found was scanned.";
+            }
+            case "RESOURCE_SCAN_RESUME_LIMIT" -> {
+                tr = "Bu tarama zinciri " + PageResourceScanService.RESUME_MAX_ROWS
+                        + " sayfa sınırına ulaştı; yeni bir tüm site taraması başlatın.";
+                en = "This scan chain reached the " + PageResourceScanService.RESUME_MAX_ROWS
+                        + "-page limit; start a new full-site scan.";
+            }
+            default -> {
+                tr = "Bu analiz sürdürülemez: tüm site taraması değil ya da sürdürme bilgisi yok. Yeni bir tüm site taraması başlatın.";
+                en = "This analysis cannot be resumed: it is not a full-site scan or has no resume data. Start a new full-site scan.";
+            }
+        }
+        return error(status, code, Msg.t(tr, en));
+    }
+
     /**
      * Başlatma gövdesi → çok sayfalı seçenek (null = tek sayfa). {@code max_pages}: tam sayı (sayı ya da rakam metni), yoksa
-     * ayarın değeri; [taban, ayarın tavanı]'na kırpılır.
+     * ayarın değeri; [taban, ayarın tavanı]'na kırpılır. {@code crawl:"full"} = tüm site taraması (2026-11-15; tavan tüm site
+     * ayarından), {@code resume_from} = sürdürülecek önceki tüm site taramasının kimliği (yalnız {@code crawl:"full"} ile).
      */
     PageResourceScanService.SiteOptions siteOptions(Map<String, Object> body) {
         if (body == null || body.isEmpty()) return null;
@@ -331,19 +374,53 @@ public class PageResourceScanController {
                     "Kapsam yalnız \"page\" (tek sayfa) ya da \"site\" (çok sayfalı) olabilir.",
                     "The scope can only be \"page\" (single page) or \"site\" (several pages)."));
         }
-        int cap = scans.siteLimits().maxPages();
+        Object rawCrawl = body.get("crawl");
+        String crawl = rawCrawl == null ? null : String.valueOf(rawCrawl).trim().toLowerCase(Locale.ROOT);
+        boolean full = PageResourceScanService.CRAWL_FULL.equals(crawl);
+        if (crawl != null && !crawl.isEmpty() && !full) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("crawl", Msg.t(
+                    "Tarama biçimi yalnız \"full\" (tüm site) olabilir ya da gönderilmez.",
+                    "The crawl mode can only be \"full\" (whole site) or left out."));
+        }
+        Long resumeFrom = null;
+        Object rawResume = body.get("resume_from");
+        if (rawResume != null && !String.valueOf(rawResume).isBlank()) {
+            Long parsedResume = wholeId(rawResume);
+            if (parsedResume == null || !full) {
+                throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("resume_from", Msg.t(
+                        "Sürdürülecek analiz kimliği yalnız tüm site taramasıyla ve pozitif bir tam sayı olarak gönderilebilir.",
+                        "The analysis to resume can only be sent with a full-site scan and as a positive whole number."));
+            }
+            resumeFrom = parsedResume;
+        }
+        int min = full ? PageResourceScanService.FULL_MAX_PAGES_MIN : PageResourceScanService.MAX_PAGES_MIN;
+        int cap = full ? scans.fullSiteLimits().maxPages() : scans.siteLimits().maxPages();
         Object raw = body.get("max_pages");
         int n = cap;
         if (raw != null) {
             Integer parsed = wholeNumber(raw);
             if (parsed == null) {
                 throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("max_pages", Msg.t(
-                        "En çok sayfa sayısı tam sayı olmalı (" + PageResourceScanService.MAX_PAGES_MIN + "–" + cap + ").",
-                        "The page count must be a whole number (" + PageResourceScanService.MAX_PAGES_MIN + "–" + cap + ")."));
+                        "En çok sayfa sayısı tam sayı olmalı (" + min + "–" + cap + ").",
+                        "The page count must be a whole number (" + min + "–" + cap + ")."));
             }
-            n = Math.max(PageResourceScanService.MAX_PAGES_MIN, Math.min(cap, parsed));
+            n = Math.max(min, Math.min(cap, parsed));
         }
-        return new PageResourceScanService.SiteOptions(n);
+        return new PageResourceScanService.SiteOptions(n, full, resumeFrom);
+    }
+
+    /** Pozitif kimlik (JSON sayısı ya da en çok 18 haneli rakam metni); değilse null. */
+    static Long wholeId(Object raw) {
+        if (raw instanceof Number num) {
+            double d = num.doubleValue();
+            if (d < 1 || d != Math.floor(d) || d > 9.0e15) return null;
+            return num.longValue();
+        }
+        String t = String.valueOf(raw).trim();
+        if (t.isEmpty() || t.length() > 18) return null;
+        for (int i = 0; i < t.length(); i++) if (t.charAt(i) < '0' || t.charAt(i) > '9') return null;
+        long v = Long.parseLong(t);
+        return v < 1 ? null : v;
     }
 
     /** Tam sayı mı (JSON sayısı ya da en çok 6 haneli rakam metni); değilse null. */

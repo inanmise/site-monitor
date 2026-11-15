@@ -188,7 +188,7 @@ describe('G çok sayfalı analiz', () => {
     expect(m.pages[0].main).toBe(true)
     expect(m.worst.map((p) => p.grade)).toEqual([48, 72])
     expect(m.shared.map((s) => s.category)).toEqual(['JS', 'CSS', 'FONT'])
-    expect(m.totals).toEqual({ pages: 5, scanned: 3, failed: 1, skipped: 1, avgGrade: 67, uniqueBytes: Math.round(8.4 * MB), sharedCount: 3 })
+    expect(m.totals).toEqual({ pages: 5, scanned: 3, failed: 1, skipped: 1, avgGrade: 67, uniqueBytes: Math.round(8.4 * MB), uniqueThisRun: false, sharedCount: 3 })
     expect(m.incomplete).toBe(true)
     expect(m.pages[0].a11y).toBeNull()
     expect(siteModel(null)).toBeNull()
