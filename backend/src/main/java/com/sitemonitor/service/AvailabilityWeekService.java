@@ -166,16 +166,22 @@ public class AvailabilityWeekService {
         if (prev != null) return prev;
         try {
             pool().execute(() -> {
+                // Önce uçuş haritasından ÇIKAR, sonra tamamla: tamamlanmış (bayat) bir okuma haritada kalırsa hemen ardından gelen
+                // istek onu yeniden kullanır ve bu arada eklenen / değişen izlemeleri görmez (2026-11-15, CI yarışı)
+                TypeRead result = null;
+                Throwable failure = null;
                 try {
                     Map<Long, MonitorSparklineService.MonitorRef> refs = sparklineService.monitorRefs(type);
                     Map<Long, Map<String, Object>> avail = refs == null || refs.isEmpty() ? Map.of()
                             : sparklineService.availabilityAll(type, SOURCE_DAYS);
-                    mine.complete(new TypeRead(refs == null ? Map.of() : refs, avail));
+                    result = new TypeRead(refs == null ? Map.of() : refs, avail);
                 } catch (Throwable t) {
-                    mine.completeExceptionally(t);
+                    failure = t;
                 } finally {
                     inflight.remove(type, mine);
                 }
+                if (failure != null) mine.completeExceptionally(failure);
+                else mine.complete(result);
             });
         } catch (RuntimeException e) {   // havuz dolu / kapalı
             inflight.remove(type, mine);
