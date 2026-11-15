@@ -16541,6 +16541,7 @@ export const EN = {
   'dom.planHint': 'Registration expires {0}. The planned date shows as a badge on the card and in the Expiry Forecast; once a check sees a new (later) expiry the plan closes itself as "renewed", and if the date passes with no renewal seen it is flagged "overdue".',
   'dom.thresholdsHint': 'One e-mail + push reminder per threshold (notification group → team chain). When several thresholds are crossed at once only the tightest is sent; the series restarts when the domain is renewed. The warning/critical thresholds additionally raise an alert.',
   'dreg.reminders': 'Reminders', 'dreg.remPending': 'Not reached yet', 'dreg.remNone': 'No reminder has been sent for this expiry yet.', 'dreg.remRow': '{0}-day threshold · {1} days left',
+  'dreg.remRecipientsHidden': '{0} recipients (addresses are not shown through shared access)',
   'dreg.remLegend': 'Green: sent · grey: covered by a tighter threshold in the same run · red: crossed, sent on the next check · amber: channels off / no recipient',
   'dreg.remStatus_SENT': 'sent', 'dreg.remStatus_COVERED': 'covered', 'dreg.remStatus_SKIPPED_NO_RECIPIENT': 'no recipient', 'dreg.remStatus_SKIPPED_CHANNELS_OFF': 'channels off',
   // ── multi-pod R2a · D2 ──

@@ -141,4 +141,14 @@ public class DomainCheck {
     @com.fasterxml.jackson.annotation.JsonIgnore
     @Column(name = "change_state", length = 16)
     private String changeState;
+
+    /**
+     * Kontrolün SORGULADIĞI kayıtlı alan adı (eTLD+1, 2026-11-15). İzlemenin alan adı düzenlenince (güncelleme / geri yükleme)
+     * sonraki zamanlanmış tur değişiklik tabanı olarak ESKİ alan adının satırını okuyor, registrar / ad sunucusu farkını
+     * "olası hijack" DOMAINMON_CHANGED alarmı olarak açıyordu. Taban başka bir alan adınınsa karşılaştırma yapılmaz
+     * ({@code DomainCheckerService}). NULL = eski satır (bugünkü kural: karşılaştırılır). API'ye çıkmaz.
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Column(name = "checked_domain")
+    private String checkedDomain;
 }

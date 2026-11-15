@@ -64,6 +64,20 @@ export function relativeDays(diff, locale = dateLocale()) {
   return fmt.format(Math.round(diff / 365.25), 'year')
 }
 
+/**
+ * İki bitiş değeri AYNI hatırlatma serisinin mi (2026-11-15) — sunucunun seri kimliği bitişin baştaki `yyyy-MM-dd`
+ * kısmıdır (DomainNames.expiryDay): RDAP "2026-12-01T04:00:00Z" ile WHOIS yedeğinin "2026-12-01"i aynı bitiştir. Bu bir
+ * GÖSTERİM değil kimliktir (gösterim yerel güne çevrilir — {@link fmtExpiry}). Biri boşsa false.
+ */
+export function sameExpiryDay(a, b) {
+  if (!a || !b) return false
+  const head = (v) => {
+    const s = String(v).trim()
+    return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : s
+  }
+  return head(a) === head(b)
+}
+
 /** Değerin saat bilgisi var mı (RDAP zaman damgası) — yalnız tarih ("2029-10-26") değilse true. */
 export function hasTime(iso) {
   return !!iso && String(iso).trim().length > 10

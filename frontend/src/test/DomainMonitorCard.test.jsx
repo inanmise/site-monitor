@@ -232,6 +232,24 @@ describe('DomainMonitorCard — Zengin', () => {
     expect(o.textContent).toMatch(/Plan overdue|Plan gecikti/)
   })
 
+  it('2026-11-15: planlayanın uzun AD adı ve uzun registrar adı KESİLMEZ (çip sarar, köşe kırpması yok) — düğme ve rozet', () => {
+    const longName = 'Ayşe Yılmaz Karaosmanoğlu (Dijital Kanallar Operasyon Müdürlüğü / Kıdemli Uzman)'
+    const longReg = 'Corporation Service Company (CSC Corporate Domains, Inc. — Kurumsal Alan Adları)'
+    for (const props of [{ onPlanRenewal: () => {} }, {}]) {
+      const { container, unmount } = renderCard({ renewal_planned_at: '2026-10-06', renewal_planned_by: longName, registrar: longReg }, props)
+      const planChip = container.querySelector('[data-slot="domain-plan"]')
+      expect(planChip.textContent).toContain(longName)
+      expect(planChip.className).not.toMatch(/(^|\s)(truncate|whitespace-nowrap|rounded-full)(\s|$)/)
+      expect(planChip.className).toMatch(/(^|\s)whitespace-normal(\s|$)/)
+      expect(planChip.className).toMatch(/(^|\s)overflow-visible(\s|$)/)
+      expectWraps(planChip.querySelector(':scope > span'), 'plan çipi metni')
+      const reg = container.querySelector('[data-slot="domain-registrar"] span[title]')
+      expect(reg.textContent).toBe(longReg)
+      expectWraps(reg, 'registrar adı')
+      unmount()
+    }
+  })
+
   it('plan çipi (salt okur): düğme değil rozet; kaydeden + not DOKUN-GÖR balonunda', async () => {
     const { container } = renderCard({ renewal_planned_at: '2026-10-06', renewal_planned_by: 'Kişi A', renewal_planned_note: 'Ödeme onayda' })
     const badge = container.querySelector('[data-slot="domain-plan"]')

@@ -16570,6 +16570,7 @@ export const TR = {
   'dom.planHint': 'Kayıt bitişi {0}. Plan tarihi kartta ve Vade Takvimi\'nde rozet olarak görünür; kontrol yeni (ileri) bir bitiş tarihi görünce plan kendiliğinden "yenilendi" olur, tarih geçer de yenileme görülmezse "gecikmiş" işaretlenir.',
   'dom.thresholdsHint': 'Her eşik için bir kez e-posta + push hatırlatması (bildirim grubu → takım zinciri). Aynı anda birden çok eşik aşılmışsa yalnız en sıkısı gönderilir; alan adı yenilenince seri sıfırlanır. Uyarı/Kritik eşikleri ayrıca alarm açar.',
   'dreg.reminders': 'Hatırlatmalar', 'dreg.remPending': 'Henüz gelmedi', 'dreg.remNone': 'Bu bitiş için henüz hatırlatma gönderilmedi.', 'dreg.remRow': '{0} gün eşiği · kalan {1} gün',
+  'dreg.remRecipientsHidden': '{0} alıcı (adresler erişim paylaşımıyla gösterilmez)',
   'dreg.remLegend': 'Yeşil: gönderildi · gri: aynı turda daha sıkı eşikle kapsandı · kırmızı: aşıldı, bir sonraki kontrolde gönderilir · sarı: kanal kapalı / alıcı yok',
   'dreg.remStatus_SENT': 'gönderildi', 'dreg.remStatus_COVERED': 'kapsandı', 'dreg.remStatus_SKIPPED_NO_RECIPIENT': 'alıcı yok', 'dreg.remStatus_SKIPPED_CHANNELS_OFF': 'kanallar kapalı',
   // ── multi-pod R2a · D2 ──

@@ -155,6 +155,28 @@ describe('DomainRegistrationPanel — tam RDAP kaydı', () => {
     expect(q('domain-reminders-claim-legend', r)).toHaveTextContent('orange: interrupted — the sending pod stopped')
   })
 
+  it('2026-11-15: hatırlatma RDAP damgasıyla gönderildi, kayıt şimdi WHOIS (yalnız tarih) — eşik çipi yine "gönderildi" (aynı bitiş günü)', () => {
+    const whois = { ...rdap, source: 'WHOIS', expiry_date: day(20), transfer_lock: 'UNKNOWN' }
+    const stamped = {
+      thresholds: [30, 7],
+      items: [{ id: 9, threshold_days: 30, expiry_date: `${day(20)}T04:00:00Z`, days_remaining: 30, status: 'SENT', sent_at: hoursAgo(24), recipients: null, push_queued: 1 }],
+    }
+    render(<DomainRegistrationPanel reg={whois} rem={stamped} remPager={pager(stamped.items)} />)
+    const chips = [...q('domain-reminders').querySelectorAll('[data-slot="badge"][data-state]')]
+    expect(chips.map((c) => [c.textContent, c.dataset.state])).toEqual([['30 days', 'sent'], ['7 days', 'pending']])
+  })
+
+  it('2026-11-15: paylaşımla okuyan kişi alıcı adreslerini görmez — yalnız adet (sunucu recipients=null + recipient_count)', () => {
+    const hidden = {
+      thresholds: [30],
+      items: [{ id: 5, threshold_days: 30, expiry_date: day(20), days_remaining: 30, status: 'SENT', sent_at: hoursAgo(24), recipients: null, recipient_count: 2, push_queued: 1 }],
+    }
+    render(<DomainRegistrationPanel reg={rdap} rem={hidden} remPager={pager(hidden.items)} />)
+    const r = q('domain-reminders')
+    expect(r).toHaveTextContent('2 recipients (addresses are not shown through shared access) · push 1')
+    expect(r).not.toHaveTextContent('→')
+  })
+
   it('hatırlatmalar: SENDING / INTERRUPTED yoksa ek açıklama satırı çizilmez', () => {
     render(<DomainRegistrationPanel reg={rdap} rem={rem} remPager={pager(rem.items)} />)
     expect(q('domain-reminders-claim-legend', q('domain-reminders'))).toBeNull()

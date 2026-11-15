@@ -1699,6 +1699,119 @@ class MonitoringControllerTest {
         assertThat(MonitoringController.DOMAINMON_ALERT_TYPES).containsExactlyInAnyOrderElementsOf(types.getValue());
     }
 
+    private com.sitemonitor.model.DomainMonitor domainForUpdate() {
+        var m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(6L); m.setDomain("ornek.com.tr"); m.setTeamId(3L); m.setName("Örnek"); m.setActive(true);
+        m.setThresholdsCsv("60,abc");   // eski sürümün bozuk ama kayıtlı değeri
+        when(domainMonitorRepo.findById(6L)).thenReturn(Optional.of(m));
+        when(domainMonitorRepo.save(any(com.sitemonitor.model.DomainMonitor.class))).thenAnswer(a -> a.getArgument(0));
+        return m;
+    }
+
+    @Test
+    @DisplayName("2026-11-15 PUT /domain/{id}: geçersiz alan adı SESSİZCE yok sayılmaz — 400 field=domain, kayıt yok (eskiden 200 + eski alan adı)")
+    void updateDomain_invalidDomain_400() throws Exception {
+        domainForUpdate();
+        when(publicSuffixService.registrableDomain("not a domain")).thenReturn(null);
+        mvc.perform(put("/api/monitoring/domain/6").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"not a domain\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("domain"));
+        verify(domainMonitorRepo, never()).save(any(com.sitemonitor.model.DomainMonitor.class));
+    }
+
+    @Test
+    @DisplayName("2026-11-15 PUT /domain/{id}: DEĞİŞMEYEN alan adı (PSL artık çözemese de) ve dokunulmamış eski eşik değeri yeniden doğrulanmaz — 200")
+    void updateDomain_unchangedValues_notRevalidated() throws Exception {
+        domainForUpdate();
+        when(publicSuffixService.registrableDomain(anyString())).thenReturn(null);
+        mvc.perform(put("/api/monitoring/domain/6").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"ornek.com.tr\",\"thresholdsCsv\":\"60,abc\",\"name\":\"Yeni ad\"}"))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DomainMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DomainMonitor.class);
+        verify(domainMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getDomain()).isEqualTo("ornek.com.tr");
+        assertThat(cap.getValue().getName()).isEqualTo("Yeni ad");
+        verify(domainMonitorRepo, never()).existsDuplicate(anyString(), any(), any());
+    }
+
+    @Test
+    @DisplayName("2026-11-15 PUT /domain/{id}: başka bir izlemenin alan adına çevirmek oluşturmadaki mükerrer kuralına takılır — 400 field=domain")
+    void updateDomain_duplicateDomain_400() throws Exception {
+        domainForUpdate();
+        when(publicSuffixService.registrableDomain("baska.com.tr")).thenReturn("baska.com.tr");
+        when(domainMonitorRepo.existsDuplicate("baska.com.tr", 3L, 6L)).thenReturn(true);
+        mvc.perform(put("/api/monitoring/domain/6").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"baska.com.tr\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("domain"));
+        verify(domainMonitorRepo, never()).save(any(com.sitemonitor.model.DomainMonitor.class));
+        // mükerrer değilse alan adı değişir
+        when(domainMonitorRepo.existsDuplicate("baska.com.tr", 3L, 6L)).thenReturn(false);
+        mvc.perform(put("/api/monitoring/domain/6").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"baska.com.tr\"}"))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DomainMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DomainMonitor.class);
+        verify(domainMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getDomain()).isEqualTo("baska.com.tr");
+    }
+
+    @Test
+    @DisplayName("2026-11-15 PUT /domain/{id}: DEĞİŞEN hatırlatma eşikleri doğrulanır — \"abc\" / aralık dışı / >255 karakter 400 field=thresholdsCsv; geçerli liste kaydedilir")
+    void updateDomain_thresholdsValidated() throws Exception {
+        domainForUpdate();
+        for (String bad : List.of("abc", "60,x", "4000", "", ";;", "7".repeat(260))) {
+            if (bad.isEmpty()) continue;   // boş gönderim eski değeri korur (değişiklik değil)
+            mvc.perform(put("/api/monitoring/domain/6").session(session("ADMIN"))
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"thresholdsCsv\":\"" + bad + "\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.field").value("thresholdsCsv"));
+        }
+        verify(domainMonitorRepo, never()).save(any(com.sitemonitor.model.DomainMonitor.class));
+        mvc.perform(put("/api/monitoring/domain/6").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"thresholdsCsv\":\"90; 30 7,0\"}"))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DomainMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DomainMonitor.class);
+        verify(domainMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getThresholdsCsv()).isEqualTo("90; 30 7,0");
+    }
+
+    @Test
+    @DisplayName("2026-11-15 PUT /domain/{id}: geçersiz eşik 400'ü YAN ETKİDEN ÖNCE — duraklatma alarmları kapatmaz, grup oluşturulmaz, kayıt yok")
+    void updateDomain_invalidThresholds_noSideEffects() throws Exception {
+        domainForUpdate();
+        mvc.perform(put("/api/monitoring/domain/6").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"thresholdsCsv\":\"abc\",\"active\":false,\"groupName\":\"Yeni grup\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("thresholdsCsv"));
+        verify(escalationService, never()).resolveOpenAlertsSilently(anyString(), any(), anyString(), any());
+        verify(monitoringGroupService, never()).getOrCreateFor(any(), any(), any(), any());
+        verify(domainMonitorRepo, never()).save(any(com.sitemonitor.model.DomainMonitor.class));
+    }
+
+    @Test
+    @DisplayName("2026-11-15 POST /domain: geçersiz eşik 400 — grup oluşturulmadan, kayıt yazılmadan")
+    void createDomain_invalidThresholds_noSideEffects() throws Exception {
+        when(publicSuffixService.registrableDomain("yeni.com.tr")).thenReturn("yeni.com.tr");
+        mvc.perform(post("/api/monitoring/domain").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"yeni.com.tr\",\"teamId\":3,\"thresholdsCsv\":\"60,abc\",\"groupName\":\"Yeni grup\",\"tags\":\"t1\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("thresholdsCsv"));
+        verify(monitoringGroupService, never()).getOrCreateFor(any(), any(), any(), any());
+        verify(domainMonitorRepo, never()).save(any(com.sitemonitor.model.DomainMonitor.class));
+    }
+
     @Test
     @DisplayName("SÖZLEŞME: TÜM response-series endpoint'leri kova zarfı döner (ham Object[] yasak) + endpoint sayısı kilidi")
     void responseSeries_contract_allEndpoints() throws Exception {
@@ -5774,6 +5887,38 @@ class MonitoringControllerTest {
         MockHttpSession s = session("USER");
         s.setAttribute("viewTeamIds", java.util.List.of(2L));
         mvc.perform(get("/api/monitoring/domain/7/reminders").session(s)).andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("2026-11-15 GET /domain/{id}/reminders: YALNIZ paylaşımla okuyan kişi hatırlatmanın alıcı ADRESLERİNİ görmez (adet kalır); kendi takımı görür")
+    void domainReminders_grantOnlyReader_recipientsMasked() throws Exception {
+        com.sitemonitor.model.DomainMonitor m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(7L); m.setDomain("a.example.com"); m.setTeamId(5L); m.setThresholdsCsv("30,7");
+        when(domainMonitorRepo.findById(7L)).thenReturn(Optional.of(m));
+        java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+        row.put("id", 1L); row.put("threshold_days", 30); row.put("status", "SENT");
+        row.put("recipients", "ops@example.com,ayse.yilmaz@example.com"); row.put("push_queued", 2);
+        when(domainReminders.history(7L)).thenReturn(List.of(row));
+
+        MockHttpSession g = session("USER");
+        g.setAttribute("teamId", 9L);
+        g.setAttribute("viewTeamIds", List.of(9L));
+        g.setAttribute("memberTeamIds", List.of(9L));
+        g.setAttribute(SessionScope.ATTR_GRANT_VIEW, new java.util.ArrayList<>(List.of(5L)));
+        mvc.perform(get("/api/monitoring/domain/7/reminders").session(g))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].recipients").doesNotExist())
+                .andExpect(jsonPath("$.data.items[0].recipient_count").value(2))
+                .andExpect(jsonPath("$.data.items[0].push_queued").value(2))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("ayse.yilmaz"))));
+
+        MockHttpSession own = session("USER");
+        own.setAttribute("teamId", 5L);
+        own.setAttribute("viewTeamIds", List.of(5L));
+        own.setAttribute("memberTeamIds", List.of(5L));
+        mvc.perform(get("/api/monitoring/domain/7/reminders").session(own))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].recipients").value("ops@example.com,ayse.yilmaz@example.com"));
     }
 
     @Test

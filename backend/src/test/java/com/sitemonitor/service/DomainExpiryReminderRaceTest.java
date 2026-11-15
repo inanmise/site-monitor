@@ -149,6 +149,28 @@ class DomainExpiryReminderRaceTest {
     }
 
     @Test
+    @DisplayName("2026-11-15: RDAP damgasıyla gönderilmiş eşik (eski sürüm satırı dahil), WHOIS yedeğinin yalnız-tarih bitişinde YENİDEN gönderilmez (gerçek H2 sorgusu)")
+    void sourceFlip_sameDay_realQuery_noResend() {
+        uniqueIndex();
+        DomainExpiryReminderService pod = pod();
+        // Eski sürümün satırı: claim_token yok, ham RDAP damgası
+        jdbc.update("INSERT INTO domain_expiry_reminders(monitor_id, expiry_date, threshold_days, days_remaining, status, sent_at) "
+                + "VALUES (7, '2026-10-30T04:00:00Z', 7, 6, 'SENT', '2026-10-24T08:00:00')");
+        jdbc.update("INSERT INTO domain_expiry_reminders(monitor_id, expiry_date, threshold_days, days_remaining, status, sent_at) "
+                + "VALUES (7, '2026-10-30T04:00:00Z', 30, 6, 'COVERED', '2026-10-24T08:00:00')");
+        Map<String, Object> whois = new HashMap<>();
+        whois.put("days_remaining", 5);
+        whois.put("expiry_date", "2026-10-30");   // aynı bitiş, WHOIS biçimi
+        assertThat(pod.evaluate(monitor(), whois)).isNull();
+        verify(email, never()).sendHtml(any(), any(), any(), any(), any());
+        assertThat(rows()).hasSize(2);
+        // LIKE joker karakteri gün önekinde yok sayılmaz: başka günün satırı eşleşmez
+        assertThat(repo.existsByMonitorIdAndThresholdDaysAndExpiryDateStartingWith(7L, 7, "2026-10-3")).isTrue();
+        assertThat(repo.existsByMonitorIdAndThresholdDaysAndExpiryDateStartingWith(7L, 7, "2026-10-31")).isFalse();
+        assertThat(repo.existsByMonitorIdAndThresholdDaysAndExpiryDateStartingWith(7L, 7, "2026-10-%")).isFalse();
+    }
+
+    @Test
     @DisplayName("Gönderirken ölen pod: SENDING satırı 1 saat sonra INTERRUPTED olur, YENİDEN gönderilmez, etkinlik satırı tek")
     void staleSending_becomesInterrupted_notResent() {
         uniqueIndex();

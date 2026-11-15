@@ -106,7 +106,10 @@ public class DomainExpiryReminderService {
             List<Integer> crossed = new ArrayList<>();
             for (Integer t : parseThresholds(m.getThresholdsCsv())) if (days <= t) crossed.add(t);
             if (crossed.isEmpty()) return null;
-            String key = m.getId() + "|" + expiry;
+            // Seri kimliği bitişin GÜNÜ (2026-11-15): RDAP "…T04:00:00Z" ile WHOIS yedeğinin "2026-12-01"i aynı bitiştir —
+            // ham metinle karşılaştırınca kaynak değişen turda aynı eşik ikinci kez gönderiliyordu.
+            String expiryDay = DomainNames.expiryDay(expiry);
+            String key = m.getId() + "|" + expiryDay;
             if (!deciding.add(key)) {
                 log.debug("Alan adı hatırlatması bu pod'da başka turda değerlendiriliyor: {} — atlandı", m.getDomain());
                 return null;
@@ -118,7 +121,7 @@ public class DomainExpiryReminderService {
                 List<Integer> unsent = new ArrayList<>();
                 Integer tightestRecorded = null;
                 for (Integer t : crossed) {
-                    if (repo.existsByMonitorIdAndExpiryDateAndThresholdDays(m.getId(), expiry, t)) tightestRecorded = t;
+                    if (repo.existsByMonitorIdAndThresholdDaysAndExpiryDateStartingWith(m.getId(), t, expiryDay)) tightestRecorded = t;
                     else unsent.add(t);
                 }
                 if (tightestRecorded != null) {
@@ -235,7 +238,10 @@ public class DomainExpiryReminderService {
                 String registrar = result.get("registrar") instanceof String s ? s : null;
                 String name = m.getName() != null && !m.getName().isBlank() ? m.getName() : m.getDomain();
                 if (mailOn && !recipients.isEmpty()) {
-                    String subject = "[Site Monitor] " + name + " — alan adı bitişine " + Math.max(days, 0) + " gün (hatırlatma · " + threshold + " gün eşiği)";
+                    // Dolmuş kayıt (2026-11-15): konu "bitişine 0 gün" diyordu, gövde ve push "N gün önce doldu" — üçü aynı şeyi söylesin.
+                    String subject = "[Site Monitor] " + name + (days < 0
+                            ? " — alan adı kaydı " + Math.abs(days) + " gün önce doldu"
+                            : " — alan adı bitişine " + days + " gün") + " (hatırlatma · " + threshold + " gün eşiği)";
                     String html = email.buildDomainExpiryReminderHtml(name, m.getDomain(), days, expiry, threshold, registrar, level, m.getId());
                     handedOver = true;
                     String status = email.sendHtml(recipients.toArray(new String[0]), null, subject, html, null);

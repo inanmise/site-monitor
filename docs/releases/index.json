@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-15T06:43:16Z",
+  "generatedAt": "2026-11-15T10:10:42Z",
   "repo": "inanmise/site-monitor",
-  "count": 840,
+  "count": 841,
   "releases": [
+    {
+      "version": "20.206.1",
+      "tag": "v20.206.1",
+      "releasedAt": "2026-11-15T10:10:34Z",
+      "commit": "73c337a824fd619a808807bb4b2ce6ab2c754e1e",
+      "prevVersion": "20.206.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "domain",
+          "breaking": false,
+          "sha": "73c337a8",
+          "subject": "alan adı süre bitişi hata avı — gün kimliği, sahte CHANGED, güncelleme doğrulaması, paylaşımda alıcı gizleme"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.206.0",
       "tag": "v20.206.0",

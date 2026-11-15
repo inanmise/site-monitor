@@ -43,11 +43,12 @@ class DomainExpiryReminderServiceTest {
     @BeforeEach
     void setUp() {
         svc = new DomainExpiryReminderService(repo, escalation, email, push, activityLog);
-        when(repo.existsByMonitorIdAndExpiryDateAndThresholdDays(anyLong(), anyString(), anyInt()))
-                .thenAnswer(i -> sent.contains(i.getArgument(0) + "|" + i.getArgument(1) + "|" + i.getArgument(2)));
+        // Kapı bitişin GÜNÜYLE sorar (2026-11-15, DomainNames.expiryDay): satır ham bitişi saklar, eşleşme gün önekiyle.
+        when(repo.existsByMonitorIdAndThresholdDaysAndExpiryDateStartingWith(anyLong(), anyInt(), anyString()))
+                .thenAnswer(i -> sent.stream().anyMatch(k -> k.startsWith(i.getArgument(0) + "|" + i.getArgument(1) + "|" + i.getArgument(2))));
         when(repo.save(any())).thenAnswer(i -> {
             DomainExpiryReminder r = i.getArgument(0);
-            sent.add(r.getMonitorId() + "|" + r.getExpiryDate() + "|" + r.getThresholdDays());
+            sent.add(r.getMonitorId() + "|" + r.getThresholdDays() + "|" + r.getExpiryDate());
             return r;
         });
         when(escalation.teamEmailsForMonitor(anyLong(), any())).thenReturn(List.of("team@example.com"));
@@ -164,7 +165,48 @@ class DomainExpiryReminderServiceTest {
         assertThat(svc.evaluate(m, result(5, "2026-09-27T00:00:00Z"))).isNull();
         verify(email, never()).sendHtml(any(), any(), any(), any(), any());
         m.setActive(true);
-        when(repo.existsByMonitorIdAndExpiryDateAndThresholdDays(anyLong(), anyString(), anyInt())).thenThrow(new RuntimeException("db down"));
+        when(repo.existsByMonitorIdAndThresholdDaysAndExpiryDateStartingWith(anyLong(), anyInt(), anyString())).thenThrow(new RuntimeException("db down"));
         assertThat(svc.evaluate(m, result(5, "2026-09-27T00:00:00Z"))).isNull();   // exception yutulur
+    }
+
+    @Test
+    @DisplayName("2026-11-15: kaynak RDAP ↔ WHOIS değişince (aynı bitiş, farklı biçim) aynı eşik İKİNCİ kez gönderilmez")
+    void sourceFlip_sameExpiryDay_noDuplicate() {
+        DomainMonitor m = monitor("30,7");
+        // RDAP: zaman damgası
+        DomainExpiryReminder first = svc.evaluate(m, result(25, "2026-12-01T04:00:00Z"));
+        assertThat(first).isNotNull();
+        assertThat(first.getThresholdDays()).isEqualTo(30);
+        // Ertesi gün RDAP 429 → WHOIS yedeği: aynı bitiş yalnız tarih olarak gelir — seri AYNI
+        assertThat(svc.evaluate(m, result(24, "2026-12-01"))).isNull();
+        // ve geri RDAP'a döndüğünde de
+        assertThat(svc.evaluate(m, result(23, "2026-12-01T04:00:00.000Z"))).isNull();
+        verify(email, times(1)).sendHtml(any(), any(), any(), any(), any());
+        // gerçek yenileme (yeni gün) yine yeni seri başlatır
+        assertThat(svc.evaluate(m, result(29, "2027-12-01"))).isNotNull();
+        verify(email, times(2)).sendHtml(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("2026-11-15: dolmuş kaydın hatırlatma konusu \"bitişine 0 gün\" DEĞİL, \"N gün önce doldu\" (gövde ve push ile aynı)")
+    void expiredSubjectSaysExpiredAgo() {
+        DomainMonitor m = monitor("30");
+        DomainExpiryReminder r = svc.evaluate(m, result(-3, "2026-11-12"));
+        assertThat(r).isNotNull();
+        ArgumentCaptor<String> subject = ArgumentCaptor.forClass(String.class);
+        verify(email).sendHtml(any(), isNull(), subject.capture(), any(), isNull());
+        assertThat(subject.getValue()).contains("3 gün önce doldu").doesNotContain("bitişine 0 gün").contains("30 gün eşiği");
+    }
+
+    @Test
+    @DisplayName("expiryDay: RDAP damgası ve WHOIS tarihi aynı gün; ISO olmayan değer kendisi; boş → null")
+    void expiryDayRule() {
+        assertThat(DomainNames.expiryDay("2026-12-01T04:00:00Z")).isEqualTo("2026-12-01");
+        assertThat(DomainNames.expiryDay(" 2026-12-01 ")).isEqualTo("2026-12-01");
+        assertThat(DomainNames.expiryDay("2026-12-01T00:30:00+03:00")).isEqualTo("2026-12-01");
+        assertThat(DomainNames.expiryDay("14-Aug-2025")).isEqualTo("14-Aug-2025");
+        assertThat(DomainNames.expiryDay("2026-13-45T00:00:00Z")).isEqualTo("2026-13-45T00:00:00Z");
+        assertThat(DomainNames.expiryDay("   ")).isNull();
+        assertThat(DomainNames.expiryDay(null)).isNull();
     }
 }

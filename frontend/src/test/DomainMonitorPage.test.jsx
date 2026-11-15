@@ -352,6 +352,29 @@ describe('DomainMonitorPage', () => {
     expect(items[1]).toHaveTextContent(/pdf/i)
     items.forEach((it) => expect(it).toHaveTextContent(/1 visible records|görünen 1 kayıt/i))
   })
+
+  it('2026-11-15: sunucunun alan hatası (mükerrer / geçersiz alan adı, bozuk eşik) alanın ALTINDA çıkar, form açık kalır', async () => {
+    api.monitoring.createDomainMonitor.mockResolvedValue({
+      success: false, error: 'Bu alan adı bu takımda zaten izleniyor.', field: 'domain',
+    })
+    render(<DomainMonitorPage systemRole="USER" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(api.monitoring.getDomainMonitors).toHaveBeenCalled())
+    fireEvent.click(screen.getByRole('button', { name: /new monitor|yeni monitör/i }))
+    fireEvent.change(screen.getByPlaceholderText('example.com'), { target: { value: 'example.org' } })
+    await fillGroupAndTags()
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    await waitFor(() => expect(api.monitoring.createDomainMonitor).toHaveBeenCalled())
+    const msg = await screen.findByText('Bu alan adı bu takımda zaten izleniyor.')
+    expect(msg.closest('[data-field="domain"]')).not.toBeNull()
+    expect(screen.getByPlaceholderText('example.com')).toBeInTheDocument()   // form kapanmadı
+
+    api.monitoring.createDomainMonitor.mockResolvedValue({
+      success: false, error: 'Hatırlatma eşikleri virgülle ayrılmış gün sayıları olmalı.', field: 'thresholdsCsv',
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))
+    const t2 = await screen.findByText('Hatırlatma eşikleri virgülle ayrılmış gün sayıları olmalı.')
+    expect(t2.closest('[data-field="thresholdsCsv"]')).not.toBeNull()
+  })
 })
 
 /**

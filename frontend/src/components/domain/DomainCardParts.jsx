@@ -28,6 +28,8 @@ import {
 
 /** Küçük çip (20 px) — koruma ve EPP satırları; ton `CHIP_TONE` (sertifika kartının çip ailesi). */
 const CHIP_SM = "h-5 min-w-0 max-w-full gap-1 rounded-md border px-1.5 py-0 text-[10.5px] font-semibold whitespace-nowrap shadow-none pointer-coarse:min-w-10 [&_svg:not([class*='size-'])]:size-3"
+/** Plan çipi sarar (ad kesilmez): yükseklik içeriğe göre, çok satırda köşe kırpması yok. */
+const PLAN_WRAP = 'h-auto min-h-6 whitespace-normal rounded-md overflow-visible py-0.5 text-left'
 /** Dokunmatikte 20 px çipin dokunma alanı: ::after dikeyde 10'ar px taşar → 40 px hedef. */
 const CHIP_TOUCH = 'pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-2.5'
 /** Çip dokun-gör tetiği: örtünün üstünde, 40 px dokunma alanı (HintPopover'ın min-h-8'i ::after'a bırakılır). */
@@ -99,7 +101,8 @@ export function DomainRegistrarLine({ monitor: m }) {
     <p data-slot="domain-registrar" className={cn(CARD_LAYER, 'mt-1 flex w-fit max-w-full min-w-0 items-center gap-1 text-xs text-muted-foreground')}>
       <Building2 aria-hidden="true" className="size-3.5 shrink-0 opacity-70" />
       <span className="sr-only">{t('dom.registrar')}: </span>
-      <span className="min-w-0 truncate" title={title}>{m.registrar}</span>
+      {/* Ad KESİLMEZ (2026-11-15, kalıcı kural): dokunmatikte `title` açılmaz — uzun registrar adı sarar. */}
+      <span className="min-w-0 [overflow-wrap:anywhere]" title={title}>{m.registrar}</span>
     </p>
   )
 }
@@ -273,10 +276,12 @@ export function DomainPlanChip({ chip, monitor: m, onPlanRenewal }) {
   const text = t(`certcard.plan.${chip.state}`, dateOnly(chip.at))
   const tone = chip.state === 'overdue' ? 'bad' : 'plan'
   const detail = [chip.by ? t('forecast.planSetBy', chip.by) : null, chip.note].filter(Boolean).join('\n')
+  // Planlayanın AD görünen adı ("Ad Soyad (Bölüm / Unvan)", 60+ karakter) çipte KESİLMEZ (2026-11-15, kalıcı kural): çip
+  // birden çok satıra sarar — yuvarlak hap çok satırda köşelerden kırpılacağı için `rounded-md overflow-visible`.
   const body = (
     <>
-      <CalendarClock aria-hidden="true" />
-      <span className="min-w-0 truncate">
+      <CalendarClock aria-hidden="true" className="shrink-0" />
+      <span className="min-w-0 [overflow-wrap:anywhere]">
         {text}
         {chip.by && <span className="font-normal opacity-80"> · {chip.by}</span>}
       </span>
@@ -284,7 +289,7 @@ export function DomainPlanChip({ chip, monitor: m, onPlanRenewal }) {
   )
   if (!onPlanRenewal) {
     const badge = (
-      <Badge variant="outline" data-slot="domain-plan" data-state={chip.state} className={cn(CHIP, CHIP_TONE[tone])}>{body}</Badge>
+      <Badge variant="outline" data-slot="domain-plan" data-state={chip.state} className={cn(CHIP, PLAN_WRAP, CHIP_TONE[tone])}>{body}</Badge>
     )
     return detail
       ? <HintPopover content={detail} align="end" aria-label={t('a11y.rowAction', m.domain, text)}
@@ -294,7 +299,7 @@ export function DomainPlanChip({ chip, monitor: m, onPlanRenewal }) {
   return (
     <Button type="button" variant="ghost" size="xs" data-slot="domain-plan" data-state={chip.state} title={detail || undefined}
       aria-label={t('a11y.rowAction', m.domain, text)} onClick={open}
-      className={cn(CARD_LAYER, TOUCH_CHIP, CHIP, CHIP_TONE[tone], CHIP_HOVER[tone])}>
+      className={cn(CARD_LAYER, TOUCH_CHIP, CHIP, PLAN_WRAP, CHIP_TONE[tone], CHIP_HOVER[tone])}>
       {body}
     </Button>
   )

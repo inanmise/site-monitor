@@ -10372,6 +10372,7 @@ public class MonitoringController {
         }
         if (domainMonitorRepo.existsDuplicate(reg, teamId, null))
             return badRequest("Bu alan adı bu takımda zaten izleniyor.");
+        prevalidateDomainThresholds(new DomainMonitor(), body);   // grup kaydı gibi yan etkilerden ÖNCE (2026-11-15)
         String now = ISO.format(Instant.now());
         DomainMonitor m = new DomainMonitor();
         // Koruma eşit değeri gövdeden düşürür (inceleme 7): paylaşımla oluşturulan kayıt kritik gün eşiğini sınıf varsayılanı
@@ -10409,11 +10410,31 @@ public class MonitoringController {
         return domainMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
-            if (body.get("name") != null) m.setName(normalizeMonitorName((String) body.get("name")));
+            // Alan adı + takım doğrulaması YAN ETKİDEN ÖNCE (2026-11-15): geçersiz alan adı eskiden SESSİZCE yok sayılıyordu
+            // (200 + eski alan adı; istemci "x, y olarak kaydedildi" diyordu) ve oluşturmadaki mükerrer kuralı güncellemede
+            // yoktu (aynı takımda aynı alan adına iki izleme → iki hatırlatma serisi). DEĞİŞMEYEN alan adı yeniden doğrulanmaz.
+            String intendedDomain = m.getDomain();
             if (!blank(body.get("domain"))) {
-                String reg = publicSuffixService.registrableDomain(body.get("domain").toString());
-                if (reg != null && !reg.isBlank()) m.setDomain(reg);
+                String rawDomain = body.get("domain").toString().trim();
+                boolean domainUnchanged = m.getDomain() != null && rawDomain.equalsIgnoreCase(m.getDomain());
+                String reg = publicSuffixService.registrableDomain(rawDomain);
+                if (reg != null && !reg.isBlank()) intendedDomain = reg;
+                else if (!domainUnchanged) {
+                    throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("domain", com.sitemonitor.util.Msg.t(
+                            "Geçersiz/çözümlenemeyen alan adı — kayıtlı bir alan adı girin (ör. ornek.com.tr).",
+                            "Invalid or unresolvable domain — enter a registered domain (e.g. example.com)."));
+                }
             }
+            Long intendedTeam = body.containsKey("teamId") ? resolveTeamChange(session, m.getTeamId(), body.get("teamId")) : m.getTeamId();
+            boolean keyChanged = !java.util.Objects.equals(intendedTeam, m.getTeamId())
+                    || (intendedDomain != null && !intendedDomain.equalsIgnoreCase(m.getDomain()));
+            if (keyChanged && intendedDomain != null && domainMonitorRepo.existsDuplicate(intendedDomain, intendedTeam, id)) {
+                throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("domain", com.sitemonitor.util.Msg.t(
+                        "Bu alan adı bu takımda zaten izleniyor.", "This domain is already monitored by this team."));
+            }
+            prevalidateDomainThresholds(m, body);   // grup kaydı / duraklatma kapanışı gibi yan etkilerden ÖNCE (applyDomainFields yine uygular)
+            if (body.get("name") != null) m.setName(normalizeMonitorName((String) body.get("name")));
+            if (intendedDomain != null && !intendedDomain.equals(m.getDomain())) m.setDomain(intendedDomain);
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
@@ -10572,7 +10593,20 @@ public class MonitoringController {
         if (mon == null || !SessionScope.canViewMonitoring(session, mon.getTeamId())) return notFound("Domain monitor not found");
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("thresholds", DomainExpiryReminderService.parseThresholds(mon.getThresholdsCsv()));
-        out.put("items", domainReminders == null ? List.of() : domainReminders.history(id));
+        List<Map<String, Object>> items = domainReminders == null ? List.of() : domainReminders.history(id);
+        // Kişi verisi paylaşımla AÇILMAZ (2026-11-15, takım erişim paylaşımı kuralı): yalnız erişim paylaşımıyla okuyan kişi
+        // hatırlatmanın GİTTİĞİ adresleri (takım / bildirim grubu / kişi e-postaları) göremez — adet kalır.
+        if (!SessionScope.canViewMonitoringOwn(session, mon.getTeamId())) {
+            List<Map<String, Object>> masked = new ArrayList<>(items.size());
+            for (Map<String, Object> row : items) {
+                Map<String, Object> copy = new LinkedHashMap<>(row);
+                Object rec = copy.put("recipients", null);
+                copy.put("recipient_count", rec instanceof String s && !s.isBlank() ? s.split(",").length : 0);
+                masked.add(copy);
+            }
+            items = masked;
+        }
+        out.put("items", items);
         return ok(out);
     }
 
@@ -10670,7 +10704,10 @@ public class MonitoringController {
 
     /** Domain form alanlarını (thresholds/warning/critical/interval) body'den uygular. */
     private void applyDomainFields(DomainMonitor m, Map<String, Object> body) {
-        if (!blank(body.get("thresholdsCsv"))) m.setThresholdsCsv(body.get("thresholdsCsv").toString().trim());
+        if (!blank(body.get("thresholdsCsv"))) {
+            prevalidateDomainThresholds(m, body);
+            m.setThresholdsCsv(body.get("thresholdsCsv").toString().trim());
+        }
         if (body.get("warningDays") instanceof Number n) m.setWarningDays(Math.max(1, n.intValue()));
         if (body.get("criticalDays") instanceof Number n) m.setCriticalDays(Math.max(1, n.intValue()));
         if (body.get("intervalSeconds") instanceof Number n) m.setIntervalSeconds(Math.max(3600, n.intValue()));
@@ -10692,6 +10729,42 @@ public class MonitoringController {
             Object v = body.get("checkTimeoutMs");
             if (v == null || (v instanceof String s && s.isBlank())) m.setCheckTimeoutMs(null);
             else if (v instanceof Number n) m.setCheckTimeoutMs(Math.max(1000, Math.min(30000, n.intValue())));
+        }
+    }
+
+    /**
+     * Gövdedeki hatırlatma eşikleri DEĞİŞİYORSA doğrular (2026-11-15): "abc" gibi bir girdi kaydediliyor, hatırlatmalar sessizce
+     * varsayılan listeyle gidiyor ve form "abc" gösteriyordu; 255 karakteri aşan değer 500 veriyordu. Kayıtlı eski değer dokunulmadan
+     * geri gönderilirse yeniden doğrulanmaz (eski kayıt düzenlenebilir kalır). Boş gönderim değişiklik değildir (eski değer kalır).
+     */
+    private static void prevalidateDomainThresholds(DomainMonitor m, Map<String, Object> body) {
+        if (blank(body.get("thresholdsCsv"))) return;
+        String csv = body.get("thresholdsCsv").toString().trim();
+        String stored = m.getThresholdsCsv() == null ? null : m.getThresholdsCsv().trim();
+        if (!csv.equals(stored)) requireValidDomainThresholds(csv);
+    }
+
+    /** Alan adı hatırlatma eşiklerinin üst sınırı (gün) — alan adı en çok 10 yıllık kaydedilir. */
+    static final int DOMAIN_THRESHOLD_MAX_DAYS = 3650;
+
+    /**
+     * Hatırlatma eşikleri ({@code thresholdsCsv}) — virgül / noktalı virgül / boşlukla ayrılmış, en az bir tam sayı, her biri
+     * 0–{@value #DOMAIN_THRESHOLD_MAX_DAYS} gün, toplam ≤ 255 karakter (kolon). Döngü parça sayısıyla sınırlı (≤ 255 karakter).
+     */
+    static void requireValidDomainThresholds(String csv) {
+        boolean ok = csv != null && csv.length() <= 255;
+        int count = 0;
+        if (ok) {
+            for (String p : csv.split("[,;\\s]+")) {
+                if (p.isEmpty()) continue;
+                if (!p.matches("\\d{1,4}") || Integer.parseInt(p) > DOMAIN_THRESHOLD_MAX_DAYS) { ok = false; break; }
+                count++;
+            }
+        }
+        if (!ok || count == 0) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("thresholdsCsv", com.sitemonitor.util.Msg.t(
+                    "Hatırlatma eşikleri virgülle ayrılmış gün sayıları olmalı (0–" + DOMAIN_THRESHOLD_MAX_DAYS + ", ör. 60,30,14,7,3,1).",
+                    "Reminder thresholds must be comma-separated day counts (0–" + DOMAIN_THRESHOLD_MAX_DAYS + ", e.g. 60,30,14,7,3,1)."));
         }
     }
 
