@@ -160,6 +160,28 @@ class HolidayCalendarTenYearFillTest {
     }
 
     @Test
+    @DisplayName("tamamen boş takvim bilinçlidir (tohum nişanı var, yönetici boşaltmış): hiçbir gün yazılmaz, yalnız nişan; plan yenilenmez")
+    void emptyTableIsDeliberate() {
+        JdbcTemplate j = jdbc("hol10y_empty");
+        previousReleaseSeeded(j);
+        j.update("DELETE FROM holiday_days");
+        HolidayCalendarService cal = mock(HolidayCalendarService.class);
+        SchedulerService s = lockingScheduler();
+        HolidayCalendarTenYearFill fill = new HolidayCalendarTenYearFill(j, provider(s), cal);
+        fill.run();
+        assertThat(count(j, COUNT_ALL)).isZero();
+        assertThat(markers(j, HolidayCalendarTenYearFill.KEY)).isEqualTo(1);
+        assertThat(count(j, "SELECT rows_affected FROM schema_patch_markers WHERE patch_key = ?", HolidayCalendarTenYearFill.KEY)).isZero();
+        assertThat((Boolean) ReflectionTestUtils.getField(fill, "doneSeen")).isTrue();
+        verify(cal, never()).invalidate();
+        verify(s, never()).dbQueryCalendarChanged();
+        // Sonraki turlar da (yeni pod dahil) boş takvime gün yazmaz
+        fill.run();
+        new HolidayCalendarTenYearFill(j, provider(s), cal).run();
+        assertThat(count(j, COUNT_ALL)).isZero();
+    }
+
+    @Test
     @DisplayName("tek bir günü olan yıl (yöneticinin şirket günü) bütünüyle atlanır; yalnız boş yıllar dolar")
     void yearWithAnyRowIsSkipped() {
         JdbcTemplate j = jdbc("hol10y_partial");

@@ -631,7 +631,8 @@ varken bağlantı silinemez (409). Sağlık paneli son denemeyi, son kullanımı
 **Zamanlama.** Aralık (60 sn – 7 gün) ya da cron (5 / 6 alan, `@hourly` / `@daily` / `@weekly` / `@monthly`, Europe/Istanbul;
 ardışık iki tetik ≥ `min-interval-seconds`); izinli pencereler, yasak pencereler, tatil takvimi (Ayarlar → Platform → Tatil
 takvimi, global yönetici; 2026–2035 resmî tatilleri Diyanet takviminden hazır gelir — boş takvime ilk açılışta, var olan
-kurulumda yalnız HİÇ günü olmayan yıllara tek seferlik eklenir (nişan `2026-11-15-holiday-calendar-10y`); resmî karar ya da
+kurulumda yalnız HİÇ günü olmayan yıllara tek seferlik eklenir (nişan `2026-11-15-holiday-calendar-10y`; tamamen boş
+takvim bilinçli sayılır, ona gün eklenmez); resmî karar ya da
 köprü gün farklıysa buradan düzeltin) ve ek
 tarihler. 15 dakikadan fazla geciken cron tetiği (lider yoktu, pod yeniden başladı) kaçırılmış sayılır, geç çalıştırılmaz.
 Aralık kipi ızgaradadır (gecikme birikmez, geç kalınca ileri atlanır). Teyit veritabanı izni alamazsa (10 sn) ilk zamanlanmış

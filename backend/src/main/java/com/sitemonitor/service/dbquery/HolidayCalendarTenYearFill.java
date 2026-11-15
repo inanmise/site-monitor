@@ -23,7 +23,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * TEK SEFERLİK tatil takvimi genişletmesi (2026-11-15, kullanıcı isteği: "Tatil takvimi ayarlarını 10 yıllık girelim"):
  * var olan kurulumlarda {@link HolidayCalendarDataset} (2026–2035) yıllarından {@code holiday_days}'te HİÇ satırı olmayan
  * her yılın günlerini ekler. Satırı olan yıla (yöneticinin düzenlediği, gün sildiği ya da kendi günlerini girdiği yıl)
- * DOKUNULMAZ — silinmiş gün geri gelmez, ad ezilmez.
+ * DOKUNULMAZ — silinmiş gün geri gelmez, ad ezilmez. Takvim TAMAMEN boşsa hiçbir şey yazılmaz (yalnız nişan + bir INFO
+ * satırı): yeni kurulumu ilk tohum doldurur, tohumu yazılmış kurulumda boş takvim yöneticinin bilinçli kararıdır.
  *
  * <p><b>İlk tohumla sıra.</b> Boş tabloyu {@link HolidayCalendarSeed} doldurur (aynı veri kümesi). Bu iş onun nişanı
  * yazılmadan başlamaz (okunamazsa ya da yoksa bekler, deneme sayılmaz) — yeni kurulumda tohum on yılı yazar, bu iş eklenecek
@@ -108,6 +109,16 @@ public class HolidayCalendarTenYearFill {
                     // bozuk satır yıl saymaz
                 }
             }
+        }
+        if (existing.isEmpty()) {
+            // BOŞ tablo bilinçli kabul edilir: yeni kurulumu ilk tohum (aynı on yıl) zaten doldurur; tohumu yazılmış bir
+            // kurulumda takvimin tamamen boş olması yöneticinin bilinçli kararıdır — hiçbir gün eklenmez.
+            jdbc.update("INSERT INTO schema_patch_markers (patch_key, applied_at, rows_affected) VALUES (?, ?, ?)",
+                    KEY, ISO.format(Instant.now()), 0);
+            doneSeen = true;
+            log.info("Tatil takvimi 10 yıl genişletmesi atlandı: takvim tamamen boş — yönetici bilerek boşaltmış sayılır, gün "
+                    + "eklenmedi (gerekirse Ayarlar → Platform → Tatil takviminden girin)");
+            return 0;
         }
         int total = existing.size();
         String now = ISO.format(Instant.now());
