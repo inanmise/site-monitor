@@ -215,7 +215,7 @@ This section shows how the platform sits in production and in local development.
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  Ingress (nginx)                                          │  │
 │  │  <application-address>  ── TLS termination                │  │
-│  │  proxy-read-timeout 60s · max body 1 MB · ssl-redirect    │  │
+│  │  proxy-read-timeout 960s · max body 16 MB · ssl-redirect  │  │
 │  └───────────────────────────┬───────────────────────────────┘  │
 │                              ↓                                  │
 │  ┌───────────────────────────────────────────────────────────┐  │
