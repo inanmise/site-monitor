@@ -2,6 +2,7 @@
 // platform, tarayıcıda platform.js). Sıra: seçenekler → başlık (sınırlar çözmeden ÖNCE) → üstveri → çöz → ölçü planı
 // (akıllı kırpma / nesne) → şerit şerit doğrusal ışıkta küçült + netleştir → biçim adayları → hedef boyut → üstveri →
 // "asla daha kötü" → sonuç. Her arama kodlama sayısıyla, her döngü sabitlerle sınırlıdır.
+import { bandingRisk, countColors, readImageFacts, svgCandidate } from './analyze.js'
 import { ENGINE_LIMITS, EngineError, MIME, MIN_TARGET_SIDE, NOTE_CODES } from './errors.js'
 import { normalizeOptions } from './options.js'
 import { checkLimits, probeBytes, readBlob } from './probe.js'
@@ -521,6 +522,8 @@ export async function processCore(blob, rawOptions, env) {
   try { bytes = await readBlob(blob) } catch { throw new EngineError('DECODE_FAILED', { reason: 'read' }) }
   const info = probeBytes(bytes, bytes.length)               // tür + ölçü sınırı: ÇÖZMEDEN önce
   const meta = readMetadata(bytes, info.type)
+  // Derin karşılaştırma (2026-11-15): kaynağın başlık bilgileri (bit derinliği, PPI, JPEG kalite tahmini …) — fırlatmaz
+  const inputFacts = readImageFacts(bytes, info.type)
   bytes = null
   ctx.progress('decode', 0)
   await ctx.checkpoint()
@@ -573,6 +576,10 @@ export async function processCore(blob, rawOptions, env) {
   }
   const candidates = formats.list.map((t) => made.get(t)).filter(Boolean)        // eşitlikte liste sırası (jpeg, png, webp)
   if (!candidates.length) candidates.push(await runPng(work, { kind: 'auto' }, pngText.text, ctx))
+  // Derin karşılaştırma: denenen her biçimin boyutu (yalnız sayı — Blob tutulmaz) ve çalışılan görselin renk sayısı
+  const tried = candidates.map((c) => ({ type: c.type, bytes: c.size, quality: c.quality ?? null, colors: c.colors ?? null,
+    similarity: c.similarity == null ? null : Math.round(c.similarity * 10000) / 10000 }))
+  const colors = countColors(work.data, work.width, work.height)
   let final = smallest ? pickSmallest(candidates, SIMILARITY_TARGET) : candidates[0]
 
   // Hedef boyut: kaliteyi, sonra ölçüyü düşür (üstveri payı hedeften düşülür)
@@ -627,9 +634,12 @@ export async function processCore(blob, rawOptions, env) {
       if (notes.has('WEBP_UNAVAILABLE')) keptNotes.add('WEBP_UNAVAILABLE')
       if (notes.has('NOT_UPSCALED')) keptNotes.add('NOT_UPSCALED')
       if (opts.targetBytes != null && k.size > opts.targetBytes) keptNotes.add('TARGET_NOT_REACHED')
+      const keptFacts = k.bytes ? readImageFacts(k.bytes, info.type) : inputFacts
       return { blob: k.bytes ? new Blob([k.bytes], { type: mime }) : null, type: info.type, mime, width: srcW, height: srcH,
         bytes: k.size, original, savingPct: savingPct(sourceBytes, k.size), quality: null, colors: null, similarity: 1,
-        resized: false, cropped: false, kept: true, notes: orderNotes(keptNotes) }
+        resized: false, cropped: false, kept: true, notes: orderNotes(keptNotes),
+        analysis: buildAnalysis({ inputFacts, outputFacts: keptFacts, colors, tried, width: srcW, height: srcH,
+          outputType: info.type, outputColors: null, similarity: 1 }) }
     }
   }
 
@@ -645,11 +655,35 @@ export async function processCore(blob, rawOptions, env) {
   if (info.icc) notes.add('COLOR_PROFILE_CONVERTED')
   const outMime = MIME[final.type]
   const outBlob = final.blob || new Blob([final.bytes], { type: outMime })
+  let outputFacts
+  try {
+    outputFacts = readImageFacts(final.bytes || await readBlob(outBlob), final.type)
+  } catch {
+    outputFacts = readImageFacts(null, final.type)
+  }
+  const analysis = buildAnalysis({ inputFacts, outputFacts, colors, tried, width: final.width, height: final.height,
+    outputType: final.type, outputColors: final.colors ?? null, similarity: similarityOut })
   return {
     blob: outBlob, type: final.type, mime: outMime, width: final.width, height: final.height, bytes: final.size, original,
     savingPct: savingPct(sourceBytes, final.size), quality: final.quality, colors: final.colors,
     similarity: similarityOut == null ? null : Math.round(similarityOut * 10000) / 10000,
     resized: final.width !== srcW || final.height !== srcH, cropped: !!plan.cropped, kept: false, notes: orderNotes(notes),
+    analysis,
+  }
+}
+
+/**
+ * Derin karşılaştırma alanı (ek alan; eski çağıran görmezden gelir): kaynak ve çıktının başlık bilgileri, çıktı ölçüsündeki
+ * renk sayısı, denenen biçimler, SVG adaylığı ve bantlaşma riski. Değer bilinmiyorsa null.
+ */
+function buildAnalysis({ inputFacts, outputFacts, colors, tried, width, height, outputType, outputColors, similarity }) {
+  return {
+    input: inputFacts,
+    output: outputFacts,
+    colors,
+    candidates: tried,
+    svgCandidate: svgCandidate(colors, width, height),
+    banding: bandingRisk({ inputBitDepth: inputFacts?.bitDepth ?? null, outputType, outputColors, similarity }),
   }
 }
 

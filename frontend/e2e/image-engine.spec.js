@@ -198,6 +198,38 @@ test.describe('görsel motoru — gerçek tarayıcı', () => {
     expect(r.ladder[0].similarity).toBeLessThan(r.res.similarity)
   })
 
+  test('derin karşılaştırma (analysis): tarayıcı JPEG kalitesi DQT tablosundan, alt örnekleme, adaylar; logo renk sayısı + SVG adayı', async ({ page }) => {
+    await open(page)
+    const r = await page.evaluate(async () => {
+      const { engine, gen, sum } = window.__ie
+      const q90 = await gen.photo(1280, 853, 'image/jpeg', 0.9)
+      const q50 = await gen.photo(1280, 853, 'image/jpeg', 0.5)
+      const a = sum(await engine.processImage(q90, { format: 'smallest', quality: 'auto' }))
+      const b = sum(await engine.processImage(q50, { format: 'keep', quality: 'auto' }))
+      const logo = sum(await engine.processImage(await gen.logo(300, 200), { format: 'keep', quality: 'auto' }))
+      return { a, b, logo }
+    })
+    const ia = r.a.analysis.input
+    expect(ia).toMatchObject({ colorModel: 'rgb', bitDepth: 8 })
+    expect(Math.abs(ia.jpeg.quality - 90)).toBeLessThanOrEqual(3)            // tarayıcının kodlayıcı kalitesi geri okunur
+    expect(['4:2:0', '4:2:2', '4:4:4']).toContain(ia.jpeg.subsampling)
+    expect(Math.abs(r.b.analysis.input.jpeg.quality - 50)).toBeLessThanOrEqual(3)
+    expect(r.a.analysis.candidates.map((c) => c.type)).toEqual(expect.arrayContaining(['jpeg', 'webp']))
+    for (const c of r.a.analysis.candidates) expect(c.bytes).toBeGreaterThan(0)
+    const chosen = r.a.analysis.candidates.find((c) => c.type === r.a.type)
+    expect(chosen?.bytes).toBe(r.a.bytes)                                   // seçilen adayın boyutu sonucun boyutu
+    expect(r.a.analysis.colors.count).toBeGreaterThan(256)                  // fotoğraf çok renkli
+    expect(r.a.analysis.svgCandidate).toBe(false)
+    expect(r.a.analysis.output).not.toBeNull()
+    // logo: az renk → palet, SVG adayı; çıktı paletli PNG
+    expect(r.logo.type).toBe('png')
+    expect(r.logo.analysis.colors.atLeast).toBe(false)                    // kenar yumuşatması yüzlerce ara renk üretir …
+    expect(r.logo.analysis.colors.count).toBeGreaterThan(24)               // … ama baskın renk kuralı logoyu yine tanır
+    expect(r.logo.analysis.svgCandidate).toBe(true)
+    expect(r.logo.analysis.output.colorModel).toBe('palette')
+    expect(r.logo.analysis.output.paletteSize).toBe(r.logo.colors)
+  })
+
   test('GAMA DOĞRU küçültme: 1 piksellik dama 2× küçülünce gerçek tuvalde ≈ 188 (128 değil)', async ({ page }) => {
     await open(page)
     const r = await page.evaluate(async () => {
