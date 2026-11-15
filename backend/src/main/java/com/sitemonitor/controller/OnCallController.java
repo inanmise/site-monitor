@@ -3,6 +3,7 @@ package com.sitemonitor.controller;
 import com.sitemonitor.model.OnCallOverride;
 import com.sitemonitor.model.OnCallSchedule;
 import com.sitemonitor.repository.TeamRepository;
+import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditService;
 import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.oncall.OnCallService;
@@ -78,6 +79,21 @@ public class OnCallController {
     public ResponseEntity<Map<String, Object>> save(@PathVariable Long teamId, @RequestBody Map<String, Object> body,
                                                     HttpSession session, HttpServletRequest request) {
         requireWrite(session, teamId);
+        // Haftalık nöbet bildirimi (2026-11-15): yalnız gönderilen alt alanlar değişir; gövdede çizelge alanı yoksa çizelgeye
+        // dokunulmaz (yalnız bildirim ayarı hedefli UPDATE ile yazılır)
+        OnCallService.WeeklyNoticePatch notice = body.containsKey("weekly_notice") ? weeklyNotice(body.get("weekly_notice")) : null;
+        boolean scheduleSent = SCHEDULE_KEYS.stream().anyMatch(body::containsKey);
+        if (!scheduleSent && notice != null) {
+            Map<String, Object> before = safeSnapshot(teamId);
+            OnCallService.WeeklyNoticeSave r = onCall.saveWeeklyNotice(teamId, notice, username(session));
+            if (r != null && r.changed()) {
+                auditService.recordAction("ONCALL_SCHEDULE_SAVE", session, request, "TEAM", String.valueOf(teamId),
+                        "{\"weekly_notice\":true}", AuditDiff.diff(before, OnCallService.noticeSnapshot(r.schedule())));
+            }
+            Map<String, Object> data = new LinkedHashMap<>(onCall.view(teamId, Instant.now()));
+            data.put("can_edit", true);
+            return ok(Map.of("data", data));
+        }
         List<Long> members = new ArrayList<>();
         if (body.get("members") instanceof List<?> list) {
             if (list.size() > OnCallService.MAX_MEMBERS) {
@@ -98,11 +114,23 @@ public class OnCallController {
                 members.add(id);
             }
         }
-        OnCallSchedule saved = onCall.save(teamId, bool(body.get("enabled")), str(body.get("rotation")), str(body.get("anchor")),
-                members, bool(body.get("notify_oncall")), username(session));
-        auditService.recordAction("ONCALL_SCHEDULE_SAVE", session, request, "TEAM", String.valueOf(teamId),
-                "{\"enabled\":" + saved.getEnabled() + ",\"rotation\":\"" + saved.getRotation() + "\",\"members\":" + members.size()
-                        + ",\"notify_oncall\":" + saved.getNotifyOncall() + "}");
+        String detail;
+        OnCallSchedule saved;
+        if (notice == null || notice.isEmpty()) {
+            saved = onCall.save(teamId, bool(body.get("enabled")), str(body.get("rotation")), str(body.get("anchor")),
+                    members, bool(body.get("notify_oncall")), username(session));
+            detail = "{\"enabled\":" + saved.getEnabled() + ",\"rotation\":\"" + saved.getRotation() + "\",\"members\":" + members.size()
+                    + ",\"notify_oncall\":" + saved.getNotifyOncall() + "}";
+            auditService.recordAction("ONCALL_SCHEDULE_SAVE", session, request, "TEAM", String.valueOf(teamId), detail);
+        } else {
+            Map<String, Object> before = safeSnapshot(teamId);
+            saved = onCall.save(teamId, bool(body.get("enabled")), str(body.get("rotation")), str(body.get("anchor")),
+                    members, bool(body.get("notify_oncall")), notice, username(session));
+            detail = "{\"enabled\":" + saved.getEnabled() + ",\"rotation\":\"" + saved.getRotation() + "\",\"members\":" + members.size()
+                    + ",\"notify_oncall\":" + saved.getNotifyOncall() + ",\"weekly_notice\":true}";
+            auditService.recordAction("ONCALL_SCHEDULE_SAVE", session, request, "TEAM", String.valueOf(teamId), detail,
+                    AuditDiff.diff(before, OnCallService.noticeSnapshot(saved)));
+        }
         Map<String, Object> data = new LinkedHashMap<>(onCall.view(teamId, Instant.now()));
         data.put("can_edit", true);
         return ok(Map.of("data", data));
@@ -161,6 +189,61 @@ public class OnCallController {
     }
 
     // ── yardımcılar ──────────────────────────────────────────────────────────────────────────
+
+    /** Çizelge gövde anahtarları — biri bile varsa tam çizelge kaydı (bugünkü sözleşme). */
+    static final List<String> SCHEDULE_KEYS = List.of("enabled", "rotation", "anchor", "members", "notify_oncall");
+
+    /**
+     * {@code weekly_notice} nesnesi → değişiklik. Yalnız gönderilen alanlar; tür hatası 400 ({@code weekly_notice.<alan>}).
+     * Değer doğrulaması (gün aralığı, saat biçimi, en az bir kanal) serviste.
+     */
+    static OnCallService.WeeklyNoticePatch weeklyNotice(Object raw) {
+        if (raw == null) return null;
+        if (!(raw instanceof Map<?, ?> m)) {
+            throw fieldError("weekly_notice.enabled", "Haftalık bildirim ayarı okunamadı.", "The weekly notice settings could not be read.");
+        }
+        return new OnCallService.WeeklyNoticePatch(boolField(m, "enabled"), boolField(m, "mail"), boolField(m, "push"),
+                dayField(m), timeField(m));
+    }
+
+    private static Boolean boolField(Map<?, ?> m, String key) {
+        if (!m.containsKey(key)) return null;
+        Object v = m.get(key);
+        if (v instanceof Boolean b) return b;
+        if (v instanceof String s && ("true".equalsIgnoreCase(s.trim()) || "false".equalsIgnoreCase(s.trim()))) {
+            return Boolean.parseBoolean(s.trim());
+        }
+        throw fieldError("weekly_notice." + key, "Bu alan açık ya da kapalı olmalı.", "This field must be on or off.");
+    }
+
+    private static Integer dayField(Map<?, ?> m) {
+        if (!m.containsKey("day")) return null;
+        Object v = m.get("day");
+        if (v instanceof Number n && n.doubleValue() == Math.rint(n.doubleValue()) && Math.abs(n.doubleValue()) < 1000) return n.intValue();
+        if (v instanceof String s && s.trim().matches("\\d{1,2}")) return Integer.parseInt(s.trim());
+        throw fieldError("weekly_notice.day", "Gün Pazartesi (1) ile Pazar (7) arasında olmalı.", "The day must be Monday (1) to Sunday (7).");
+    }
+
+    private static String timeField(Map<?, ?> m) {
+        if (!m.containsKey("time")) return null;
+        Object v = m.get("time");
+        if (v instanceof String s && s.length() <= 10) return s;
+        throw fieldError("weekly_notice.time", "Saati SS:dd biçiminde girin (ör. 08:30).", "Enter the time as HH:mm (e.g. 08:30).");
+    }
+
+    private static RuntimeException fieldError(String field, String tr, String en) {
+        return new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(field, Msg.t(tr, en));
+    }
+
+    /** Denetim farkının "önce" hâli — okunamazsa boş (denetim farkı yine yazılır). */
+    private Map<String, Object> safeSnapshot(Long teamId) {
+        try {
+            Map<String, Object> m = onCall.weeklyNoticeSnapshot(teamId);
+            return m == null ? Map.of() : m;
+        } catch (RuntimeException e) {
+            return Map.of();
+        }
+    }
 
     private boolean canEdit(HttpSession session, Long teamId) {
         try {

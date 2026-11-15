@@ -6,6 +6,8 @@ import com.sitemonitor.model.OnCallSchedule;
 import com.sitemonitor.repository.AppUserRepository;
 import com.sitemonitor.repository.OnCallOverrideRepository;
 import com.sitemonitor.repository.OnCallScheduleRepository;
+import com.sitemonitor.repository.OnCallWeeklyNoticeRepository;
+import com.sitemonitor.model.OnCallWeeklyNotice;
 import com.sitemonitor.service.cache.CacheBus;
 import com.sitemonitor.service.cache.CacheBusNames;
 import com.sitemonitor.util.Msg;
@@ -66,6 +68,17 @@ public class OnCallService {
     void setCacheBus(CacheBus bus) {
         this.cacheBus = bus;
         if (bus != null) bus.register(CacheBusNames.ONCALL, this::memoClearLocal);
+    }
+
+    /**
+     * Haftalık nöbet bildirimi gönderim kayıtları (2026-11-15) — isteğe bağlı: elle kurulan testlerde yoksa pencere "son
+     * sonuç" göstermez ve sıradaki gönderim haftanın gönderildiğini bilmeden hesaplanır; takım silme bu satırlara dokunmaz.
+     */
+    private volatile OnCallWeeklyNoticeRepository weeklyNotices;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setWeeklyNotices(OnCallWeeklyNoticeRepository repo) {
+        this.weeklyNotices = repo;
     }
 
     /**
@@ -177,6 +190,7 @@ public class OnCallService {
         out.put("notify_oncall", s != null && Boolean.TRUE.equals(s.getNotifyOncall()));
         out.put("updated_at", s == null ? null : s.getUpdatedAt());
         out.put("updated_by", s == null ? null : s.getUpdatedBy());
+        putWeeklyNotice(out, teamId, s, now);
         List<Map<String, Object>> members = new ArrayList<>();
         if (cfg != null) for (Long id : cfg.members()) members.add(person(id, byId.get(id)));
         out.put("members", members);
@@ -221,6 +235,18 @@ public class OnCallService {
     /** Çizelgeyi kaydeder (doğrulamalı). {@code memberIds} sıralı, çözülmüş kullanıcı kimlikleri. */
     public OnCallSchedule save(Long teamId, boolean enabled, String rotation, String anchor, List<Long> memberIds,
                                boolean notifyOncall, String actor) {
+        return save(teamId, enabled, rotation, anchor, memberIds, notifyOncall, null, actor);
+    }
+
+    /**
+     * Çizelge + haftalık bildirim ayarı tek kayıtta (2026-11-15). {@code notice} null / boş = bildirim kolonlarına dokunulmaz.
+     * Bildirim doğrulaması HER ŞEYDEN ÖNCE (hatalı istek hiçbir şey yazmaz).
+     */
+    public OnCallSchedule save(Long teamId, boolean enabled, String rotation, String anchor, List<Long> memberIds,
+                               boolean notifyOncall, WeeklyNoticePatch notice, String actor) {
+        OnCallSchedule existing = schedules.findByTeamId(teamId).orElse(null);
+        OnCallSchedule draft = existing == null ? new OnCallSchedule() : copyNotice(existing);
+        boolean noticeChanged = notice != null && !notice.isEmpty() && applyNotice(draft, notice, Instant.now());
         String rot = OnCallSchedule.DAILY.equalsIgnoreCase(rotation) ? OnCallSchedule.DAILY : OnCallSchedule.WEEKLY;
         if (rotation != null && !rotation.isBlank() && !OnCallSchedule.DAILY.equalsIgnoreCase(rotation)
                 && !OnCallSchedule.WEEKLY.equalsIgnoreCase(rotation)) {
@@ -256,11 +282,16 @@ public class OnCallService {
         if (enabled && members.isEmpty()) {
             throw field("members", "Çizelgeyi açmak için en az bir nöbetçi ekleyin.", "Add at least one person to turn the schedule on.");
         }
-        OnCallSchedule s = schedules.findByTeamId(teamId).orElseGet(() -> {
-            OnCallSchedule n = new OnCallSchedule();
-            n.setTeamId(teamId);
-            return n;
-        });
+        OnCallSchedule s = existing != null ? existing : new OnCallSchedule();
+        if (existing == null) s.setTeamId(teamId);
+        if (noticeChanged) {
+            s.setWeeklyNoticeEnabled(draft.getWeeklyNoticeEnabled());
+            s.setWeeklyNoticeMail(draft.getWeeklyNoticeMail());
+            s.setWeeklyNoticePush(draft.getWeeklyNoticePush());
+            s.setWeeklyNoticeDay(draft.getWeeklyNoticeDay());
+            s.setWeeklyNoticeTime(draft.getWeeklyNoticeTime());
+            s.setWeeklyNoticeSince(draft.getWeeklyNoticeSince());
+        }
         s.setEnabled(enabled);
         s.setRotation(rot);
         s.setAnchor(anchor.trim());
@@ -312,6 +343,8 @@ public class OnCallService {
         try {
             schedules.findByTeamId(teamId).ifPresent(schedules::delete);
             overrides.deleteByTeam(teamId);
+            OnCallWeeklyNoticeRepository wn = weeklyNotices;
+            if (wn != null) wn.deleteByTeam(teamId);      // haftalık bildirim gönderim kayıtları (2026-11-15)
         } catch (Exception e) {
             log.warn("Silinen takımın nöbet çizelgesi temizlenemedi (takım {}): {}", teamId, e.toString());
         }
@@ -327,9 +360,163 @@ public class OnCallService {
         memoChanged();
     }
 
+    // ── Haftalık nöbet bildirimi (2026-11-15) ───────────────────────────────────────────────
+
+    /**
+     * Haftalık bildirim ayarı değişikliği — YALNIZ gönderilen alanlar (null = dokunma). Takım kendisi açar (varsayılan
+     * kapalı); kanal e-posta (takımın alarm adresi) ve / veya push (takım üyeleri); gün 1–7 (Pazartesi = 1), saat "HH:mm".
+     */
+    public record WeeklyNoticePatch(Boolean enabled, Boolean mail, Boolean push, Integer day, String time) {
+        public boolean isEmpty() {
+            return enabled == null && mail == null && push == null && day == null && time == null;
+        }
+    }
+
+    /** Yalnız bildirim ayarı kaydı sonucu: {@code changed} false = hiçbir şey yazılmadı (denetim de yok). */
+    public record WeeklyNoticeSave(OnCallSchedule schedule, boolean changed) { }
+
+    /**
+     * Yalnız haftalık bildirim ayarını kaydeder (çizelgenin geri kalanına dokunmayan hedefli UPDATE). Çizelge kaydedilmemişse
+     * 400 ({@code weekly_notice.enabled}). Değişiklik yoksa yazmaz.
+     */
+    public WeeklyNoticeSave saveWeeklyNotice(Long teamId, WeeklyNoticePatch patch, String actor) {
+        OnCallSchedule existing = schedules.findByTeamId(teamId).orElse(null);
+        if (existing == null) {
+            throw field("weekly_notice.enabled", "Haftalık bildirimi açmadan önce takımın nöbet çizelgesini kaydedin.",
+                    "Save the team's on-call schedule before turning on the weekly notice.");
+        }
+        if (patch == null || patch.isEmpty()) return new WeeklyNoticeSave(existing, false);
+        Instant now = Instant.now();
+        if (!applyNotice(existing, patch, now)) return new WeeklyNoticeSave(existing, false);
+        String stamp = ISO.format(now);
+        int n = schedules.updateWeeklyNotice(teamId, existing.getWeeklyNoticeEnabled(), existing.getWeeklyNoticeMail(),
+                existing.getWeeklyNoticePush(), existing.getWeeklyNoticeDay(), existing.getWeeklyNoticeTime(),
+                existing.getWeeklyNoticeSince(), stamp, actor);
+        if (n == 0) throw new java.util.NoSuchElementException("schedule");
+        existing.setUpdatedAt(stamp);
+        existing.setUpdatedBy(actor);
+        return new WeeklyNoticeSave(existing, true);
+    }
+
+    /** Denetim farkı için ayarın etkin (varsayılanları uygulanmış) hâli; çizelge yoksa boş. */
+    public Map<String, Object> weeklyNoticeSnapshot(Long teamId) {
+        return noticeSnapshot(schedules.findByTeamId(teamId).orElse(null));
+    }
+
+    /** Satırın bildirim ayarı — denetim farkı anahtarları (camelCase). */
+    public static Map<String, Object> noticeSnapshot(OnCallSchedule s) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        if (s == null) return m;
+        OnCallWeeklyNoticeSlots.Settings st = OnCallWeeklyNoticeSlots.Settings.of(s);
+        m.put("weeklyNoticeEnabled", st.enabled());
+        m.put("weeklyNoticeMail", st.mail());
+        m.put("weeklyNoticePush", st.push());
+        m.put("weeklyNoticeDay", st.day());
+        m.put("weeklyNoticeTime", st.time());
+        return m;
+    }
+
+    /**
+     * Değişikliği satıra uygular (doğrulamalı; hatada satır değişmez). Değişen yoksa false. "Açık + hiç kanal yok" reddedilir
+     * — yalnız açma / kanal alanlarından biri gönderildiyse (değişmeyen değer yeniden doğrulanmaz). Açma ya da gün / saat
+     * değişince {@code weeklyNoticeSince} = şimdi ("zamanı kaçırıldı" izi o andan önceki dilimi saymaz).
+     */
+    static boolean applyNotice(OnCallSchedule s, WeeklyNoticePatch p, Instant now) {
+        if (p.day() != null && !OnCallWeeklyNoticeSlots.validDay(p.day())) {
+            throw field("weekly_notice.day", "Gün Pazartesi (1) ile Pazar (7) arasında olmalı.", "The day must be Monday (1) to Sunday (7).");
+        }
+        String time = p.time() == null ? null : p.time().trim();
+        if (time != null && !OnCallWeeklyNoticeSlots.validTime(time)) {
+            throw field("weekly_notice.time", "Saati SS:dd biçiminde girin (ör. 08:30).", "Enter the time as HH:mm (e.g. 08:30).");
+        }
+        OnCallWeeklyNoticeSlots.Settings before = OnCallWeeklyNoticeSlots.Settings.of(s);
+        boolean enabled = p.enabled() != null ? p.enabled() : before.enabled();
+        boolean mail = p.mail() != null ? p.mail() : before.mail();
+        boolean push = p.push() != null ? p.push() : before.push();
+        int day = p.day() != null ? p.day() : before.day();
+        String t = time != null ? time : before.time();
+        boolean channelTouched = p.enabled() != null || p.mail() != null || p.push() != null;
+        if (channelTouched && enabled && !mail && !push) {
+            throw field("weekly_notice.mail", "Bildirim açıkken en az bir kanal (e-posta ya da push) seçin.",
+                    "Pick at least one channel (e-mail or push) while the notice is on.");
+        }
+        boolean changed = enabled != before.enabled() || mail != before.mail() || push != before.push()
+                || day != before.day() || !t.equals(before.time());
+        if (!changed) return false;
+        boolean timing = enabled && (!before.enabled() || day != before.day() || !t.equals(before.time()));
+        s.setWeeklyNoticeEnabled(enabled);
+        s.setWeeklyNoticeMail(mail);
+        s.setWeeklyNoticePush(push);
+        s.setWeeklyNoticeDay(day);
+        s.setWeeklyNoticeTime(t);
+        if (timing) s.setWeeklyNoticeSince(ISO.format(now));
+        return true;
+    }
+
+    private static OnCallSchedule copyNotice(OnCallSchedule s) {
+        OnCallSchedule c = new OnCallSchedule();
+        c.setWeeklyNoticeEnabled(s.getWeeklyNoticeEnabled());
+        c.setWeeklyNoticeMail(s.getWeeklyNoticeMail());
+        c.setWeeklyNoticePush(s.getWeeklyNoticePush());
+        c.setWeeklyNoticeDay(s.getWeeklyNoticeDay());
+        c.setWeeklyNoticeTime(s.getWeeklyNoticeTime());
+        c.setWeeklyNoticeSince(s.getWeeklyNoticeSince());
+        return c;
+    }
+
+    /**
+     * Görünüme ayar + sıradaki gönderim + son sonuç. Gönderim kayıtları okunamazsa {@code weekly_notice_next} /
+     * {@code weekly_notice_last} null ve {@code weekly_notice_unreadable} true (bilinmeyen "gönderilmedi" değildir).
+     */
+    private void putWeeklyNotice(Map<String, Object> out, Long teamId, OnCallSchedule s, Instant now) {
+        OnCallWeeklyNoticeSlots.Settings st = OnCallWeeklyNoticeSlots.Settings.of(s);
+        Map<String, Object> wn = new LinkedHashMap<>();
+        wn.put("enabled", st.enabled());
+        wn.put("mail", st.mail());
+        wn.put("push", st.push());
+        wn.put("day", st.day());
+        wn.put("time", st.time());
+        out.put("weekly_notice", wn);
+        OnCallWeeklyNoticeRepository repo = weeklyNotices;
+        try {
+            Instant next = OnCallWeeklyNoticeSlots.next(st, now,
+                    repo == null ? null : key -> repo.findByTeamIdAndWeekKey(teamId, key).isPresent());
+            out.put("weekly_notice_next", next == null ? null : ISO.format(next));
+            OnCallWeeklyNotice last = repo == null ? null : repo.findTopByTeamIdOrderByWeekKeyDescIdDesc(teamId).orElse(null);
+            out.put("weekly_notice_last", last == null ? null : lastJson(last));
+        } catch (RuntimeException e) {
+            log.debug("Haftalık nöbet bildirimi kayıtları okunamadı (takım {}): {}", teamId, e.toString());
+            out.put("weekly_notice_next", null);
+            out.put("weekly_notice_last", null);
+            out.put("weekly_notice_unreadable", true);
+        }
+    }
+
+    private static Map<String, Object> lastJson(OnCallWeeklyNotice n) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("week", n.getWeekKey());
+        m.put("status", n.getStatus());
+        m.put("reason", n.getReason());
+        m.put("at", n.getFinishedAt() != null ? n.getFinishedAt() : n.getClaimedAt());
+        m.put("slot_at", n.getSlotAt());
+        m.put("mail", mailOutcome(n.getMailStatus()));
+        m.put("push_count", n.getPushCount());
+        return m;
+    }
+
+    /** Posta durumu → sınıf (ham SMTP metni istemciye gitmez): delivered | skipped | failed | off | null. */
+    static String mailOutcome(String mailStatus) {
+        if (mailStatus == null || mailStatus.isBlank()) return null;
+        if (mailStatus.startsWith(OnCallWeeklyNoticeService.MAIL_OFF)) return "off";
+        if (mailStatus.startsWith("SENT") || mailStatus.startsWith("QUEUED")) return "delivered";
+        if (mailStatus.startsWith("SKIPPED")) return "skipped";
+        return "failed";
+    }
+
     // ── yardımcılar ──────────────────────────────────────────────────────────────────────────
 
     static OnCallRotation.Config config(OnCallSchedule s) {
+
         List<Long> members = new ArrayList<>();
         if (s.getMemberIds() != null) for (String p : s.getMemberIds().split(",")) {
             String v = p.trim();
