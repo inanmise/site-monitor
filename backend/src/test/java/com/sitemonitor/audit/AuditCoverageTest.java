@@ -100,6 +100,9 @@ class AuditCoverageTest {
         EXEMPT.put("MonitoringController#scriptedSchedulePreview",
                 "Sentetik izleme ZAMANLAMA ÖNİZLEMESİ (2026-10-31, k6r): dbquery önizlemesinin aynısı — sonraki çalışmaları saf "
               + "hesapla bulur, hiçbir kayıt değiştirmez. Kayıt (MONITOR_CREATE / MONITOR_UPDATE) denetlenir.");
+        EXEMPT.put("MonitoringController#pageSpeedSchedulePreview",
+                "Sayfa Hızı ZAMANLAMA ÖNİZLEMESİ (2026-11-15, 2. sürüm madde 14): sentetik önizlemenin aynısı (alt sınır 5 dk) — sonraki "
+              + "ölçümleri saf hesapla bulur, hiçbir kayıt değiştirmez. Kayıt (MONITOR_CREATE / MONITOR_UPDATE) denetlenir.");
         EXEMPT.put("PageResourceImageController#projection",
                 "Kaynak analizi \"not ne olurdu?\" PROJEKSİYONU (2026-11-14, görsel aracı): saklanan analizin nesne listesinin "
               + "kopyası üzerinde notu bellekte yeniden hesaplar — veritabanına yazmaz, dış istek atmaz. POST yalnız görsel "
