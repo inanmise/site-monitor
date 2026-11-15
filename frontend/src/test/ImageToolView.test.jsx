@@ -252,13 +252,26 @@ describe('görsel aracı görünümü', () => {
     expect(engine.calls[1]).toMatchObject({ quality: 80, targetBytes: null, format: 'webp' })
   })
 
-  it('WebP bu tarayıcıda üretilemiyorsa seçenek kapalıdır ve nedeni yazılır', async () => {
+  it('WebP bu tarayıcıda üretilemiyorsa seçenek kapalıdır; neden WebP / "en küçük" seçiliyken yazılır', async () => {
     setup({ engine: fakeEngine({ engineSupport: async () => ({ worker: true, webp: false }) }) })
     const panel = slot('prs-it-settings-panel')
-    await waitFor(() => expect(panel).toHaveTextContent('Bu tarayıcı WebP üretemiyor; WebP seçeneği kapalı.'))
+    await waitFor(() => expect([...slot('prs-it-format', panel).options].find((o) => o.value === 'webp').disabled).toBe(true))
     const webp = [...slot('prs-it-format', panel).options].find((o) => o.value === 'webp')
-    expect(webp.disabled).toBe(true)
     expect(webp.textContent).toContain('bu tarayıcıda yok')
+    // "koru"da WebP uyarısı gösterilmez (inceleme 2026-11-15) — biçimin kendi ipucu
+    expect(panel).not.toHaveTextContent('Bu tarayıcı WebP üretemiyor; WebP seçeneği kapalı.')
+    fireEvent.change(slot('prs-it-format', panel), { target: { value: 'smallest' } })
+    await waitFor(() => expect(panel).toHaveTextContent('Bu tarayıcı WebP üretemiyor; WebP seçeneği kapalı.'))
+  })
+
+  it('Safari benzeri (WebP yok, AVIF var — inceleme 2026-11-15): AVIF seçiliyken "WebP üretemiyor" DEĞİL, AVIF ipucu yazılır', async () => {
+    setup({ engine: fakeEngine({ engineSupport: async () => ({ worker: true, webp: false, avif: true }) }) })
+    const panel = slot('prs-it-settings-panel')
+    await waitFor(() => expect([...slot('prs-it-format', panel).options].find((o) => o.value === 'avif').disabled).toBe(false))
+    fireEvent.change(slot('prs-it-format', panel), { target: { value: 'avif' } })
+    await waitFor(() => expect(slot('prs-it-format', panel).value).toBe('avif'))
+    expect(panel.textContent).toContain(tr['prs.it.set.formatHint.avif'])
+    expect(panel.textContent).not.toContain(tr['prs.it.set.webpOff'])
   })
 
   it('AVIF (2026-11-15): tarayıcı burada üretebiliyorsa seçenek açık, ipucu yavaşlığı söyler; üretemiyorsa kapalı + nedeni', async () => {

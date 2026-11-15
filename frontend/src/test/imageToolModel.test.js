@@ -8,7 +8,7 @@ import { FALLBACK_LIMITS } from '../components/page/resourcescan/imagetool/engin
 import {
   BULK_MAX_IMAGES, CLIENT_PROBLEMS, DEFAULT_SETTINGS, ENGINE_CODES, FORMATS, METHODS, NOTE_CODES, PHASES, PROJECTION_MAX_IMAGES,
   QUALITY_MODES, RESPONSIVE_WIDTHS, SERVER_CODES, SERVER_MAX_BYTES, TOOL_MAX_FILES, UNAVAILABLE_REASONS,
-  baseNameOfUrl, buildOptions, bulkPlan, dimsText, engineProblemText, escapeAttr, imageUnavailable, isImageItem, isSvgItem, largeImages, mappingCsv,
+  baseNameOfUrl, buildOptions, bulkPlan, dimsText, engineProblemText, escapeAttr, formatUnavailableKey, imageUnavailable, isImageItem, isSvgItem, largeImages, mappingCsv,
   mappingRows, missingText, noteText, optimizeSettings, optionsKey, outputName, phaseText, pictureSnippet, problemLine, processedCells,
   projectionImages, projectionView, resizeSettings, responsiveWidths, resultLine, resultMeta, resultSummary, safeFileBase, savingPctOf,
   growthPctOf, nameKey, pctText, pngPaletteColors, resultTone,
@@ -428,6 +428,14 @@ describe('görsel aracı — sorun metinleri (sunucu / motor)', () => {
     expect(engineProblemText('DECODE_FAILED', { reason: 'header' }, t, 'tr-TR')).toBe('prs.it.eng.DECODE_FAILED')
     expect(engineProblemText('BROWSER_UNSUPPORTED', { reason: 'memory' }, t, 'tr-TR')).toBe('prs.it.eng.BROWSER_UNSUPPORTED.memory')
     expect(engineProblemText('BROWSER_UNSUPPORTED', { reason: 'worker' }, t, 'tr-TR')).toBe('prs.it.eng.BROWSER_UNSUPPORTED')
+    // AVIF kodlayıcı dosyası bulunamadı (inceleme 2026-11-15): AVIF'e özgü metin — "sayfa güncellendi" DEĞİL
+    expect(engineProblemText('BROWSER_UNSUPPORTED', { reason: 'avif', detail: 'asset_missing' }, t, 'tr-TR')).toBe('prs.it.eng.BROWSER_UNSUPPORTED.avifAsset')
+    expect(engineProblemText('BROWSER_UNSUPPORTED', { reason: 'stale_bundle' }, t, 'tr-TR')).toBe('prs.it.eng.BROWSER_UNSUPPORTED.stale')
+    for (const k of ['prs.it.eng.BROWSER_UNSUPPORTED.avifAsset', 'prs.it.note.AVIF_TIME_LIMIT']) {
+      expect(TR[k], k).toBeTruthy()
+      expect(EN[k], k).toBeTruthy()
+    }
+    expect(TR['prs.it.eng.BROWSER_UNSUPPORTED.avifAsset']).not.toMatch(/güncellendi/)
     expect(engineProblemText('ENCODE_FAILED', { reason: 'timeout' }, t, 'tr-TR')).toBe('prs.it.eng.ENCODE_FAILED.timeout')
     expect(engineProblemText('ENCODE_FAILED', { reason: 'unsupported_type' }, t, 'tr-TR')).toBe('prs.it.eng.ENCODE_FAILED.type')
     expect(engineProblemText('ENCODE_FAILED', { reason: 'internal', name: 'TypeError' }, t, 'tr-TR')).toBe('prs.it.eng.ENCODE_FAILED')
@@ -440,6 +448,20 @@ describe('görsel aracı — sorun metinleri (sunucu / motor)', () => {
     expect(problemLine({ kind: 'client', code: 'download' }, t, 'tr-TR')).toBe('prs.it.srv.download')
     expect(problemLine({ kind: 'client', code: 'tooLargeFile', params: { maxBytes: 1024 * 1024 } }, t, 'tr-TR')).toBe('prs.it.eng.TOO_LARGE(1 MB)')
     expect(problemLine(null, t, 'tr-TR')).toBe('')
+  })
+
+  it('biçim uyarısı (inceleme 2026-11-15): AVIF önce değerlendirilir; WebP uyarısı yalnız WebP / "en küçük"te; destek bilinmiyorsa uyarı yok', () => {
+    const safari = { state: 'ready', webp: false, avif: true }
+    expect(formatUnavailableKey('avif', safari)).toBeNull()                // Safari: AVIF var — "WebP üretemiyor" denmez
+    expect(formatUnavailableKey('webp', safari)).toBe('prs.it.set.webpOff')
+    expect(formatUnavailableKey('smallest', safari)).toBe('prs.it.set.webpOff')
+    for (const f of ['keep', 'jpeg', 'png']) expect(formatUnavailableKey(f, safari)).toBeNull()
+    const noAvif = { state: 'ready', webp: true, avif: false }
+    expect(formatUnavailableKey('avif', noAvif)).toBe('prs.it.set.avifOff')
+    expect(formatUnavailableKey('webp', noAvif)).toBeNull()
+    expect(formatUnavailableKey('avif', { state: 'ready', webp: false, avif: false })).toBe('prs.it.set.avifOff')
+    expect(formatUnavailableKey('avif', { state: 'loading', avif: false })).toBeNull()
+    expect(formatUnavailableKey('webp', null)).toBeNull()
   })
 })
 

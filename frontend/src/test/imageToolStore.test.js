@@ -599,3 +599,26 @@ describe('akış ZIP yazıcısı', () => {
     await expect(createZipWriter({ load: async () => { throw new Error('bayat paket') } })).rejects.toThrow('bayat paket')
   })
 })
+
+describe('görsel deposu — AVIF kodlayıcı dosyası bulunamadı (inceleme 2026-11-15)', () => {
+  it('satırın sorunu AVIF e özgü; destek "bayat paket" OLMAZ — sonraki JPEG işlemi motora gider ve biter', async () => {
+    let first = true
+    const base = fakeEngine()
+    const engine = fakeEngine({
+      processImage: async (blob, options, extra) => {
+        if (first) { first = false; throw engineError('BROWSER_UNSUPPORTED', { reason: 'avif', detail: 'asset_missing' }) }
+        return base.processImage(blob, options, extra)
+      },
+    })
+    const { store } = make({ engine })
+    const item = img('hero.jpg')
+    const avif = { ...optimizeSettings(), format: 'avif' }
+    expect(await store.optimizeScanImage(SCAN, item, avif)).toEqual({ ok: false })
+    const e = store.scanEntry(SCAN, item.url)
+    expect(e.problem).toMatchObject({ kind: 'engine', code: 'BROWSER_UNSUPPORTED', params: { reason: 'avif', detail: 'asset_missing' } })
+    expect(store.support().staleBundle).toBeUndefined()
+    expect(store.support().state).not.toBe('stale')
+    expect(await store.optimizeScanImage(SCAN, item, { ...optimizeSettings(), format: 'jpeg' })).toEqual({ ok: true })
+    expect(store.scanEntry(SCAN, item.url)).toMatchObject({ state: 'done', problem: null })
+  })
+})

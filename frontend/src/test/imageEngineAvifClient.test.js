@@ -4,8 +4,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 vi.mock('../utils/imageEngine/avif.worker.js?worker&url', () => ({ default: '/assets/avif.worker-T3st.js' }))
 
 import {
-  AVIF_ENCODE_TIMEOUT_MS, AVIF_IDLE_MS, AVIF_LOAD_TIMEOUT_MS, _resetAvifForTests, avifAvailable, prepareAvif,
+  AVIF_ENCODE_TIMEOUT_MS, AVIF_IDLE_MS, AVIF_LOAD_TIMEOUT_MS, _resetAvifForTests, avifAvailable, avifBlocked, getAvifBlock, prepareAvif,
+  setAvifBlock,
 } from '../utils/imageEngine/avifClient.js'
+import { AVIF_FAIL_COOLDOWN_MS } from '../utils/imageEngine/errors.js'
 
 /**
  * AVIF kodlayıcı istemcisi (2026-11-15): ayrı modül Worker'ı yalnız ilk AVIF kodlamasında açılır; yükleme 30 sn, her
@@ -14,7 +16,7 @@ import {
  */
 class FakeWorker {
   static instances = []
-  static mode = 'ok'          // ok | silent | crash | wasm404 | encodeFail
+  static mode = 'ok'          // ok | silent | crash | wasm404 | legacyStale | loadFail | encodeFail
   constructor(url, opts) {
     this.url = String(url)
     this.opts = opts
@@ -28,7 +30,10 @@ class FakeWorker {
     const mode = FakeWorker.mode
     if (m.kind === 'init') {
       if (mode === 'ok' || mode === 'encodeFail') queueMicrotask(() => this.reply({ id: m.id, type: 'ready' }))
-      if (mode === 'wasm404') queueMicrotask(() => this.reply({ id: m.id, type: 'error', code: 'BROWSER_UNSUPPORTED', params: { reason: 'stale_bundle' } }))
+      if (mode === 'wasm404') queueMicrotask(() => this.reply({ id: m.id, type: 'error', code: 'BROWSER_UNSUPPORTED', params: { reason: 'avif', detail: 'asset_missing' } }))
+      // önceki sürümün AVIF Worker'ı 404'ü stale_bundle diye bildirirdi
+      if (mode === 'legacyStale') queueMicrotask(() => this.reply({ id: m.id, type: 'error', code: 'BROWSER_UNSUPPORTED', params: { reason: 'stale_bundle' } }))
+      if (mode === 'loadFail') queueMicrotask(() => this.reply({ id: m.id, type: 'error', code: 'BROWSER_UNSUPPORTED', params: { reason: 'avif', detail: 'wasm_http' } }))
     }
     if (m.kind === 'encode') {
       if (mode === 'ok') queueMicrotask(() => this.reply({ id: m.id, type: 'result', buffer: new Uint8Array([1, 2, 3, m.quality]).buffer }))
@@ -95,7 +100,7 @@ describe('AVIF istemcisi — oturum', () => {
     await expect(a.encode('image/avif', 0.5)).rejects.toMatchObject({ code: 'BROWSER_UNSUPPORTED', params: { reason: 'avif', detail: 'worker_closed' } })
   })
 
-  it('yükleme 30 sn içinde bitmezse: load_timeout, Worker sonlandırılır; sonraki deneme yeni Worker açar', async () => {
+  it('yükleme 30 sn içinde bitmezse: load_timeout, Worker sonlandırılır; hata HATIRLANIR — 5 dk yeniden beklenmez, sonra yeni Worker', async () => {
     vi.useFakeTimers()
     FakeWorker.mode = 'silent'
     const p = prepareAvif(image(), { speed: 6 })
@@ -105,10 +110,53 @@ describe('AVIF istemcisi — oturum', () => {
     await vi.advanceTimersByTimeAsync(2)
     expect(await caught).toMatchObject({ code: 'BROWSER_UNSUPPORTED', params: { reason: 'avif', detail: 'load_timeout' } })
     expect(FakeWorker.instances[0].terminated).toBe(true)
+    // yakın zamandaki yükleme hatası: AVIF denenmez, oturum ANINDA reddedilir (Worker açılmaz, 30 sn beklenmez)
     FakeWorker.mode = 'ok'
+    expect(avifAvailable()).toBe(false)
+    expect(avifBlocked()).toBe('load_timeout')
+    await expect(prepareAvif(image(), { speed: 6 })).rejects.toMatchObject({ params: { reason: 'avif', detail: 'load_timeout' } })
+    expect(FakeWorker.instances).toHaveLength(1)
+    // süre dolunca yeniden denenir
+    await vi.advanceTimersByTimeAsync(AVIF_FAIL_COOLDOWN_MS)
+    expect(avifAvailable()).toBe(true)
     const s = await prepareAvif(image(), { speed: 6 })
     expect(FakeWorker.instances).toHaveLength(2)
     s.close()
+  })
+
+  it('işin süre bütçesi: kısaltılmış YÜKLEME beklemesi time_budget ile biter ama HATIRLANMAZ (yükleme arkada sürer); kısaltılmış kodlama da time_budget', async () => {
+    vi.useFakeTimers()
+    FakeWorker.mode = 'silent'
+    const caught = prepareAvif(image(), { speed: 6, loadTimeoutMs: 2000 }).catch((e) => e)
+    await vi.advanceTimersByTimeAsync(2001)
+    expect(await caught).toMatchObject({ params: { reason: 'avif', detail: 'time_budget' } })
+    expect(avifBlocked()).toBeNull()
+    expect(FakeWorker.instances[0].terminated).toBe(false)                // yükleme sürüyor (kendi 30 sn sınırıyla)
+    // yükleme bütçeden SONRA biter (kendi 30 sn sınırının içinde): kimse kullanmazsa boşta kalma süresi sonunda kapanır
+    // (bellek tutulmaz) ve bu kapanış yükleme hatası sayılmaz
+    const w0 = FakeWorker.instances[0]
+    w0.reply({ id: w0.posted[0].m.id, type: 'ready' })
+    await flush()
+    await vi.advanceTimersByTimeAsync(AVIF_IDLE_MS + 1)
+    expect(w0.terminated).toBe(true)
+    expect(avifBlocked()).toBeNull()
+    _resetAvifForTests()
+    FakeWorker.instances = []
+    FakeWorker.mode = 'ok'
+    const s = await prepareAvif(image(), { speed: 6 })
+    FakeWorker.mode = 'silent'
+    const slow = s.encode('image/avif', 0.5, { timeoutMs: 5000 }).catch((e) => e)
+    await vi.advanceTimersByTimeAsync(5001)
+    expect(await slow).toMatchObject({ params: { reason: 'avif', detail: 'time_budget' } })
+    expect(FakeWorker.instances[0].terminated).toBe(true)
+    expect(avifBlocked()).toBeNull()                                     // kodlama hatası yükleme hatası değildir
+    // istenen sınır 90 sn'den uzunsa 90 sn'ye kırpılır (encode_timeout)
+    FakeWorker.mode = 'ok'
+    const s2 = await prepareAvif(image(), { speed: 6 })
+    FakeWorker.mode = 'silent'
+    const capped = s2.encode('image/avif', 0.5, { timeoutMs: 10 * AVIF_ENCODE_TIMEOUT_MS }).catch((e) => e)
+    await vi.advanceTimersByTimeAsync(AVIF_ENCODE_TIMEOUT_MS + 1)
+    expect(await capped).toMatchObject({ params: { reason: 'avif', detail: 'encode_timeout' } })
   })
 
   it('kodlama 90 sn içinde bitmezse: encode_timeout, Worker sonlandırılır (WASM durumu bilinmiyor)', async () => {
@@ -145,29 +193,70 @@ describe('AVIF istemcisi — oturum', () => {
   })
 })
 
-describe('AVIF istemcisi — eski paket (dağıtım sonrası 404)', () => {
-  it('WASM sunucuda yok (Worker stale_bundle der): iş stale_bundle ile biter; sonra Worker AÇILMAZ, denetim false', async () => {
+describe('AVIF istemcisi — kodlayıcı dosyası sunucuda yok (dağıtım sonrası 404, inceleme 2026-11-15)', () => {
+  it('WASM bulunamadı (Worker asset_missing der): YALNIZ AVIF e özgü hata — eski paket (stale_bundle) DEĞİL; 5 dk hatırlanır, sonra yeniden denenir', async () => {
+    vi.useFakeTimers()
     FakeWorker.mode = 'wasm404'
-    await expect(prepareAvif(image(), { speed: 6 })).rejects.toMatchObject({ code: 'BROWSER_UNSUPPORTED', params: { reason: 'stale_bundle' } })
+    await expect(prepareAvif(image(), { speed: 6 })).rejects.toMatchObject({ code: 'BROWSER_UNSUPPORTED', params: { reason: 'avif', detail: 'asset_missing' } })
     expect(avifAvailable()).toBe(false)
+    expect(avifBlocked()).toBe('asset_missing')
     FakeWorker.mode = 'ok'
-    await expect(prepareAvif(image(), { speed: 6 })).rejects.toMatchObject({ params: { reason: 'stale_bundle' } })
+    await expect(prepareAvif(image(), { speed: 6 })).rejects.toMatchObject({ params: { reason: 'avif', detail: 'asset_missing' } })
     expect(FakeWorker.instances).toHaveLength(1)
+    // kalıcı kilit YOK: süre dolunca (dağıtım bitti) AVIF yeniden çalışır
+    await vi.advanceTimersByTimeAsync(AVIF_FAIL_COOLDOWN_MS + 1)
+    expect(avifAvailable()).toBe(true)
+    const s = await prepareAvif(image(), { speed: 6 })
+    expect(FakeWorker.instances).toHaveLength(2)
+    s.close()
   })
 
-  it('Worker betiği konuşmadan düştü + HEAD 404 → stale_bundle; HEAD ağ hatası → worker_failed (eski paket sayılmaz)', async () => {
+  it('önceki sürümün AVIF Worker ı stale_bundle bildirse de istemci bunu asset_missing e çevirir (motor kilidi konmaz)', async () => {
+    FakeWorker.mode = 'legacyStale'
+    await expect(prepareAvif(image(), { speed: 6 })).rejects.toMatchObject({ params: { reason: 'avif', detail: 'asset_missing' } })
+  })
+
+  it('her YÜKLEME hatası hatırlanır (5xx de): kayıt ana iş parçacığına taşınabilir — get / set, üst sınır, geçersiz değer yok sayılır', async () => {
+    vi.useFakeTimers()
+    FakeWorker.mode = 'loadFail'
+    await expect(prepareAvif(image(), { speed: 6 })).rejects.toMatchObject({ params: { reason: 'avif', detail: 'wasm_http' } })
+    const b = getAvifBlock()
+    expect(b).toMatchObject({ detail: 'wasm_http' })
+    expect(b.until).toBeGreaterThan(Date.now())
+    // yeni bir Worker'da (motor Worker'ı boşta kapanıp açıldı) kayıt geri yüklenir
+    _resetAvifForTests()
+    expect(getAvifBlock()).toBeNull()
+    setAvifBlock(b)
+    expect(avifBlocked()).toBe('wasm_http')
+    expect(avifAvailable()).toBe(false)
+    // üst sınır: süre AVIF_FAIL_COOLDOWN_MS'yi aşamaz; geçersiz / geçmiş kayıt yok sayılır, tuhaf neden 'unavailable' olur
+    _resetAvifForTests()
+    setAvifBlock({ until: Date.now() + 10 * AVIF_FAIL_COOLDOWN_MS, detail: 'asset_missing' })
+    expect(getAvifBlock().until).toBeLessThanOrEqual(Date.now() + AVIF_FAIL_COOLDOWN_MS)
+    _resetAvifForTests()
+    setAvifBlock({ until: Date.now() - 1, detail: 'x' })
+    setAvifBlock(null)
+    setAvifBlock({ until: 'yarın' })
+    expect(getAvifBlock()).toBeNull()
+    setAvifBlock({ until: Date.now() + 1000, detail: '<script>' })
+    expect(avifBlocked()).toBe('unavailable')
+  })
+
+  it('Worker betiği konuşmadan düştü + HEAD 404 → asset_missing; HEAD ağ hatası → worker_failed — ikisi de hatırlanır', async () => {
     FakeWorker.mode = 'crash'
     const head = vi.fn(async () => ({ status: 404 }))
     vi.stubGlobal('fetch', head)
-    await expect(prepareAvif(image(), { speed: 6 })).rejects.toMatchObject({ params: { reason: 'stale_bundle' } })
+    await expect(prepareAvif(image(), { speed: 6 })).rejects.toMatchObject({ params: { reason: 'avif', detail: 'asset_missing' } })
     expect(head).toHaveBeenCalledTimes(1)
     expect(head.mock.calls[0][1]).toMatchObject({ method: 'HEAD', cache: 'no-store' })
     expect(String(head.mock.calls[0][0])).toMatch(/\/assets\/avif\.worker-T3st\.js$/)
+    expect(avifBlocked()).toBe('asset_missing')
 
     _resetAvifForTests()
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('ağ yok') }))
     await expect(prepareAvif(image(), { speed: 6 })).rejects.toMatchObject({ params: { reason: 'avif', detail: 'worker_failed' } })
-    expect(avifAvailable()).toBe(true)
+    expect(avifBlocked()).toBe('worker_failed')
+    expect(avifAvailable()).toBe(false)
   })
 
   it('HEAD denetimi de sınırlı: yanıt gelmezse 5 sn sonra kesilir → worker_failed (asılı kalmaz)', async () => {

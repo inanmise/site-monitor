@@ -2,6 +2,7 @@
 // çözümü, "asla daha kötü" kuralı. Kodlayıcı dışarıdan verilir (testte sahte kodlayıcı) — her arama KODLAMA SAYISIYLA
 // sınırlıdır.
 
+import { JOB_TIMEOUT_MS } from './errors.js'
 import { drive, runSteps } from './steps.js'
 
 /**
@@ -35,6 +36,26 @@ export const AVIF_SPEED = 6
  * yavaş bir makinede de tek kodlama 90 sn sınırının içinde kalır, WASM belleği (≈ 4 × piksel + kodlayıcı) sınırlanır.
  */
 export const AVIF_MAX_PIXELS = 12_000_000
+
+// ── AVIF süre bütçesi (inceleme 2026-11-15) ───────────────────────────────────────────────────────────────────────────
+// Ana iş parçacığı işi JOB_TIMEOUT_MS (5 dk) dolunca Worker'ı sonlandırır — o zaman JPEG / WebP adayları da kaybolurdu. Tek
+// AVIF kodlaması 12 MP'de ≈ 17 sn (geliştirici makinesi), 3 kat yavaş makinede ≈ 55 sn: arama + hedef boyut adımları süreyi
+// aşabilir. Bu yüzden AVIF'in her yüklemesi / kodlaması işin başlangıcından sayılan bir SON ANA bağlıdır; kodlamadan önce
+// kalan süre, ölçülen hızdan kestirilen kodlama süresine yetmiyorsa AVIF o noktada bırakılır (not AVIF_TIME_LIMIT) ve her
+// kodlamanın süre sınırı kalan süreyle kısaltılır. AVIF'in ardından AVIF dışı iş kalıyorsa ("en küçük" — PNG adayı ve hedef
+// boyut aramaları) AVIF adayı daha erken bir son ana bağlıdır.
+/** AVIF işinin (aday + hedef boyut araması) bitmesi gereken an — işin başından (JOB_TIMEOUT_MS'den 60 sn önce). */
+export const AVIF_JOB_DEADLINE_MS = JOB_TIMEOUT_MS - 60_000
+/** Ardından AVIF dışı iş kalan işlerde ("en küçük" ya da hedef boyut) AVIF ADAYININ bitmesi gereken an — işin başından. */
+export const AVIF_CANDIDATE_DEADLINE_MS = 150_000
+/** Bir AVIF kodlaması için kalması gereken en az süre (hız henüz ölçülmemişken de). */
+export const AVIF_MIN_ENCODE_BUDGET_MS = 3_000
+/** Kestirim payı: ölçülen hız × piksel × bu kat (kalite / içerik farkı). */
+export const AVIF_ESTIMATE_MARGIN = 1.25
+/** Hedef boyut kipinde AVIF için kalite ikili arama adımı (tuval kodlayıcılarında 4) — AVIF kodlaması pahalı. */
+export const AVIF_TARGET_STEPS = 2
+/** Hedef boyut kipinde AVIF için en çok ölçü küçültme adımı (tuval kodlayıcılarında MAX_DIM_STEPS). */
+export const AVIF_MAX_DIM_STEPS = 2
 /**
  * Otomatik kalite arama aralığı (tarayıcı kodlayıcısının 1–100 ölçeği). Taban 60: altında düz geçişlerde blok /
  * bantlanma görünür olur ve SSIM düz bölgedeki bu bozulmaya az duyarlıdır. Tavan 90: üstünde dosya hızla büyür
@@ -146,17 +167,21 @@ export function resolveFormats(format, sourceType, hasAlpha, webpOk, avif = null
 }
 
 /**
- * "En küçük biçim": yarışa giren adaylardan EN KÜÇÜK dosya. Kayıplı adaylar (JPEG / WebP) her zaman yarışır — her biri
- * kendi kalite aramasının (ya da istenen sabit kalitenin) sonucudur; arama aralığın üst ucunda bitse bile adaydır.
+ * "En küçük biçim": yarışa giren adaylardan EN KÜÇÜK dosya. JPEG / WebP adayları her zaman yarışır — her biri kendi
+ * kalite aramasının (ya da istenen sabit kalitenin) sonucudur; arama aralığın üst ucunda bitse bile adaydır.
  * PNG adayı yalnız eşiği tutturuyorsa yarışır (birebir palet / gerçek renk = 1; titreşimli palet ölçülen benzerlikle):
- * rengi azaltılmış bir fotoğraf PNG'si, biraz küçük diye "eşdeğer" JPEG'in önüne geçmesin. Yarışan yoksa (yalnız
- * eşik altı PNG) benzerliği en yüksek olan döner. Eşitlikte liste sırası (jpeg, png, webp, avif) korunur.
+ * rengi azaltılmış bir fotoğraf PNG'si, biraz küçük diye "eşdeğer" JPEG'in önüne geçmesin. AVIF adayı eşiğin altında
+ * kaldıysa (aralığının üst ucu 85 eşiğe yetmedi) YALNIZ eşiği tutturan başka aday yoksa yarışır (inceleme 2026-11-15):
+ * eşik altı AVIF, eşiği tutan JPEG / WebP'yi küçük diye geçmesin. Yarışan yoksa (yalnız eşik altı PNG) benzerliği en
+ * yüksek olan döner. Eşitlikte liste sırası (jpeg, png, webp, avif) korunur.
  * @param {{ type: string, size: number, similarity: number|null }[]} candidates
  */
 export function pickSmallest(candidates, threshold = SIMILARITY_TARGET) {
   if (!candidates.length) return null
   const sim = (c) => (c.similarity == null ? 1 : c.similarity)
-  const eligible = candidates.filter((c) => c.type !== 'png' || sim(c) >= threshold)
+  const meets = (c) => sim(c) >= threshold
+  const anyMeets = candidates.some(meets)
+  const eligible = candidates.filter((c) => (c.type === 'png' || (c.type === 'avif' && anyMeets) ? meets(c) : true))
   if (eligible.length) return eligible.reduce((best, c) => (c.size < best.size ? c : best))
   return candidates.reduce((best, c) => (sim(c) > sim(best) ? c : best))
 }

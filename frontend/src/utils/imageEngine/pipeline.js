@@ -17,7 +17,8 @@ import { assembleSample, extractSample, samplePlan, similarityAsync } from './ss
 import { insertJpegExif, insertWebpExif, planMetadata, readMetadata } from './metadata.js'
 import { densityOverhead, readDensity, withDensity } from './density.js'
 import {
-  AVIF_FALLBACK_QUALITY, AVIF_MAX_PIXELS, AVIF_SEARCH_ENCODES, AVIF_SPEED,
+  AVIF_CANDIDATE_DEADLINE_MS, AVIF_ESTIMATE_MARGIN, AVIF_FALLBACK_QUALITY, AVIF_JOB_DEADLINE_MS, AVIF_MAX_DIM_STEPS,
+  AVIF_MAX_PIXELS, AVIF_MIN_ENCODE_BUDGET_MS, AVIF_SEARCH_ENCODES, AVIF_SPEED, AVIF_TARGET_STEPS,
   MAX_DIM_STEPS, MAX_SEARCH_ENCODES, PALETTE_MAX_MSE, PNG_COLOR_LADDER, QUALITY_RANGE, SIMILARITY_TARGET,
   bestQualityUnder, flattenOntoAsync, hasTransparency, pickForTarget, pickSmallest, targetQualityFloor,
   keepEligible, pngColorsForQuality, resolveFormats, savingPct, searchQuality, shouldKeepOriginal,
@@ -56,6 +57,8 @@ function macrotask() {
  */
 export function makeCtx(env) {
   const { signal, onProgress, cooperative } = env
+  // İşin saati (AVIF süre bütçesi): tarayıcıda performance.now; testte sahte saat verilebilir (`env.clock`)
+  const clock = typeof env.clock === 'function' ? env.clock : now
   let lastYield = now()
   let lastPhase = null
   let lastFraction = -1
@@ -71,6 +74,13 @@ export function makeCtx(env) {
   return {
     checkpoint,
     cooperative: !!cooperative,
+    clock,
+    /** İşin başladığı an (işin saatiyle). */
+    startedAt: clock(),
+    /** AVIF işinin bitmesi gereken an (işin saatiyle; processCore ayarlar — ayarlanmamışsa sınır yok). */
+    avifDeadline: Infinity,
+    /** Ölçülen en yüksek AVIF kodlama hızı (ms / piksel; 0 = henüz ölçülmedi) — sonraki kodlamanın süresini kestirir. */
+    avifRate: 0,
     /** Saf modüllere verilen `tick`: yalnız iptal / nefes gerektiğinde tanımlı (Worker'da boş → hiç beklenmez). */
     tick: signal || cooperative ? checkpoint : undefined,
     /**
@@ -238,17 +248,46 @@ const lossyCandidate = (type, r, notes, image) => ({ type, blob: r.blob, bytes: 
 const AVIF_TUNING = Object.freeze({ speed: AVIF_SPEED })
 /** Tarayıcı AVIF çözemediği için benzerlik ölçülemedi (iç işaret — "en küçük"te aday düşer, istenmişse sabit kalite). */
 const avifNotMeasured = () => new EngineError('BROWSER_UNSUPPORTED', { reason: 'avif', detail: 'not_measured' })
+/** AVIF bu işin süre bütçesine sığmadı (iç işaret — AVIF bırakılır, not AVIF_TIME_LIMIT). */
+const avifTimeLimit = () => new EngineError('BROWSER_UNSUPPORTED', { reason: 'avif', detail: 'time_budget' })
+const avifDetail = (e) => (e instanceof EngineError && e.code === 'BROWSER_UNSUPPORTED' && e.params?.reason === 'avif' ? e.params?.detail : null)
+const isAvifTimeLimit = (e) => avifDetail(e) === 'time_budget'
 
 /**
- * Bir AVIF hatası "atla + not" mu, yoksa işi düşürmeli mi? İptal ve eski paket (sunucuda olmayan kodlayıcı dosyası)
- * işi düşürür (null döner); ötekiler — yüklenemedi, CSP, süre doldu, bellek, kodlayıcı hatası — AVIF'i atlatır.
+ * Bir AVIF hatası "atla + not" mu, yoksa işi düşürmeli mi (null)? İptal ve motorun KENDİ eski paket hatası işi düşürür.
+ * AVIF kodlayıcı dosyası sunucuda bulunamadı (`asset_missing` — yuvarlanan dağıtım) YALNIZ AVIF açıkça istendiyse
+ * (`format === 'avif'`) işi düşürür — AVIF'e özgü iletiyle, "sayfa güncellendi" değil; "en küçük" / "koru"da AVIF
+ * atlanır, iş biter (inceleme 2026-11-15). Ötekiler — yüklenemedi, CSP, süre doldu, bellek, kodlayıcı hatası — AVIF'i atlatır.
  */
-export function avifSkipNote(e) {
+export function avifSkipNote(e, format) {
   if (!(e instanceof EngineError)) return 'AVIF_UNAVAILABLE'
   if (e.code === 'CANCELLED') return null
   if (e.code === 'BROWSER_UNSUPPORTED' && e.params?.reason === 'stale_bundle') return null
-  if (e.code === 'BROWSER_UNSUPPORTED' && e.params?.reason === 'avif' && e.params?.detail === 'not_measured') return 'AVIF_NOT_MEASURED'
+  const detail = avifDetail(e)
+  if (detail === 'asset_missing') return format === 'avif' ? null : 'AVIF_UNAVAILABLE'
+  if (detail === 'not_measured') return 'AVIF_NOT_MEASURED'
+  if (detail === 'time_budget') return 'AVIF_TIME_LIMIT'
   return 'AVIF_UNAVAILABLE'
+}
+
+/**
+ * Bir AVIF yüklemesini / kodlamasını işin süre bütçesiyle koşar: kalan süre (son ana dek) ölçülen hızdan kestirilen süreye
+ * (+ `reservePixels` için ayrılan paya) yetmiyorsa hiç başlamaz (`time_budget`); başlarsa sınırı kalan süredir (istemci 90
+ * sn'ye kırpar, kısaltılmış sınır aşılırsa `time_budget`). `pixels` > 0 ise süresi hızı günceller (en yüksek ölçülen).
+ * @param {(timeoutMs: number) => Promise<any>} run
+ */
+async function avifTimed(ctx, pixels, reservePixels, run) {
+  if (!Number.isFinite(ctx.avifDeadline)) return run(undefined)
+  const est = (px) => (ctx.avifRate > 0 && px > 0 ? ctx.avifRate * px * AVIF_ESTIMATE_MARGIN : 0)
+  const remaining = ctx.avifDeadline - ctx.clock()
+  if (remaining < Math.max(AVIF_MIN_ENCODE_BUDGET_MS, est(pixels) + est(reservePixels))) throw avifTimeLimit()
+  const t0 = ctx.clock()
+  const out = await run(Math.max(1, Math.floor(remaining - est(reservePixels))))
+  if (pixels > 0) {
+    const rate = (ctx.clock() - t0) / pixels
+    if (rate > ctx.avifRate) ctx.avifRate = rate
+  }
+  return out
 }
 
 /**
@@ -268,12 +307,19 @@ async function openLossy(type, image, opts, env, ctx) {
   const plan = samplePlan(img.width, img.height)
   const ref = extractSample(img.data, img.width, img.height, plan)
   const mime = MIME[type]
-  // AVIF oturumu TEMBEL açılır: kodlayıcı Worker'ı tek görsel tutar — mozaik araması önce, tam görsel sonra gönderilir
-  const open = (image) => (avif ? platform.prepareAvif(image, AVIF_TUNING) : platform.prepare(image))
+  // AVIF oturumu TEMBEL açılır: kodlayıcı Worker'ı tek görsel tutar — mozaik araması önce, tam görsel sonra gönderilir.
+  // AVIF'in yüklemesi ve her kodlaması işin süre bütçesine bağlıdır (avifTimed)
+  const fullPixels = img.width * img.height
+  const open = (image) => (avif
+    ? avifTimed(ctx, 0, 0, (timeoutMs) => platform.prepareAvif(image, timeoutMs === undefined ? AVIF_TUNING : { ...AVIF_TUNING, loadTimeoutMs: timeoutMs }))
+    : platform.prepare(image))
   let session = avif ? null : await open(img)
   let proxy = null
   const sessionFor = async () => { if (!session) session = await open(img); return session }
-  const encode = async (q) => { await ctx.checkpoint(); return (await sessionFor()).encode(mime, q / 100) }
+  const encodeWith = (s, q, pixels, reservePixels = 0) => (avif
+    ? avifTimed(ctx, pixels, reservePixels, (timeoutMs) => s.encode(mime, q / 100, timeoutMs === undefined ? undefined : { timeoutMs }))
+    : s.encode(mime, q / 100))
+  const encode = async (q) => { await ctx.checkpoint(); return encodeWith(await sessionFor(), q, fullPixels) }
   // Tarayıcı AVIF çözemezse benzerlik ölçülemez → null (uydurulmaz); öteki biçimlerde hata olduğu gibi yükselir
   const decode = async (blob, rects, w, h) => {
     try {
@@ -304,7 +350,8 @@ async function openLossy(type, image, opts, env, ctx) {
     const whole = [{ x: 0, y: 0, w: plan.width, h: plan.height }]
     const found = await searchQuality(async (q) => {
       await ctx.checkpoint()
-      const b = await proxy.encode(mime, q / 100)
+      // AVIF: her deneme kodlamasından önce tam görselin kodlaması için de süre ayrılır (bulunan kalite boşa gitmesin)
+      const b = await encodeWith(proxy, q, plan.width * plan.height, fullPixels)
       const px = await decode(b, whole, plan.width, plan.height)
       if (!px) throw avifNotMeasured()
       onStep()
@@ -479,37 +526,66 @@ function pngMode(opts, smallest) {
   return colors === 0 ? { kind: 'lossless' } : { kind: 'palette', colors }
 }
 
-/** Hedef boyut — kayıplı biçim: önce kalite (tabana dek), sonra ölçü. */
-async function fitLossy(type, work, start, target, opts, env, ctx) {
+/**
+ * Hedef boyut — kayıplı biçim: önce kalite (tabana dek), sonra ölçü. AVIF'te adımlar daha az (AVIF_TARGET_STEPS,
+ * AVIF_MAX_DIM_STEPS) ve her kodlama süre bütçesine bağlı: bütçe biterse o ana dek bulunan en iyi aday döner (en kötü
+ * ihtimalle başlangıçtaki otomatik AVIF adayı) ve işin notlarına AVIF_TIME_LIMIT eklenir — iş hiçbir zaman düşmez.
+ */
+async function fitLossy(type, work, start, target, opts, env, ctx, jobNotes) {
+  const avif = type === 'avif'
   const hi = start.quality
   const lo = Math.min(targetQualityFloor(type), hi)
+  let timeLimited = false
   const tryAt = async (image) => {
     const enc = await openLossy(type, image, opts, env, ctx)
     try {
-      const res = await bestQualityUnder(async (q) => { const blob = await enc.encode(q); return { blob, size: blob.size } }, lo, hi, target)
+      // Süre bütçesi biten AVIF denemesi "sığmadı" sayılır (sonsuz boyut) — arama kalan adımları kodlamadan bitirir
+      const encodeQ = async (q) => {
+        if (timeLimited) return { blob: null, size: Infinity }
+        try {
+          const blob = await enc.encode(q)
+          return { blob, size: blob.size }
+        } catch (e) {
+          if (!avif || !isAvifTimeLimit(e)) throw e
+          timeLimited = true
+          return { blob: null, size: Infinity }
+        }
+      }
+      const res = await bestQualityUnder(encodeQ, lo, hi, target, avif ? AVIF_TARGET_STEPS : undefined)
       const pick = res.fit || res.low
+      if (!pick.blob) throw avifTimeLimit()
       const sim = await enc.measure(pick.blob)
       return { fit: !!res.fit, cand: lossyCandidate(type, { q: pick.q, blob: pick.blob, size: pick.size, similarity: sim }, enc.notes, image) }
     } finally {
       enc.close()
     }
   }
-  let r = await tryAt(work)
-  if (r.fit) return r.cand
-  let best = r.cand.size < start.size ? r.cand : start
-  let cur = { width: work.width, height: work.height }
-  for (let step = 0; step < MAX_DIM_STEPS; step++) {
-    await ctx.checkpoint()
-    const f = Math.max(0.2, Math.min(0.9, Math.sqrt(target / best.size) * 0.9))
-    const dims = shrinkDims(cur.width, cur.height, f, MIN_TARGET_SIDE)
-    if (!dims) break
-    cur = dims
-    r = await tryAt(await shrinkImage(work, dims.width, dims.height, ctx))
-    ctx.progress('search', (step + 1) / MAX_DIM_STEPS)
+  let best = start
+  try {
+    let r = await tryAt(work)
     if (r.fit) return r.cand
     if (r.cand.size < best.size) best = r.cand
+    let cur = { width: work.width, height: work.height }
+    const steps = avif ? AVIF_MAX_DIM_STEPS : MAX_DIM_STEPS
+    for (let step = 0; step < steps && !timeLimited; step++) {
+      await ctx.checkpoint()
+      const f = Math.max(0.2, Math.min(0.9, Math.sqrt(target / best.size) * 0.9))
+      const dims = shrinkDims(cur.width, cur.height, f, MIN_TARGET_SIDE)
+      if (!dims) break
+      cur = dims
+      r = await tryAt(await shrinkImage(work, dims.width, dims.height, ctx))
+      ctx.progress('search', (step + 1) / steps)
+      if (r.fit) return r.cand
+      if (r.cand.size < best.size) best = r.cand
+    }
+    return best
+  } catch (e) {
+    if (!avif || !isAvifTimeLimit(e)) throw e
+    timeLimited = true
+    return best
+  } finally {
+    if (timeLimited) jobNotes?.add('AVIF_TIME_LIMIT')
   }
-  return best
 }
 
 /** Hedef boyut — PNG: önce palet boyu (256 → 16), sonra ölçü. */
@@ -567,7 +643,13 @@ async function avifStateFor(format, sourceType, work, platform) {
   if (work.width * work.height > AVIF_MAX_PIXELS) return 'AVIF_TOO_LARGE'
   let ok = false
   try { ok = (await platform.avifAvailable()) === true } catch { ok = false }
-  return ok ? 'ok' : 'AVIF_UNAVAILABLE'
+  if (ok) return 'ok'
+  // Kodlayıcı dosyası yakın zamanda sunucuda bulunamadı (yuvarlanan dağıtım): açık AVIF isteği ilk denemedeki AYNI
+  // AVIF'e özgü hatayla biter (her görselde yeniden beklemeden); "en küçük" / "koru"da AVIF atlanır (not)
+  let blocked = null
+  try { blocked = typeof platform.avifBlocked === 'function' ? platform.avifBlocked() : null } catch { blocked = null }
+  if (blocked === 'asset_missing' && format === 'avif') throw new EngineError('BROWSER_UNSUPPORTED', { reason: 'avif', detail: 'asset_missing' })
+  return 'AVIF_UNAVAILABLE'
 }
 
 /**
@@ -628,6 +710,9 @@ export async function processCore(blob, rawOptions, env) {
   const exifPlan = { jpeg: planMetadata(meta, opts.preserve, 'jpeg'), webp: planMetadata(meta, opts.preserve, 'webp'),
     avif: planMetadata(meta, opts.preserve, 'avif') }
   const smallest = opts.format === 'smallest'
+  // AVIF süre bütçesi: ardından AVIF dışı iş kalıyorsa ("en küçük" — PNG adayı; hedef boyut — öteki adayların araması)
+  // AVIF adayı daha erken bitmeli; yoksa işin son payına dek sürebilir (search.js AVIF_*_DEADLINE_MS)
+  ctx.avifDeadline = ctx.startedAt + (smallest || opts.targetBytes != null ? AVIF_CANDIDATE_DEADLINE_MS : AVIF_JOB_DEADLINE_MS)
 
   // "En küçük biçim"de önce kayıplı adaylar üretilir: PNG adayı onların boyutuna bakarak erken elenebilir (AVIF, en yavaş
   // kodlayıcı, kayıplıların sonunda)
@@ -646,8 +731,9 @@ export async function processCore(blob, rawOptions, env) {
       try {
         c = await runLossy('avif', work, opts, env, ctx, smallest)
       } catch (e) {
-        // AVIF üretilemedi (yüklenemedi / süre / bellek / ölçülemedi): iş DÜŞMEZ — not + "en küçük"te atla, istenmişse yedek
-        const skip = avifSkipNote(e)
+        // AVIF üretilemedi (yüklenemedi / süre / bellek / ölçülemedi): iş DÜŞMEZ — not + "en küçük"te atla, istenmişse yedek.
+        // Kodlayıcı dosyası bulunamadıysa açık AVIF isteği AVIF'e özgü hatayla biter (avifSkipNote)
+        const skip = avifSkipNote(e, opts.format)
         if (!skip) throw e
         notes.add(skip)
         c = null
@@ -671,6 +757,7 @@ export async function processCore(blob, rawOptions, env) {
       try { avifPossible = work.width * work.height <= AVIF_MAX_PIXELS && (await platform.avifAvailable()) === true } catch { avifPossible = false }
     }
     if (notes.has('AVIF_UNAVAILABLE') || notes.has('AVIF_NOT_MEASURED')) avifPossible = false
+    if (notes.has('AVIF_TIME_LIMIT') && !made.has('avif')) avifPossible = false
   }
   if (!candidates.length) candidates.push(await runPng(work, { kind: 'auto' }, pngText.text, ctx))
   // Derin karşılaştırma: denenen her biçimin boyutu (yalnız sayı — Blob tutulmaz) ve çalışılan görselin renk sayısı
@@ -680,29 +767,34 @@ export async function processCore(blob, rawOptions, env) {
   const colors = countColors(work.data, work.width, work.height)
   let final = smallest ? pickSmallest(candidates, SIMILARITY_TARGET) : candidates[0]
   let fittedForTarget = false
+  // Kodlamadan SONRA eklenecek baytlar (yoğunluk alanı JFIF / pHYs + JPEG / WebP'ye yazılacak en küçük EXIF bloğu): hedef
+  // karşılaştırması bunlarla yapılır — son dosya hedefi aşmasın (PNG metin parçaları kodlamada yazıldı, boyuta dahil)
+  const addedBytes = (type) => densityOverhead(type, density)
+    + (type !== 'png' && exifPlan[type]?.exif ? exifPlan[type].exif.length + 26 : 0)
 
-  // Hedef boyut: kaliteyi, sonra ölçüyü düşür (üstveri payı hedeften düşülür)
-  if (opts.targetBytes != null && final.size > opts.targetBytes) {
+  // Hedef boyut: kaliteyi, sonra ölçüyü düşür (eklenecek baytlar hedeften düşülür)
+  if (opts.targetBytes != null && final.size + addedBytes(final.type) > opts.targetBytes) {
     const fitted = []
+    // AVIF'in hedef araması AVIF dışı adaylardan sonra koşar (liste sırası) ve işin son payına dek sürebilir
+    ctx.avifDeadline = ctx.startedAt + AVIF_JOB_DEADLINE_MS
     for (const c of candidates) {
       await ctx.checkpoint()
-      // Sonradan eklenecek yoğunluk alanı (JFIF / pHYs) da hedefe sayılır: son dosya hedefi aşmasın
-      if (c.type === 'png') fitted.push(await fitPng(work, c, Math.max(1, opts.targetBytes - densityOverhead('png', density)), pngText.text, ctx))
+      if (c.type === 'png') fitted.push(await fitPng(work, c, Math.max(1, opts.targetBytes - addedBytes('png')), pngText.text, ctx))
       else {
-        const overhead = (exifPlan[c.type].exif ? exifPlan[c.type].exif.length + 26 : 0) + densityOverhead(c.type, density)
         try {
-          fitted.push(await fitLossy(c.type, work, c, Math.max(1, opts.targetBytes - overhead), opts, env, ctx))
+          fitted.push(await fitLossy(c.type, work, c, Math.max(1, opts.targetBytes - addedBytes(c.type)), opts, env, ctx, notes))
         } catch (e) {
-          // AVIF hedef araması yarıda kaldı (süre / bellek): elde olan AVIF adayı kalır, not düşülür
+          // AVIF hedef araması yarıda kaldı (yüklenemedi / bellek / kodlayıcı hatası): elde olan AVIF adayı kalır, not
+          // düşülür. Otomatik aday zaten var — dosya bulunamasa da açık istek bile düşmez (biçimsiz çağrı)
           const skip = c.type === 'avif' ? avifSkipNote(e) : null
           if (!skip) throw e
-          notes.add(skip === 'AVIF_NOT_MEASURED' ? skip : 'AVIF_UNAVAILABLE')
+          notes.add(skip)
           fitted.push(c)
         }
       }
     }
-    final = pickForTarget(fitted.map((c) => ({ ...c, size: c.size + densityOverhead(c.type, density) })), opts.targetBytes)
-    final = { ...final, size: final.size - densityOverhead(final.type, density) }
+    final = pickForTarget(fitted.map((c) => ({ ...c, size: c.size + addedBytes(c.type) })), opts.targetBytes)
+    final = { ...final, size: final.size - addedBytes(final.type) }
     fittedForTarget = true
   }
   final = { ...final, notes: [...final.notes] }
@@ -785,8 +877,10 @@ export async function processCore(blob, rawOptions, env) {
   } catch {
     outputFacts = readImageFacts(null, final.type)
   }
-  // Kalite nasıl seçildi: hedef boyut araması / kullanıcının verdiği sayı / otomatik (benzerlik hedefi)
-  const qualityMode = fittedForTarget ? 'target' : typeof opts.quality === 'number' ? 'manual' : 'auto'
+  // Kalite nasıl seçildi: hedef boyut araması / kullanıcının verdiği sayı / otomatik (benzerlik hedefi) / sabit (AVIF'in
+  // benzerliği ölçülemedi — tarayıcı AVIF çözemiyor: arama yapılmadı, AVIF_FALLBACK_QUALITY kullanıldı)
+  const qualityMode = fittedForTarget ? 'target' : typeof opts.quality === 'number' ? 'manual'
+    : final.type === 'avif' && final.notes.includes('AVIF_NOT_MEASURED') ? 'fixed' : 'auto'
   const reshaped = final.width !== work.width || final.height !== work.height   // hedef boyut için ayrıca küçültüldü
   const analysis = buildAnalysis({ inputFacts, outputFacts, colors, tried, width: final.width, height: final.height,
     outputType: final.type, outputColors: final.colors ?? null, similarity: similarityOut, outputBitDepth: outputFacts?.bitDepth ?? null,

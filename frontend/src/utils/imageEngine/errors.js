@@ -17,10 +17,25 @@ export const ERROR_CODES = Object.freeze(['UNSUPPORTED_FORMAT', 'TOO_LARGE', 'TO
 //  AVIF_TOO_LARGE       — görsel AVIF piksel sınırının (AVIF_MAX_PIXELS) üstünde: AVIF üretilmedi
 //  AVIF_NOT_MEASURED    — AVIF üretildi ama tarayıcı AVIF çözemiyor: benzerlik ölçülemedi (null); otomatik kalite yerine
 //                         sabit kalite kullanıldı; "en küçük"te bu yüzden AVIF yarışa girmez
+//  AVIF_TIME_LIMIT      — (inceleme 2026-11-15) AVIF kodlaması işin süre bütçesine sığmadı: AVIF adayı ya da AVIF'in hedef
+//                         boyut araması kısaltıldı / atlandı; öteki biçimlerin adayları ve iş sonucu etkilenmez
 export const NOTE_CODES = Object.freeze(['KEPT_ORIGINAL', 'NOT_UPSCALED', 'TRUECOLOR_KEPT', 'ALPHA_FLATTENED',
   'WEBP_UNAVAILABLE', 'TARGET_NOT_REACHED', 'METADATA_PRESERVED', 'METADATA_NOT_PRESERVED', 'ORIENTATION_APPLIED',
   'ANIMATION_DROPPED', 'SMART_CROP', 'THUMB_PADDED', 'COLOR_PROFILE_CONVERTED', 'METADATA_STRIPPED', 'ALPHA_COLORS_ROUNDED',
-  'AVIF_UNAVAILABLE', 'AVIF_TOO_LARGE', 'AVIF_NOT_MEASURED'])
+  'AVIF_UNAVAILABLE', 'AVIF_TOO_LARGE', 'AVIF_NOT_MEASURED', 'AVIF_TIME_LIMIT'])
+
+/**
+ * Bir işin en uzun süresi: dolarsa ana iş parçacığı motor Worker'ını sonlandırır (index.js). İş akışı AVIF'in süre
+ * bütçesini bundan hesaplar (search.js `AVIF_*_DEADLINE_MS`) — tek kaynak burası.
+ */
+export const JOB_TIMEOUT_MS = 5 * 60_000
+
+/**
+ * AVIF kodlayıcısı YÜKLENEMEDİYSE (süre doldu, ağ / 5xx, bellek, CSP, dosya sunucuda bulunamadı …) bu süre boyunca yeniden
+ * denenmez: AVIF "şu an yok" sayılır (inceleme 2026-11-15 — yavaş bağlantıda 100 görsellik toplu indirmede her görsel
+ * 30 sn yükleme beklemesin). Kalıcı değildir; süre dolunca bir sonraki AVIF işi yeniden dener.
+ */
+export const AVIF_FAIL_COOLDOWN_MS = 5 * 60_000
 
 /** Çıktı / girdi türü → MIME. */
 export const MIME = Object.freeze({ jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif',

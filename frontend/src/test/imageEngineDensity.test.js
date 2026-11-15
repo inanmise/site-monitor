@@ -156,4 +156,24 @@ describe('iş akışı: kaynağın PPI değeri çıktıda kalır', () => {
     if (!r.notes.includes('TARGET_NOT_REACHED')) expect(r.bytes).toBeLessThanOrEqual(target)
     expect(readDensity(out, 'png')).toEqual({ unit: 'm', x: 11811, y: 11811 })
   })
+
+  it('hedef boyut EŞİĞİ eklenecek yoğunluk alanını da sayar (inceleme 2026-11-15): aday hedefin altında ama + pHYs aşıyorsa aranır', async () => {
+    const rgba = new Uint8ClampedArray(photoLike(80, 60, 6))
+    const src = withPngDensity((await encodePng({ width: 80, height: 60, rgba })).bytes, { unit: 'in', x: 300, y: 300 })
+    const blob = new Blob([src], { type: 'image/png' })
+    const probe = await run(blob, { format: 'png' })
+    expect(probe.kept).toBe(false)
+    expect(readDensity(new Uint8Array(await probe.blob.arrayBuffer()), 'png')).not.toBeNull()
+    // kodlanan aday = probe.bytes − 21 (pHYs) hedefin ALTINDA; pHYs eklenince hedefin ÜSTÜNDE — eskiden arama hiç koşmaz,
+    // son dosya hedefi aşar ve TARGET_NOT_REACHED düşerdi
+    const target = probe.bytes - Math.floor(PHYS_CHUNK_BYTES / 2)
+    expect(probe.bytes - PHYS_CHUNK_BYTES).toBeLessThanOrEqual(target)
+    const r = await run(blob, { format: 'png', targetBytes: target })
+    const out = new Uint8Array(await r.blob.arrayBuffer())
+    expect(r.bytes).toBe(out.length)
+    expect(r.notes).not.toContain('TARGET_NOT_REACHED')
+    expect(r.bytes).toBeLessThanOrEqual(target)
+    expect(r.analysis.qualityMode).toBe('target')
+    expect(readDensity(out, 'png')).toEqual({ unit: 'm', x: 11811, y: 11811 })
+  })
 })
