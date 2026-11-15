@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-15T00:57:40Z",
+  "generatedAt": "2026-11-15T01:20:39Z",
   "repo": "inanmise/site-monitor",
-  "count": 834,
+  "count": 835,
   "releases": [
+    {
+      "version": "20.201.0",
+      "tag": "v20.201.0",
+      "releasedAt": "2026-11-15T01:20:32Z",
+      "commit": "a9b0c3fdf2e1861abfcf4cc6d7bf75043edaece9",
+      "prevVersion": "20.200.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "noc",
+          "breaking": false,
+          "sha": "a9b0c3fd",
+          "subject": "7/24 onayı — form kapanınca kayıt gönderilmez, doğru gruplar, toplu oluşturmada bir daha sorma"
+        },
+        {
+          "type": "feat",
+          "scope": "noc",
+          "breaking": false,
+          "sha": "a6afb8b9",
+          "subject": "izleme kaydında 7/24 bildirimi seçilmediyse onay sor"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.200.1",
       "tag": "v20.200.1",

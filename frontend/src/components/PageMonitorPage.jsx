@@ -47,6 +47,7 @@ import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/rec
 import MonitorProxyField from './ui/MonitorProxyField.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import NocNotifyField from './noc/forms/NocNotifyField.jsx'
+import { useNocSaveConfirm } from './noc/forms/useNocSaveConfirm.jsx'
 import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
 import CardDensityToggle from './ui/CardDensityToggle.jsx'
 import { useCardDensity } from '../hooks/useCardDensity.js'
@@ -423,6 +424,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   // Bildirim yönlendirmesi kilidi (inceleme 5): paylaşımla yazılan takımın kaydı ya da paylaşan takıma YENİ kayıt —
   // kanallar / seviye / grup / 7/24 kilitli; yeni kayıtta varsayılana çekilir (sunucu farklı değeri 403 ile reddeder).
   const routingLock = routingLockOf(modal, form.teamId, pickTeams)
+  const nocConfirm = useNocSaveConfirm()   // kayıtta 7/24 onayı (2026-11-15)
   useEffect(() => { if (modal === 'new' && routingLock) setForm(f => withRoutingDefaults(f)) }, [modal, routingLock])
 
   function openNew() {
@@ -493,6 +495,11 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
       // Bulgu 9 (2026-11-13): sınır dışı eşik sessizce kırpılmaz — alanın altında söylenir (sunucu da 400 + alan döner)
       minBrokenResources: !validMinBroken(form.minBrokenResources) && t('page.minBrokenRange'),
     })) return
+    // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → form açık kalır.
+    const noc = await nocConfirm.ask({ type: 'PAGE', monitorId: modal === 'new' ? null : modal?.id,
+      nocNotify: form.nocNotify, locked: routingLock, groupIds: form.nocGroupIds })
+    if (!noc) return
+    if (noc.asked && noc.nocNotify) setForm((prev) => ({ ...prev, nocNotify: true }))
     setSaving(true)
     try {
       const payload = {
@@ -501,7 +508,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
           ? null : Number(form.notificationGroupId),
-        nocNotify: !!form.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),   // 7/24 izleme ekibi (2026-09-27)
+        nocNotify: noc.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),   // 7/24 izleme ekibi (2026-09-27)
         tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING', notifyWebhook: form.notifyWebhook,
         mode: form.mode, crawlDepth: Number(form.crawlDepth), crawlMaxPages: Number(form.crawlMaxPages),
         excludePatterns: form.excludePatterns?.trim() || null, slowResourceMs: Number(form.slowResourceMs), useProxy: form.useProxy || 'AUTO',
@@ -520,6 +527,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
       // Sunucunun alan hatası (bulgu 9) alanın ALTINDA — tost değil
       if (!res?.success && res?.field === 'minBrokenResources') { fe.check({ minBrokenResources: res.error || t('page.minBrokenRange') }); return }
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
+      noc.done(res.data?.id)
       // Açık detayın kopyası da sunucu satırıyla tazelenir (2026-10-09): aynı pencereden ikinci "Düzenle" bayat kopyadan
       // kurulup ilk düzenlemeyi geri yazmasın. Yeni kayıt / başka izleme → kopyaya dokunulmaz (kimlik kapısı).
       setSelected((prev) => mergeSavedRow(prev, res.data))
@@ -1026,6 +1034,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
       {modal !== 'new' && (
         <ChangeNoteField t={t} id="page-change-note" value={changeNote} onChange={setChangeNote} />
       )}
+      {nocConfirm.dialog}
     </MonitorFormModal>
   )
 

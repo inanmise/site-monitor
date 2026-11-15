@@ -66,6 +66,7 @@ import { matchesTeamAndGroup, monitorUrlState, matchesTag, tagNamesOf, matchesGr
 import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import NocNotifyField from './noc/forms/NocNotifyField.jsx'
+import { useNocSaveConfirm } from './noc/forms/useNocSaveConfirm.jsx'
 import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
@@ -600,6 +601,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   // takım taşınamaz. Bu sayfada yeni kayıt `{}` — ortak yardımcılar 'new' bekler.
   const modalKey = modal && typeof modal === 'object' && modal.id == null ? 'new' : modal
   const routingLock = routingLockOf(modalKey, form.teamId, pickTeams)
+  const nocConfirm = useNocSaveConfirm()   // kayıtta 7/24 onayı (2026-11-15)
   useEffect(() => { if (modalKey === 'new' && routingLock) setForm(f => withRoutingDefaults(f)) }, [modalKey, routingLock])
   const teamPick = formTeamSelect(modalKey, teamSelectOptions, pickTeams)
   // Değişiklik geçmişi `teamId` farkını ADA çevirebilsin — çıplak sayı okunmuyor.
@@ -1102,6 +1104,11 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
     // "Zamanlama ve alarm" kapalıyken içindeki alan hatalıysa önce açılır — odak ve hata metni görünür olsun
     if (hasTimingError(errs)) setTimingOpen(true)
     if (fe.check(errs)) return
+    // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → form açık kalır.
+    const noc = await nocConfirm.ask({ type: 'SCRIPTED', monitorId: modal?.id ?? null,
+      nocNotify: form.nocNotify, locked: routingLock, groupIds: form.nocGroupIds })
+    if (!noc) return
+    if (noc.asked && noc.nocNotify) setForm((prev) => ({ ...prev, nocNotify: true }))
     // Değeri boş değişkenler: uyarı (engellemez) — betik onları boş okur
     setEnvWarnNames(emptyEnvNames(form.env, savedSecrets))
     setSaving(true)
@@ -1112,7 +1119,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
           ? null : Number(form.notificationGroupId),
-        nocNotify: !!form.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),   // 7/24 izleme ekibi (2026-09-27)
+        nocNotify: noc.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),   // 7/24 izleme ekibi (2026-09-27)
         tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING', notifyWebhook: form.notifyWebhook,
         intervalSeconds: Number(form.intervalSeconds), timeoutSeconds: Number(form.timeoutSeconds),
         confirmAttempts: Number(form.confirmAttempts), confirmIntervalSeconds: Number(form.confirmIntervalSeconds),
@@ -1132,6 +1139,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
       const res = modal?.id ? await api.monitoring.updateScriptedMonitor(modal.id, payload)
                             : await api.monitoring.createScriptedMonitor(payload)
       if (res?.success) {
+        noc.done(res.data?.id)
         // Kayıt başarılı → taslak artık gereksiz (backend de siliyor; liste burada tazelenir).
         setDrafts(d => d.filter(x => x.monitor_key !== (modal?.id ? String(modal.id) : 'new')))
         setForm(f => ({ ...f, restoredFrom: null }))
@@ -1455,7 +1463,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   // ── Ekle / Düzenle formu ── (örtü tıklaması ve Escape KAPATMAZ — veri kaybı önlenir; bkz. MonitorFormModal)
   // Detay penceresi açıkken form ONUN İÇİNDE çizilir (aşağıda `{formModal}`), aksi hâlde sayfa düzeyinde.
   const formModal = modal && (
-    <EditModal fe={fe} {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke, dismissSmoke: () => { setSmoke(null); closeEdit({ skipDraft: true }) }, save, del, closeEdit, runTest, isAdminish, canPickTeam, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamPick, routingLock, teamName, groupSelectOptions, teamTags, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, templates: scriptTemplates, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType, canOpenSettings: globalAdmin,
+    <EditModal nocDialog={nocConfirm.dialog} fe={fe} {...{ t, lang, k6Version: k6.version, proxy, form, setForm, modal, dupSource, saving, testing, testResult, saveWarnings, saveError, smoke, dismissSmoke: () => { setSmoke(null); closeEdit({ skipDraft: true }) }, save, del, closeEdit, runTest, isAdminish, canPickTeam, canDelete: modal?.id ? canDeleteRow(modal) : false, teamSelectOptions, teamPick, routingLock, teamName, groupSelectOptions, teamTags, setEnvRow, addEnvRow, delEnvRow, selectScriptSource, savedScripts, savedSource, templates: scriptTemplates, draftSavedAt, pendingDraft, applyDraft, discardDraft, bumpType, setBumpType, canOpenSettings: globalAdmin,
       testLive, timingOpen, setTimingOpen, envWarnNames, addEnvNamed, markEnvSecret, savedSecrets }} />
   )
 
@@ -2047,7 +2055,7 @@ function CheckDetail({ t, check, monitor = null }) {
  * açılır) ve en sonda bildirimler. Eskiden asıl iş formun en altındaydı: telefonda şablon seçiciye 4–5 ekran
  * kaydırılıyordu. `useFormErrors` sırası bu düzene uyar (save()).
  */
-function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe, dupSource, saving, testing, testResult, testLive = '', saveWarnings, saveError, smoke = null, dismissSmoke, save, del, closeEdit, runTest, isAdminish, canPickTeam = isAdminish, canDelete, teamSelectOptions, teamPick = null, routingLock = false, teamName, groupSelectOptions, teamTags = [], setEnvRow, addEnvRow, delEnvRow, addEnvNamed, markEnvSecret, selectScriptSource, savedScripts = [], savedSource = null, templates = [], draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType, canOpenSettings = false, timingOpen = false, setTimingOpen, envWarnNames = [], savedSecrets = null }) {
+function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe, dupSource, saving, testing, testResult, testLive = '', saveWarnings, saveError, smoke = null, dismissSmoke, save, del, closeEdit, runTest, isAdminish, canPickTeam = isAdminish, canDelete, teamSelectOptions, teamPick = null, routingLock = false, teamName, groupSelectOptions, teamTags = [], setEnvRow, addEnvRow, delEnvRow, addEnvNamed, markEnvSecret, selectScriptSource, savedScripts = [], savedSource = null, templates = [], draftSavedAt = null, pendingDraft = null, applyDraft, discardDraft, bumpType = 'patch', setBumpType, canOpenSettings = false, timingOpen = false, setTimingOpen, envWarnNames = [], savedSecrets = null, nocDialog = null }) {
   // Pencere ortak MonitorFormModal (ui/ModalShell): sabit başlık + kaydırılan gövde + sabit alt çubuk
   // + "devamı için kaydırın" ipucu orada TEK kopya (kapı modalScroll.test.jsx).
   // Ortak bildirim blogunun "kime gidecek" satiri. Form AYRI bir bilesende oldugu icin
@@ -2426,6 +2434,7 @@ function EditModal({ t, lang, k6Version, proxy = null, form, setForm, modal, fe,
       </FormGrid>
       </FormBlock>
       </div>
+      {nocDialog}
     </MonitorFormModal>
   )
 }

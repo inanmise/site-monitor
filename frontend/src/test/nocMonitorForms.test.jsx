@@ -166,8 +166,41 @@ describe.each(PAGES)('$type formu — 7/24 alanı', (p) => {
     fireEvent.click(within(dlg).getByRole('switch', { name: SWITCH }))
     expect(dlg.querySelector('[data-slot="noc-group-picker"]')).toBeNull()
     save()
+    // Kayıtta 7/24 onayı (2026-11-15): kapalıyken sorulur — "Hayır" bilinçli seçim, kapalı kaydedilir
+    fireEvent.click(await confirmButton('noc-confirm-no'))
     await waitFor(() => expect(updateFn(p)).toHaveBeenCalled())
     expect(updateFn(p).mock.calls[0][1]).toMatchObject({ nocNotify: false, nocGroupIds: [2] })
+  })
+
+  it('kayıtta 7/24 onayı: kapalı izleme kaydedilirken sorulur; "Evet" → 7/24 açık kaydedilir, form alanı da açılır', async () => {
+    setup(p, { row: { noc_notify: false, noc_group_ids: [] } })
+    fireEvent.click(await cardAction(EDIT))
+    const dlg = formDialog()
+    expect(within(dlg).getByRole('switch', { name: SWITCH })).not.toBeChecked()
+    save()
+    const box = await waitFor(() => {
+      const el = document.querySelector('[data-slot="noc-save-confirm"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    expect(box.getAttribute('data-type')).toBe(p.type)
+    // Varsayılan grup adı (aktif varsayılan) pencerede yazılı
+    expect(document.querySelector('[data-slot="noc-confirm-groups"]')).toHaveTextContent('NOC Nöbet Listesi')
+    expect(updateFn(p)).not.toHaveBeenCalled()
+    fireEvent.click(await confirmButton('noc-confirm-yes'))
+    await waitFor(() => expect(updateFn(p)).toHaveBeenCalled())
+    expect(updateFn(p).mock.calls[0][1]).toMatchObject({ nocNotify: true })
+    expect(createFn(p)).not.toHaveBeenCalled()
+  })
+
+  it('kayıtta 7/24 onayı: "Vazgeç" → istek GİTMEZ, form açık kalır; tür kapalıysa / grup yoksa SORULMAZ', async () => {
+    setup(p, { row: { noc_notify: false, noc_group_ids: [] } })
+    fireEvent.click(await cardAction(EDIT))
+    save()
+    fireEvent.click(await confirmButton('noc-confirm-cancel'))
+    await waitFor(() => expect(document.querySelector('[data-slot="noc-save-confirm"]')).toBeNull())
+    expect(updateFn(p)).not.toHaveBeenCalled()
+    expect(nocField(formDialog())).not.toBeNull()
   })
 
   it('Kopyala: açık anahtar + grup seçimi kopyaya taşınır (create gövdesi)', async () => {
@@ -205,6 +238,62 @@ describe.each(PAGES)('$type formu — 7/24 alanı', (p) => {
     })
     expect(within(line).queryByRole('button')).toBeNull()
     expect(line).toHaveTextContent(/yöneticinize başvurun|ask your administrator/i)
+  })
+})
+
+/** Onay penceresindeki düğme (data-slot ile). */
+async function confirmButton(slot) {
+  return waitFor(() => {
+    const el = document.querySelector(`[data-slot="${slot}"]`)
+    if (!el) throw new Error(`onay düğmesi yok: ${slot}`)
+    return el
+  })
+}
+
+describe('Kayıtta 7/24 onayı — sorulmayan durumlar ve "bir daha sorma" (Ping)', () => {
+  const p = PAGES.find((x) => x.type === 'PING')
+  beforeEach(() => { localStorage.removeItem('sm.noc.noAsk') })
+
+  it('tür yöneticice kapalı → SORULMAZ, kapalı kaydedilir', async () => {
+    setup(p, { row: { noc_notify: false, noc_group_ids: [] }, disabled: ['PING'] })
+    fireEvent.click(await cardAction(EDIT))
+    save()
+    await waitFor(() => expect(updateFn(p)).toHaveBeenCalled())
+    expect(updateFn(p).mock.calls[0][1]).toMatchObject({ nocNotify: false })
+    expect(document.querySelector('[data-slot="noc-save-confirm"]')).toBeNull()
+  })
+
+  it('aktif 7/24 grubu yok → SORULMAZ', async () => {
+    setup(p, { row: { noc_notify: false, noc_group_ids: [] }, groups: [GROUPS[2]] })
+    fireEvent.click(await cardAction(EDIT))
+    save()
+    await waitFor(() => expect(updateFn(p)).toHaveBeenCalled())
+    expect(document.querySelector('[data-slot="noc-save-confirm"]')).toBeNull()
+  })
+
+  it('7/24 seçenekleri okunamazsa → SORULMAZ, kayıt engellenmez', async () => {
+    setup(p, { row: { noc_notify: false, noc_group_ids: [] } })
+    api.noc.groupOptions.mockResolvedValue({ success: false, error: 'x' })
+    resetNocFormOptionsCache()
+    fireEvent.click(await cardAction(EDIT))
+    save()
+    await waitFor(() => expect(updateFn(p)).toHaveBeenCalled())
+    expect(document.querySelector('[data-slot="noc-save-confirm"]')).toBeNull()
+  })
+
+  it('"Hayır" + "bu izleme için bir daha sorma" → kayıttan sonra listeye yazılır; sonraki kayıtta sorulmaz', async () => {
+    setup(p, { row: { noc_notify: false, noc_group_ids: [] } })
+    fireEvent.click(await cardAction(EDIT))
+    save()
+    fireEvent.click(await confirmButton('noc-confirm-noask'))
+    fireEvent.click(await confirmButton('noc-confirm-no'))
+    await waitFor(() => expect(updateFn(p)).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('sm.noc.noAsk') || '[]')).toContain('PING:1'))
+    // Form kapandı; yeniden düzenleyip kaydet → pencere yok
+    fireEvent.click(await cardAction(EDIT))
+    save()
+    await waitFor(() => expect(updateFn(p)).toHaveBeenCalledTimes(2))
+    expect(document.querySelector('[data-slot="noc-save-confirm"]')).toBeNull()
   })
 })
 
@@ -251,6 +340,21 @@ describe('Sertifika envanter formu (tür SSL) — 7/24 alanı', () => {
     save()
     await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
     expect(api.admin.updateInventory.mock.calls[0][1]).toMatchObject({ noc_notify: false, noc_group_ids: null })
+  })
+
+  it('kayıtta 7/24 onayı (SSL türü açıkken): kapalı kayıtta sorulur; "Evet" → noc_notify:true', async () => {
+    api.noc.groupOptions.mockResolvedValue({ success: true, data: { groups: GROUPS, disabled_types: [] } })
+    render(<InventoryFormModal mode="edit" record={{ ...RECORD, noc_notify: false, noc_group_ids: [] }} teams={TEAMS} canManage onClose={() => {}} onSaved={() => {}} />)
+    save()
+    const box = await waitFor(() => {
+      const el = document.querySelector('[data-slot="noc-save-confirm"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    expect(box.getAttribute('data-type')).toBe('SSL')
+    fireEvent.click(await confirmButton('noc-confirm-yes'))
+    await waitFor(() => expect(api.admin.updateInventory).toHaveBeenCalled())
+    expect(api.admin.updateInventory.mock.calls[0][1]).toMatchObject({ noc_notify: true })
   })
 
   it('Kopyala: 7/24 alanları kopyaya taşınır (addInventory)', async () => {

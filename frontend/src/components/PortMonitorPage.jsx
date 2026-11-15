@@ -19,6 +19,7 @@ import PortEndpoint from './ui/PortEndpoint.jsx'
 import MonitorProxyField, { ProxyViaBadge } from './ui/MonitorProxyField.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import NocNotifyField from './noc/forms/NocNotifyField.jsx'
+import { useNocSaveConfirm } from './noc/forms/useNocSaveConfirm.jsx'
 import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
 import CardDensityToggle from './ui/CardDensityToggle.jsx'
 import { useCardDensity } from '../hooks/useCardDensity.js'
@@ -289,6 +290,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
   // Bildirim yönlendirmesi kilidi (inceleme 5): paylaşımla yazılan takımın kaydı ya da paylaşan takıma YENİ kayıt —
   // kanallar / seviye / grup / 7/24 kilitli; yeni kayıtta varsayılana çekilir (sunucu farklı değeri 403 ile reddeder).
   const routingLock = routingLockOf(modal, form.teamId, pickTeams)
+  const nocConfirm = useNocSaveConfirm()   // kayıtta 7/24 onayı (2026-11-15)
   useEffect(() => { if (modal === 'new' && routingLock) setForm(f => withRoutingDefaults(f)) }, [modal, routingLock])
 
   function openNew() {
@@ -343,6 +345,11 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
       groupName: !form.groupName?.trim() && t('mon.groupRequired'),   // grup + etiket zorunlu (2026-09-18)
       tags: !form.tags?.trim() && t('mon.tagsRequired'),
     })) return
+    // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → form açık kalır.
+    const noc = await nocConfirm.ask({ type: 'PORT', monitorId: modal === 'new' ? null : modal?.id,
+      nocNotify: form.nocNotify, locked: routingLock, groupIds: form.nocGroupIds })
+    if (!noc) return
+    if (noc.asked && noc.nocNotify) setForm((prev) => ({ ...prev, nocNotify: true }))
     setSaving(true); setSaveError(null)
     try {
       const payload = {
@@ -353,7 +360,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
         // Bos = takim varsayilani -> takim adresi (zincirin kalani).
         notificationGroupId: form.notificationGroupId === '' || form.notificationGroupId == null
           ? null : Number(form.notificationGroupId),
-        nocNotify: !!form.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),   // 7/24 izleme ekibi (2026-09-27)
+        nocNotify: noc.nocNotify, nocGroupIds: nocGroupIdsBody(form.nocGroupIds),   // 7/24 izleme ekibi (2026-09-27)
         tags: form.tags?.trim() || null, notifyEmail: form.notifyEmail, alertLevel: form.alertLevel || 'WARNING', notifyWebhook: form.notifyWebhook, ipVersion: form.ipVersion,
         slowResponseEnabled: form.slowResponseEnabled, slowThresholdMs: Number(form.slowThresholdMs),
         intervalSeconds: Number(form.intervalSeconds), timeoutMs: Number(form.timeoutMs),
@@ -368,6 +375,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
         : await api.monitoring.updatePortMonitor(modal.id, payload)
       setSaving(false)
       if (!res?.success) { setSaveError(res?.error || t('port.saveError')); return }
+      noc.done(res.data?.id)
       // Açık detayın kopyası da sunucu satırıyla tazelenir (2026-10-09): aynı pencereden ikinci "Düzenle" bayat kopyadan
       // kurulup ilk düzenlemeyi geri yazmasın. Yeni kayıt / başka izleme → kopyaya dokunulmaz (kimlik kapısı).
       setSelected((prev) => mergeSavedRow(prev, res.data))
@@ -804,6 +812,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
       {modal !== 'new' && (
         <ChangeNoteField t={t} id="port-change-note" value={changeNote} onChange={setChangeNote} />
       )}
+      {nocConfirm.dialog}
     </MonitorFormModal>
   )
 
