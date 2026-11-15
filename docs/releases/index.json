@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-15T16:45:15Z",
+  "generatedAt": "2026-11-15T17:21:35Z",
   "repo": "inanmise/site-monitor",
-  "count": 844,
+  "count": 845,
   "releases": [
+    {
+      "version": "20.209.1",
+      "tag": "v20.209.1",
+      "releasedAt": "2026-11-15T17:21:27Z",
+      "commit": "8d3dfde2f2af1bf665d94e017f1ba5facd1277a3",
+      "prevVersion": "20.209.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "claude",
+          "breaking": false,
+          "sha": "8d3dfde2",
+          "subject": "dokunmatik onay kutusu ve yayın öncesi akış testleri notu"
+        },
+        {
+          "type": "fix",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "c7617978",
+          "subject": "dokunma hedefleri ve kırpılan adlar — yayın öncesi e2e bulguları"
+        },
+        {
+          "type": "test",
+          "scope": "e2e",
+          "breaking": false,
+          "sha": "6087edf3",
+          "subject": "yayın öncesi kapı — eksik akışların uçtan uca testleri"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.209.0",
       "tag": "v20.209.0",

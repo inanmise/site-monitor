@@ -92,7 +92,7 @@ export default function MaintenanceTargetPicker({ options = [], value = [], onCh
           className="flex h-auto w-full flex-row justify-start gap-0.5 overflow-x-auto bg-transparent p-0 sm:flex-col sm:items-stretch sm:overflow-visible">
           {types.map((ty) => (
             <TabsTrigger key={ty.type} value={ty.type} data-type={ty.type}
-              className="h-auto flex-none justify-between gap-2 px-2 py-1.5 font-normal data-[state=active]:bg-primary/10 data-[state=active]:font-semibold data-[state=active]:shadow-none sm:w-full">
+              className="h-auto flex-none justify-between gap-2 px-2 py-1.5 font-normal pointer-coarse:min-h-10 data-[state=active]:bg-primary/10 data-[state=active]:font-semibold data-[state=active]:shadow-none sm:w-full">
               <span className="min-w-0 truncate">{label(ty.type)}</span>
               <Badge variant={ty.picked > 0 ? 'default' : 'secondary'} className="px-1.5 py-0 text-[11px] tabular-nums">
                 {ty.picked > 0 ? `${ty.picked}/${ty.total}` : ty.total}
@@ -104,12 +104,15 @@ export default function MaintenanceTargetPicker({ options = [], value = [], onCh
         {current != null && (
           <TabsContent value={current} className="min-w-0 rounded-lg border p-1.5">
             <div className="mb-1.5 flex flex-wrap items-center gap-2">
-              <InputGroup className="h-8 min-w-0 flex-1">
+              {/* Arama kutusunun temel genişliği var (12rem): dar ekranda "tümünü seç" düğmesi alt satıra iner, arama ezilmez
+                  (2026-11-15 yayın öncesi e2e kapısı — telefonda ~20 px'e ezilen kutu). */}
+              <InputGroup className="h-8 min-w-[min(12rem,100%)] flex-1">
                 <InputGroupInput value={q} onChange={(e) => setQ(e.target.value)}
                   placeholder={t('mtp.searchPh')} aria-label={t('mtp.searchPh')} />
                 <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
               </InputGroup>
-              <Button type="button" variant="secondary" size="sm" onClick={toggleAllOfType} disabled={!currentAll.length}>
+              <Button type="button" variant="secondary" size="sm" onClick={toggleAllOfType} disabled={!currentAll.length}
+                className="h-auto min-h-8 max-w-full text-left whitespace-normal pointer-coarse:min-h-10">
                 {allPicked ? t('mtp.clearType', label(current)) : t('mtp.selectType', label(current))}
               </Button>
             </div>
@@ -119,16 +122,17 @@ export default function MaintenanceTargetPicker({ options = [], value = [], onCh
                 return (
                   <li key={o.value}>
                     <Toggle pressed={on} onPressedChange={() => toggle(o.value)} data-slot="mtp-item"
-                      className="h-auto w-full justify-start gap-2 px-2 py-1 font-normal hover:bg-muted hover:text-foreground data-[state=on]:bg-success/10 data-[state=on]:text-foreground">
+                      className="h-auto w-full justify-start gap-2 px-2 py-1 font-normal pointer-coarse:min-h-10 hover:bg-muted hover:text-foreground data-[state=on]:bg-success/10 data-[state=on]:text-foreground">
                       <span aria-hidden="true"
                         className={cn('inline-flex size-4 shrink-0 items-center justify-center rounded border',
                           on ? 'border-success text-success' : 'border-input')}>
                         {on && <Check size={12} />}
                       </span>
                       {/* value = KİMLİK ("tur:hedef"); ekranda hedefin kendisi yazar. */}
-                      <span data-slot="mtp-item-name" className="min-w-0 flex-1 truncate text-left">{o.name || o.target || o.value}</span>
+                      {/* Ad ve hedef KESİLMEZ, sarar (2026-11-15 yayın öncesi e2e kapısı). */}
+                      <span data-slot="mtp-item-name" className="min-w-0 flex-1 text-left whitespace-normal [overflow-wrap:anywhere]">{o.name || o.target || o.value}</span>
                       {o.name && o.target && o.name !== o.target && (
-                        <span className="max-w-[45%] truncate text-xs text-muted-foreground">{o.target}</span>
+                        <span className="max-w-[45%] text-left text-xs whitespace-normal text-muted-foreground [overflow-wrap:anywhere]">{o.target}</span>
                       )}
                     </Toggle>
                   </li>

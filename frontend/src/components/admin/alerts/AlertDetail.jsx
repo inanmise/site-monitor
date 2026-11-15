@@ -285,7 +285,7 @@ export function AlertDetailBody({
           )}
           <Fact label={t('alh.fact.id')}>
             <span className="inline-flex items-center gap-1 font-mono text-xs"><Hash aria-hidden="true" className="size-3 text-muted-foreground" />
-              <CopyableRef value={String(a.id)} copyLabel={t('share.copyLink')} copiedLabel={t('share.copied')} />
+              <CopyableRef value={String(a.id)} copyLabel={t('share.copyLink')} copiedLabel={t('share.copied')} buttonClassName="pointer-coarse:size-10" />
             </span>
           </Fact>
         </dl>

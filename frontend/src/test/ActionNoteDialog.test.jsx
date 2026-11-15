@@ -43,7 +43,7 @@ function deferred() {
 afterEach(() => { document.body.style.overflow = '' })
 
 describe('ActionNoteDialog — bağlam', () => {
-  it('tekil: başlık + ne yaptığını söyleyen açıklama, hedef (mono, kırpılır, tam değer title\'da), önem, takım, açılış, süre, bildirim ve 7/24 sayıları', async () => {
+  it('tekil: başlık + ne yaptığını söyleyen açıklama, hedef (mono, KESİLMEZ — sarar, tam değer title\'da), önem, takım, açılış, süre, bildirim ve 7/24 sayıları', async () => {
     const { dlg } = await openDialog()
     expect(within(dlg).getByRole('heading', { name: 'Acknowledge alert' })).toBeInTheDocument()
     expect(dlg).toHaveAccessibleDescription(/recorded as the owner and repeat reminders will stop/)
@@ -51,7 +51,8 @@ describe('ActionNoteDialog — bağlam', () => {
     expect(target).toHaveTextContent('api.example.com')
     expect(target).toHaveAttribute('title', 'api.example.com')
     expect(target.className).toMatch(/font-mono/)
-    expect(target.className).toMatch(/truncate/)
+    expect(target.className).not.toMatch(/truncate/)
+    expect(target.className).toMatch(/\[overflow-wrap:anywhere\]/)
     expect(dlg.querySelector('[data-slot="alert-level"][data-level="critical"]')).not.toBeNull()
     expect(within(dlg).getByText('Takım A')).toBeInTheDocument()
     // Göreli zaman = açık kalma süresi, kartlardaki "Açık kalma" rozetiyle AYNI biçimleyici (Intl yuvarlaması ayrışırdı)

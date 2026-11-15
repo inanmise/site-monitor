@@ -205,7 +205,7 @@ export default function NocConsole({ canWrite: canWriteProp = false }) {
               </InputGroup>
             </div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap lg:items-center">
-              <span className="min-w-0 lg:w-56 [&_[role=combobox]]:h-10 sm:[&_[role=combobox]]:h-9">
+              <span className="min-w-0 lg:w-56 [&_[role=combobox]]:h-10 sm:[&_[role=combobox]]:h-9 sm:pointer-coarse:[&_[role=combobox]]:h-10">
                 <SearchableSelect value={filters.team} onChange={(v) => patch({ team: v || '' })} options={teamOpts}
                   searchThreshold={6} ariaLabel={t('noc.con.team')} placeholder={t('noc.con.allTeams')} />
               </span>

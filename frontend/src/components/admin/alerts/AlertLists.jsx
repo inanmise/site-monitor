@@ -35,7 +35,8 @@ const ALL = '__all__'
 /**
  * Alarmın takımı (2026-10-01, Takım sütunu): DAMGALI takım (`team_id` + sunucunun `team_name`'i; yoksa çağıranın dizini)
  * — izleme alarmları; sertifika alarmlarında envanterin SY takımı. `onPickTeam` verilirse tıklama takım SÜZGECİNİ uygular
- * (çip + URL), yoksa üye penceresi (TeamBadge varsayılanı). Takımsız alarm okunur "takım yok".
+ * (çip + URL), yoksa üye penceresi (TeamBadge varsayılanı). Takımsız alarm okunur "takım yok". Uzun AD takım adı
+ * KESİLMEZ, sarar (`wrap`, 2026-11-15 yayın öncesi e2e kapısı).
  */
 export function AlertTeam({ alert: a, teamName, onPickTeam, className }) {
   const t = useT()
@@ -45,7 +46,7 @@ export function AlertTeam({ alert: a, teamName, onPickTeam, className }) {
   if (id == null && !name) return <span className={cn('text-muted-foreground italic', className)}>{t('alh.noTeam')}</span>
   const filterLabel = onPickTeam && name ? t('alh.filterByTeam', name) : undefined
   return (
-    <TeamBadge as="span" teamId={id} teamName={name} className={className} title={filterLabel} ariaLabel={filterLabel}
+    <TeamBadge as="span" wrap teamId={id} teamName={name} className={className} title={filterLabel} ariaLabel={filterLabel}
       onOpen={onPickTeam ? (tid) => onPickTeam(tid) : undefined} />
   )
 }

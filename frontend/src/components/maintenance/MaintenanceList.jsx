@@ -33,7 +33,7 @@ function InlineActions({ w, t, actions }) {
       {rowActionItems(w, t, actions).filter((a) => !a.hidden).map(({ key, label, Icon, onClick, danger }) => (
         <Button key={key} type="button" variant="ghost" size="icon-sm" title={label}
           aria-label={t('a11y.rowAction', w.name, label)} onClick={onClick}
-          className={cn('text-muted-foreground', danger ? 'hover:bg-destructive/10 hover:text-destructive' : 'hover:text-foreground',
+          className={cn('text-muted-foreground pointer-coarse:size-10', danger ? 'hover:bg-destructive/10 hover:text-destructive' : 'hover:text-foreground',
             key === 'end' && 'text-success hover:text-success')}>
           <Icon aria-hidden="true" />
         </Button>

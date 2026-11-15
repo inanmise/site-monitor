@@ -64,12 +64,12 @@ export default function NocPersonPicker({ id, contacts, loading = false, value, 
         )}
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate font-medium">{c.display_name}</span>
+            <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{c.display_name}</span>
             {c.is_manager && c.source !== 'MANAGER' && (
               <Crown aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
             )}
           </span>
-          {c.title && <span className="truncate text-xs text-muted-foreground">{c.title}</span>}
+          {c.title && <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{c.title}</span>}
         </span>
         {c.has_phone === false && (
           <span data-slot="no-phone" className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">

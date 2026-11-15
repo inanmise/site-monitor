@@ -221,9 +221,9 @@ export default function MaintenanceWindowsPage({ systemRole, teamId, teamName, g
           <p className="mt-1 max-w-[78ch] text-xs text-muted-foreground">{t('mw.purpose')}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" onClick={load} disabled={loading}><RefreshCw aria-hidden="true" />{t('mw.refresh')}</Button>
-          {canManage && <Button variant="secondary" size="sm" onClick={openQuick}><Play aria-hidden="true" />{t('mw.quickWindow')}</Button>}
-          {canManage && <Button size="sm" onClick={openNew}><Plus aria-hidden="true" />{t('mw.newWindow')}</Button>}
+          <Button variant="outline" size="sm" className="pointer-coarse:h-10" onClick={load} disabled={loading}><RefreshCw aria-hidden="true" />{t('mw.refresh')}</Button>
+          {canManage && <Button variant="secondary" size="sm" className="pointer-coarse:h-10" onClick={openQuick}><Play aria-hidden="true" />{t('mw.quickWindow')}</Button>}
+          {canManage && <Button size="sm" className="pointer-coarse:h-10" onClick={openNew}><Plus aria-hidden="true" />{t('mw.newWindow')}</Button>}
         </div>
       </div>
 
@@ -248,10 +248,10 @@ export default function MaintenanceWindowsPage({ systemRole, teamId, teamName, g
         <MonitorStatsBar items={tiles} activeFilter={filter} onStatClick={onTile} />
 
         <Tabs value={view} onValueChange={setView} className="min-w-0 gap-3">
-          <TabsList aria-label={t('mw.viewsAria')} className="w-full justify-start overflow-x-auto sm:w-fit">
-            <TabsTrigger value="list" className="flex-none px-3"><ListIcon aria-hidden="true" />{t('mw.view.list')}</TabsTrigger>
-            <TabsTrigger value="agenda" className="flex-none px-3"><CalendarDays aria-hidden="true" />{t('mw.view.agenda')}</TabsTrigger>
-            <TabsTrigger value="calendar" className="flex-none px-3"><CalendarRange aria-hidden="true" />{t('mw.calendar')}</TabsTrigger>
+          <TabsList aria-label={t('mw.viewsAria')} className="w-full justify-start overflow-x-auto sm:w-fit pointer-coarse:group-data-[orientation=horizontal]/tabs:h-auto">
+            <TabsTrigger value="list" className="flex-none px-3 pointer-coarse:h-10"><ListIcon aria-hidden="true" />{t('mw.view.list')}</TabsTrigger>
+            <TabsTrigger value="agenda" className="flex-none px-3 pointer-coarse:h-10"><CalendarDays aria-hidden="true" />{t('mw.view.agenda')}</TabsTrigger>
+            <TabsTrigger value="calendar" className="flex-none px-3 pointer-coarse:h-10"><CalendarRange aria-hidden="true" />{t('mw.calendar')}</TabsTrigger>
           </TabsList>
           <TabsContent value="list" className="flex min-w-0 flex-col gap-3">
             {filter && (
