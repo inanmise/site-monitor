@@ -139,6 +139,11 @@ function ResourceRow({ row, total, t, open, onToggle, raw }) {
             <dt>{t('pspd.wf.status')}</dt><dd className="m-0 tabular-nums text-foreground">{row.status ?? '—'}</dd>
             <dt>{t('pspd.wf.party')}</dt><dd className="m-0 text-foreground">{t(row.thirdParty ? 'pspd.wf.third' : 'pspd.wf.first')}</dd>
           </dl>
+          {row.foundIn && (
+            <span data-slot="pspd-wf-foundin" className={cn('text-muted-foreground', WRAP)}>
+              {t('pspd.res.foundIn')} <span className="font-mono text-[11px] text-foreground">{row.foundIn}</span>
+            </span>
+          )}
           {img && <ImageActions item={img} showSuggestion={false} />}
         </div>
       )}

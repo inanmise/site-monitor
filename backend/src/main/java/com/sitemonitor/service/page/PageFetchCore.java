@@ -613,6 +613,17 @@ public class PageFetchCore {
     }
 
     /**
+     * {@link #fetch(String, String, FetchOptions)} + açık {@code Accept-Encoding} (2026-11-15, Sayfa Hızı genişletilmiş ölçüm):
+     * yalnız SAYILAN (ayrıştırılmayan) nesneler {@link #ACCEPT_ENCODING_COUNT} ({@code br} dahil) ile istenir — telden gelen
+     * bayt tarayıcınınkine eşit olur; gövdesi açılan istekler (HTML, stil) Brotli çözücü olmadığı için gzip / deflate kalır.
+     * Ağ davranışı, sınırlar ve SSRF kuralı aynıdır; {@code acceptEncoding} null ise {@link #fetch} ile birebir.
+     */
+    public Fetch fetch(String url, String method, FetchOptions opts, String acceptEncoding) {
+        if (acceptEncoding == null) return fetch(url, method, opts, null, null);
+        return fetch(url, method, opts, null, new ScanTuning(null, acceptEncoding, MAX_BODY_BYTES, MAX_DECODED_BYTES));
+    }
+
+    /**
      * {@link #fetch} + üst veri (2026-10-31, kaynak analizi): son yanıtın başlıkları, son URL, yönlendirme sayısı ve
      * {@code headBytes > 0} ise gövdenin ilk baytları (yalnız SAYIM yolunda — {@code countBytes} ve {@code !wantBody}).
      * Ağ davranışı, sınırlar ve SSRF kuralı {@link #fetch} ile birebir aynıdır. Hiçbir zaman fırlatmaz.
@@ -1161,7 +1172,11 @@ public class PageFetchCore {
      *                           ağırlığını katbekat şişirir. Sayfa Bütünlüğü hepsini ister (herhangi
      *                           biri kırık olabilir), Sayfa Hızı görsel başına BİR tane ister.
      */
-    public record InventoryOptions(boolean hyperlinks, boolean allImageCandidates, boolean skipLazy) {
+    public record InventoryOptions(boolean hyperlinks, boolean allImageCandidates, boolean skipLazy, boolean inlineCss) {
+        /** Satır içi stil toplamadan (2026-11-15 öncesi imza). */
+        public InventoryOptions(boolean hyperlinks, boolean allImageCandidates, boolean skipLazy) {
+            this(hyperlinks, allImageCandidates, skipLazy, false);
+        }
         /** Sayfa Bütünlüğü: her şeyi topla (mevcut davranış). {@code loading=lazy} DAHİL —
          *  orada soru "bu kaynak var mı", tarayıcının onu ne zaman istediği değil. */
         public static final InventoryOptions FULL = new InventoryOptions(true, true, false);
@@ -1175,7 +1190,19 @@ public class PageFetchCore {
          * 124 istek. Atlanan sayı raporlanır: sessizce eksiltmek de fazla saymak kadar yanıltıcı.
          */
         public static final InventoryOptions AS_BROWSER_LOADS = new InventoryOptions(false, false, true);
+        /**
+         * Sayfa Hızı GENİŞLETİLMİŞ ölçüm (2026-11-15, madde 10): {@link #AS_BROWSER_LOADS} + satır içi stiller ({@code <style>}
+         * blokları ve {@code url(} taşıyan {@code style=""} öznitelikleri) aynı ayrıştırmadan çağırana döner — stil
+         * başvuruları ({@code PageResourceDiscovery.cssRefs}) onlardan da çıkarılır. Toplam {@value #MAX_INLINE_CSS_CHARS}
+         * karakter, en çok {@value #MAX_INLINE_CSS_ENTRIES} parça.
+         */
+        public static final InventoryOptions AS_BROWSER_LOADS_EXTENDED = new InventoryOptions(false, false, true, true);
     }
+
+    /** Satır içi stil toplamının karakter tavanı (kaynak analizinin stil tavanıyla aynı büyüklük). */
+    public static final int MAX_INLINE_CSS_CHARS = 2_000_000;
+    /** Satır içi stil parçası tavanı. */
+    public static final int MAX_INLINE_CSS_ENTRIES = 500;
 
     /**
      * Sayfa başına kaynak tavanı (canlı ayar, sınırlı): boş / sıfır / negatif ya da okunamayan değer varsayılan
@@ -1203,10 +1230,18 @@ public class PageFetchCore {
         return Math.max(MIN_TOTAL_RESOURCES, perPage * 3);
     }
 
-    /** Envanter + ölçüm dışı bırakılanların sayısı + uygulanan sayfa başına kaynak tavanı. */
-    public record Inventory(List<Resource> resources, int skippedLazy, int cap) {
+    /**
+     * Envanter + ölçüm dışı bırakılanların sayısı + uygulanan sayfa başına kaynak tavanı. {@code inlineCss} / {@code baseUrl}
+     * (2026-11-15): yalnız {@link InventoryOptions#inlineCss()} istendiyse dolu — satır içi stiller ve belgenin taban adresi
+     * ({@code <base href>} varsa o); aksi hâlde boş liste / null.
+     */
+    public record Inventory(List<Resource> resources, int skippedLazy, int cap, List<String> inlineCss, String baseUrl) {
         public Inventory(List<Resource> resources, int skippedLazy) {
             this(resources, skippedLazy, DEFAULT_MAX_RESOURCES_PER_CHECK);
+        }
+
+        public Inventory(List<Resource> resources, int skippedLazy, int cap) {
+            this(resources, skippedLazy, cap, List.of(), null);
         }
 
         /** Envanter tavana takıldı mı — kalan kaynaklar atlandı ("kısmi"). */
@@ -1233,6 +1268,12 @@ public class PageFetchCore {
 
     private List<Resource> inventory(byte[] bytes, String baseUrl, String sourcePage, Predicate<String> exclude,
                                      InventoryOptions opts, int cap) {
+        return inventory(bytes, baseUrl, sourcePage, exclude, opts, cap, null);
+    }
+
+    /** {@code inlineOut != null} → satır içi stiller ve belgenin taban adresi oraya yazılır (aynı ayrıştırma). */
+    private List<Resource> inventory(byte[] bytes, String baseUrl, String sourcePage, Predicate<String> exclude,
+                                     InventoryOptions opts, int cap, InlineOut inlineOut) {
         Document doc;
         try {
             // Bayt-stream + null charset → jsoup <meta charset>/BOM'dan charset'i otomatik tespit eder;
@@ -1259,6 +1300,7 @@ public class PageFetchCore {
         addAll(out, doc, "link[rel~=(?i)icon][href]", "href", "FAVICON", sourcePage);
         addAll(out, doc, "link[rel=preload][as=font][href]", "href", "FONT", sourcePage);
         if (opts.hyperlinks()) addAll(out, doc, "a[href]", "href", "LINK", sourcePage);
+        if (opts.inlineCss() && inlineOut != null) collectInlineCss(doc, inlineOut);
         List<Resource> list = new ArrayList<>();
         int skippedLazy = 0;
         for (Resource r : out.values()) {
@@ -1282,8 +1324,53 @@ public class PageFetchCore {
     public Inventory inventoryDetailed(byte[] bytes, String baseUrl, String sourcePage,
                                        Predicate<String> exclude, InventoryOptions opts) {
         int cap = maxResourcesPerCheck();
-        List<Resource> list = inventory(bytes, baseUrl, sourcePage, exclude, opts, cap);
-        return new Inventory(list, lastSkippedLazy.get(), cap);
+        InlineOut inline = opts.inlineCss() ? new InlineOut() : null;
+        List<Resource> list = inventory(bytes, baseUrl, sourcePage, exclude, opts, cap, inline);
+        return new Inventory(list, lastSkippedLazy.get(), cap,
+                inline == null ? List.of() : List.copyOf(inline.css), inline == null ? null : inline.base);
+    }
+
+    /** Satır içi stil toplayıcısı (çağrının kendi yığınında yaşar). */
+    private static final class InlineOut {
+        final List<String> css = new ArrayList<>();
+        String base;
+    }
+
+    /**
+     * {@code <style>} bloklarının metni ve {@code url(} taşıyan {@code style=""} öznitelikleri — kaynak analizi keşfiyle aynı
+     * kural ({@code PageResourceDiscovery.discoverParsed}); {@code noscript} / {@code template} içi sayılmaz (tarayıcı
+     * yüklemez). Sınırlı: toplam {@value #MAX_INLINE_CSS_CHARS} karakter, {@value #MAX_INLINE_CSS_ENTRIES} parça.
+     */
+    private static void collectInlineCss(Document doc, InlineOut out) {
+        String b = doc.baseUri();
+        out.base = b == null || b.isBlank() ? null : b;
+        int chars = 0;
+        for (Element el : doc.select("style")) {
+            if (out.css.size() >= MAX_INLINE_CSS_ENTRIES || chars >= MAX_INLINE_CSS_CHARS) return;
+            if (insideInert(el)) continue;
+            String d = el.data();
+            if (d == null || d.isEmpty()) continue;
+            if (d.length() > MAX_INLINE_CSS_CHARS - chars) d = d.substring(0, MAX_INLINE_CSS_CHARS - chars);
+            out.css.add(d);
+            chars += d.length();
+        }
+        for (Element el : doc.select("[style]")) {
+            if (out.css.size() >= MAX_INLINE_CSS_ENTRIES || chars >= MAX_INLINE_CSS_CHARS) return;
+            String st = el.attr("style");
+            if (st.length() > 4096 || !st.toLowerCase(Locale.ROOT).contains("url(") || insideInert(el)) continue;
+            out.css.add(st);
+            chars += st.length();
+        }
+    }
+
+    /** Öğe {@code noscript} ya da {@code template} içinde mi (en çok 64 ata yürünür). */
+    private static boolean insideInert(Element el) {
+        Element p = el.parent();
+        for (int i = 0; p != null && i < 64; i++, p = p.parent()) {
+            String n = p.normalName();
+            if ("noscript".equals(n) || "template".equals(n)) return true;
+        }
+        return false;
     }
 
     /** {@link #inventoryDetailed} çağıran thread'in son sayısını taşır — paylaşılan alan DEĞİL

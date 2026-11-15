@@ -1645,6 +1645,18 @@ public class SchedulerService {
         patch("ALTER TABLE pagespeed_monitors ADD COLUMN skip_holidays BOOLEAN");
         patch("ALTER TABLE pagespeed_monitors ADD COLUMN skip_dates_json TEXT");
         patch("ALTER TABLE pagespeed_monitors ADD COLUMN next_run_at VARCHAR(30)");
+        // Sayfa Hızı 2c (2026-11-15, madde 10 / 13): genişletilmiş ölçüm + büyüme alarmı. Hepsi NULL'lanabilir (eski kayıt =
+        // bugünkü davranış); ihlal / kararsız eşik kolonları on iki anahtarı (75 karakter) taşıyacak kadar genişletilir.
+        patch("ALTER TABLE pagespeed_monitors ADD COLUMN extended_measurement BOOLEAN");
+        patch("ALTER TABLE pagespeed_monitors ADD COLUMN growth_bytes_pct INTEGER");
+        patch("ALTER TABLE pagespeed_monitors ADD COLUMN growth_requests_pct INTEGER");
+        patch("ALTER TABLE pagespeed_monitors ADD COLUMN growth_bytes_band BOOLEAN");
+        patch("ALTER TABLE pagespeed_checks ADD COLUMN extended BOOLEAN");
+        patch("ALTER TABLE pagespeed_checks ADD COLUMN manual BOOLEAN");
+        patch("ALTER TABLE pagespeed_checks ADD COLUMN recheck BOOLEAN");
+        patch("ALTER TABLE pagespeed_checks ALTER COLUMN breached_metrics TYPE VARCHAR(120)");
+        patch("ALTER TABLE pagespeed_checks ALTER COLUMN undecided_metrics TYPE VARCHAR(120)");
+        patch("ALTER TABLE pagespeed_resources ADD COLUMN found_in TEXT");
 
         for (String t : new String[]{"port_checks", "ping_checks", "keyword_results", "http_checks",
                 "uptime_checks", "dns_records", "certificate_checks", "activity_log", "audit_log", "notification_logs",
@@ -7447,7 +7459,7 @@ public class SchedulerService {
      * gerekmez); değilse bant kararı (örnek YAZMAZ). Ölçülemedi / bant kuruluyor → "skipped" (kanıt yok).
      */
     private Map<String, Object> evalPageSpeedSlowBaseline(com.sitemonitor.model.PageSpeedMonitor m) {
-        Map<String, Object> p = recheckPageSpeed(m, false);
+        Map<String, Object> p = recheckPageSpeed(m, false, true);
         Long ms = p.get("response_ms") instanceof Number n ? n.longValue() : null;
         boolean measured = !Boolean.TRUE.equals(p.get("config_error")) && Boolean.TRUE.equals(p.get("reachable")) && ms != null;
         if (measured && !pageSpeedNonLoadBreaches(p).isEmpty()) {
@@ -7482,9 +7494,18 @@ public class SchedulerService {
     private static final com.fasterxml.jackson.databind.ObjectMapper PAGESPEED_CTX_JSON = new com.fasterxml.jackson.databind.ObjectMapper();
 
     /**
-     * Bu izlemenin AÇIK PAGESPEED_SLOW alarmı yükleme DIŞI bir eşikle mi açıldı (kayıtlı {@code breached_metrics} dolu ve
-     * {@code LOAD} içermiyor)? Tek indeksli okuma, yalnız bant karar veremezken çağrılır (inceleme B3). Alarm yok, sebep
-     * boş / okunamıyor ya da depo yok → false (bugünkü "kalem yok" kuralı korunur — kapatma ancak kanıtla).
+     * Bu izlemenin AÇIK PAGESPEED_SLOW alarmı yükleme DIŞI bir eşikle mi açıldı? Tek indeksli okuma, yalnız bant karar
+     * veremezken çağrılır (inceleme B3). Alarm yok, sebep boş / okunamıyor ya da depo yok → false (bugünkü "kalem yok" kuralı
+     * korunur — kapatma ancak kanıtla).
+     *
+     * <p><b>Prod kapısı düzeltmesi B3 (2026-11-15):</b> sebep eskiden YALNIZ {@code breached_metrics} bağlam anahtarından
+     * okunuyordu — ama alarm bağlamı {@code EscalationService.RESOLVED_CONTEXT_KEYS} beyaz listesiyle saklanır ve o anahtar
+     * listede yok: alarm bağlamında HİÇ bulunmuyordu, metot her zaman false dönüyor, alarm bant yeniden karar verene dek (saatler
+     * — mevsimsel tabanda haftalar) açık kalıyordu. Artık birincil kaynak zaten saklanan eşik tablosu ({@code ps_thresholds},
+     * {@code ANAHTAR \t eşik \t ölçülen \t ihlal \t alt}) — düzeltmeden ÖNCE açılmış alarmlarda da vardır. Sebep = ihlal bayrağı 1 olan
+     * satırlar; {@code LOAD} (sabit yükleme eşiği) ya da {@code BAND} (yükleme bandı) varsa alarm yükleme kaynaklıdır → false.
+     * Büyüme anahtarları ({@code GROWSIZE / GROWREQ / SIZEBAND}, 2026-11-15) YÜKLEME DIŞI eşik sayılır: yükleme bandından
+     * bağımsız karar verilir; kararsızken çağıran zaten "up" demez. Tablo yoksa eski {@code breached_metrics} okunur.
      */
     boolean openPageSpeedSlowWithoutLoad(com.sitemonitor.model.PageSpeedMonitor m) {
         if (pageSpeedAlertRepo == null || m == null || m.getUrl() == null) return false;
@@ -7492,14 +7513,37 @@ public class SchedulerService {
             java.util.Optional<com.sitemonitor.model.AlertEvent> open =
                     pageSpeedAlertRepo.findOpenAlert(m.getUrl(), EscalationService.TYPE_PAGESPEED_SLOW);
             if (open.isEmpty() || open.get().getContextJson() == null) return false;
-            com.fasterxml.jackson.databind.JsonNode b = PAGESPEED_CTX_JSON.readTree(open.get().getContextJson()).get("breached_metrics");
-            List<String> keys = new ArrayList<>();
-            if (b != null && b.isArray()) { for (com.fasterxml.jackson.databind.JsonNode k : b) keys.add(k.asText()); }
-            else if (b != null && b.isTextual()) { for (String k : b.asText().split(",")) if (!k.isBlank()) keys.add(k.trim()); }
-            return !keys.isEmpty() && !keys.contains(com.sitemonitor.service.page.PageSpeedRules.BREACH_LOAD);
+            List<String> keys = pageSpeedAlarmCauses(PAGESPEED_CTX_JSON.readTree(open.get().getContextJson()));
+            return keys != null && !keys.isEmpty()
+                    && !keys.contains(com.sitemonitor.service.page.PageSpeedRules.BREACH_LOAD) && !keys.contains("BAND");
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /**
+     * Açık Sayfa Hızı alarmının kayıtlı sebepleri (prod kapısı düzeltmesi B3): önce {@code ps_thresholds} tablosunun ihlal
+     * bayraklı satırları, tablo yoksa {@code breached_metrics} (dizi ya da virgüllü metin). Hiçbiri yoksa null (bilinmiyor).
+     * Sınırlı: tablo en çok 32 satır okunur.
+     */
+    static List<String> pageSpeedAlarmCauses(com.fasterxml.jackson.databind.JsonNode ctx) {
+        if (ctx == null) return null;
+        com.fasterxml.jackson.databind.JsonNode t = ctx.get(PS_THRESHOLDS);
+        if (t != null && t.isTextual() && !t.asText().isBlank()) {
+            List<String> keys = new ArrayList<>();
+            String[] lines = t.asText().split("\n");
+            for (int i = 0; i < lines.length && i < 32; i++) {
+                String[] p = lines[i].split("\t", -1);
+                if (p.length >= 4 && "1".equals(p[3].trim()) && !p[0].isBlank()) keys.add(p[0].trim());
+            }
+            return keys;
+        }
+        com.fasterxml.jackson.databind.JsonNode b = ctx.get("breached_metrics");
+        if (b == null || b.isNull()) return null;
+        List<String> keys = new ArrayList<>();
+        if (b.isArray()) { for (com.fasterxml.jackson.databind.JsonNode k : b) keys.add(k.asText()); }
+        else if (b.isTextual()) { for (String k : b.asText().split(",")) if (!k.isBlank()) keys.add(k.trim()); }
+        return keys;
     }
 
     /** İzlemenin bant yönü (up | down | both) — bellekteki yapılandırma anlık görüntüsünden; bilinmiyorsa null. */
@@ -8896,7 +8940,7 @@ public class SchedulerService {
         downSweep.add(new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_PAGESPEED_DOWN, m.getUrl(), "sayfa hızı",
                 up, err, chanCtx(new LinkedHashMap<>(ctx), m),
-                () -> { Map<String, Object> p = recheckPageSpeed(m, false);
+                () -> { Map<String, Object> p = recheckPageSpeed(m, false, true);
                         return Map.of("status", Boolean.TRUE.equals(p.get("config_error"))
                                 || Boolean.TRUE.equals(p.get("reachable")) ? "up" : "down"); }));
 
@@ -8923,7 +8967,7 @@ public class SchedulerService {
         slowSweep.add(new MonitoringOutageService.SweepItem(
                 EscalationService.TYPE_PAGESPEED_SLOW, m.getUrl(), slowDetail,
                 withinThresholds, withinThresholds ? null : slowDetail, chanCtx(slowCtx, m),
-                () -> pageSpeedSlowRecheck(recheckPageSpeed(m, false))));
+                () -> pageSpeedSlowRecheck(recheckPageSpeed(m, false, true))));
     }
 
     /**
@@ -8979,6 +9023,12 @@ public class SchedulerService {
                 case "IMG" -> parts.add("görsel " + ge + kb(r.get("img_bytes")) + " KB");
                 case "FONT" -> parts.add("yazı tipi " + ge + kb(r.get("font_bytes")) + " KB");
                 case "THIRD" -> parts.add("üçüncü taraf " + ge + kb(r.get("third_party_bytes")) + " KB");
+                // Büyüme (2026-11-15): önceki haftanın medyanına göre
+                case "GROWSIZE" -> parts.add("boyut " + ge + kb(r.get("total_bytes")) + " KB (önceki hafta medyanı "
+                        + kb(r.get("growth_median_bytes")) + " KB" + growthPctText(r.get("total_bytes"), r.get("growth_median_bytes")) + ")");
+                case "GROWREQ" -> parts.add(r.getOrDefault("request_count", "?") + " istek (önceki hafta medyanı "
+                        + r.getOrDefault("growth_median_requests", "?") + growthPctText(r.get("request_count"), r.get("growth_median_requests")) + ")");
+                case "SIZEBAND" -> parts.add("boyut " + ge + kb(r.get("total_bytes")) + " KB öğrenilen bandın üstünde");
                 default -> parts.add(k);
             }
         }
@@ -9045,6 +9095,59 @@ public class SchedulerService {
         return sb.length() == 0 ? null : sb.toString();
     }
 
+    /** " +25 %" — şimdiki değerin medyana göre büyümesi (aşağı yuvarlı); hesaplanamıyorsa boş. */
+    static String growthPctText(Object now, Object median) {
+        if (!(now instanceof Number n) || !(median instanceof Number md) || md.longValue() <= 0) return "";
+        long pct = Math.floorDiv((n.longValue() - md.longValue()) * 100L, md.longValue());
+        return ", " + (pct >= 0 ? "+" : "") + pct + " %";
+    }
+
+    /**
+     * Büyüme referansının geçmişi (2026-11-15, madde 13): önceki 7 günün ({@code now − 7 gün, now]}) TAM (sayfa alındı, kaynak /
+     * bayt / süre tavanına takılmadı), aynı KİPTEKİ ({@code extended}), ZAMANLANMIŞ (elle / teyit değil) ölçümleri — yeniden
+     * eskiye. Tek sınırlı sorgu ({@link com.sitemonitor.service.page.PageSpeedRules#GROWTH_READ_LIMIT}, 5 sn zaman aşımı); hata
+     * → null (BİLİNMİYOR; WARN saatte bir).
+     */
+    List<com.sitemonitor.service.page.PageSpeedRules.GrowthSample> pageSpeedGrowthSamples(Long monitorId, boolean extended) {
+        if (pageSpeedCheckRepo == null || monitorId == null) return null;
+        Instant now = Instant.now();
+        try {
+            List<Object[]> rows = pageSpeedCheckRepo.growthWindow(monitorId,
+                    ISO.format(now.minusMillis(com.sitemonitor.service.page.PageSpeedRules.GROWTH_WINDOW_MS)), ISO.format(now),
+                    com.sitemonitor.service.page.PageSpeedRules.GROWTH_READ_LIMIT);
+            return pageSpeedGrowthSamplesOf(rows, extended);
+        } catch (Exception e) {
+            long t = System.currentTimeMillis();
+            if (t - lastGrowthWarnMs > 3_600_000L) {
+                lastGrowthWarnMs = t;
+                log.warn("Sayfa hızı büyüme referansı okunamadı (izleme {}) — büyüme eşikleri bu ölçümde bilinmiyor: {}",
+                        monitorId, e.getClass().getSimpleName());
+            }
+            return null;
+        }
+    }
+
+    private volatile long lastGrowthWarnMs;
+
+    /** Ham satırlar → örnekler (saf; süzme kuralı tek yerde). Satır: totalBytes, requestCount, breached, ok, capped, bytesTruncated, timeTruncated, extended, manual, recheck. */
+    static List<com.sitemonitor.service.page.PageSpeedRules.GrowthSample> pageSpeedGrowthSamplesOf(List<Object[]> rows, boolean extended) {
+        List<com.sitemonitor.service.page.PageSpeedRules.GrowthSample> out = new ArrayList<>();
+        if (rows == null) return out;
+        for (Object[] r : rows) {
+            if (r == null || r.length < 10) continue;
+            if (!Boolean.TRUE.equals(r[3])) continue;                                   // sayfa alınamadı
+            if (Boolean.TRUE.equals(r[4]) || Boolean.TRUE.equals(r[5]) || Boolean.TRUE.equals(r[6])) continue;   // kısmi
+            if (Boolean.TRUE.equals(r[7]) != extended) continue;                       // başka kip
+            if (Boolean.TRUE.equals(r[8]) || Boolean.TRUE.equals(r[9])) continue;      // elle / teyit
+            if (!(r[0] instanceof Number b) || !(r[1] instanceof Number q)) continue;
+            String breached = r[2] == null ? "" : r[2].toString();
+            boolean band = false;
+            for (String k : breached.split(",")) if (com.sitemonitor.service.page.PageSpeedRules.BREACH_SIZEBAND.equals(k.trim())) band = true;
+            out.add(new com.sitemonitor.service.page.PageSpeedRules.GrowthSample(b.longValue(), q.intValue(), band));
+        }
+        return out;
+    }
+
     private static String kb(Object bytes) {
         if (!(bytes instanceof Number n)) return "?";
         return String.valueOf(n.longValue() / 1024);
@@ -9056,6 +9159,14 @@ public class SchedulerService {
      * total_bytes, request_count}.
      */
     private Map<String, Object> recheckPageSpeed(com.sitemonitor.model.PageSpeedMonitor m, boolean manual) {
+        return recheckPageSpeed(m, manual, false);
+    }
+
+    /**
+     * {@code recheck} (2026-11-15, Sayfa Hızı 2c): teyit / kurtarma yeniden ölçümü — satır {@code recheck=true} yazılır ve
+     * büyüme referansına girmez (referans yalnız ZAMANLANMIŞ ölçümlerden).
+     */
+    private Map<String, Object> recheckPageSpeed(com.sitemonitor.model.PageSpeedMonitor m, boolean manual, boolean recheck) {
         // Delil dondurma KENAR-tetiklidir: bunun icin ONCEKI olcumun ihlal durumu, yeni kayit
         // yazilmadan ONCE okunur (tek indeksli sorgu).
         boolean wasBreached = pageSpeedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(m.getId())
@@ -9063,6 +9174,12 @@ public class SchedulerService {
                 .orElse(false);
         PageSpeedCheckerService.Result res = pageSpeedCheckerService.check(m);
         if (workerJobAbandoned()) return abandonedCheckJob();   // R3-3 son inceleme F4: işçi bıraktı → geçmiş satırı yok
+        // Büyüme alarmı (2026-11-15, madde 13): yalnız eşik tanımlıysa önceki 7 günün TAM, aynı kipteki zamanlanmış ölçümleri
+        // okunur (sınırlı, zaman aşımlı tek sorgu) ve eşikler büyüme referansıyla yeniden değerlendirilir. Okunamazsa büyüme
+        // eşikleri BİLİNMİYOR kalır (ihlal de sağlık da değil).
+        if (res != null && res.reachable() && PageSpeedCheckerService.growthConfigured(m)) {
+            res = PageSpeedCheckerService.withGrowth(res, m, pageSpeedGrowthSamples(m.getId(), res.extended()));
+        }
         boolean cfgError = "CONFIG_ERROR".equals(res.status());
         boolean reachable = res.reachable();
         String ts = ISO.format(Instant.now());
@@ -9110,6 +9227,10 @@ public class SchedulerService {
             pc.setTlsMs(res.phases().tlsMs());
             pc.setServerMs(res.phases().serverMs());
             pc.setSkippedLazy(res.skippedLazy());
+            // Sayfa Hızı 2c (2026-11-15): ölçüm kipi ve ölçüm türü — yalnız true yazılır (null = klasik kip / zamanlanmış)
+            if (res.extended()) pc.setExtended(true);
+            if (manual) pc.setManual(true);
+            if (recheck) pc.setRecheck(true);
             // İhlal delili ÖLÇÜM ANINDAKİ eşikle donar; izleme sonradan düzenlenirse geçmiş
             // satır yine doğru sayıyı gösterir.
             // TTFB delili GERÇEK isteğin ilk baytıdır (madde 2) — eşiğin değerlendirdiği sayının aynısı.
@@ -9165,6 +9286,13 @@ public class SchedulerService {
         // Toplam ALT SINIR mı: arayüz "≥" ile gösteriyor, e-posta detayı da bunu okuyor.
         out.put("bytes_truncated", res.bytesTruncated());
         out.put("request_count", res.requestCount());
+        // Sayfa Hızı 2c (2026-11-15): genişletilmiş kip ve büyüme referansı — yalnız varsa (eski çıktı birebir)
+        if (res.extended()) out.put("extended", true);
+        if (res.growth() != null) {
+            out.put("growth_samples", res.growth().samples());
+            if (res.growth().enough() && res.growth().medianBytes() != null) out.put("growth_median_bytes", res.growth().medianBytes());
+            if (res.growth().enough() && res.growth().medianRequests() != null) out.put("growth_median_requests", res.growth().medianRequests());
+        }
         // 2026-11-14 (Sayfa Hızı zenginleştirme): kısmi ölçüm bayrakları, HTML süresi, tür kırılımı ve eşik tablosu (alarm postası).
         if (reachable) {
             out.put("html_ms", res.htmlMs());
@@ -9248,6 +9376,7 @@ public class SchedulerService {
         row.setBytes(x.bytes());
         row.setDurationMs((int) x.durationMs());
         row.setStartMs(x.startMs() == null ? null : (int) Math.min(Integer.MAX_VALUE, x.startMs()));
+        row.setFoundIn(x.foundIn());   // genişletilmiş ölçüm: başvuran stil (null = HTML öğesi / klasik kip)
         row.setStatusCode(x.statusCode());
         row.setThirdParty(x.thirdParty());
         row.setTruncated(x.truncated());
@@ -13526,7 +13655,13 @@ public class SchedulerService {
     static String pingCheckTarget(PingMonitor m) { return m.getHost() + "|" + m.getIpVersion(); }
     static String dnsCheckTarget(DnsMonitor m) { return m.getDomain() + "|" + m.getRecordType(); }
     static String pageCheckTarget(com.sitemonitor.model.PageMonitor m) { return String.valueOf(m.getUrl()); }
-    static String pageSpeedCheckTarget(com.sitemonitor.model.PageSpeedMonitor m) { return String.valueOf(m.getUrl()); }
+    /**
+     * Sayfa hızı işinin hedef parmak izi: adres (+ genişletilmiş ölçüm açıksa {@code |ext}, 2026-11-15) — eski ayarla ölçülmüş
+     * sonuç ({@code dropped_target}) uygulanmaz. Klasik kipte değer birebir eskisi (sürümler arası iş uyumu).
+     */
+    static String pageSpeedCheckTarget(com.sitemonitor.model.PageSpeedMonitor m) {
+        return String.valueOf(m.getUrl()) + (PageSpeedCheckerService.extendedOf(m) ? "|ext" : "");
+    }
     static String scriptedCheckTarget(com.sitemonitor.model.ScriptedMonitor m) { return m.getName() + "|" + m.getScriptVersion(); }
 
     /** DNS iş sonucunun anahtarları (değerlendirici {@link #addDnsResultItems} okur). */

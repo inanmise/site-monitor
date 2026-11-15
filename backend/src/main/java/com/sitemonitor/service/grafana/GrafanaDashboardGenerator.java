@@ -50,7 +50,7 @@ public final class GrafanaDashboardGenerator {
      * Pano içerik revizyonu — içerik (panel, sorgu, değişken) değişen HER sürümde artır ve
      * {@code src/test/resources/grafana/dashboard-content.sha256} dosyasını güncelle (kapı mesajı yeni satırı yazar).
      */
-    public static final int DASHBOARD_REVISION = 17;
+    public static final int DASHBOARD_REVISION = 18;
     /** "Kritik / yüksek alarm açıldı" anotasyonunun penceresi (sn) — açılış zamanı bu kadar yeni olan alarmlar. */
     static final int ALERT_OPENED_WINDOW_S = 900;
     /** Aktarıcı tazelik eşiği (sn) — sunucunun {@code max(180, 3 × refresh-seconds)} kuralının varsayılan değeri. */
@@ -1492,7 +1492,11 @@ public final class GrafanaDashboardGenerator {
                     {"JS", t("JavaScript bütçesi", "JavaScript budget")},
                     {"IMG", t("Görsel bütçesi", "Image budget")},
                     {"FONT", t("Yazı tipi bütçesi", "Font budget")},
-                    {"THIRD", t("Üçüncü taraf bütçesi", "Third-party budget")}};
+                    {"THIRD", t("Üçüncü taraf bütçesi", "Third-party budget")},
+                    // 2026-11-15 (revizyon 18, Sayfa Hızı 2c madde 13): önceki haftaya göre büyüme ve öğrenilen bayt bandı
+                    {"GROWSIZE", t("Ağırlık büyümesi (önceki hafta)", "Weight growth (previous week)")},
+                    {"GROWREQ", t("İstek artışı (önceki hafta)", "Request growth (previous week)")},
+                    {"SIZEBAND", t("Ağırlık (öğrenilen bant)", "Weight (learned band)")}};
         }
 
         /**
@@ -1508,11 +1512,12 @@ public final class GrafanaDashboardGenerator {
             String BL = "team, team_id, metric";
             add(stat(t("Sayfa hızı — bütçeyi aşan", "Page speed — over budget"),
                     t("Son ölçümde en az bir eşiği ya da tür bütçesini (yükleme süresi, TTFB, boyut, istek, JavaScript, görsel, yazı "
-                                    + "tipi, üçüncü taraf) aşan ETKİN sayfa hızı izlemeleri. Takım süzgecine uyar, tür süzgecinden bağımsızdır. "
-                                    + "Veri yoksa kaynak okunamadı.",
+                                    + "tipi, üçüncü taraf, önceki haftaya göre büyüme, öğrenilen bayt bandı) aşan ETKİN sayfa hızı izlemeleri. "
+                                    + "Takım süzgecine uyar, tür süzgecinden bağımsızdır. Veri yoksa kaynak okunamadı.",
                             "ACTIVE page speed monitors whose last measurement went over at least one threshold or type budget (load "
-                                    + "time, TTFB, size, requests, JavaScript, images, fonts, third parties). Follows the team filter, not "
-                                    + "the type filter. No data means the source could not be read."),
+                                    + "time, TTFB, size, requests, JavaScript, images, fonts, third parties, growth against the previous "
+                                    + "week, learned weight band). Follows the team filter, not the type filter. No data means the source "
+                                    + "could not be read."),
                     guard("sum(max by (" + PL + ") (" + metric(pages, TEAM, "state=\"over_budget\"") + "))", "pagespeed"), "short",
                     thresholds(GREEN, null, AMBER, 1), "background", links() ? url("tab=pagespeed&stat=slow") : null).size(4, 8));
             add(stat(t("Sayfa hızı — açılamayan", "Page speed — not loading"),

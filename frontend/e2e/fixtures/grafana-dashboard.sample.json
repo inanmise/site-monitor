@@ -111,7 +111,7 @@
       }
     } ]
   },
-  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 17 · SiteMonitor 0.0.0-gate.",
+  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 18 · SiteMonitor 0.0.0-gate.",
   "editable" : true,
   "fiscalYearStartMonth" : 0,
   "graphTooltip" : 1,
@@ -5648,7 +5648,7 @@
   }, {
     "type" : "stat",
     "title" : "Sayfa hızı — bütçeyi aşan",
-    "description" : "Son ölçümde en az bir eşiği ya da tür bütçesini (yükleme süresi, TTFB, boyut, istek, JavaScript, görsel, yazı tipi, üçüncü taraf) aşan ETKİN sayfa hızı izlemeleri. Takım süzgecine uyar, tür süzgecinden bağımsızdır. Veri yoksa kaynak okunamadı.",
+    "description" : "Son ölçümde en az bir eşiği ya da tür bütçesini (yükleme süresi, TTFB, boyut, istek, JavaScript, görsel, yazı tipi, üçüncü taraf, önceki haftaya göre büyüme, öğrenilen bayt bandı) aşan ETKİN sayfa hızı izlemeleri. Takım süzgecine uyar, tür süzgecinden bağımsızdır. Veri yoksa kaynak okunamadı.",
     "datasource" : {
       "type" : "prometheus",
       "uid" : "${datasource}"
@@ -5950,6 +5950,33 @@
         "properties" : [ {
           "id" : "displayName",
           "value" : "Üçüncü taraf bütçesi"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "GROWSIZE"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Ağırlık büyümesi (önceki hafta)"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "GROWREQ"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "İstek artışı (önceki hafta)"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "SIZEBAND"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Ağırlık (öğrenilen bant)"
         } ]
       } ]
     },
@@ -14738,6 +14765,6 @@
   "timezone" : "browser",
   "title" : "SiteMonitor — Uçtan uca izleme",
   "uid" : "sitemonitor-overview",
-  "version" : 17,
+  "version" : 18,
   "weekStart" : "monday"
 }

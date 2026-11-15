@@ -67,6 +67,8 @@ export function buildWaterfall(data, maxRows = WF_MAX_ROWS) {
       key: `${rows.length}:${r.url}`, url: typeof r.url === 'string' ? r.url : '', type: wfType(r.type), rawType: r.type || null,
       start: Math.max(0, start), duration: dur, end: Math.max(0, start) + dur, bytes: num(r.bytes), truncatedBytes: r.truncated === true,
       status: num(r.http_status), failed: r.failed === true, thirdParty: r.third_party === true,
+      // Genişletilmiş ölçüm (2026-11-15): kaynağı başvuran stil dosyası; null = HTML öğesi / klasik kip / eski satır
+      foundIn: typeof r.found_in === 'string' && r.found_in ? r.found_in : null,
     })
   }
   rows.sort((a, b) => a.start - b.start || a.end - b.end)
@@ -168,6 +170,8 @@ export function compareSnapshots(a, b) {
   const ma = snapshotMetrics(a)
   const mb = snapshotMetrics(b)
   const cut = isLowerBound(a) || isLowerBound(b)
+  // Ölçüm kipi farklı (2026-11-15, genişletilmiş ölçüm): toplamlar karşılaştırılamaz — kesik ölçümdeki gibi yön yok
+  const modeDiffers = isObj(a?.check) && isObj(b?.check) && (a.check.extended === true) !== (b.check.extended === true)
   const rows = CMP_METRICS.map((key) => {
     const va = ma[key]
     const vb = mb[key]
@@ -175,7 +179,7 @@ export function compareSnapshots(a, b) {
     const delta = known ? vb - va : null
     const pct = known && va > 0 ? Math.round(((vb - va) / va) * 1000) / 10 : null
     // Kesik ölçümde boyut / sayı / süre küçülmesi "iyileşme" değildir — yön verilmez (renk yok)
-    const directional = known && !(cut && CMP_CUT_SENSITIVE.includes(key))
+    const directional = known && !((cut || modeDiffers) && CMP_CUT_SENSITIVE.includes(key))
     return { key, a: va, b: vb, delta, pct, worse: directional ? (delta === 0 ? false : delta > 0) : null }
   })
   const listA = (Array.isArray(a?.resources) ? a.resources : []).filter((r) => isObj(r) && typeof r.url === 'string')
@@ -211,6 +215,7 @@ export function compareSnapshots(a, b) {
     grown: { items: grown.sort(byDelta).slice(0, CMP_LIST_MAX), total: grown.length },
     slower: { items: slower.sort(byDelta).slice(0, CMP_LIST_MAX), total: slower.length },
     partial: cut,
+    modeDiffers,
   }
 }
 
