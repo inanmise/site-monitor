@@ -121,8 +121,9 @@ for (const vp of VIEWPORTS) {
 
     // Kullanıcı menüsü → "Eksiklerim": her zaman açar (telefonda menü çekmecenin içinde, alt sayfa olarak açılır)
     if (vp.width < 768) await page.locator('[data-sidebar="trigger"]').first().click()
-    await page.locator('[data-slot="user-menu-trigger"]:visible').first().click()
-    await page.locator('[data-slot="user-menu-gaps"]:visible').first().click()
+    // (seçici dizesine görünürlük sözde sınıfı yazılmaz: Tailwind onu sınıf adayı sanıp bozuk CSS üretir — filter kullanılır)
+    await page.locator('[data-slot="user-menu-trigger"]').filter({ visible: true }).first().click()
+    await page.locator('[data-slot="user-menu-gaps"]').filter({ visible: true }).first().click()
     await expect(dialog).toHaveAttribute('data-status', 'ready', { timeout: 20_000 })
 
     // "Düzelt": izlemenin ekranına gider, pencere kapanır

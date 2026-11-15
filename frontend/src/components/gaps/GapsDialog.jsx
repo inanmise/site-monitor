@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { ArrowRight, BellRing, CircleCheck, ClipboardList, Database, LayoutGrid, RefreshCw, UserRound, Users } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
-import { navigateTo } from '../../utils/navigate.js'
+import { applyTabView, navigateTo } from '../../utils/navigate.js'
 import ToneBadge from '../admin/ToneBadge.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
 import AlertBanner from '../ui/AlertBanner.jsx'
@@ -24,7 +24,12 @@ const SEVERITY_TONE = Object.freeze({ HIGH: 'danger', MEDIUM: 'warning', LOW: 'm
  * neden önemli olduğu ve düzeltme yerine giden düğme. Alt kısım: "Daha sonra hatırlat" (1 gün), "Bir daha gösterme" (yeni
  * eksik çıkana dek), "Kapat".
  */
-export default function GapsDialog({ status, gaps, moreTeams = 0, dqAllowed = true, globalAdmin = false, username, onClose, onSnooze, onDismiss, onRetry }) {
+/** Şu an açık sekme (adres çubuğundan). */
+function currentTab() {
+  try { return new URLSearchParams(window.location.search).get('tab') } catch { return null }
+}
+
+export default function GapsDialog({ status, gaps, moreTeams = 0, dq = 'yes', globalAdmin = false, username, onClose, onSnooze, onDismiss, onRetry }) {
   const t = useT()
   const ready = status === 'ready' && gaps
   const firstWithGaps = useMemo(() => (ready ? GAP_CATEGORIES.find((c) => gaps.byCategory[c].length > 0) : null), [ready, gaps])
@@ -33,7 +38,10 @@ export default function GapsDialog({ status, gaps, moreTeams = 0, dqAllowed = tr
   const go = (link) => {
     if (!link) return
     onClose()
-    navigateTo(link.tab, link.params)
+    // Hedef sekme zaten açıksa sayfa parametrelerini yalnız bağlanırken okur (Yönetim, Veri Kalitesi): sekme YENİDEN
+    // bağlanır (kayıtlı görünüm yolu); başka sekmeye geçişte olağan gezinme
+    if (currentTab() === link.tab) applyTabView(link.tab, link.params)
+    else navigateTo(link.tab, link.params)
   }
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
@@ -48,7 +56,10 @@ export default function GapsDialog({ status, gaps, moreTeams = 0, dqAllowed = tr
             <LoadingBlock label={t('gaps.loading')} className="py-10" />
           ) : (
             <div className="flex min-w-0 flex-col gap-3">
-              {gaps.total === 0 && gaps.failedTeams.length === 0 && !gaps.profileFailed && dqAllowed && (
+              {/* "Tamamlanacak bir şey yok" YALNIZ her şey okunduysa: profil alanları vardı, hiçbir takım okunmadan kalmadı,
+                  ilk 10 takımın dışında takım yok ve veri kalitesi yetkisi biliniyor (bilinmeyen ≠ eksik yok) */}
+              {gaps.total === 0 && gaps.failedTeams.length === 0 && !gaps.profileFailed && gaps.profileKnown && moreTeams === 0
+                && dq === 'yes' && (
                 <div data-slot="gaps-none">
                   <AlertBanner tone="success" className="mb-0" icon={CircleCheck}>{t('gaps.none')}</AlertBanner>
                 </div>
@@ -83,7 +94,7 @@ export default function GapsDialog({ status, gaps, moreTeams = 0, dqAllowed = tr
                 </TabsList>
                 {GAP_CATEGORIES.map((c) => (
                   <TabsContent key={c} value={c} className="mt-3 min-w-0" data-slot="gaps-panel" data-category={c}>
-                    <CategoryPanel category={c} list={gaps.byCategory[c]} dqAllowed={dqAllowed} profileFailed={gaps.profileFailed} globalAdmin={globalAdmin}
+                    <CategoryPanel category={c} list={gaps.byCategory[c]} dq={dq} profileFailed={gaps.profileFailed} globalAdmin={globalAdmin}
                       username={username} t={t} onGo={go} />
                   </TabsContent>
                 ))}
@@ -106,11 +117,14 @@ export default function GapsDialog({ status, gaps, moreTeams = 0, dqAllowed = tr
   )
 }
 
-function CategoryPanel({ category, list, dqAllowed, profileFailed, globalAdmin, username, t, onGo }) {
+function CategoryPanel({ category, list, dq, profileFailed, globalAdmin, username, t, onGo }) {
   if (category === 'profile' && profileFailed) {
     return <p data-slot="gaps-profile-failed" className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t('gaps.profileFailed')}</p>
   }
-  if (category !== 'profile' && !dqAllowed) {
+  if (category !== 'profile' && dq === 'unknown') {
+    return <p data-slot="gaps-perm-unknown" className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t('gaps.permUnknown')}</p>
+  }
+  if (category !== 'profile' && dq !== 'yes') {
     return <p data-slot="gaps-no-permission" className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t('gaps.noPermission')}</p>
   }
   if (list.length === 0) {

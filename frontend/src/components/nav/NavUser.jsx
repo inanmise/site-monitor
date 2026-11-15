@@ -116,9 +116,11 @@ function Caption({ children }) {
  */
 export default function NavUser({
   username, profile = null, teamName, myTeams = [], systemRole, loginInfo, isMobile,
-  onGo, onOpenTeams, onReportIssue, onChangePassword, onStartTour, onShowShortcuts, onLogout,
+  onGo, onOpenTeams, onReportIssue, onChangePassword, onStartTour, onShowShortcuts, onLogout, onOpenGaps,
 }) {
   const t = useT()
+  // Eksiklerim (2026-11-15): Nav telefonda önce çekmeceyi kapatır (diğer pencere açan öğeler gibi); verilmezse doğrudan
+  const openGaps = onOpenGaps || openGapsDialog
   // Kısayol listesi menüden açılınca Radix menünün odak iadesi (kapanış animasyonu sonunda tetiğe) pencerenin
   // odağını çalmasın — MonitorPageHeader / KebabMenu kalıbı; diğer öğelerin davranışı değişmez.
   const openedDialog = useRef(false)
@@ -218,7 +220,7 @@ export default function NavUser({
                   {multiTeam && <Row icon={<Users />} onSelect={pick(onOpenTeams)}>{t('nav.myTeams', myTeams.length)}</Row>}
                   <Row icon={<MonitorSmartphone />} onSelect={pick(() => onGo('myactivity'))}>{t('dev.navLink')}</Row>
                   {isAdmin && <Row icon={<Settings />} onSelect={pick(() => onGo('settings'))}>{t('nav.settings')}</Row>}
-                  <Row icon={<ClipboardList />} onSelect={pick(openGapsDialog)} data-slot="user-menu-gaps">{t('gaps.menu')}</Row>
+                  <Row icon={<ClipboardList />} onSelect={pick(openGaps)} data-slot="user-menu-gaps">{t('gaps.menu')}</Row>
                   <Row icon={<Lock />} onSelect={pick(onChangePassword)}>{t('nav.changePassword')}</Row>
                 </div>
                 <div data-slot="user-menu-group" data-group="help">
@@ -292,7 +294,7 @@ export default function NavUser({
                     içinde kilitli, backend GLOBAL_ONLY/requireNotScopedAdmin uygular). */}
                 {isAdmin && <Item icon={<Settings />} onSelect={() => onGo('settings')}>{t('nav.settings')}</Item>}
                 <Item icon={<ClipboardList />} data-slot="user-menu-gaps"
-                  onSelect={() => { openedDialog.current = true; openGapsDialog() }}>{t('gaps.menu')}</Item>
+                  onSelect={() => { openedDialog.current = true; openGaps() }}>{t('gaps.menu')}</Item>
                 <Item icon={<Lock />} onSelect={onChangePassword}>{t('nav.changePassword')}</Item>
               </DropdownMenuGroup>
               <DropdownMenuSeparator />

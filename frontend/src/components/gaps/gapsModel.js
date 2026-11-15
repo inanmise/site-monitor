@@ -12,10 +12,27 @@ export const MAX_TEAMS = 10
 export const MAX_ITEMS_PER_GAP = 5
 /** "Daha sonra hatırlat" süresi. */
 export const SNOOZE_MS = 24 * 60 * 60 * 1000
-/** Saklanan "gösterme" özetinin en çok uzunluğu (kullanıcı tercih belgesine sığsın). */
+/**
+ * Saklanan "gösterme" kaydının en çok girdisi. Girdi EKSİK (kural) düzeyindedir, kalem düzeyinde değil: profil 2 + en çok
+ * 10 takım × ~20 kural — bu sınıra ulaşılmaz; kalem düzeyi (kural başına 500 kalem) sınırı aşıp pencereyi her girişte
+ * yeniden açıyordu (inceleme 2026-11-15).
+ */
 export const MAX_DISMISSED = 500
 /** Takım veri kalitesi isteğinin süre sınırı (ms) — istek asla süresiz beklemez. */
 export const TEAM_FETCH_TIMEOUT_MS = 20_000
+/**
+ * Bir okumanın (yanıt gövdesi dahil) üst süresi. `request()`'in zaman aşımı başlıklar gelince biter; gövde takılırsa okuma
+ * bu süre dolunca "okunamadı" sayılır (süresiz bekleme yok).
+ */
+export const LOAD_DEADLINE_MS = 30_000
+/** Kendiliğinden gösterme: okuma bundan uzun sürdüyse pencere açılmaz (kullanıcı başka işe geçmiştir; menüden açılabilir). */
+export const AUTO_MAX_AGE_MS = 30_000
+/** Başka bir sekme bu kadar süre içinde denetlediyse yeni sekme yeniden okumaz (her sekmede MB'lar indirilmesin). */
+export const RECHECK_MS = 30 * 60 * 1000
+/** "Kapat": bu oturumda (çıkışta silinir) bu kadar süre kendiliğinden açılmaz — sekmeler arası. */
+export const CLOSE_QUIET_MS = 12 * 60 * 60 * 1000
+/** Oturuma bağlı yerel kayıt (tercih aynasına GİRMEZ; çıkışta kişisel depolamayla silinir). */
+export const GAPS_SESSION_KEY = 'sm.gaps.session'
 /** Kendiliğinden gösterme öncesi bekleme (sayfa otursun, başka pencere açılmışsa sorulmaz). */
 export const AUTO_PROMPT_DELAY_MS = 1500
 /** Kullanıcı tercihindeki (yerel ayna) anahtar — UserPreferencesService.LOCAL_KEYS ile aynı. */
@@ -28,12 +45,15 @@ const SEVERITY_RANK = Object.freeze({ HIGH: 0, MEDIUM: 1, LOW: 2 })
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const num = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v))
 
-/** Basit teslim edilebilir e-posta denetimi (sunucunun ayrıntılı kuralı değil — boş / bozuk adresi yakalar). */
+/**
+ * Yalnız açıkça kullanılamaz adres eksik sayılır: boş, '@' yok / birden çok, yerel ya da alan kısmı boş, boşluk içeriyor.
+ * Sunucunun kuralından daha katı DEĞİL (ör. `ayse@localhost` eksik sayılmaz — yanlış uyarı yok).
+ */
 function deliverable(email) {
   if (typeof email !== 'string') return false
   const e = email.trim()
   const at = e.indexOf('@')
-  return at > 0 && at === e.lastIndexOf('@') && e.indexOf('.', at) > at + 1 && !/\s/.test(e)
+  return at > 0 && at === e.lastIndexOf('@') && at < e.length - 1 && !/\s/.test(e)
 }
 
 /**
@@ -67,12 +87,6 @@ export function ownTeamIds(myTeamIds, manageTeamIds) {
   return { ids: out.slice(0, MAX_TEAMS), more: Math.max(0, out.length - MAX_TEAMS) }
 }
 
-/** Bir kalemin kalıcı anahtarı (kural + tür + kimlik); kimliksiz kalem adıyla. */
-function itemKey(code, it) {
-  const id = it?.id ?? it?.name ?? ''
-  return `${code}|${it?.kind ?? ''}|${it?.type ?? ''}|${id}`
-}
-
 /**
  * Takım veri kalitesi yanıtından eksikler: kusurlu (failing > 0) her kural bir eksik — kategori kuralın kapsamından,
  * kalemler en çok MAX_ITEMS_PER_GAP (`more` = gösterilmeyen). Bilinmeyen kapsam atlanır.
@@ -88,44 +102,47 @@ export function teamGaps(teamId, data) {
     const failing = num(r.failing) ?? 0
     if (!category || failing <= 0) continue
     const items = (Array.isArray(r.items) ? r.items : []).filter(isObj)
-    const keys = items.length ? items.map((it) => itemKey(r.code, it)) : [`${r.code}|team|${teamId}`]
     out.push({
       key: `${teamId}:${r.code}`, category, code: r.code, severity: SEVERITIES.includes(r.severity) ? r.severity : 'LOW',
       teamId, teamName, failing, items: items.slice(0, MAX_ITEMS_PER_GAP),
-      more: Math.max(0, failing - Math.min(items.length, MAX_ITEMS_PER_GAP)), itemKeys: keys,
+      more: Math.max(0, failing - Math.min(items.length, MAX_ITEMS_PER_GAP)),
     })
   }
   return out
 }
 
 /**
- * Tüm eksikler: `{ byCategory: {profile, team, monitors, inventory}, total, keys, failedTeams }`. Kategoride sıra: önem,
- * sonra takım adı, sonra kural. `keys` = kendiliğinden gösterme kararı için kalem anahtarları (profil kodu dahil).
- * Okunamayan takım `failedTeams`'e girer (bilinmeyen ≠ eksik yok) ve anahtarlara katılmaz.
+ * Tüm eksikler: `{ byCategory: {profile, team, monitors, inventory}, total, marks, failedTeams, profileKnown }`. Kategoride
+ * sıra: önem, sonra takım adı, sonra kural. `marks` = kendiliğinden gösterme kararı için EKSİK düzeyinde işaretler
+ * `{ key, n, scope }` (n = kusurlu kayıt sayısı; profil 1). Okunamayan takım `failedTeams`'e girer (bilinmeyen ≠ eksik yok)
+ * ve işaretlere katılmaz; uygulanamayan takım (`skipped`: pasif / görünmez — 404) hiçbir yere girmez. `profileKnown`:
+ * profil alanları yanıtta vardı (yoksa "tamamlanacak bir şey yok" denmez).
  */
 export function collectGaps({ profile, profileFailed = false, teams = [] }) {
   const byCategory = Object.fromEntries(GAP_CATEGORIES.map((c) => [c, []]))
-  const keys = []
+  const marks = []
   const failedTeams = []
   for (const g of profileGaps(profile)) {
     byCategory.profile.push(g)
-    keys.push(g.key)
+    marks.push({ key: g.key, n: 1, scope: 'p' })
   }
   for (const t of teams) {
-    if (!t || t.id == null) continue
+    if (!t || t.id == null || t.skipped) continue
     if (t.failed) { failedTeams.push({ id: t.id, name: t.name ?? null }); continue }
     for (const g of teamGaps(t.id, t.data)) {
       byCategory[g.category].push(g)
-      keys.push(...g.itemKeys)
+      marks.push({ key: g.key, n: g.failing, scope: `t${t.id}` })
     }
   }
+  const has = (k) => isObj(profile) && Object.prototype.hasOwnProperty.call(profile, k)
+  const profileKnown = has('email') && has('phone')
   const coll = typeof Intl !== 'undefined' ? new Intl.Collator('tr', { sensitivity: 'base', numeric: true }) : null
   for (const c of GAP_CATEGORIES) {
     byCategory[c].sort((a, b) => (SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity])
       || (coll ? coll.compare(a.teamName || '', b.teamName || '') : 0) || String(a.code).localeCompare(String(b.code)))
   }
   const total = GAP_CATEGORIES.reduce((n, c) => n + byCategory[c].length, 0)
-  return { byCategory, total, keys, failedTeams, profileFailed: profileFailed === true }
+  return { byCategory, total, marks, failedTeams, profileFailed: profileFailed === true, profileKnown }
 }
 
 /** FNV-1a 32 bit (onaltılık) — saklanan anahtar özetleri kısa olsun, ham kimlik / ad tercih belgesine yazılmasın. */
@@ -139,49 +156,103 @@ export function hashKey(s) {
   return h.toString(16).padStart(8, '0')
 }
 
-/** Saklanan durum (bozuksa boş): `{ v: 1, snoozeUntil: ms|null, dismissed: [hex] }`. */
+/**
+ * Saklanan durum (bozuksa boş): `{ v: 2, snoozeUntil: ms|null, dismissed: [[eksikÖzeti, kayıtSayısı, kapsamÖzeti]] }`.
+ * Özetler 8 haneli onaltılık (ham kimlik / ad / kod yazılmaz). Önceki biçim (v1, yalnız özet dizgeleri — yayınlanmadı)
+ * yok sayılır.
+ */
 export function readState(raw) {
   let o = raw
   if (typeof raw === 'string') {
     try { o = JSON.parse(raw) } catch { o = null }
   }
-  if (!isObj(o)) return { v: 1, snoozeUntil: null, dismissed: [] }
+  if (!isObj(o)) return { v: 2, snoozeUntil: null, dismissed: [] }
   const snooze = num(o.snoozeUntil)
-  const dismissed = (Array.isArray(o.dismissed) ? o.dismissed : []).filter((x) => typeof x === 'string' && /^[0-9a-f]{8}$/.test(x))
+  const hex = (x) => typeof x === 'string' && /^[0-9a-f]{8}$/.test(x)
+  const dismissed = (Array.isArray(o.dismissed) ? o.dismissed : [])
+    .filter((e) => Array.isArray(e) && e.length === 3 && hex(e[0]) && Number.isInteger(e[1]) && e[1] >= 0 && hex(e[2]))
     .slice(0, MAX_DISMISSED)
-  return { v: 1, snoozeUntil: snooze !== null && snooze > 0 ? snooze : null, dismissed }
+  return { v: 2, snoozeUntil: snooze !== null && snooze > 0 ? snooze : null, dismissed }
 }
 
 /**
- * Kendiliğinden gösterilsin mi: eksik varsa, ertelenmediyse ve "gösterme" dendiğinden beri YENİ bir eksik çıktıysa.
- * Eksik yoksa ya da bilinmiyorsa (hiç anahtar) gösterilmez.
+ * Kendiliğinden gösterilsin mi: eksik varsa, ertelenmediyse ve "gösterme" dendiğinden beri YENİ bir eksik çıktıysa ya da
+ * bir eksiğin kusurlu kayıt sayısı ARTTIYSA. Düzelen (azalan / kaybolan) eksik pencereyi açmaz. Eksik yoksa gösterilmez.
  */
-export function shouldPrompt(state, keys, now) {
+export function shouldPrompt(state, marks, now) {
   const s = readState(state)
-  if (!Array.isArray(keys) || keys.length === 0) return false
+  if (!Array.isArray(marks) || marks.length === 0) return false
   if (s.snoozeUntil !== null && s.snoozeUntil > now) return false
-  if (s.dismissed.length === 0) return true
-  const seen = new Set(s.dismissed)
-  return keys.some((k) => !seen.has(hashKey(k)))
+  const known = new Map(s.dismissed.map((e) => [e[0], e[1]]))
+  return marks.some((m) => {
+    const n = known.get(hashKey(m?.key))
+    return n === undefined || (Number(m?.n) || 0) > n
+  })
 }
 
-/** "Daha sonra hatırlat": 1 gün sonra (gösterme listesi korunur). */
+/** "Daha sonra hatırlat": 1 gün sonra (gösterme kaydı korunur). */
 export function snoozeState(state, now) {
   const s = readState(state)
   return { ...s, snoozeUntil: now + SNOOZE_MS }
 }
 
-/** "Bir daha gösterme": şu anki eksikler hatırlanır; yeni bir eksik çıkınca yine gösterilir. */
-export function dismissState(state, keys) {
+/**
+ * "Bir daha gösterme": şu anki eksikler ve kayıt sayıları hatırlanır. Okunamayan takımların (`failedTeamIds`) önceki
+ * kaydı KORUNUR (o takım bu kez okunamadı diye, daha önce gösterilmemesi istenen eksikleri yeniden açılmasın).
+ */
+export function dismissState(state, marks, failedTeamIds = []) {
   const s = readState(state)
-  const hashes = []
+  const out = []
   const seen = new Set()
-  for (const k of Array.isArray(keys) ? keys : []) {
-    const h = hashKey(k)
+  for (const m of Array.isArray(marks) ? marks : []) {
+    const h = hashKey(m?.key)
     if (seen.has(h)) continue
     seen.add(h)
-    hashes.push(h)
-    if (hashes.length >= MAX_DISMISSED) break
+    out.push([h, Math.max(0, Math.round(Number(m?.n) || 0)), hashKey(m?.scope ?? '')])
   }
-  return { ...s, snoozeUntil: null, dismissed: hashes }
+  const keepScopes = new Set((Array.isArray(failedTeamIds) ? failedTeamIds : []).map((id) => hashKey(`t${id}`)))
+  for (const e of s.dismissed) {
+    if (!seen.has(e[0]) && keepScopes.has(e[2])) { seen.add(e[0]); out.push(e) }
+  }
+  return { ...s, snoozeUntil: null, dismissed: out.slice(0, MAX_DISMISSED) }
+}
+
+/** Oturuma bağlı yerel kayıt `{ checkedAt, closedAt }` (bozuksa boş). */
+export function readSession(raw) {
+  let o = raw
+  if (typeof raw === 'string') {
+    try { o = JSON.parse(raw) } catch { o = null }
+  }
+  if (!isObj(o)) return { checkedAt: null, closedAt: null }
+  const c = num(o.checkedAt)
+  const k = num(o.closedAt)
+  return { checkedAt: c !== null && c > 0 ? c : null, closedAt: k !== null && k > 0 ? k : null }
+}
+
+/**
+ * Kendiliğinden okuma YAPILSIN mı (ağa çıkmadan önceki karar): ertelendiyse, bu oturumda kapatıldıysa (12 sa) ya da başka
+ * bir sekme yakın zamanda denetlediyse (30 dk) hayır. Saat geri alındıysa (gelecekte damga) kayıt yok sayılır.
+ */
+export function shouldAutoCheck(state, session, now) {
+  const s = readState(state)
+  if (s.snoozeUntil !== null && s.snoozeUntil > now) return false
+  const ss = readSession(session)
+  if (ss.closedAt !== null && ss.closedAt <= now && now - ss.closedAt < CLOSE_QUIET_MS) return false
+  if (ss.checkedAt !== null && ss.checkedAt <= now && now - ss.checkedAt < RECHECK_MS) return false
+  return true
+}
+
+/** Üst süre dolduğunda {@link withDeadline}'in döndürdüğü işaret (okuma "okunamadı" sayılır). */
+export const DEADLINE = Symbol('gaps-deadline')
+
+/**
+ * Söz `ms` içinde sonuçlanmazsa {@link DEADLINE} döner. Söz kendi zaman aşımıyla sonra biter; sonucu yok sayılır. Söz
+ * reddedilirse ret aynen geçer. Zamanlayıcı her durumda temizlenir.
+ */
+export function withDeadline(promise, ms) {
+  let timer
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((resolve) => { timer = setTimeout(() => resolve(DEADLINE), ms) }),
+  ]).finally(() => clearTimeout(timer))
 }
