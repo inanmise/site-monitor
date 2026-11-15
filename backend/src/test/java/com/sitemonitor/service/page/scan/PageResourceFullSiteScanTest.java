@@ -63,6 +63,8 @@ class PageResourceFullSiteScanTest {
     volatile boolean withRobots = true;
     /** robots.txt başka sunucudaki bir site haritasını da listeler (indirilmemeli). */
     volatile boolean robotsOtherHost;
+    /** robots.txt YALNIZ başka sunucudaki haritayı listeler (sitenin kendi /sitemap.xml'i denenmeli). */
+    volatile boolean robotsOnlyOtherHost;
     /** Doluysa site haritası isteği bu kadar ms bekletilir (sınırlı) — süre sınırı denetimi. */
     volatile long sitemapStallMs;
     final AtomicInteger userSeq = new AtomicInteger();
@@ -107,8 +109,8 @@ class PageResourceFullSiteScanTest {
                 case "/s.css" -> { body = "body{color:red}".getBytes(StandardCharsets.UTF_8); ct = "text/css"; }
                 case "/robots.txt" -> {
                     if (!withRobots) { body = "no".getBytes(); status = 404; ct = "text/plain"; break; }
-                    body = ("User-agent: *\n" + (robotsOtherHost ? "Sitemap: http://other.example.invalid/sm.xml\n" : "")
-                            + "Sitemap: " + host + "/sm-index.xml\n").getBytes(StandardCharsets.UTF_8);
+                    body = ("User-agent: *\n" + (robotsOtherHost || robotsOnlyOtherHost ? "Sitemap: http://other.example.invalid/sm.xml\n" : "")
+                            + (robotsOnlyOtherHost ? "" : "Sitemap: " + host + "/sm-index.xml\n")).getBytes(StandardCharsets.UTF_8);
                     ct = "text/plain";
                 }
                 case "/sm-index.xml" -> {
@@ -217,7 +219,7 @@ class PageResourceFullSiteScanTest {
         assertThat(crawl.get("complete")).isEqualTo(true);
         assertThat(crawl.get("stop_reason")).isNull();
         assertThat(crawl).doesNotContainKey("discovery_incomplete");
-        assertThat(scan.get("resumable")).as("tüm site taramasının denetim noktası var").isEqualTo(true);
+        assertThat(scan.get("resumable")).as("kuyruk bitti: sürdürülecek bir şey yok").isEqualTo(false);
         assertThat((Integer) crawl.get("from_sitemap")).as("yalnız haritada olan sayfa").isEqualTo(1);
         Map<String, Object> sm = get(crawl, "sitemap");
         assertThat(sm).containsEntry("found", true).containsEntry("from_robots", true).containsEntry("files_read", 2)
@@ -230,7 +232,7 @@ class PageResourceFullSiteScanTest {
         assertThat(hits("GET /a")).as("her sayfa bir kez").isEqualTo(1);
         assertThat(hits("GET /doc.pdf")).as("belge sayfa olarak taranmaz").isZero();
         String ck = jdbc.queryForObject("SELECT site_checkpoint FROM page_resource_scans WHERE id = ?", String.class, id);
-        assertThat(ck).as("sürdürme noktası API'ye dönmez ama saklanır").contains("\"done_urls\"").doesNotContain("\"u\":");
+        assertThat(ck).as("kuyruk bitti: ara sürdürme noktası silinir (budama yuvası tüketmez)").isNull();
         assertThat(one.toString()).doesNotContain("done_urls").doesNotContain("site_checkpoint");
     }
 
@@ -267,7 +269,10 @@ class PageResourceFullSiteScanTest {
         assertThat(hits("GET /a")).as("devralınan sayfa yeniden taranmaz").isEqualTo(1);
 
         assertThatThrownBy(() -> svc.loadResume(2, second)).isInstanceOf(PageResourceScanService.ResumeException.class)
-                .extracting("code").isEqualTo("RESOURCE_SCAN_NOTHING_TO_RESUME");
+                .extracting("code").isEqualTo("RESOURCE_SCAN_NOT_RESUMABLE");   // tamamlanan taramanın noktası yok
+        String ck1 = jdbc.queryForObject("SELECT site_checkpoint FROM page_resource_scans WHERE id = ?", String.class, first);
+        assertThat(ck1).as("kuyruğu kalan taramanın noktası saklanır, API'ye dönmez").contains("\"done_urls\"");
+        assertThat(one.toString()).doesNotContain("done_urls").doesNotContain("site_checkpoint");
     }
 
     @Test
@@ -294,11 +299,34 @@ class PageResourceFullSiteScanTest {
         Map<String, Object> sm = get(crawl, "sitemap");
         assertThat(sm.get("other_host")).isEqualTo(1);
         assertThat((List<?>) get(sm, "errors")).as("denenmedi, hata değil").isEmpty();
-        assertThat(crawl.get("complete")).isEqualTo(true);
+        assertThat(sm.get("files_read")).as("sitenin kendi haritaları okundu").isEqualTo(2);
+        assertThat(crawl.get("complete")).as("başka sunucudaki haritanın sayfaları bilinmiyor").isEqualTo(false);
+        assertThat(crawl.get("discovery_incomplete")).isEqualTo(true);
         PageResourceScanService.Start st = svc.start(monitor(8), "u:y", "Ayşe", new PageResourceScanService.SiteOptions(3));
         long siteId = ((Number) st.scan().get("id")).longValue();
         Map<String, Object> scan = get(awaitEnd(8, siteId), "scan");
         assertThat(scan).doesNotContainKey("resumable");
+    }
+
+    @Test
+    @DisplayName("robots yalnız başka sunucudaki haritayı listeler: sitenin kendi /sitemap.xml'i denenir; 404 hata değil, keşif eksik")
+    void onlyOtherHostSitemapTriesDefault() throws Exception {
+        robotsOnlyOtherHost = true;
+        long id = startFull(9, 1000, null);
+        Map<String, Object> site = get(get(awaitEnd(9, id), "analysis"), "site");
+        Map<String, Object> crawl = get(site, "crawl");
+        Map<String, Object> sm = get(crawl, "sitemap");
+        assertThat(hits("GET /sitemap.xml")).as("varsayılan harita denendi").isEqualTo(1);
+        assertThat(sm.get("default_seed")).isEqualTo(true);
+        assertThat(sm.get("other_host")).isEqualTo(1);
+        assertThat((List<?>) get(sm, "errors")).as("varsayılan haritanın 404'ü hata değil").isEmpty();
+        assertThat(crawl.get("complete")).isEqualTo(false);
+        assertThat(crawl.get("discovery_incomplete")).isEqualTo(true);
+        assertThat(PageResourceScanService.hostOf("http://a b.example/x.xml")).as("okunamayan adres").isNull();
+        assertThat(PageResourceScanService.hostOf("/rel.xml")).isNull();
+        assertThat(PageResourceScanService.hostOf("ftp://a.example/x")).isNull();
+        assertThat(PageResourceScanService.sameHost("https://A.Example/x.xml", "http://a.example:8080")).isTrue();
+        assertThat(PageResourceScanService.sameHost("https://cdn.a.example/x.xml", "https://a.example")).isFalse();
     }
 
     @Test
@@ -347,7 +375,7 @@ class PageResourceFullSiteScanTest {
         assertThat(crawl.get("stop_reason")).as("kuyruk bitti").isNull();
         assertThat(crawl.get("complete")).as("listelenen harita okunamadı: 'her sayfa tarandı' denmez").isEqualTo(false);
         assertThat(crawl.get("discovery_incomplete")).isEqualTo(true);
-        assertThat(site.get("incomplete")).isEqualTo(true);
+        assertThat(site.get("incomplete")).as("bütün sayfalar tarandı: sayfa uyarısı değil, keşif uyarısı").isEqualTo(false);
         assertThat(took).as("15 sn bekletilen harita taramayı bekletmez").isLessThan(14_000);
     }
 }

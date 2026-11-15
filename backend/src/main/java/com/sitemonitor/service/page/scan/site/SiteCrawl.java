@@ -100,6 +100,11 @@ public final class SiteCrawl {
         return droppedAtLeast;
     }
 
+    /** Kalan adresler sayılamadan bırakıldı (ör. site haritası evresi tavan dolunca kesildi): sayaç alt sınırdır. */
+    public void markDroppedAtLeast() {
+        droppedAtLeast = true;
+    }
+
     private void noteDropped(String n) {
         if (droppedSeen.size() >= DROPPED_TRACK_MAX) { droppedAtLeast = true; return; }
         if (droppedSeen.add(fnv64(n))) dropped++;

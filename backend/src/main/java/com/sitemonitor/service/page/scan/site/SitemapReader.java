@@ -89,7 +89,9 @@ public final class SitemapReader {
     public static Parsed parse(String xml) {
         List<String> locs = new ArrayList<>();
         if (xml == null || xml.isEmpty()) return new Parsed(false, locs, false);
-        boolean index = isIndex(xml);
+        String root = rootName(xml);
+        boolean index = "sitemapindex".equals(root);
+        String firstEntry = null;   // ilk kayıt öğesi (sitemap / url) — kök öncesi çöp (PHP uyarısı …) olunca dizin kararı bundan
         boolean truncated = false;
         int n = xml.length();
         int i = 0;
@@ -128,6 +130,7 @@ public final class SitemapReader {
             String local = localOf(name);
             if (ENTRY_ELEMENTS.contains(local)) {
                 extDepth = 0;   // bozuk (kapanmamış) uzantı öğesi sonraki kayıtları yutmasın
+                if (!closing && firstEntry == null && ("sitemap".equals(local) || "url".equals(local))) firstEntry = local;
             } else if (name.indexOf(':') > 0 && !STANDARD_ELEMENTS.contains(local)) {
                 if (closing) {
                     if (extDepth > 0) extDepth--;
@@ -137,6 +140,7 @@ public final class SitemapReader {
             }
             i = gt + 1;
         }
+        if (!"urlset".equals(root) && !"sitemapindex".equals(root) && "sitemap".equals(firstEntry)) index = true;
         return new Parsed(index, locs, truncated);
     }
 
@@ -163,34 +167,40 @@ public final class SitemapReader {
      * yalnız ilk öğenin adına bakılır (bir urlset'in stil sayfası ya da ilk adresi "sitemapindex" içerse de urlset kalır).
      */
     static boolean isIndex(String xml) {
+        return "sitemapindex".equals(rootName(xml));
+    }
+
+    /** Kök öğenin yerel adı (küçük harf) ya da null — {@link #isIndex} kuralıyla. */
+    static String rootName(String xml) {
+        if (xml == null) return null;
         int lim = Math.min(xml.length(), ROOT_SCAN_CHARS);
         int i = 0;
         while (i < lim) {
             int lt = xml.indexOf('<', i);
-            if (lt < 0 || lt >= lim) return false;
+            if (lt < 0 || lt >= lim) return null;
             if (xml.startsWith("<?", lt)) {
                 int e = xml.indexOf("?>", lt + 2);
-                if (e < 0) return false;
+                if (e < 0) return null;
                 i = e + 2;
                 continue;
             }
             if (xml.startsWith("<!--", lt)) {
                 int e = xml.indexOf("-->", lt + 4);
-                if (e < 0) return false;
+                if (e < 0) return null;
                 i = e + 3;
                 continue;
             }
             if (xml.startsWith("<!", lt)) {
                 int e = xml.indexOf('>', lt + 2);
-                if (e < 0) return false;
+                if (e < 0) return null;
                 i = e + 1;
                 continue;
             }
             int gt = xml.indexOf('>', lt + 1);
             if (gt < 0) gt = xml.length();
-            return "sitemapindex".equals(localOf(elementName(xml, lt + 1, gt)));
+            return localOf(elementName(xml, lt + 1, gt));
         }
-        return false;
+        return null;
     }
 
     /** {@code <loc>} / {@code <ns:loc>} / {@code <loc ...>} açılış etiketi mi ({@code from}..{@code gt} arası). */

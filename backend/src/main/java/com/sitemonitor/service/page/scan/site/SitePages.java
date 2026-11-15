@@ -347,7 +347,8 @@ public final class SitePages {
         if (extra != null) {
             site.putAll(extra);
             if (extra.get("unscanned_total") instanceof Number n && n.intValue() > 0) site.put("incomplete", true);
-            if (extra.get("crawl") instanceof Map<?, ?> c && Boolean.FALSE.equals(c.get("complete"))) site.put("incomplete", true);
+            // Keşif eksikliği / adres tavanı burada sayılmaz: tarama özeti kendi uyarısıyla söyler (sayfa "kısmi ölçüm" uyarısı
+            // yanlış neden göstermesin)
         }
         return site;
     }
