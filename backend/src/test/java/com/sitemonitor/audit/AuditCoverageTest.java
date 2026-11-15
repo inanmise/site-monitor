@@ -94,6 +94,10 @@ class AuditCoverageTest {
               + "ekleyen öneriyi bellekte hesaplar ve döndürür — veritabanına gitmez, hiçbir kayıt değiştirmez, kota harcamaz. "
               + "POST yalnız sorgu metni gövdesi taşıdığı için (URL'de SQL olmasın); öneri uygulanıp KAYDEDİLİNCE "
               + "MONITOR_CREATE / MONITOR_UPDATE denetlenir.");
+        EXEMPT.put("MonitoringController#dbQueryBacktest",
+                "Veritabanı sorgu izlemesi GERİ TEST (2026-10-31, prod kapısında gövdesi dbqRunBacktest'e taşındı): SAKLI ölçümleri "
+              + "yeni kurallarla yeniden oynatır — hedef veritabanına gitmez, satır verisi okumaz, hiçbir kayıt değiştirmez. POST "
+              + "yalnız kural gövdesi taşıdığı için; kurallar KAYDEDİLİNCE MONITOR_UPDATE denetlenir.");
         EXEMPT.put("MonitoringController#dbQuerySchedulePreview",
                 "Veritabanı sorgu izlemesi ZAMANLAMA ÖNİZLEMESİ (2026-10-31): sonraki çalışmaları saf hesapla bulur, hiçbir "
               + "kayıt değiştirmez. Kayıt (MONITOR_CREATE / MONITOR_UPDATE) denetlenir.");

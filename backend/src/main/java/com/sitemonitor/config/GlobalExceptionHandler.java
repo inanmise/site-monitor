@@ -400,7 +400,7 @@ public class GlobalExceptionHandler {
     /** Neden zincirinde gövde boyutu sınırı var mı (Jackson okuma kısıtı ya da oturumsuz uç süzgeci) — tavanlı yürüyüş. */
     static boolean bodyTooLarge(Throwable e) {
         Throwable t = e;
-        for (int i = 0; t != null && i < com.sitemonitor.util.CauseChain.MAX_DEPTH; i++, t = t.getCause()) {
+        for (int guard = 0; t != null && guard < com.sitemonitor.util.CauseChain.MAX_DEPTH; guard++, t = t.getCause()) {
             if (t instanceof PublicBodyLimitFilter.BodyLimitExceededException) return true;
             if (t instanceof tools.jackson.core.exc.StreamConstraintsException sc) {
                 String m = sc.getMessage();
