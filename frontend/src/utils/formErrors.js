@@ -47,3 +47,27 @@ export function focusFormError(errors, root) {
   }
   return keys[0]
 }
+
+/**
+ * Sunucunun 400 `VALIDATION_FAILED` gövdesinden (`field` + `fields`) alan → ileti haritası (2026-11-15, yayın öncesi e2e B —
+ * Genel Ayarlar'da sunucu alan hatası yalnız tost olarak görünüyordu). `fields` nesne (`{ad: ileti}`) ya da dizi
+ * (`[{field, message}]`) olabilir; `field`'in iletisi gövdenin `error` metnidir (sunucu ikisini aynı yazar). `resolve(ad)`
+ * sunucunun alan adını ekrandaki alan anahtarına çevirir; null dönerse o alan haritaya girmez. Hiç alan yoksa null.
+ */
+export function serverFieldErrors(res, resolve = (name) => name) {
+  if (!res || typeof res !== 'object') return null
+  const out = {}
+  const add = (name, msg) => {
+    if (name == null || name === '' || !msg) return
+    const key = resolve(String(name))
+    if (key && !out[key]) out[key] = String(msg)
+  }
+  const fields = res.fields
+  if (res.field) add(res.field, res.error || (fields && !Array.isArray(fields) ? fields[res.field] : null))
+  if (Array.isArray(fields)) {
+    for (const it of fields.slice(0, 50)) add(it?.field, it?.message || it?.error)
+  } else if (fields && typeof fields === 'object') {
+    for (const [k, v] of Object.entries(fields).slice(0, 50)) add(k, v)
+  }
+  return Object.keys(out).length ? out : null
+}

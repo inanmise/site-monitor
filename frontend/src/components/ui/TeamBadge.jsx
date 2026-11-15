@@ -21,8 +21,11 @@ const BADGE_INTERACTIVE = 'cursor-pointer hover:bg-accent hover:text-primary foc
  * DEĞİŞMEZ; `::after` yalnız dokunmatik işaretçide dikeyde 10'ar px taşar (≈42 px hedef). Yatayda taşmaz: meta
  * satırında yanındaki düğmelerle çakışmasın. Badge tabanının `overflow-hidden`'ı bu katmanı kırpardı → yalnız
  * dokunmatikte `overflow-visible` (ad kırpması içteki `truncate` span'inde, etkilenmez). Kalıp: TOUCH_CHIP.
+ * 2026-11-15 (yayın öncesi e2e B): mutlak konumlu ::after rozetin DOLGU kutusuna göre yerleşir (1 px kenarlık hariç) —
+ * 18 px dolgu kutusunda 18 + 20 = 38 px kalıyordu. `min-h-10` alt sınır: rozet boyu bağlamdan (yazı boyu) ne gelirse gelsin
+ * ≥ 40 px (aşırı kısıtlı mutlak kutuda `bottom` yok sayılır, katman 0–2 px aşağı uzar).
  */
-export const TEAM_BADGE_TOUCH = 'relative pointer-coarse:overflow-visible pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-2.5'
+export const TEAM_BADGE_TOUCH = 'relative pointer-coarse:overflow-visible pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-inset-y-2.5 pointer-coarse:after:min-h-10'
 
 /**
  * Tıklanabilir takım rozeti: adın geçtiği her yerde aynı görünüm, tıklanınca üye modalı.

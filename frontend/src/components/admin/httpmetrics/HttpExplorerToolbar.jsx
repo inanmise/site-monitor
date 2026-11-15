@@ -25,12 +25,17 @@ import { CLASS_COLOR, STATUS_CLASSES, activeFilterCount } from './httpMetricsMod
 /** Dokunma hedefi: 1024 px altında (telefon + tablet) ve kaba işaretçide 40 px. */
 const TOUCH = 'max-lg:h-10 pointer-coarse:h-10'
 
-function Chip({ label, onRemove, t }) {
+/**
+ * Etkin süzgeç çipi. `wrap`: uzun değer (uç yolu) KESİLMEZ, satıra sarar — çok satırlı metin hap köşesinde kırpılmasın diye
+ * düz köşe (2026-11-15, yayın öncesi e2e B: 390'da "…/resources/expor…" kesiliyordu).
+ */
+function Chip({ label, onRemove, t, wrap = false }) {
   return (
     <Button type="button" variant="outline" size="sm" onClick={onRemove} aria-label={t('hreq.f.remove', label)}
       data-slot="hreq-chip"
-      className={cn('h-8 max-w-full gap-1 rounded-full border-primary/40 bg-primary/10 px-2.5 text-xs font-normal text-primary hover:bg-primary/15 hover:text-primary', TOUCH)}>
-      <span className="min-w-0 truncate">{label}</span>
+      className={cn('max-w-full gap-1 border-primary/40 bg-primary/10 px-2.5 text-xs font-normal text-primary hover:bg-primary/15 hover:text-primary',
+        wrap ? 'h-auto min-h-8 rounded-md py-1 text-left whitespace-normal max-lg:min-h-10 pointer-coarse:min-h-10' : cn('h-8 rounded-full', TOUCH))}>
+      <span className={wrap ? 'min-w-0 [overflow-wrap:anywhere]' : 'min-w-0 truncate'}>{label}</span>
       <X aria-hidden="true" className="size-3.5 shrink-0" />
     </Button>
   )
@@ -68,15 +73,16 @@ export default function HttpExplorerToolbar({
   const updated = updatedAt ? new Date(updatedAt).toLocaleTimeString(dateLocale(), { hour: '2-digit', minute: '2-digit' }) : null
 
   const endpointSelect = (
-    <div className={cn('min-w-0 sm:w-[min(340px,40vw)]', phone ? 'w-full [&_[role=combobox]]:h-10' : 'max-lg:[&_[role=combobox]]:h-10 pointer-coarse:[&_[role=combobox]]:h-10')}>
-      <SearchableSelect value={filters.endpoint} onChange={(v) => patch({ endpoint: v || '' })} options={epOptions}
+    // Seçili uç yolu KESİLMEZ (wrapLabels, tetik `h-auto`); dokunma tabanı bu yüzden `min-h` (2026-11-15, yayın öncesi e2e B)
+    <div className={cn('min-w-0 sm:w-[min(340px,40vw)]', phone ? 'w-full [&_[role=combobox]]:min-h-10' : 'max-lg:[&_[role=combobox]]:min-h-10 pointer-coarse:[&_[role=combobox]]:min-h-10')}>
+      <SearchableSelect value={filters.endpoint} onChange={(v) => patch({ endpoint: v || '' })} options={epOptions} wrapLabels
         searchThreshold={2} placeholder={t('hreq.f.allEndpoints')} ariaLabel={t('hreq.f.endpoint')} />
     </div>
   )
 
   const chips = n > 0 && (
     <div data-slot="hreq-chips" className="flex flex-wrap items-center gap-1.5" role="group" aria-label={t('hreq.f.active')}>
-      {filters.endpoint && <Chip t={t} label={filters.endpoint} onRemove={() => patch({ endpoint: '' })} />}
+      {filters.endpoint && <Chip t={t} wrap label={filters.endpoint} onRemove={() => patch({ endpoint: '' })} />}
       {filters.methods.map((m) => <Chip key={m} t={t} label={m} onRemove={() => patch({ methods: filters.methods.filter((x) => x !== m) })} />)}
       {filters.classes.map((c) => <Chip key={c} t={t} label={t(`hreq.class.${c}`)} onRemove={() => patch({ classes: filters.classes.filter((x) => x !== c) })} />)}
       <Button type="button" variant="ghost" size="sm" className={cn('h-8 px-2 text-xs text-muted-foreground', TOUCH)}

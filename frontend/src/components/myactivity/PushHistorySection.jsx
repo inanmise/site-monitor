@@ -253,7 +253,8 @@ function RowWhat({ r, t }) {
       {/* 2026-10-04: fırtınaya devredilen alarm → kapsayan fırtına push'unu SİZ ne zaman aldınız; fırtına push'unuz → kapsadığı alarmlar */}
       {r.storm_push && <StormPushNote sp={r.storm_push} />}
       {r.storm_alarms && <StormAlarmsNote sa={r.storm_alarms} />}
-      {r.message && <span data-slot="ph-message" className="text-xs leading-snug break-words text-muted-foreground line-clamp-3">{r.message}</span>}
+      {/* Push metni (≤ 320 karakter) TAM gösterilir — kırpılınca kalanına ulaşan açılım yoktu (2026-11-15, yayın öncesi e2e B) */}
+      {r.message && <span data-slot="ph-message" className="text-xs leading-snug [overflow-wrap:anywhere] text-muted-foreground">{r.message}</span>}
       {r.message_hidden && <span className="text-xs italic text-muted-foreground">{t('mypush.hist.hiddenText')}</span>}
     </div>
   )

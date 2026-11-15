@@ -164,7 +164,9 @@ export default function LinkField({ label, value, onChange, editable }) {
               }} />
             <InputGroupAddon><Link2 aria-hidden="true" /></InputGroupAddon>
             <InputGroupAddon align="inline-end">
+              {/* Dokunmatikte görünmez ::after ile 40 px vuruş alanı (24 + 2 × 8); görünüm değişmez (2026-11-15, e2e B) */}
               <InputGroupButton size="icon-xs" onMouseDown={(e) => e.preventDefault()} onClick={commit}
+                className="relative pointer-coarse:after:absolute pointer-coarse:after:-inset-2 pointer-coarse:after:content-['']"
                 aria-label={t('wr.link.add', label)} title={t('wr.link.add', label)}>
                 <Check aria-hidden="true" />
               </InputGroupButton>

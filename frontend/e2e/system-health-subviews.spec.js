@@ -187,28 +187,14 @@ async function mock(page, { who = 'global', pgss = true } = {}) {
 }
 
 /**
- * Yerleşim denetiminin BİLİNÇLİ / BİLDİRİLMİŞ istisnaları (liste yalnız küçülür):
- *  - SMTP tablosu: konu / alan adı hücresi tek satır (`truncate` + `title`), tam metin satır ayrıntısında (tasarım).
- *  - BİLDİRİLEN ÜRÜN HATALARI (2026-11-15 prod kapısı raporu; düzeltilince buradan silinmeli):
- *    · Sürüm kaydı kartında pod adı `truncate` (DeployTimeline.jsx:130) — dokunmatikte okunamıyor, `title` örnek kimliği;
- *    · Kayıtlar tablosunda 110 karakterden kısa not `line-clamp-2` ile kesiliyor ama açılır içerik yok (DeployRecords.jsx:105);
- *    · HTTP özet kutucuklarında etiket + "en yavaş uç" alt satırı `truncate` (HttpSection.jsx Tile'lar `wrapText` almıyor);
- *    · SMTP tablosunda takım rozeti (TeamBadge `wrap` yok) 768'de "Takım A" bile kesiliyor (SmtpLogView.jsx:471);
- *    · İstek Gezgini: durum sınıfı göstergesi ("2xx success") dar ekranda `truncate`; uç seçicisi seçili uç yolunu kesiyor.
- *    · SMTP günlüğü dokunmatikte küçük hedefler: hata sınıfı çubukları 30 px, sıralanabilir sütun başlıkları 20 px
- *      (LogViewParts SortHead), satır eylemleri (ayrıntı / yeniden gönder) `icon-sm` 32 px (SmtpLogView.jsx tablo).
- *  - SMTP tablosu alıcı adresi `max-w-[160px] truncate` + `title` (tasarım; tam liste satır ayrıntısında).
- *  - BİLİNEN HATA (gerçek Inter fontuyla 390'da görüldü): İstek Gezgini etkin süzgeç çipi uzun uç yolunu `truncate` ile
- *    kesiyor ("GET /api/monitoring/pagespeed/{id}/resources/expor…") — HttpExplorerToolbar.jsx:34 `Chip` span'ı.
+ * Yerleşim denetiminin BİLİNÇLİ istisnaları (tasarım; liste yalnız küçülür) — 2026-11-15 prod kapısı raporundaki ürün
+ * hataları (pod adı, kısa not, HTTP kutucukları, SMTP takım rozeti ve dokunma hedefleri, İstek Gezgini göstergesi / uç
+ * seçicisi / süzgeç çipi) düzeltildi, artık ölçülür:
+ *  - SMTP tablosu: konu / alan adı hücresi tek satır (`truncate` + `title`), tam metin satır ayrıntısında.
+ *  - SMTP tablosu alıcı adresi `max-w-[160px] truncate` + `title` (tam liste satır ayrıntısında).
  */
-const KNOWN_RELEASE_CLIPS = [/span\.min-w-0\.truncate\.font-mono\.text-foreground @deploy-card/, /span\.line-clamp-2\.text-xs/]
-const KNOWN_HTTP_TILE_CLIPS = [/@[^ ]*hreq-tiles>hreq-tile \[own box\]/]
-const KNOWN_SMTP_CLIPS = [/^td\[table-cell\][^@]*@table-container>table>table-body>table-row>table-cell \[own box\]/, /span\.truncate @table-row>table-cell>team-badge/,
+const KNOWN_SMTP_CLIPS = [/^td\[table-cell\][^@]*@table-container>table>table-body>table-row>table-cell \[own box\]/,
   /div\.max-w-\[160px\]\.truncate/]
-const KNOWN_SMTP_SMALL = [/@card>button \d+×30 /, /@table>table-header>table-row>table-head>button \d+×20 /,
-  /@table-body>table-row>table-cell>button 32×32 /]
-const KNOWN_EXPLORER_CLIPS = [/hreq-class-legend \[own box\]/, /span\.min-w-0\.flex-1\.text-left\.truncate @[^ ]*popover-trigger \[own box\]/,
-  /span\.min-w-0\.truncate @hreq-toolbar>hreq-chips>hreq-chip \[own box\]/]
 
 /** Sistem Sağlığı yüklendi (bölüm kabuğu çizildi). */
 async function ready(page) {
@@ -240,7 +226,7 @@ for (const vp of VIEWPORTS) {
       await expect(panel.getByRole('button', { name: /Add manual record|Elle kayıt ekle/ })).toBeVisible()
       await expect(panel.locator('[data-action="delete"]')).toHaveCount(1)
       await page.waitForTimeout(300)
-      await checkLayout(page, `releases@${vp.name}`, '[data-section="releases"]', { allowClip: KNOWN_RELEASE_CLIPS })
+      await checkLayout(page, `releases@${vp.name}`, '[data-section="releases"]')
 
       await panel.locator('[data-action="delete"]').click()
       const dlg = page.getByRole('dialog')
@@ -308,7 +294,7 @@ for (const vp of VIEWPORTS) {
       await expect(sec.locator('[data-slot="hreq-top-errors"] [data-slot="hreq-top-row"]')).toHaveCount(1)
       await expect(sec.locator('[data-slot="hreq-top-slowest"] [data-slot="hreq-top-row"]')).toHaveCount(2)
       await page.waitForTimeout(300)
-      await checkLayout(page, `http@${vp.name}`, '[data-section="http"]', { allowClip: KNOWN_HTTP_TILE_CLIPS })
+      await checkLayout(page, `http@${vp.name}`, '[data-section="http"]')
 
       await sec.locator(`[data-slot="hreq-top-slowest"] [data-slot="hreq-top-row"][data-endpoint="${SLOW_EP}"]`).click()
       const dlg = page.getByRole('dialog', { name: /Request Explorer|İstek Gezgini/ })
@@ -317,7 +303,7 @@ for (const vp of VIEWPORTS) {
         .map((r) => new URLSearchParams(r.search).get('endpoint'))).toContain(SLOW_EP)
       await expect(dlg.locator('[data-slot="hreq-tile"]').first()).toBeVisible({ timeout: 15_000 })
       await page.waitForTimeout(400)
-      await checkLayout(page, `http explorer@${vp.name}`, '[role="dialog"]', { allowClip: KNOWN_EXPLORER_CLIPS })
+      await checkLayout(page, `http explorer@${vp.name}`, '[role="dialog"]')
     })
 
     test('smtp: KPI filter re-searches with status=FAILED; resend refused with RECIPIENTS_TRUNCATED / SUMMARY_NOT_RESENDABLE text; layout', async ({ page }) => {
@@ -329,7 +315,7 @@ for (const vp of VIEWPORTS) {
       const view = page.locator('[data-slot="system-health"]')
       await expect(view.locator('[data-testid="sml-table"] tbody tr')).toHaveCount(3, { timeout: 20_000 })
       await page.waitForTimeout(300)
-      await checkLayout(page, `smtp@${vp.name}`, '[data-slot="system-health"]', { allowClip: KNOWN_SMTP_CLIPS, allowSmall: KNOWN_SMTP_SMALL })
+      await checkLayout(page, `smtp@${vp.name}`, '[data-slot="system-health"]', { allowClip: KNOWN_SMTP_CLIPS })
 
       // KPI "Failed" kutucuğu = durum süzgeci → status=FAILED ile yeniden arama, 2 satır
       await view.getByRole('button', { name: /^3\s*(Failed|Başarısız)$/ }).click()

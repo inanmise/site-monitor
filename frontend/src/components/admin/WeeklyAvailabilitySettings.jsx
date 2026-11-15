@@ -277,7 +277,7 @@ export default function WeeklyAvailabilitySettings() {
       <SettingsSection title={t('weeklyavail.previewTitle')} description={t('weeklyavail.previewDesc')}>
         <div className="flex flex-wrap items-center gap-2 [&>*]:min-w-0">
           <div className="w-full sm:w-auto sm:min-w-[200px]">
-            <SearchableSelect value={previewTeamId} onChange={setPreviewTeamId}
+            <SearchableSelect value={previewTeamId} onChange={setPreviewTeamId} wrapLabels
               placeholder={t('weeklyavail.selectTeam')} searchThreshold={2} options={teamOptions} ariaLabel={t('weeklyavail.selectTeam')} />
           </div>
           <div className="w-full sm:w-auto sm:min-w-[220px]">
@@ -301,11 +301,12 @@ export default function WeeklyAvailabilitySettings() {
       {/* Send test email */}
       <SettingsSection title={t('weeklyavail.testTitle')} description={t('weeklyavail.testDesc')} contentClassName="flex flex-col gap-2.5">
         <div className="w-full sm:max-w-xl">
-          <SearchableSelect value={testTeamId} onChange={setTestTeamId}
+          <SearchableSelect value={testTeamId} onChange={setTestTeamId} wrapLabels
             placeholder={t('weeklyavail.selectTeam')} searchThreshold={2} options={teamOptions} ariaLabel={t('weeklyavail.selectTeam')} />
         </div>
         <div className="flex flex-col gap-2 sm:max-w-xl sm:flex-row sm:items-center">
-          <Input type="email" value={testEmail} placeholder="recipient@example.com" aria-label={t('weeklyavail.testTitle')} className="min-w-0 flex-1"
+          {/* `flex-1` yalnız satır düzeninde (sm+): telefondaki sütun düzeninde yükseklik tabanını 0 yapıp kutuyu 31 px'e ezerdi */}
+          <Input type="email" value={testEmail} placeholder="recipient@example.com" aria-label={t('weeklyavail.testTitle')} className="min-w-0 sm:flex-1"
             onChange={(e) => setTestEmail(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') sendTest() }} />
           <Button onClick={sendTest} className="shrink-0" aria-busy={sending || undefined}
@@ -371,7 +372,7 @@ export default function WeeklyAvailabilitySettings() {
                       <TableCell className="hidden min-w-[200px] break-all whitespace-normal md:table-cell">{m.to}{m.cc ? ` · CC: ${m.cc}` : ''}</TableCell>
                       <TableCell className="max-w-[260px] whitespace-normal">{statusCell(m.status)}</TableCell>
                       <TableCell className="text-right">
-                        <Button variant="secondary" size="sm" onClick={() => openArchived(m)} disabled={openingId === m.id}
+                        <Button variant="secondary" size="sm" className="pointer-coarse:h-10" onClick={() => openArchived(m)} disabled={openingId === m.id}
                           aria-busy={openingId === m.id || undefined}
                           aria-label={t('a11y.rowAction', t('weeklyavail.view'), `${m.team} · ${formatDate(m.sent_at)}`)}>
                           {openingId === m.id ? <Spinner size={14} inline decorative /> : <Eye size={14} />} {t('weeklyavail.view')}

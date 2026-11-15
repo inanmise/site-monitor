@@ -9,10 +9,25 @@ import Field from '../ui/Field.jsx'
 import { SETTINGS_STACK, helpLabel, SettingsHeader, SettingsSaveBar, SettingsSection } from './SettingsControls.jsx'
 import EnvironmentNameField, { ENV_KEY, isValidEnvName } from './EnvironmentNameField.jsx'
 import { invalidateVersionCache } from '../VersionPopover.jsx'
+import { useFormErrors } from '../../hooks/useFormErrors.js'
+import { serverFieldErrors } from '../../utils/formErrors.js'
 import { Input } from '@/components/shadcn/input'
 import { Textarea } from '@/components/shadcn/textarea'
 import { Switch } from '@/components/shadcn/switch'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
+
+/**
+ * Sunucu alan adı → ekrandaki ayar anahtarı. Sunucu çoğunlukla TAM anahtarı yazar (`site.monitor.executor.max-size`);
+ * bazı kurallar kısa ad kullanır (`dbquery_local_timezone`, `domain_recovery_interval_ms`): `site.monitor.` öneki atılıp
+ * `.` / `-` → `_` ile karşılaştırılır (tam eşleşme ya da `_<ad>` ile biten TEK anahtar). Belirsiz / bulunamayan → null.
+ */
+export function settingKeyFor(name, keys) {
+  if (keys.includes(name)) return name
+  const norm = (k) => String(k).replace(/^site\.monitor\./, '').replace(/[.-]/g, '_').toLowerCase()
+  const n = norm(name)
+  const hits = keys.filter((k) => { const nk = norm(k); return nk === n || nk.endsWith('_' + n) })
+  return hits.length === 1 ? hits[0] : null
+}
 
 /**
  * Genel Ayarlar — küratörlü, tipli proje config'leri (key/value). Backend kataloğundan
@@ -41,6 +56,9 @@ export default function GeneralSettings({ focusKey = null }) {
   const [loadError, setLoadError] = useState(null)
   const [edited, setEdited] = useState({})    // yalnız dokunulan key'ler
   const [saving, setSaving] = useState(false)
+  // Sunucunun alan hataları (400 VALIDATION_FAILED `field` / `fields`) alanın ALTINDA (2026-11-15, yayın öncesi e2e B);
+  // katalog yeniden yüklenince / kaydedilince silinir, alan düzenlenince kendi hatası kalkar.
+  const fe = useFormErrors(items)
 
   useEffect(() => { load() }, [])
 
@@ -60,7 +78,7 @@ export default function GeneralSettings({ focusKey = null }) {
     }
   }
 
-  function set(key, val) { setEdited((e) => ({ ...e, [key]: val })) }
+  function set(key, val) { setEdited((e) => ({ ...e, [key]: val })); fe.clear(key) }
   // Ortam adı: kutu YALNIZ ekrandan kaydedilmiş değeri gösterir — katalog `value`'su override yokken Helm
   // varsayılanına düşer; kutuda görünse "boş = Helm değeri" sözü yalan olurdu (Helm değeri ipucunda + rozette).
   function valueOf(it) {
@@ -82,8 +100,15 @@ export default function GeneralSettings({ focusKey = null }) {
         if (ENV_KEY in edited) invalidateVersionCache()
         setEdited({})
       } else {
+        // Alan hatası ekrandaki ayara eşlenebiliyorsa alanın altında da gösterilir (kaydırma + odak); tost özet olarak kalır.
+        const shown = (items || []).map((i) => i.key)
+        const map = serverFieldErrors(res, (name) => settingKeyFor(name, shown))
+        if (map) fe.check(map)
         toast.error(res?.error || t('settings.saveError'))
       }
+    } catch (e) {
+      // Ağ hatası (request() fırlatır) — sessiz kalmaz
+      toast.error(e?.message || t('settings.saveError'))
     } finally {
       setSaving(false)
     }
@@ -104,7 +129,7 @@ export default function GeneralSettings({ focusKey = null }) {
       const on = String(v) === 'true'
       return (
         <div className="flex items-center gap-2">
-          <Switch id={id} aria-describedby={describedBy} checked={on} disabled={ro}
+          <Switch id={id} aria-describedby={describedBy} aria-invalid={invalid} checked={on} disabled={ro}
             onCheckedChange={(c) => set(it.key, c ? 'true' : 'false')} />
           <span className="text-sm">{on ? t('general.on') : t('general.off')}</span>
         </div>
@@ -112,20 +137,20 @@ export default function GeneralSettings({ focusKey = null }) {
     }
     if (it.type === 'ENUM') {
       return (
-        <NativeSelect id={id} aria-describedby={describedBy} value={v} disabled={ro} onChange={(e) => set(it.key, e.target.value)}>
+        <NativeSelect id={id} aria-describedby={describedBy} aria-invalid={invalid} value={v} disabled={ro} onChange={(e) => set(it.key, e.target.value)}>
           {(it.options || []).map((o) => <NativeSelectOption key={o} value={o}>{o}</NativeSelectOption>)}
         </NativeSelect>
       )
     }
     if (it.type === 'TEXT') {
       return (
-        <Textarea id={id} aria-describedby={describedBy} value={v} rows={8} spellCheck={false} disabled={ro}
+        <Textarea id={id} aria-describedby={describedBy} aria-invalid={invalid} value={v} rows={8} spellCheck={false} disabled={ro}
           className="resize-y font-mono" onChange={(e) => set(it.key, e.target.value)} />
       )
     }
     const numeric = it.type === 'INT' || it.type === 'DOUBLE'
     return (
-      <Input id={id} aria-describedby={describedBy} type={numeric ? 'number' : 'text'} value={v} disabled={ro}
+      <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} type={numeric ? 'number' : 'text'} value={v} disabled={ro}
         step={it.type === 'DOUBLE' ? '0.01' : undefined}
         onChange={(e) => set(it.key, e.target.value)} />
     )
@@ -192,9 +217,9 @@ export default function GeneralSettings({ focusKey = null }) {
             <div key={it.key} data-setting-key={it.key}
               className={'min-w-0 rounded-lg transition-[outline-color] data-[focus-target]:outline-2 data-[focus-target]:outline-offset-[6px] data-[focus-target]:outline-primary'
                 + (it.type === 'TEXT' ? ' xl:col-span-2' : '')}>
-              <Field label={helpLabel(t('general.lbl.' + it.key), 'help.set.' + it.key)}
+              <Field label={helpLabel(t('general.lbl.' + it.key), 'help.set.' + it.key)} name={it.key}
                 className="mb-3 [&>[data-slot=native-select-wrapper]]:w-full"
-                error={it.key === ENV_KEY && !isValidEnvName(String(valueOf(it))) ? t('general.env.invalid') : undefined}
+                error={(it.key === ENV_KEY && !isValidEnvName(String(valueOf(it))) ? t('general.env.invalid') : undefined) || fe.errors[it.key] || undefined}
                 hint={<>
                   <code className="font-mono">{it.key}</code>
                   {it.default != null && it.default !== ''
@@ -209,7 +234,7 @@ export default function GeneralSettings({ focusKey = null }) {
         </SettingsSection>
       ))}
 
-      <SettingsSaveBar dirty={dirty} saving={saving} onSave={save} onDiscard={() => setEdited({})} />
+      <SettingsSaveBar dirty={dirty} saving={saving} onSave={save} onDiscard={() => { setEdited({}); fe.reset() }} />
     </div>
   )
 }

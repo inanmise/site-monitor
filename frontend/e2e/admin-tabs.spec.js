@@ -116,32 +116,6 @@ async function mock(page) {
   return calls
 }
 
-/**
- * Yerleşim denetiminin BİLDİRİLEN ÜRÜN HATALARI (2026-11-15 prod kapısı raporu; düzeltilince buradan silinmeli — liste
- * yalnız küçülür). Kalan her şey (taşma, ekran dışı, diğer kırpma, dokunma hedefi) ölçülmeye devam eder:
- *  - TeamBadge `wrap` almadan uzun takım adını `truncate` ile kesiyor: Kullanıcılar kart + tablo, "Kim bilgilendirilir?"
- *    sonuç başlığı (UserManager teamBadges, whonotified/SimResult.jsx TeamBadge `static`);
- *  - Kullanıcılar kartında görünen ad düğmesi `whitespace-nowrap` (shadcn Button tabanı) — `[overflow-wrap:anywhere]` span
- *    sarmıyor, uzun AD adı ekranın sağından taşıp ana kapta kesiliyor (UserManager.jsx:495, kart başlığı düğmesi);
- *  - SearchableSelect tetikleyicisi seçili uzun takım adını kesiyor (whonotified/ScenarioForm.jsx — `wrapLabels` yok);
- *  - Eşik kartı eylemleri (Düzenle / Sil) dokunmatik tablette 32 px (thresholds/ThresholdCard.jsx — yalnız telefonda büyüyor);
- *  - Kullanıcılar araç çubuğu dokunmatikte küçük: "Süzgeçler" 32 px (`size="sm" h-8`), Görünümler 32 px, süzgeç çipleri ve
- *    "Süzgeçleri temizle" 28 px (UserManager.jsx araç çubuğu / çip satırı);
- *  - "Kim bilgilendirilir?" senaryo formu dokunmatik tablette küçük: seçiciler 36 px (`md:[&_[role=combobox]]:h-9`),
- *    seviye / tür düğmeleri 32 px (`md:…h-8`, ScenarioForm.jsx SELECT_TOUCH / SEGMENT_TOUCH), alıcı satırı kopyala 32 px.
- */
-const KNOWN_CLIPS = [
-  /span\.truncate @[^ ]*team-badge \[own box\]/,
-  /span\.min-w-0\.\[overflow-wrap:anywhere\] @button \[ancestor/,
-  /span\.min-w-0\.flex-1\.text-left\.truncate @[^ ]*popover-trigger \[own box\]/,
-]
-const KNOWN_SMALL = [
-  /@threshold-card>card-header>card-action>threshold-actions>button /,
-  /^button\[button\][^@]*@tabs-content>button \d+×(28|32) /, /^button\[saved-views-trigger\][^@]*@tabs-content>saved-views-trigger \d+×32 /,
-  /@wn-scenario>card-content>field>(searchable-select>popover-trigger|toggle-group>toggle-group-item) \d+×(32|36) /,
-  /@card-content>item-group>wn-recipient>item-actions>button 32×32 /,
-]
-
 const searchOf = (log, path) => log.filter((r) => r.path === path).map((r) => new URLSearchParams(r.search))
 
 for (const vp of VIEWPORTS) {
@@ -157,7 +131,7 @@ for (const vp of VIEWPORTS) {
       await expect(page.locator('[data-slot="threshold-matrix"]')).toBeVisible()
       await expect(cards.first().locator('[data-slot="threshold-scope-count"]')).toContainText('40')
       await page.waitForTimeout(400)
-      await checkLayout(page, `thresholds@${vp.name}`, undefined, { allowClip: KNOWN_CLIPS, allowSmall: KNOWN_SMALL })
+      await checkLayout(page, `thresholds@${vp.name}`)
 
       await cards.first().locator('[data-slot="threshold-actions"] button').first().click()
       const dlg = page.getByRole('dialog')
@@ -170,7 +144,7 @@ for (const vp of VIEWPORTS) {
       await critical.fill('5')
       await expect(save).toBeEnabled()
       await page.waitForTimeout(500)   // önizleme debounce + açılış geçişi
-      await checkLayout(page, `threshold editor@${vp.name}`, '[role="dialog"]', { allowClip: KNOWN_CLIPS, allowSmall: KNOWN_SMALL })
+      await checkLayout(page, `threshold editor@${vp.name}`, '[role="dialog"]')
       await save.click()
       await expect.poll(() => calls.thresholdPuts.length).toBe(1)
       expect(calls.thresholdPuts[0]).toMatchObject({ tier: null, warning_days: 30, high_days: 14, critical_days: 5, re_alert_interval_hours: 24, name: 'default', active: true })
@@ -187,7 +161,7 @@ for (const vp of VIEWPORTS) {
       await expect(feed.locator('[data-slot="cf-area"]')).toHaveCount(FEED_AREAS.length)
       await page.waitForTimeout(300)
       // Bilinçli tek satır: değişiklik özet çipleri uzun değeri kısaltır (tamamı satır açılımındaki fark tablosunda)
-      await checkLayout(page, `changes@${vp.name}`, '[data-slot="change-feed"]', { allowClip: [/change-chips/, ...KNOWN_CLIPS], allowSmall: KNOWN_SMALL })
+      await checkLayout(page, `changes@${vp.name}`, '[data-slot="change-feed"]', { allowClip: [/change-chips/] })
 
       // Satır açılımı: fark tablosunda tam e-posta
       const first = feed.locator('[data-slot="cf-row"]').first()
@@ -219,7 +193,7 @@ for (const vp of VIEWPORTS) {
       expect(first.get('teamId')).toBe('7')
       expect(first.get('level')).toBe('HIGH')
       await page.waitForTimeout(300)
-      await checkLayout(page, `whoNotified@${vp.name}`, '[data-slot="who-notified"]', { allowClip: KNOWN_CLIPS, allowSmall: KNOWN_SMALL })
+      await checkLayout(page, `whoNotified@${vp.name}`, '[data-slot="who-notified"]')
 
       // Hariç kalan, gerekçesiyle (bölüm kapalı başlar; kutucuk açar)
       await sec.locator('[data-slot="stat-item"][data-key="excluded"]').click()
@@ -250,7 +224,7 @@ for (const vp of VIEWPORTS) {
       expect(levels).toEqual(expect.arrayContaining(['WARNING', 'HIGH', 'CRITICAL']))
       await expect(cmp.locator('[data-slot="wn-compare-row"][data-varies="true"]')).toHaveCount(2)
       await page.waitForTimeout(300)
-      await checkLayout(page, `whoNotified compare@${vp.name}`, '[data-slot="who-notified"]', { allowClip: KNOWN_CLIPS, allowSmall: KNOWN_SMALL })
+      await checkLayout(page, `whoNotified compare@${vp.name}`, '[data-slot="who-notified"]')
     })
 
     test('users: deep-link advanced filters reach the search; date filter; save view, clear, apply view; layout', async ({ page }) => {
@@ -267,7 +241,7 @@ for (const vp of VIEWPORTS) {
       await tab.locator('[data-slot="um-login-from"]').fill('2026-10-01')
       await expect.poll(() => searchOf(log, '/api/admin/users/search').some((s) => s.get('loginFrom') === '2026-10-01' && s.get('status') === 'passive')).toBe(true)
       await page.waitForTimeout(300)
-      await checkLayout(page, `users@${vp.name}`, '[data-testid="users-tab"]', { allowClip: KNOWN_CLIPS, allowSmall: KNOWN_SMALL })
+      await checkLayout(page, `users@${vp.name}`, '[data-testid="users-tab"]')
 
       // Görünümü kaydet → kişisel tercihlerde savedViews.admin-users
       await tab.locator('[data-slot="saved-views-trigger"]').click()

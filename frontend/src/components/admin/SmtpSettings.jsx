@@ -212,7 +212,8 @@ export default function SmtpSettings() {
       {/* Send test email */}
       <SettingsSection title={t('smtp.sendTitle')} description={t('smtp.sendDesc')} contentClassName="flex flex-col gap-3">
           <div className="flex flex-col gap-2 sm:max-w-xl sm:flex-row sm:items-stretch">
-            <Input type="email" value={recipient} placeholder="recipient@example.com" className="min-w-0 flex-1"
+            {/* `flex-1` yalnız satır düzeninde (sm+): telefondaki sütun düzeninde yükseklik tabanını 0 yapıp kutuyu 31 px'e ezerdi */}
+            <Input type="email" value={recipient} placeholder="recipient@example.com" className="min-w-0 sm:flex-1"
               aria-label={t('smtp.recipient')}
               onChange={(e) => setRecipient(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') sendTest() }} />

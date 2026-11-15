@@ -22,9 +22,9 @@ export default function MonitorHowBox({ bullets = [], title }) {
       className="mb-3.5 overflow-hidden rounded-lg border bg-violet-500/5">
       <CollapsibleTrigger asChild>
         <Button type="button" variant="ghost"
-          className="h-auto w-full justify-start gap-2 rounded-none px-3.5 py-2 text-[13px] font-semibold hover:bg-violet-500/5 dark:hover:bg-violet-500/10">
+          className="h-auto w-full justify-start gap-2 rounded-none px-3.5 py-2 text-left text-[13px] font-semibold whitespace-normal hover:bg-violet-500/5 pointer-coarse:min-h-10 dark:hover:bg-violet-500/10">
           <HelpCircle size={15} aria-hidden="true" className="text-violet-600 dark:text-violet-400" />
-          <span>{title || t('mhow.title')}</span>
+          <span className="min-w-0 [overflow-wrap:anywhere]">{title || t('mhow.title')}</span>
           <ChevronDown size={15} aria-hidden="true"
             className={cn('ml-auto text-muted-foreground transition-transform duration-200 motion-reduce:transition-none', open && 'rotate-180')} />
         </Button>

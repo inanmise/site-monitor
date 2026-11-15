@@ -45,21 +45,22 @@ export default function HttpSection({ t, httpMetrics, error, onRetry, onOpenExpl
         </Button>
       </SectionToolbar>
 
+      {/* Kutucuk etiketi ve alt satırı (en yavaş uç yolu dahil) SARAR — `wrapText` (2026-11-15, yayın öncesi e2e B) */}
       <div role="group" aria-label={t('hreq.kpi.label')} data-slot="hreq-tiles"
         className="grid grid-cols-2 gap-2 sm:grid-cols-3 2xl:grid-cols-6">
-        <Tile t={t} id="total" label={t('hreq.kpi.total')} value={fmtInt(s.total)} sub={t('hreq.kpi.totalSub24')} hint={t('hreq.hint.total')} />
-        <Tile t={t} id="rate" label={t('hreq.kpi.rate')} value={fmtRate(rate)} sub={t('hreq.kpi.peak', fmtInt(peak))} hint={t('hreq.hint.rate')} />
-        <Tile t={t} id="errors" label={t('hreq.kpi.errorRate')} value={fmtPct(s.errorRate)} tone={errTone(s.errorRate, s.total)}
+        <Tile t={t} wrapText id="total" label={t('hreq.kpi.total')} value={fmtInt(s.total)} sub={t('hreq.kpi.totalSub24')} hint={t('hreq.hint.total')} />
+        <Tile t={t} wrapText id="rate" label={t('hreq.kpi.rate')} value={fmtRate(rate)} sub={t('hreq.kpi.peak', fmtInt(peak))} hint={t('hreq.hint.rate')} />
+        <Tile t={t} wrapText id="errors" label={t('hreq.kpi.errorRate')} value={fmtPct(s.errorRate)} tone={errTone(s.errorRate, s.total)}
           sub={t('hreq.kpi.errorsSub', fmtInt(s.errors))} hint={t('hreq.hint.errorRate', HTTP_ERR_PCT.warn, HTTP_ERR_PCT.crit)} />
-        <Tile t={t} id="avg" label={t('hreq.kpi.avg')} value={fmt.value(s.avg)} tone={msTone(s.avg)}
+        <Tile t={t} wrapText id="avg" label={t('hreq.kpi.avg')} value={fmt.value(s.avg)} tone={msTone(s.avg)}
           sub={s.p95 != null ? t('hreq.kpi.p95Sub', fmt.value(s.p95)) : null} hint={t('hreq.hint.avg', fmt.value(lat.warn), fmt.value(lat.crit))} />
-        <Tile t={t} id="max" label={t('hreq.kpi.max')} value={fmt.value(s.max)}
+        <Tile t={t} wrapText id="max" label={t('hreq.kpi.max')} value={fmt.value(s.max)}
           sub={s.p99 != null ? t('hreq.kpi.p99Sub', fmt.value(s.p99)) : null} hint={t('hreq.hint.max')} />
         {slow ? (
-          <Tile t={t} id="slowest" label={t('hreq.kpi.slowest')} value={fmt.value(slow.p95)} tone={msTone(slow.p95)}
+          <Tile t={t} wrapText id="slowest" label={t('hreq.kpi.slowest')} value={fmt.value(slow.p95)} tone={msTone(slow.p95)}
             sub={slow.endpoint} onClick={() => open(slow.endpoint)} actionLabel={t('hreq.kpi.slowestAction', fmt.value(slow.p95), slow.endpoint)} />
         ) : (
-          <Tile t={t} id="slowest" label={t('hreq.kpi.slowest')} value="—" sub={t('hreq.top.noData')} hint={t('hreq.hint.slowest')} />
+          <Tile t={t} wrapText id="slowest" label={t('hreq.kpi.slowest')} value="—" sub={t('hreq.top.noData')} hint={t('hreq.hint.slowest')} />
         )}
       </div>
 
