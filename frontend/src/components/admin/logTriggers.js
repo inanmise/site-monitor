@@ -63,6 +63,7 @@ const COMMON_KEYS = {
   NEW_DEVICE: 'logtrig.NEW_DEVICE',
   NETWORK_OUTAGE: 'logtrig.NETWORK_OUTAGE',
   TLS_GRADE_DROP: 'userpush.trigger.TLS_GRADE_DROP',
+  ONCALL_WEEKLY: 'userpush.trigger.ONCALL_WEEKLY',   // haftalık nöbet bildirimi (2026-11-15): e-posta + push
   DOMAIN_EXPIRY_REMINDER: 'userpush.trigger.DOMAIN_EXPIRY_REMINDER',
   TECH_ERROR_REPORT: 'logtrig.TECH_ERROR_REPORT',
   TECH_ERROR_REPORT_TEST: 'logtrig.TECH_ERROR_REPORT_TEST',

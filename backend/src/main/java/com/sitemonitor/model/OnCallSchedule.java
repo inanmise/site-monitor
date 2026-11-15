@@ -52,6 +52,37 @@ public class OnCallSchedule {
     @Column(name = "notify_oncall", nullable = false)
     private Boolean notifyOncall = false;
 
+    // ── Haftalık nöbet bildirimi (2026-11-15, kullanıcı isteği: "takımın nöbetçi bilgisini her hafta pazartesi 08:30'da
+    // push ve mail ile ekibe bildirelim; takım kendisi açsın, ayarlarını kendisi yapsın"). Hepsi BOŞ OLABİLİR — eski satır
+    // ve hiç açılmamış takım: kapalı. Varsayılanlar okurken uygulanır (OnCallWeeklyNoticeSlots.Settings). ──────────────
+
+    /** Haftalık bildirim açık mı (null = kapalı — varsayılan). */
+    @Column(name = "weekly_notice_enabled")
+    private Boolean weeklyNoticeEnabled;
+
+    /** E-posta kanalı (takımın alarm adresi) — null = açık. */
+    @Column(name = "weekly_notice_mail")
+    private Boolean weeklyNoticeMail;
+
+    /** Push kanalı (takım üyeleri, takım bildirimi kuralları) — null = açık. */
+    @Column(name = "weekly_notice_push")
+    private Boolean weeklyNoticePush;
+
+    /** Haftanın günü 1 (Pazartesi) … 7 (Pazar) — null = Pazartesi. */
+    @Column(name = "weekly_notice_day")
+    private Integer weeklyNoticeDay;
+
+    /** İstanbul saati "HH:mm" — null = 08:30. */
+    @Column(name = "weekly_notice_time", length = 5)
+    private String weeklyNoticeTime;
+
+    /**
+     * Açma / gün / saat en son ne zaman değişti (UTC ISO) — yalnız "zamanı kaçırıldı" izinin karar ölçütü: bu andan ÖNCEKİ
+     * bir dilim kaçırılmış sayılmaz (salı açılan bildirim o haftanın pazartesisini "kaçırmadı").
+     */
+    @Column(name = "weekly_notice_since", length = 19)
+    private String weeklyNoticeSince;
+
     @Column(name = "updated_at", length = 19)
     private String updatedAt;
 

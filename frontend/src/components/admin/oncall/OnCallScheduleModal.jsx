@@ -18,8 +18,9 @@ import { Input } from '@/components/shadcn/input'
 import { ItemGroup, Item } from '@/components/shadcn/item'
 import { cn } from '@/lib/utils'
 import {
-  MAX_MEMBERS, addMember, anchorToUtc, buildPayload, hasMissingMembers, isDirty, move, toForm, utcToAnchor, validate, validateOverride,
+  MAX_MEMBERS, addMember, anchorToUtc, buildSaveBody, hasMissingMembers, isDirty, move, toForm, utcToAnchor, validate, validateOverride,
 } from './oncallModel.js'
+import WeeklyNoticeSection from './WeeklyNoticeSection.jsx'
 
 const SECTION = 'flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3 sm:p-4'
 const H = 'm-0 text-sm font-semibold'
@@ -32,7 +33,7 @@ const TOUCH = 'pointer-coarse:size-10 max-sm:size-10'
  * Yönetemeyen kişi pencereyi salt okunur görür. Adlar KESİLMEZ (sarar).
  *
  * Test kancaları: `data-slot="oncall-modal"`, `oncall-current`, `oncall-member` (+ `data-index`), `oncall-upcoming`,
- * `oncall-override`, `oncall-save`.
+ * `oncall-override`, `oncall-save`. Haftalık nöbet bildirimi (2026-11-15): `WeeklyNoticeSection` (`oncall-weekly-notice`).
  */
 export default function OnCallScheduleModal({ team, onClose, onSaved }) {
   const t = useT()
@@ -92,14 +93,14 @@ export default function OnCallScheduleModal({ team, onClose, onSaved }) {
     if (Object.keys(errs).length) return
     setSaving(true)
     try {
-      const res = await api.oncall.save(team.id, buildPayload(form))
+      const res = await api.oncall.save(team.id, buildSaveBody(form, base, { configured: view?.configured !== false }))
       if (!alive.current) return
       if (res?.success) {
         apply(res.data)
         toast.success(t('oncall.saved'))
         onSaved?.()
       } else {
-        if (res?.field) setErrors({ [res.field]: null, _server: res.error })
+        if (res?.field) setErrors({ [res.field]: null, _server: res.error, _serverField: res.field })
         toast.error(res?.error || t('oncall.saveError'))
       }
     } catch (e) {
@@ -210,6 +211,13 @@ export default function OnCallScheduleModal({ team, onClose, onSaved }) {
                 <p className="m-0 text-xs text-muted-foreground">{t('oncall.notifyHint')}</p>
               </div>
             </div>
+
+            <WeeklyNoticeSection form={form} base={base} view={view} canEdit={canEdit} errors={errors}
+              onChange={(notice) => {
+                set({ notice })
+                setErrors((e) => ({ ...e, 'weekly_notice.mail': undefined, 'weekly_notice.time': undefined, 'weekly_notice.day': undefined,
+                  'weekly_notice.push': undefined, 'weekly_notice.enabled': undefined, _serverField: undefined }))
+              }} />
 
             <div className={SECTION} data-field="members">
               <div className="flex flex-wrap items-baseline justify-between gap-2">

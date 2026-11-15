@@ -801,6 +801,35 @@ WHERE owner_team_id = :hedef AND enabled = FALSE AND note LIKE '%Takım taşıma
 Erişim paylaşımı: iletimle birlikte "görüntüleme erişimi ver" ile açılan VIEW paylaşımı iletim silinince / duraklatılınca GERİ
 ALINMAZ — Yönetim → Erişim paylaşımı ekranından yönetilir.
 
+## Haftalık nöbet bildirimi
+
+Takım kendisi açar (Takımlar → takım menüsü → Nöbet çizelgesi → "Haftalık nöbet bildirimi"; varsayılan KAPALI). Seçilen
+gün + saatte (varsayılan Pazartesi 08:30, Türkiye saati) o haftanın nöbetçisi — her devir ve yer değiştirmeyle, e-postada
+telefon ve e-postasıyla — takımın alarm adresine (varsayılan bildirim grubu, yoksa takım e-postası) ve takım üyelerine push
+olarak gider. Nöbet bilgisi olmayan (çizelge kapalı / sırada kimse yok / hafta boyunca var olan bir hesaba çözülen nöbetçi
+yok) haftada hiçbir şey gönderilmez; o hafta "SKIPPED: nöbet bilgisi yok" diye bir kez kaydedilir.
+
+- Takım × ISO hafta EN ÇOK BİR kez: `oncall_weekly_notices` satırı gönderimden ÖNCE eklenir (benzersiz takım × hafta; hafta
+  anahtarı = haftanın Pazartesi'si). İş `scheduler_lock` `oncall-weekly-notice` altında dakikada bir bakar.
+- Pod dilim anında çalışmıyorsa aynı gün içinde (gece yarısına yakın dilimde en az 1 saat) gönderir; gün de geçtiyse
+  "SKIPPED: zamanı kaçırıldı" izi kalır, gönderilmez.
+- Yarıda kalan gönderim (pod öldü, satır 15 dk'dan uzun SENDING) YENİDEN GÖNDERİLMEZ: UNKNOWN olur ve
+  "FAILED: sonuç bilinmiyor …" izi yazılır. Yalnız hiçbir kanalın ulaşmadığı FAILED aynı gün içinde 10 dk arayla en çok
+  3 kez denenir.
+- Sistem bakımı susturması açıkken o haftanın bildirimi "SKIPPED: sistem bakımı" ile kapanır (telafi yok).
+
+"Bildirim gelmedi" denetimi: pencerenin "Son sonuç" satırı durumu ve nedeni söyler; ayrıntı SMTP günlüğünde (tetikleyici
+"Haftalık nöbet bildirimi", `ONCALL_WEEKLY`) ve push günlüğünde. Veritabanından:
+
+```sql
+SELECT team_id, week_key, status, reason, mail_status, push_count, attempts, claimed_at, finished_at
+FROM oncall_weekly_notices ORDER BY week_key DESC, team_id LIMIT 50;
+```
+
+Bir haftayı elle yeniden göndermek için o satırı silmek yeterlidir — ama yalnız dilimin günü içinde (telafi
+penceresi) iş yeniden gönderir; gün geçtiyse "zamanı kaçırıldı" izi yazılır. Satırı silmeden önce takıma gerçekten ulaşmadığını
+SMTP / push günlüğünden doğrulayın (çift bildirim olmasın).
+
 ## Merkezi izleme alarm akışı
 
 Kurum içi izleme ekibi alarmları tek merkezde toplar; SiteMonitor'den **her dakika** `GET /api/public/alarm-feed` ile çeker

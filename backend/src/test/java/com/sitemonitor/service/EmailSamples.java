@@ -119,6 +119,7 @@ final class EmailSamples {
         systemMaintenance();
         loginCode();
         alertForward();
+        oncallWeekly();
         addHtml("smtp-test", "smtp", "[Site Monitor] SMTP test e-postası", smtp.buildTestHtml(smtpSettings), "ok");
         return List.copyOf(out);
     }
@@ -134,6 +135,36 @@ final class EmailSamples {
                 UserAgentSummary.labelOf(LONG_UA));
         var m = com.sitemonitor.service.mail.LoginCodeMail.build(info);
         add("login-code", "admin", com.sitemonitor.service.mail.LoginCodeMail.subject(), m.html(), m.text(), "ok");
+    }
+
+    // ── Haftalık nöbet bildirimi (2026-11-15) ───────────────────────────────
+
+    /**
+     * Haftanın üç parçası: uzun adlı nöbetçi (telefon + e-posta), hafta ortasında PASİF kişiye yer değiştirme (iletişim
+     * yazılmaz) ve rotasyonla dönüş; uzun takım adı. TR (takım posta kutusu dili) ve EN (önizleme).
+     */
+    private void oncallWeekly() {
+        java.time.Instant from = java.time.Instant.parse("2026-11-16T05:30:00Z");
+        var a = new com.sitemonitor.service.mail.OnCallWeeklyNoticeMail.Person(
+                "Ayşegül Nur Karaosmanoğlu-Yıldırımtekin (Teknoloji Servis Yönetimi Bölüm Başkanı)", "+90 532 000 00 11",
+                "aysegul.karaosmanoglu@example.com", true, false);
+        var b = new com.sitemonitor.service.mail.OnCallWeeklyNoticeMail.Person("Mehmet Demir", "+90 533 000 00 22",
+                "mehmet.demir@example.com", false, false);
+        var segs = List.of(
+                new com.sitemonitor.service.mail.OnCallWeeklyNoticeMail.Segment(from, java.time.Instant.parse("2026-11-18T06:00:00Z"), a, false),
+                new com.sitemonitor.service.mail.OnCallWeeklyNoticeMail.Segment(java.time.Instant.parse("2026-11-18T06:00:00Z"),
+                        java.time.Instant.parse("2026-11-19T06:00:00Z"), b, true),
+                new com.sitemonitor.service.mail.OnCallWeeklyNoticeMail.Segment(java.time.Instant.parse("2026-11-19T06:00:00Z"),
+                        java.time.Instant.parse("2026-11-23T05:30:00Z"), a, false));
+        var info = new com.sitemonitor.service.mail.OnCallWeeklyNoticeMail.Info(
+                "Dijital Kanallar Mobil Bankacılık Uygulama Geliştirme (" + TR + ")", from,
+                java.time.Instant.parse("2026-11-23T05:30:00Z"), segs, BASE);
+        var tr = com.sitemonitor.service.mail.OnCallWeeklyNoticeMail.build(info, false);
+        add("reminder-oncall-weekly", "reminder", com.sitemonitor.service.mail.OnCallWeeklyNoticeMail.subject(info.teamName(), from, false),
+                tr.html(), tr.text(), "ok");
+        var en = com.sitemonitor.service.mail.OnCallWeeklyNoticeMail.build(info, true);
+        add("reminder-oncall-weekly-en", "reminder", com.sitemonitor.service.mail.OnCallWeeklyNoticeMail.subject(info.teamName(), from, true),
+                en.html(), en.text(), "ok");
     }
 
     // ── Alarm iletimi bilgi postası (2026-11-05) ────────────────────────────

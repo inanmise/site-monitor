@@ -70,6 +70,57 @@ public final class OnCallRotation {
                 .orElse(null);
     }
 
+    /** Haftalık bildirimde gösterilecek dilim sınırı (7 günde günlük rotasyon + yer değiştirmeler; fazlası kesilir). */
+    public static final int MAX_TIMELINE = 50;
+
+    /**
+     * {@code [from, to)} aralığının nöbet zaman çizelgesi (2026-11-15, haftalık nöbet bildirimi): rotasyon devirleri VE yer
+     * değiştirme başlangıç / bitişleri sınır alınır, her parça {@link #current} ile çözülür (aynı öncelik kuralı — yeniden
+     * türetilmez); aynı kişinin (ve aynı yer değiştirme bayrağının) art arda parçaları birleşir. En çok {@code max} parça
+     * ({@link #MAX_TIMELINE} tavanlı). Yer değiştirme listesi çağıranın verdiği kadardır (sınırlı sorgu).
+     */
+    public static List<Slot> timeline(Config c, List<Override> overrides, Instant from, Instant to, int max) {
+        List<Slot> out = new ArrayList<>();
+        if (from == null || to == null || !to.isAfter(from)) return out;
+        int cap = Math.max(1, Math.min(max, MAX_TIMELINE));
+        java.util.TreeSet<Instant> cuts = new java.util.TreeSet<>();
+        cuts.add(from);
+        cuts.add(to);
+        if (c != null && c.enabled() && c.anchor() != null && c.members() != null && !c.members().isEmpty()) {
+            Instant anchor = anchorInstant(c);
+            Duration p = period(c);
+            if (anchor.isAfter(from) && anchor.isBefore(to)) cuts.add(anchor);
+            Instant t = from.isBefore(anchor) ? anchor : baseSlot(c, from).end();
+            for (int i = 0; t != null && t.isBefore(to) && i < 400; i++) {   // 7 günde en çok 8 devir; sınır güvenlik ağı
+                if (t.isAfter(from)) cuts.add(t);
+                t = t.plus(p);
+            }
+        }
+        if (overrides != null) {
+            int n = 0;
+            for (Override o : overrides) {
+                if (++n > 500) break;
+                if (o.start() != null && o.start().isAfter(from) && o.start().isBefore(to)) cuts.add(o.start());
+                if (o.end() != null && o.end().isAfter(from) && o.end().isBefore(to)) cuts.add(o.end());
+            }
+        }
+        Instant prev = null;
+        for (Instant cut : cuts) {
+            if (prev != null) {
+                Slot s = current(c, overrides, prev);
+                Slot last = out.isEmpty() ? null : out.get(out.size() - 1);
+                if (last != null && java.util.Objects.equals(last.userId(), s.userId()) && last.override() == s.override()) {
+                    out.set(out.size() - 1, new Slot(last.userId(), last.start(), cut, last.override(), last.overrideId()));
+                } else {
+                    if (out.size() >= cap) break;
+                    out.add(new Slot(s.userId(), prev, cut, s.override(), s.override() ? s.overrideId() : null));
+                }
+            }
+            prev = cut;
+        }
+        return out;
+    }
+
     /**
      * Şu andan başlayarak rotasyonun yaklaşan dilimleri (en çok {@code count}, sınır {@link #MAX_UPCOMING}). Yer
      * değiştirmeler ayrıca listelenir; burada yalnız rotasyon sırası.
