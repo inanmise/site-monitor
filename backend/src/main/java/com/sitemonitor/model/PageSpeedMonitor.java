@@ -79,6 +79,34 @@ public class PageSpeedMonitor implements MonitorAlertPrefs, MonitorSchedule, Noc
     @Column(name = "max_requests")
     private Integer maxRequests;
 
+    // ── Tür bütçeleri ve asgari boyut (2026-11-14, Sayfa Hızı zenginleştirme madde 11 / 12) ──────────────────
+    // Hepsi opsiyonel (null = değerlendirilmez), KB girilir, karşılaştırma KESİN (> ya da asgari için <). Aşım SLOW'dur
+    // (kesinti değil), ihlal delili ve alarm postası eşik tablosunda görünür. Bunlar EŞİKTİR, bildirim yönlendirmesi değil.
+
+    /** Ölçülen JavaScript baytı (KB) bu değeri aşarsa SLOW ({@code JS}). */
+    @Column(name = "max_js_kb")
+    private Integer maxJsKb;
+
+    /** Ölçülen görsel baytı (KB; favicon dahil) bu değeri aşarsa SLOW ({@code IMG}). */
+    @Column(name = "max_img_kb")
+    private Integer maxImgKb;
+
+    /** Ölçülen yazı tipi baytı (KB) bu değeri aşarsa SLOW ({@code FONT}). */
+    @Column(name = "max_font_kb")
+    private Integer maxFontKb;
+
+    /** Üçüncü taraf (başka kayıtlı alan adı) baytı (KB) bu değeri aşarsa SLOW ({@code THIRD}). */
+    @Column(name = "max_third_party_kb")
+    private Integer maxThirdPartyKb;
+
+    /**
+     * Asgari sayfa boyutu (KB): toplam aktarım bundan KÜÇÜKSE SLOW ({@code MINSIZE}) — "beklenenden küçük sayfa": 200 ile dönen
+     * boş / hata sayfası (bakım sayfası, boş şablon, giriş yönlendirmesi) kesinti gibi görünmez ama içerik yoktur. ASLA DOWN
+     * değildir; yalnız sayfa alınabildiğinde değerlendirilir.
+     */
+    @Column(name = "min_page_kb")
+    private Integer minPageKb;
+
     // ── Gelişmiş ölçüm seçenekleri ────────────────────────────────────────────
 
     /** Gönderilecek User-Agent; boş/null ise {@link #DEFAULT_UA}. WAF/bot koruması olan sayfalar için gerekir. */

@@ -103,7 +103,8 @@ describe('PageSpeedMonitorPage', () => {
     expect(screen.getByText(/new page speed monitor|yeni sayfa hızı/i)).toBeInTheDocument()
     // Dört eşik alanı da "eşik yok" yer tutucusuyla ve BOŞ gelir.
     const blanks = screen.getAllByPlaceholderText(/no threshold|eşik yok/i)
-    expect(blanks).toHaveLength(4)
+    // Dört eşik + 2026-11-14'ten beri dört tür bütçesi ve asgari boyut — hepsi opsiyonel, boş gelir
+    expect(blanks).toHaveLength(9)
     blanks.forEach(el => expect(el).toHaveValue(null))
   })
 
@@ -192,7 +193,7 @@ describe('PageSpeedMonitorPage', () => {
     render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     fireEvent.click(await cardTitle())
 
-    await waitFor(() => expect(api.monitoring.getPageSpeedResources).toHaveBeenCalledWith(1, { checkId: undefined }))
+    await waitFor(() => expect(api.monitoring.getPageSpeedResources).toHaveBeenCalledWith(1, expect.objectContaining({ checkId: undefined, page: 0, type: 'all', party: 'all', failed: false })))
     expect(await screen.findByText('https://x.com/app.js')).toBeInTheDocument()
     expect(screen.getByText('500 KB')).toBeInTheDocument()
     expect(screen.getByText(/third party|3\. taraf/i)).toBeInTheDocument()
@@ -213,7 +214,7 @@ describe('PageSpeedMonitorPage', () => {
     await screen.findByText(/threshold breaches on record|eşik ihlali kayıtlı/i)
     fireEvent.mouseDown(snapshotPicker())
     fireEvent.mouseDown(await screen.findByText('2026-08-20T09:00:00'))
-    await waitFor(() => expect(api.monitoring.getPageSpeedResources).toHaveBeenCalledWith(1, { checkId: 77 }))
+    await waitFor(() => expect(api.monitoring.getPageSpeedResources).toHaveBeenCalledWith(1, expect.objectContaining({ checkId: 77 })))
   })
 
   it('kısmi ölçüm (capped) modalde açıkça uyarılır', async () => {
@@ -585,7 +586,8 @@ describe('PageSpeedMonitorPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: /apply suggested|önerilen eşikleri uygula/i }))
 
     const blanks = screen.getAllByPlaceholderText(/no threshold|eşik yok/i)
-    expect(blanks.map(el => el.value)).toEqual(['7000', '300', '55000', '220'])
+    // Öneri yalnız dört eşiği yazar; tür bütçeleri ve asgari boyut boş kalır (2026-11-14)
+    expect(blanks.map(el => el.value)).toEqual(['7000', '300', '55000', '220', '', '', '', '', ''])
 
     await fillGroupAndTags()   // grup + etiket zorunlu (2026-09-18)
     fireEvent.click(screen.getByRole('button', { name: /^save$|^kaydet$/i }))

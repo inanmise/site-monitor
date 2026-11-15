@@ -50,7 +50,7 @@ public final class GrafanaDashboardGenerator {
      * Pano içerik revizyonu — içerik (panel, sorgu, değişken) değişen HER sürümde artır ve
      * {@code src/test/resources/grafana/dashboard-content.sha256} dosyasını güncelle (kapı mesajı yeni satırı yazar).
      */
-    public static final int DASHBOARD_REVISION = 15;
+    public static final int DASHBOARD_REVISION = 17;
     /** "Kritik / yüksek alarm açıldı" anotasyonunun penceresi (sn) — açılış zamanı bu kadar yeni olan alarmlar. */
     static final int ALERT_OPENED_WINDOW_S = 900;
     /** Aktarıcı tazelik eşiği (sn) — sunucunun {@code max(180, 3 × refresh-seconds)} kuralının varsayılan değeri. */
@@ -1409,6 +1409,7 @@ public final class GrafanaDashboardGenerator {
 
             baselineAdoption();
             scriptedRuns();
+            pageSpeed();
         }
 
         /**
@@ -1478,6 +1479,128 @@ public final class GrafanaDashboardGenerator {
             versions.target("max by (version) (" + metric(vers) + ")", "{{version}}", true);
             versions.options(pieOptions());
             add(versions);
+        }
+
+        /** Sayfa hızı eşik anahtarı → okunur ad (lejant / sütun). Sıra {@code PageSpeedRules.BREACH_KEYS}. */
+        String[][] pageSpeedMetricNames() {
+            return new String[][]{
+                    {"LOAD", t("Yükleme süresi", "Load time")},
+                    {"TTFB", t("İlk bayt (TTFB)", "Time to first byte")},
+                    {"SIZE", t("Sayfa boyutu (üst sınır)", "Page size (max)")},
+                    {"REQUESTS", t("İstek sayısı", "Requests")},
+                    {"MINSIZE", t("Sayfa boyutu (alt sınır)", "Page size (min)")},
+                    {"JS", t("JavaScript bütçesi", "JavaScript budget")},
+                    {"IMG", t("Görsel bütçesi", "Image budget")},
+                    {"FONT", t("Yazı tipi bütçesi", "Font budget")},
+                    {"THIRD", t("Üçüncü taraf bütçesi", "Third-party budget")}};
+        }
+
+        /**
+         * Sayfa Hızı (revizyon 16, 2026-11-14 — Sayfa Hızı zenginleştirme madde 20): son ölçüme göre bütçeyi aşan / açılamayan /
+         * ölçülmemiş sayfalar, hangi eşiklerin aşıldığı, durumlar zaman içinde ve (izleme başına açıksa) en yavaş sayfalar +
+         * son ölçüm tablosu. Toplam aileleri takım süzgecine uyar, tür süzgecinden bağımsızdır (yalnız sayfa hızı). Kaynak
+         * okunamazsa "veri yok" (sahte 0 yok; kaynak {@code pagespeed}).
+         */
+        void pageSpeed() {
+            String pages = MonitoringMetricNames.PAGESPEED_PAGES;
+            String breaches = MonitoringMetricNames.PAGESPEED_BREACHES;
+            String PL = "team, team_id, state";
+            String BL = "team, team_id, metric";
+            add(stat(t("Sayfa hızı — bütçeyi aşan", "Page speed — over budget"),
+                    t("Son ölçümde en az bir eşiği ya da tür bütçesini (yükleme süresi, TTFB, boyut, istek, JavaScript, görsel, yazı "
+                                    + "tipi, üçüncü taraf) aşan ETKİN sayfa hızı izlemeleri. Takım süzgecine uyar, tür süzgecinden bağımsızdır. "
+                                    + "Veri yoksa kaynak okunamadı.",
+                            "ACTIVE page speed monitors whose last measurement went over at least one threshold or type budget (load "
+                                    + "time, TTFB, size, requests, JavaScript, images, fonts, third parties). Follows the team filter, not "
+                                    + "the type filter. No data means the source could not be read."),
+                    guard("sum(max by (" + PL + ") (" + metric(pages, TEAM, "state=\"over_budget\"") + "))", "pagespeed"), "short",
+                    thresholds(GREEN, null, AMBER, 1), "background", links() ? url("tab=pagespeed&stat=slow") : null).size(4, 8));
+            add(stat(t("Sayfa hızı — açılamayan", "Page speed — not loading"),
+                    t("Son ölçümde sayfası alınamayan (bağlantı, durum kodu, zaman aşımı) etkin sayfa hızı izlemeleri.",
+                            "Active page speed monitors whose page could not be loaded in the last measurement (connection, status "
+                                    + "code, timeout)."),
+                    guard("sum(max by (" + PL + ") (" + metric(pages, TEAM, "state=\"down\"") + "))", "pagespeed"), "short",
+                    thresholds(GREEN, null, RED, 1), "background", links() ? url("tab=pagespeed&stat=down") : null).size(4, 8));
+            add(stat(t("Sayfa hızı — bilinmiyor", "Page speed — unknown"),
+                    t("Henüz hiç ölçülmemiş ya da son ölçümü kısmi kalıp (süre / boyut / kaynak tavanı) bir eşiği karara "
+                                    + "bağlanamamış etkin sayfa hızı izlemeleri. Bilinmeyen durumdur — sağlıklı sayılmaz.",
+                            "Active page speed monitors without any measurement yet, or whose last measurement was partial (time, size "
+                                    + "or resource cap) and left a threshold undecided. An unknown state — not counted as healthy."),
+                    guard("sum(max by (" + PL + ") (" + metric(pages, TEAM, "state=\"unknown\"") + "))", "pagespeed"), "short",
+                    thresholds(GREEN, null, GREY, 1), "background", null).size(4, 8));
+
+            Panel which = new Panel("bargauge", t("Sayfa hızı — aşılan eşikler", "Page speed — thresholds exceeded"),
+                    t("Son ölçümde ilgili eşiği aşan etkin sayfa sayısı, ölçüye göre (bir sayfa birden çok ölçüde sayılabilir). "
+                                    + "Takım süzgecine uyar. Veri yoksa kaynak okunamadı ya da süzgece uyan sayfa hızı izlemesi yok.",
+                            "Active pages whose last measurement went over the threshold, per metric (one page may count under several "
+                                    + "metrics). Follows the team filter. No data means the source could not be read or no page speed "
+                                    + "monitor matches the filter."));
+            which.w = 12; which.h = 8;
+            which.targetInstant("sum by (metric) (max by (" + BL + ") (" + metric(breaches, TEAM) + "))", "{{metric}}");
+            which.bargauge("short", thresholds(GREEN, null, AMBER, 1));
+            for (String[] m : pageSpeedMetricNames()) which.override(m[0], "displayName", m[1]);
+            add(which);
+
+            Panel states = new Panel("timeseries", t("Sayfa hızı durumları zaman içinde", "Page speed states over time"),
+                    t("Sayfa hızı izlemelerinin son ölçüme göre durumu, zaman içinde yığılmış: eşik içinde, bütçeyi aşan, açılamayan, "
+                                    + "bilinmiyor (ölçülmemiş ya da kısmi ölçüm), bütçe tanımsız, duraklatılmış. Takım süzgecine uyar.",
+                            "Page speed monitors by the state of their last measurement over time, stacked: within budget, over budget, "
+                                    + "not loading, unknown (never measured or a partial measurement), no budget defined, paused. Follows "
+                                    + "the team filter."));
+            states.w = o.perMonitor() ? 12 : 24; states.h = 8;
+            String[][] st = {{"ok", t("Eşik içinde", "Within budget"), GREEN}, {"over_budget", t("Bütçeyi aşan", "Over budget"), AMBER},
+                    {"down", t("Açılamayan", "Not loading"), RED}, {"unknown", t("Bilinmiyor", "Unknown"), GREY},
+                    {"no_budget", t("Bütçe tanımsız", "No budget defined"), PURPLE}, {"paused", t("Duraklatılmış", "Paused"), BLUE}};
+            Map<String, String> sc = new LinkedHashMap<>();
+            for (String[] s : st) {
+                states.target("sum(max by (" + PL + ") (" + metric(pages, TEAM, "state=\"" + s[0] + "\"") + "))", s[1], false);
+                sc.put(s[1], s[2]);
+            }
+            states.timeseries("short", true, "line");
+            states.fixedColors(sc);
+            add(states);
+
+            if (!o.perMonitor()) return;
+            Panel slow = new Panel("timeseries", t("Sayfa hızı — en yavaş 10 sayfa", "Page speed — 10 slowest pages"),
+                    t("Son ölçüme göre yükleme süresi en uzun 10 sayfa hızı izlemesi, zaman içinde. Süre tavanına takılan ölçüm bir alt "
+                                    + "sınırdır. Açılamayan ya da ölçülmemiş sayfanın değeri yoktur (0 sayılmaz).",
+                            "The 10 page speed monitors with the longest load time in their last measurement, over time. A measurement "
+                                    + "cut by the time limit is a lower bound. A page that did not load or was never measured has no value "
+                                    + "(not 0)."));
+            slow.w = 12; slow.h = 8;
+            slow.target("topk(10, " + mon(MonitoringMetricNames.PAGESPEED_LOAD_MS) + ")", "{{monitor}}", false);
+            slow.timeseries("ms", false, "line");
+            add(slow);
+
+            Panel table = new Panel("table", t("Sayfa hızı — son ölçümler", "Page speed — last measurements"),
+                    t("Süzgece uyan her ölçülmüş sayfa hızı izlemesi: yükleme süresi, TTFB (kontrolün kendi isteği), sayfa ağırlığı, "
+                                    + "istek sayısı ve bütçe durumu. İzleme adı SiteMonitor'da detayını açar.",
+                            "Every measured page speed monitor matching the filter: load time, TTFB (the check's own request), page "
+                                    + "weight, requests and budget state. The monitor name opens it in SiteMonitor."));
+            table.w = 24; table.h = 11;
+            table.targetTable(mon(MonitoringMetricNames.PAGESPEED_LOAD_MS), "A");
+            table.targetTable(mon(MonitoringMetricNames.PAGESPEED_TTFB_MS), "B");
+            table.targetTable(mon(MonitoringMetricNames.PAGESPEED_BYTES), "C");
+            table.targetTable(mon(MonitoringMetricNames.PAGESPEED_REQUESTS), "D");
+            table.targetTable(mon(MonitoringMetricNames.PAGESPEED_BUDGET_BREACHED), "E");
+            table.mergeTable();
+            table.organize(List.of("monitor", "team", "group", "target", "Value #A", "Value #B", "Value #C", "Value #D", "Value #E"),
+                    List.of("type", "team_id", "monitor_id"));
+            table.override("monitor", "displayName", t("İzleme", "Monitor"));
+            if (links()) table.override("monitor", "links", List.of(link(t("İzlemeyi SiteMonitor'da aç", "Open the monitor in SiteMonitor"),
+                    url("tab=pagespeed&monitor=${__data.fields.monitor_id}"))));
+            table.override("team", "displayName", t("Takım", "Team"));
+            table.override("group", "displayName", t("Grup", "Group"));
+            table.override("target", "displayName", t("Hedef", "Target"));
+            table.valueColumn("A", t("Yükleme", "Load"), "ms", thresholds("text", null), "auto", null);
+            table.valueColumn("B", t("TTFB", "TTFB"), "ms", thresholds("text", null), "auto", null);
+            table.valueColumn("C", t("Ağırlık", "Weight"), "bytes", thresholds("text", null), "auto", null);
+            table.valueColumn("D", t("İstek", "Requests"), "short", thresholds("text", null), "auto", null);
+            // Bütçe değeri yalnız karara bağlanmış ölçümde yazılır — kısmi ölçüm / bütçesiz izleme boş hücredir (bilinmiyor ≠ 0).
+            table.valueColumn("E", t("Bütçe", "Budget"), "none", null, "color-text", List.of(valueMap(new Object[][]{
+                    {0, t("Eşik içinde", "Within budget"), GREEN}, {1, t("Aştı", "Over budget"), AMBER}})));
+            table.sortBy(t("Yükleme", "Load"), true);
+            add(table);
         }
 
         // ── Sertifikalar ve alan adları ──────────────────────────────────────────────────────────────────

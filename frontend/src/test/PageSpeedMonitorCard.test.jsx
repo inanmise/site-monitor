@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import PageSpeedMonitorCard from '../components/pagespeed/PageSpeedMonitorCard.jsx'
 import {
-  budgetFor, breachWeek, humanizeBytes, humanizeMs, meterTone, metersFor, urlParts, NEAR_BUDGET,
+  budgetFor, breachWeek, budgetCompliance, complianceTone, humanizeBytes, humanizeMs, meterTone, metersFor, urlParts, NEAR_BUDGET,
 } from '../components/pagespeed/pageSpeedCardModel.js'
 import PageSpeedMonitorPage from '../components/PageSpeedMonitorPage.jsx'
 import { MonitorStatusBadge, CARD_CHECK } from '../components/monitoring/MonitorCard.jsx'
@@ -91,9 +91,37 @@ describe('pageSpeedCardModel — saf yardımcılar', () => {
     expect(meterTone({ key: 'load', ratio: 1.01 })).toBe('crit')
     expect(meterTone({ key: 'load', ratio: 0.3, breached: true })).toBe('crit')
     expect(meterTone({ key: 'load', ratio: null })).toBeNull()
-    // TTFB eşiği sunucuda server_ms'e karşı değerlendirilir; görünen ttfb_ms aştı ama sunucu ihlal saymadı → sınırda
-    expect(meterTone({ key: 'ttfb', ratio: 1.4 })).toBe('warn')
+    // 2026-11-14: TTFB eşiği sunucuda GÖRÜNEN değere (gerçek isteğin ilk baytı) bakar — istisna kalktı, aşan kırmızı
+    expect(meterTone({ key: 'ttfb', ratio: 1.4 })).toBe('crit')
     expect(meterTone({ key: 'ttfb', ratio: 1.4, breached: true })).toBe('crit')
+  })
+
+  it('breachWeek (2026-11-14): sunucu `breach` gönderiyorsa yalnız eşik aşımları sayılır (yüklenemeyen ölçüm değil)', () => {
+    expect(breachWeek({ n: 10, fail: 5, breach: 2 }, { n: 20, fail: 6, breach: 3 })).toMatchObject({ thisWeek: 2, lastWeek: 1, trend: 'worse' })
+    // Biri eski biri yeni (karışık yanıt) → eski kural (fail) — iki pencere aynı ölçüyle karşılaştırılır
+    expect(breachWeek({ n: 10, fail: 5, breach: 2 }, { n: 20, fail: 6 })).toMatchObject({ thisWeek: 5, lastWeek: 1 })
+  })
+
+  it('budgetCompliance / complianceTone (2026-11-14): alan yoksa null, yüklenen ölçüm yoksa pct null — asla yeşil değil', () => {
+    expect(budgetCompliance(null)).toBeNull()
+    expect(budgetCompliance({ n: 10, fail: 0, up_pct: 100 })).toBeNull()              // eski sunucu
+    expect(budgetCompliance({ n: 10, fail: 2, budget_pct: 87.5 })).toEqual({ pct: 87.5, loaded: 8, days: 30, noBudget: false })
+    expect(budgetCompliance({ n: 3, fail: 3, budget_pct: null }, 7)).toEqual({ pct: null, loaded: 0, days: 7, noBudget: false })
+    expect(complianceTone(null)).toBe('none')
+    expect(complianceTone(100)).toBe('ok')
+    expect(complianceTone(96)).toBe('warn')
+    expect(complianceTone(80)).toBe('crit')
+  })
+
+  it('metersFor (2026-11-14): süre tavanı yükleme süresini ve boyutu alt sınır yapar', () => {
+    const ms = metersFor(mon({ time_truncated: true }))
+    const by = Object.fromEntries(ms.map((x) => [x.key, x]))
+    expect(by.load.lowerBound).toBe(true)
+    expect(by.load.timeCut).toBe(true)
+    expect(by.load.display.prefix).toBe('≥')
+    expect(by.size.lowerBound).toBe(true)
+    expect(by.ttfb.lowerBound).toBe(false)
+    expect(by.requests.lowerBound).toBe(false)
   })
 
   it('breachWeek: geçen hafta = 14 gün − 7 gün; 14 günde kontrol yoksa karşılaştırma yok', () => {

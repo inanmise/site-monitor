@@ -285,6 +285,123 @@ public final class MonitoringMetricsModel {
         };
     }
 
+    // ── Sayfa Hızı (2026-11-14, madde 20) ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Sayfa hızı durumları — pano bu sırayla çizer. {@code unknown}: hiç ölçülmedi YA DA son ölçüm kısmi ve bir eşik kararsız
+     * kaldı (inceleme B1); {@code no_budget}: sayfa alındı ama izlemede hiç eşik tanımlı değil (inceleme F7).
+     */
+    public static final List<String> PAGESPEED_STATES = List.of("ok", "over_budget", "down", "unknown", "no_budget", "paused");
+
+    /**
+     * Bir sayfa hızı izlemesi + son ölçümü. {@code ok} null = hiç ölçülmedi (bilinmiyor); {@code breached} = son ölçümün aşılan
+     * eşikleri (virgüllü; boş = eşik içinde); {@code undecided} = kararsız eşikler (kısmi ölçüm); {@code budgetDefined} =
+     * izlemede en az bir eşik var.
+     */
+    public record PageSpeedRow(long id, String name, String url, String group, Long teamId, boolean active,
+                               Boolean ok, Integer loadMs, Integer ttfbMs, Long totalBytes, Integer requests, String breached,
+                               String undecided, boolean budgetDefined) {
+
+        /** İnceleme öncesi biçim — kararsız eşik yok, bütçe tanımlı. */
+        public PageSpeedRow(long id, String name, String url, String group, Long teamId, boolean active,
+                            Boolean ok, Integer loadMs, Integer ttfbMs, Long totalBytes, Integer requests, String breached) {
+            this(id, name, url, group, teamId, active, ok, loadMs, ttfbMs, totalBytes, requests, breached, null, true);
+        }
+
+        String state() {
+            if (!active) return "paused";
+            if (ok == null) return "unknown";
+            if (!ok) return "down";
+            if (!breachedKeys().isEmpty()) return "over_budget";
+            if (!budgetDefined) return "no_budget";
+            return keys(undecided).isEmpty() ? "ok" : "unknown";
+        }
+
+        List<String> breachedKeys() { return keys(breached); }
+
+        /** Bütçe değeri: kanıtlı aşım 1, karara bağlanmış "içinde" 0; bütçe yok ya da kararsız → null (seri YAZILMAZ). */
+        Integer budgetBreached() {
+            if (!budgetDefined) return null;
+            if (!breachedKeys().isEmpty()) return 1;
+            return keys(undecided).isEmpty() ? 0 : null;
+        }
+
+        private static List<String> keys(String csv) {
+            if (csv == null || csv.isBlank()) return List.of();
+            List<String> out = new ArrayList<>();
+            for (String k : csv.split(",")) {
+                String t = k.trim().toUpperCase(Locale.ROOT);
+                if (!t.isEmpty()) out.add(t);
+            }
+            return out;
+        }
+    }
+
+    /**
+     * Sayfa hızı izlemeleri → takım × durum ve takım × aşılan ölçü toplamları (sıfırlar dahil; yalnız sayfa hızı izlemesi olan
+     * takımlar) + (açıksa) izleme başına son ölçüm satırları. Alınamayan / ölçülmemiş izlemenin değer satırları YAZILMAZ
+     * (bilinmiyor ≠ 0). İzleme başına satırların tavanı {@code monitors} ailesinin tavan işaretiyle bildirilir.
+     */
+    public static void pageSpeed(Families f, List<PageSpeedRow> rows, TeamDirectory teams, boolean perEntity, int maxEntities) {
+        if (rows == null) return;
+        Map<String, long[]> states = new TreeMap<>();
+        Map<String, long[]> breaches = new TreeMap<>();
+        Map<String, String[]> parts = new HashMap<>();
+        List<String> metrics = com.sitemonitor.service.page.PageSpeedRules.BREACH_KEYS;
+        for (PageSpeedRow r : rows) {
+            String key = TeamDirectory.id(r.teamId());
+            parts.putIfAbsent(key, new String[]{teams.name(r.teamId()), key});
+            states.computeIfAbsent(key, k -> new long[PAGESPEED_STATES.size()])[PAGESPEED_STATES.indexOf(r.state())]++;
+            long[] b = breaches.computeIfAbsent(key, k -> new long[metrics.size()]);
+            if (r.active() && Boolean.TRUE.equals(r.ok())) {
+                for (String m : r.breachedKeys()) {
+                    int i = metrics.indexOf(m);
+                    if (i >= 0) b[i]++;
+                }
+            }
+        }
+        for (Map.Entry<String, long[]> e : states.entrySet()) {
+            String[] p = parts.get(e.getKey());
+            for (int i = 0; i < PAGESPEED_STATES.size(); i++) {
+                f.add(MonitoringMetricNames.PAGESPEED_PAGES, e.getValue()[i], "team", p[0], "team_id", p[1], "state", PAGESPEED_STATES.get(i));
+            }
+        }
+        for (Map.Entry<String, long[]> e : breaches.entrySet()) {
+            String[] p = parts.get(e.getKey());
+            for (int i = 0; i < metrics.size(); i++) {
+                f.add(MonitoringMetricNames.PAGESPEED_BREACHES, e.getValue()[i], "team", p[0], "team_id", p[1], "metric", metrics.get(i));
+            }
+        }
+        if (!perEntity) return;
+        List<PageSpeedRow> measured = new ArrayList<>();
+        for (PageSpeedRow r : rows) if (r.active() && Boolean.TRUE.equals(r.ok())) measured.add(r);
+        // Önemli olan önce (tavan aşılırsa eşiği aşan sayfalar korunur), sonra ad
+        measured.sort(Comparator.<PageSpeedRow>comparingInt(r -> r.breachedKeys().isEmpty() ? 1 : 0)
+                .thenComparing(r -> String.valueOf(r.name()).toLowerCase(Locale.ROOT))
+                .thenComparingLong(PageSpeedRow::id));
+        int limit = Math.max(0, maxEntities);
+        if (measured.size() > limit) {
+            f.markCapped("monitors");
+            measured = measured.subList(0, limit);
+        }
+        for (PageSpeedRow r : measured) {
+            String[] kv = {
+                    "type", "pagespeed",
+                    "team", teams.name(r.teamId()),
+                    "team_id", TeamDirectory.id(r.teamId()),
+                    "group", r.group(),
+                    "monitor", r.name(),
+                    "monitor_id", String.valueOf(r.id()),
+                    "target", safeTarget(r.url())};
+            if (r.loadMs() != null && r.loadMs() >= 0) f.add(MonitoringMetricNames.PAGESPEED_LOAD_MS, r.loadMs(), kv);
+            if (r.ttfbMs() != null && r.ttfbMs() >= 0) f.add(MonitoringMetricNames.PAGESPEED_TTFB_MS, r.ttfbMs(), kv);
+            if (r.totalBytes() != null && r.totalBytes() >= 0) f.add(MonitoringMetricNames.PAGESPEED_BYTES, r.totalBytes(), kv);
+            if (r.requests() != null && r.requests() >= 0) f.add(MonitoringMetricNames.PAGESPEED_REQUESTS, r.requests(), kv);
+            Integer bb = r.budgetBreached();
+            if (bb != null) f.add(MonitoringMetricNames.PAGESPEED_BUDGET_BREACHED, bb, kv);
+        }
+    }
+
     // ── Alarmlar ─────────────────────────────────────────────────────────────────────────────────────────
 
     /** Envanter alan adı → SY / UG takımı (alarm sahipliği ve sertifika UG etiketi). */

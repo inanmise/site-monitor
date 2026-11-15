@@ -111,7 +111,7 @@
       }
     } ]
   },
-  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 15 · SiteMonitor 0.0.0-gate.",
+  "description" : "SiteMonitor izleme durumu, alarmlar, sertifikalar ve sistemin kendi sağlığı — takım ve tür süzgeçli. Pano revizyonu 17 · SiteMonitor 0.0.0-gate.",
   "editable" : true,
   "fiscalYearStartMonth" : 0,
   "graphTooltip" : 1,
@@ -5646,6 +5646,934 @@
     },
     "id" : 52
   }, {
+    "type" : "stat",
+    "title" : "Sayfa hızı — bütçeyi aşan",
+    "description" : "Son ölçümde en az bir eşiği ya da tür bütçesini (yükleme süresi, TTFB, boyut, istek, JavaScript, görsel, yazı tipi, üçüncü taraf) aşan ETKİN sayfa hızı izlemeleri. Takım süzgecine uyar, tür süzgecinden bağımsızdır. Veri yoksa kaynak okunamadı.",
+    "datasource" : {
+      "type" : "prometheus",
+      "uid" : "${datasource}"
+    },
+    "fieldConfig" : {
+      "defaults" : {
+        "unit" : "short",
+        "thresholds" : {
+          "mode" : "absolute",
+          "steps" : [ {
+            "color" : "green",
+            "value" : null
+          }, {
+            "color" : "orange",
+            "value" : 1
+          } ]
+        },
+        "color" : {
+          "mode" : "thresholds"
+        },
+        "noValue" : "Veri yok"
+      },
+      "overrides" : [ ]
+    },
+    "targets" : [ {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "(sum(max by (team, team_id, state) (sitemonitor_pagespeed_pages{namespace=\"site-monitor-prod\", team=~\"$team\", state=\"over_budget\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"pagespeed\"}) == 1))",
+      "instant" : false,
+      "legendFormat" : "__auto",
+      "range" : true,
+      "refId" : "A"
+    } ],
+    "transformations" : [ ],
+    "options" : {
+      "colorMode" : "background",
+      "graphMode" : "area",
+      "justifyMode" : "auto",
+      "orientation" : "auto",
+      "percentChangeColorMode" : "standard",
+      "reduceOptions" : {
+        "calcs" : [ "lastNotNull" ],
+        "fields" : "",
+        "values" : false
+      },
+      "showPercentChange" : false,
+      "textMode" : "auto",
+      "wideLayout" : true
+    },
+    "links" : [ {
+      "title" : "SiteMonitor'da aç",
+      "url" : "https://sitemonitor.example.org/?tab=pagespeed&stat=slow",
+      "targetBlank" : true
+    } ],
+    "gridPos" : {
+      "h" : 8,
+      "w" : 4,
+      "x" : 12,
+      "y" : 151
+    },
+    "id" : 53
+  }, {
+    "type" : "stat",
+    "title" : "Sayfa hızı — açılamayan",
+    "description" : "Son ölçümde sayfası alınamayan (bağlantı, durum kodu, zaman aşımı) etkin sayfa hızı izlemeleri.",
+    "datasource" : {
+      "type" : "prometheus",
+      "uid" : "${datasource}"
+    },
+    "fieldConfig" : {
+      "defaults" : {
+        "unit" : "short",
+        "thresholds" : {
+          "mode" : "absolute",
+          "steps" : [ {
+            "color" : "green",
+            "value" : null
+          }, {
+            "color" : "red",
+            "value" : 1
+          } ]
+        },
+        "color" : {
+          "mode" : "thresholds"
+        },
+        "noValue" : "Veri yok"
+      },
+      "overrides" : [ ]
+    },
+    "targets" : [ {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "(sum(max by (team, team_id, state) (sitemonitor_pagespeed_pages{namespace=\"site-monitor-prod\", team=~\"$team\", state=\"down\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"pagespeed\"}) == 1))",
+      "instant" : false,
+      "legendFormat" : "__auto",
+      "range" : true,
+      "refId" : "A"
+    } ],
+    "transformations" : [ ],
+    "options" : {
+      "colorMode" : "background",
+      "graphMode" : "area",
+      "justifyMode" : "auto",
+      "orientation" : "auto",
+      "percentChangeColorMode" : "standard",
+      "reduceOptions" : {
+        "calcs" : [ "lastNotNull" ],
+        "fields" : "",
+        "values" : false
+      },
+      "showPercentChange" : false,
+      "textMode" : "auto",
+      "wideLayout" : true
+    },
+    "links" : [ {
+      "title" : "SiteMonitor'da aç",
+      "url" : "https://sitemonitor.example.org/?tab=pagespeed&stat=down",
+      "targetBlank" : true
+    } ],
+    "gridPos" : {
+      "h" : 8,
+      "w" : 4,
+      "x" : 16,
+      "y" : 151
+    },
+    "id" : 54
+  }, {
+    "type" : "stat",
+    "title" : "Sayfa hızı — bilinmiyor",
+    "description" : "Henüz hiç ölçülmemiş ya da son ölçümü kısmi kalıp (süre / boyut / kaynak tavanı) bir eşiği karara bağlanamamış etkin sayfa hızı izlemeleri. Bilinmeyen durumdur — sağlıklı sayılmaz.",
+    "datasource" : {
+      "type" : "prometheus",
+      "uid" : "${datasource}"
+    },
+    "fieldConfig" : {
+      "defaults" : {
+        "unit" : "short",
+        "thresholds" : {
+          "mode" : "absolute",
+          "steps" : [ {
+            "color" : "green",
+            "value" : null
+          }, {
+            "color" : "#8E8E8E",
+            "value" : 1
+          } ]
+        },
+        "color" : {
+          "mode" : "thresholds"
+        },
+        "noValue" : "Veri yok"
+      },
+      "overrides" : [ ]
+    },
+    "targets" : [ {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "(sum(max by (team, team_id, state) (sitemonitor_pagespeed_pages{namespace=\"site-monitor-prod\", team=~\"$team\", state=\"unknown\"}))) or (vector(0) and on() (max(sitemonitor_exporter_source_up{namespace=\"site-monitor-prod\", source=\"pagespeed\"}) == 1))",
+      "instant" : false,
+      "legendFormat" : "__auto",
+      "range" : true,
+      "refId" : "A"
+    } ],
+    "transformations" : [ ],
+    "options" : {
+      "colorMode" : "background",
+      "graphMode" : "area",
+      "justifyMode" : "auto",
+      "orientation" : "auto",
+      "percentChangeColorMode" : "standard",
+      "reduceOptions" : {
+        "calcs" : [ "lastNotNull" ],
+        "fields" : "",
+        "values" : false
+      },
+      "showPercentChange" : false,
+      "textMode" : "auto",
+      "wideLayout" : true
+    },
+    "gridPos" : {
+      "h" : 8,
+      "w" : 4,
+      "x" : 20,
+      "y" : 151
+    },
+    "id" : 55
+  }, {
+    "type" : "bargauge",
+    "title" : "Sayfa hızı — aşılan eşikler",
+    "description" : "Son ölçümde ilgili eşiği aşan etkin sayfa sayısı, ölçüye göre (bir sayfa birden çok ölçüde sayılabilir). Takım süzgecine uyar. Veri yoksa kaynak okunamadı ya da süzgece uyan sayfa hızı izlemesi yok.",
+    "datasource" : {
+      "type" : "prometheus",
+      "uid" : "${datasource}"
+    },
+    "fieldConfig" : {
+      "defaults" : {
+        "unit" : "short",
+        "thresholds" : {
+          "mode" : "absolute",
+          "steps" : [ {
+            "color" : "green",
+            "value" : null
+          }, {
+            "color" : "orange",
+            "value" : 1
+          } ]
+        },
+        "color" : {
+          "mode" : "thresholds"
+        },
+        "noValue" : "—"
+      },
+      "overrides" : [ {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "LOAD"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Yükleme süresi"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "TTFB"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "İlk bayt (TTFB)"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "SIZE"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Sayfa boyutu (üst sınır)"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "REQUESTS"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "İstek sayısı"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "MINSIZE"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Sayfa boyutu (alt sınır)"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "JS"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "JavaScript bütçesi"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "IMG"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Görsel bütçesi"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "FONT"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Yazı tipi bütçesi"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "THIRD"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Üçüncü taraf bütçesi"
+        } ]
+      } ]
+    },
+    "targets" : [ {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "sum by (metric) (max by (team, team_id, metric) (sitemonitor_pagespeed_breaches{namespace=\"site-monitor-prod\", team=~\"$team\"}))",
+      "instant" : true,
+      "legendFormat" : "{{metric}}",
+      "range" : false,
+      "refId" : "A"
+    } ],
+    "transformations" : [ ],
+    "options" : {
+      "displayMode" : "gradient",
+      "maxVizHeight" : 300,
+      "minVizHeight" : 16,
+      "minVizWidth" : 8,
+      "namePlacement" : "left",
+      "orientation" : "horizontal",
+      "reduceOptions" : {
+        "calcs" : [ "lastNotNull" ],
+        "fields" : "",
+        "values" : false
+      },
+      "showUnfilled" : true,
+      "sizing" : "auto",
+      "valueMode" : "color"
+    },
+    "gridPos" : {
+      "h" : 8,
+      "w" : 12,
+      "x" : 0,
+      "y" : 160
+    },
+    "id" : 56
+  }, {
+    "type" : "timeseries",
+    "title" : "Sayfa hızı durumları zaman içinde",
+    "description" : "Sayfa hızı izlemelerinin son ölçüme göre durumu, zaman içinde yığılmış: eşik içinde, bütçeyi aşan, açılamayan, bilinmiyor (ölçülmemiş ya da kısmi ölçüm), bütçe tanımsız, duraklatılmış. Takım süzgecine uyar.",
+    "datasource" : {
+      "type" : "prometheus",
+      "uid" : "${datasource}"
+    },
+    "fieldConfig" : {
+      "defaults" : {
+        "unit" : "short",
+        "color" : {
+          "mode" : "palette-classic"
+        },
+        "custom" : {
+          "axisPlacement" : "auto",
+          "barAlignment" : 0,
+          "drawStyle" : "line",
+          "fillOpacity" : 60,
+          "gradientMode" : "none",
+          "lineInterpolation" : "smooth",
+          "lineWidth" : 2,
+          "pointSize" : 4,
+          "showPoints" : "never",
+          "spanNulls" : false,
+          "stacking" : {
+            "group" : "A",
+            "mode" : "normal"
+          },
+          "thresholdsStyle" : {
+            "mode" : "off"
+          }
+        }
+      },
+      "overrides" : [ {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "Eşik içinde"
+        },
+        "properties" : [ {
+          "id" : "color",
+          "value" : {
+            "mode" : "fixed",
+            "fixedColor" : "green"
+          }
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "Bütçeyi aşan"
+        },
+        "properties" : [ {
+          "id" : "color",
+          "value" : {
+            "mode" : "fixed",
+            "fixedColor" : "orange"
+          }
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "Açılamayan"
+        },
+        "properties" : [ {
+          "id" : "color",
+          "value" : {
+            "mode" : "fixed",
+            "fixedColor" : "red"
+          }
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "Bilinmiyor"
+        },
+        "properties" : [ {
+          "id" : "color",
+          "value" : {
+            "mode" : "fixed",
+            "fixedColor" : "#8E8E8E"
+          }
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "Bütçe tanımsız"
+        },
+        "properties" : [ {
+          "id" : "color",
+          "value" : {
+            "mode" : "fixed",
+            "fixedColor" : "purple"
+          }
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "Duraklatılmış"
+        },
+        "properties" : [ {
+          "id" : "color",
+          "value" : {
+            "mode" : "fixed",
+            "fixedColor" : "blue"
+          }
+        } ]
+      } ]
+    },
+    "targets" : [ {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "sum(max by (team, team_id, state) (sitemonitor_pagespeed_pages{namespace=\"site-monitor-prod\", team=~\"$team\", state=\"ok\"}))",
+      "instant" : false,
+      "legendFormat" : "Eşik içinde",
+      "range" : true,
+      "refId" : "A"
+    }, {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "sum(max by (team, team_id, state) (sitemonitor_pagespeed_pages{namespace=\"site-monitor-prod\", team=~\"$team\", state=\"over_budget\"}))",
+      "instant" : false,
+      "legendFormat" : "Bütçeyi aşan",
+      "range" : true,
+      "refId" : "B"
+    }, {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "sum(max by (team, team_id, state) (sitemonitor_pagespeed_pages{namespace=\"site-monitor-prod\", team=~\"$team\", state=\"down\"}))",
+      "instant" : false,
+      "legendFormat" : "Açılamayan",
+      "range" : true,
+      "refId" : "C"
+    }, {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "sum(max by (team, team_id, state) (sitemonitor_pagespeed_pages{namespace=\"site-monitor-prod\", team=~\"$team\", state=\"unknown\"}))",
+      "instant" : false,
+      "legendFormat" : "Bilinmiyor",
+      "range" : true,
+      "refId" : "D"
+    }, {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "sum(max by (team, team_id, state) (sitemonitor_pagespeed_pages{namespace=\"site-monitor-prod\", team=~\"$team\", state=\"no_budget\"}))",
+      "instant" : false,
+      "legendFormat" : "Bütçe tanımsız",
+      "range" : true,
+      "refId" : "E"
+    }, {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "sum(max by (team, team_id, state) (sitemonitor_pagespeed_pages{namespace=\"site-monitor-prod\", team=~\"$team\", state=\"paused\"}))",
+      "instant" : false,
+      "legendFormat" : "Duraklatılmış",
+      "range" : true,
+      "refId" : "F"
+    } ],
+    "transformations" : [ ],
+    "options" : {
+      "legend" : {
+        "calcs" : [ "lastNotNull", "max" ],
+        "displayMode" : "table",
+        "placement" : "bottom",
+        "showLegend" : true
+      },
+      "tooltip" : {
+        "hideZeros" : false,
+        "mode" : "multi",
+        "sort" : "desc"
+      }
+    },
+    "gridPos" : {
+      "h" : 8,
+      "w" : 12,
+      "x" : 12,
+      "y" : 160
+    },
+    "id" : 57
+  }, {
+    "type" : "timeseries",
+    "title" : "Sayfa hızı — en yavaş 10 sayfa",
+    "description" : "Son ölçüme göre yükleme süresi en uzun 10 sayfa hızı izlemesi, zaman içinde. Süre tavanına takılan ölçüm bir alt sınırdır. Açılamayan ya da ölçülmemiş sayfanın değeri yoktur (0 sayılmaz).",
+    "datasource" : {
+      "type" : "prometheus",
+      "uid" : "${datasource}"
+    },
+    "fieldConfig" : {
+      "defaults" : {
+        "unit" : "ms",
+        "color" : {
+          "mode" : "palette-classic"
+        },
+        "custom" : {
+          "axisPlacement" : "auto",
+          "barAlignment" : 0,
+          "drawStyle" : "line",
+          "fillOpacity" : 12,
+          "gradientMode" : "opacity",
+          "lineInterpolation" : "smooth",
+          "lineWidth" : 2,
+          "pointSize" : 4,
+          "showPoints" : "never",
+          "spanNulls" : false,
+          "stacking" : {
+            "group" : "A",
+            "mode" : "none"
+          },
+          "thresholdsStyle" : {
+            "mode" : "off"
+          }
+        }
+      },
+      "overrides" : [ ]
+    },
+    "targets" : [ {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "topk(10, max by (type, team, team_id, group, monitor, monitor_id, target) (sitemonitor_pagespeed_load_ms{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", monitor=~\"$monitor\"}))",
+      "instant" : false,
+      "legendFormat" : "{{monitor}}",
+      "range" : true,
+      "refId" : "A"
+    } ],
+    "transformations" : [ ],
+    "options" : {
+      "legend" : {
+        "calcs" : [ "lastNotNull", "max" ],
+        "displayMode" : "table",
+        "placement" : "bottom",
+        "showLegend" : true
+      },
+      "tooltip" : {
+        "hideZeros" : false,
+        "mode" : "multi",
+        "sort" : "desc"
+      }
+    },
+    "gridPos" : {
+      "h" : 8,
+      "w" : 12,
+      "x" : 0,
+      "y" : 168
+    },
+    "id" : 58
+  }, {
+    "type" : "table",
+    "title" : "Sayfa hızı — son ölçümler",
+    "description" : "Süzgece uyan her ölçülmüş sayfa hızı izlemesi: yükleme süresi, TTFB (kontrolün kendi isteği), sayfa ağırlığı, istek sayısı ve bütçe durumu. İzleme adı SiteMonitor'da detayını açar.",
+    "datasource" : {
+      "type" : "prometheus",
+      "uid" : "${datasource}"
+    },
+    "fieldConfig" : {
+      "defaults" : {
+        "custom" : {
+          "align" : "auto",
+          "cellOptions" : {
+            "type" : "auto"
+          },
+          "filterable" : true,
+          "inspect" : false
+        }
+      },
+      "overrides" : [ {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "type"
+        },
+        "properties" : [ {
+          "id" : "custom.hidden",
+          "value" : true
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "team_id"
+        },
+        "properties" : [ {
+          "id" : "custom.hidden",
+          "value" : true
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "monitor_id"
+        },
+        "properties" : [ {
+          "id" : "custom.hidden",
+          "value" : true
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "monitor"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "İzleme"
+        }, {
+          "id" : "links",
+          "value" : [ {
+            "title" : "İzlemeyi SiteMonitor'da aç",
+            "url" : "https://sitemonitor.example.org/?tab=pagespeed&monitor=${__data.fields.monitor_id}",
+            "targetBlank" : true
+          } ]
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "team"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Takım"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "group"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Grup"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "target"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Hedef"
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "Value #A"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Yükleme"
+        }, {
+          "id" : "unit",
+          "value" : "ms"
+        }, {
+          "id" : "thresholds",
+          "value" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "text",
+              "value" : null
+            } ]
+          }
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "Value #B"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "TTFB"
+        }, {
+          "id" : "unit",
+          "value" : "ms"
+        }, {
+          "id" : "thresholds",
+          "value" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "text",
+              "value" : null
+            } ]
+          }
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "Value #C"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Ağırlık"
+        }, {
+          "id" : "unit",
+          "value" : "bytes"
+        }, {
+          "id" : "thresholds",
+          "value" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "text",
+              "value" : null
+            } ]
+          }
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "Value #D"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "İstek"
+        }, {
+          "id" : "unit",
+          "value" : "short"
+        }, {
+          "id" : "thresholds",
+          "value" : {
+            "mode" : "absolute",
+            "steps" : [ {
+              "color" : "text",
+              "value" : null
+            } ]
+          }
+        } ]
+      }, {
+        "matcher" : {
+          "id" : "byName",
+          "options" : "Value #E"
+        },
+        "properties" : [ {
+          "id" : "displayName",
+          "value" : "Bütçe"
+        }, {
+          "id" : "unit",
+          "value" : "none"
+        }, {
+          "id" : "mappings",
+          "value" : [ {
+            "options" : {
+              "0" : {
+                "color" : "green",
+                "index" : 0,
+                "text" : "Eşik içinde"
+              },
+              "1" : {
+                "color" : "orange",
+                "index" : 1,
+                "text" : "Aştı"
+              }
+            },
+            "type" : "value"
+          } ]
+        }, {
+          "id" : "custom.cellOptions",
+          "value" : {
+            "type" : "color-text",
+            "mode" : "basic"
+          }
+        } ]
+      } ]
+    },
+    "targets" : [ {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "max by (type, team, team_id, group, monitor, monitor_id, target) (sitemonitor_pagespeed_load_ms{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", monitor=~\"$monitor\"})",
+      "format" : "table",
+      "instant" : true,
+      "legendFormat" : "__auto",
+      "range" : false,
+      "refId" : "A"
+    }, {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "max by (type, team, team_id, group, monitor, monitor_id, target) (sitemonitor_pagespeed_ttfb_ms{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", monitor=~\"$monitor\"})",
+      "format" : "table",
+      "instant" : true,
+      "legendFormat" : "__auto",
+      "range" : false,
+      "refId" : "B"
+    }, {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "max by (type, team, team_id, group, monitor, monitor_id, target) (sitemonitor_pagespeed_bytes{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", monitor=~\"$monitor\"})",
+      "format" : "table",
+      "instant" : true,
+      "legendFormat" : "__auto",
+      "range" : false,
+      "refId" : "C"
+    }, {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "max by (type, team, team_id, group, monitor, monitor_id, target) (sitemonitor_pagespeed_requests{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", monitor=~\"$monitor\"})",
+      "format" : "table",
+      "instant" : true,
+      "legendFormat" : "__auto",
+      "range" : false,
+      "refId" : "D"
+    }, {
+      "datasource" : {
+        "type" : "prometheus",
+        "uid" : "${datasource}"
+      },
+      "editorMode" : "code",
+      "expr" : "max by (type, team, team_id, group, monitor, monitor_id, target) (sitemonitor_pagespeed_budget_breached{namespace=\"site-monitor-prod\", team=~\"$team\", type=~\"$type\", monitor=~\"$monitor\"})",
+      "format" : "table",
+      "instant" : true,
+      "legendFormat" : "__auto",
+      "range" : false,
+      "refId" : "E"
+    } ],
+    "transformations" : [ {
+      "id" : "merge",
+      "options" : { }
+    }, {
+      "id" : "organize",
+      "options" : {
+        "excludeByName" : {
+          "Time" : true
+        },
+        "includeByName" : { },
+        "indexByName" : {
+          "monitor" : 0,
+          "team" : 1,
+          "group" : 2,
+          "target" : 3,
+          "Value #A" : 4,
+          "Value #B" : 5,
+          "Value #C" : 6,
+          "Value #D" : 7,
+          "Value #E" : 8,
+          "type" : 9,
+          "team_id" : 10,
+          "monitor_id" : 11
+        },
+        "renameByName" : { }
+      }
+    } ],
+    "options" : {
+      "cellHeight" : "sm",
+      "footer" : {
+        "countRows" : false,
+        "fields" : "",
+        "reducer" : [ "sum" ],
+        "show" : false
+      },
+      "showHeader" : true,
+      "sortBy" : [ {
+        "desc" : true,
+        "displayName" : "Yükleme"
+      } ]
+    },
+    "gridPos" : {
+      "h" : 11,
+      "w" : 24,
+      "x" : 0,
+      "y" : 176
+    },
+    "id" : 59
+  }, {
     "type" : "row",
     "title" : "Sertifikalar ve alan adları",
     "collapsed" : true,
@@ -5653,9 +6581,9 @@
       "h" : 1,
       "w" : 24,
       "x" : 0,
-      "y" : 160
+      "y" : 187
     },
-    "id" : 53,
+    "id" : 60,
     "panels" : [ {
       "type" : "stat",
       "title" : "İzlenen sertifika",
@@ -5718,9 +6646,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 0,
-        "y" : 161
+        "y" : 188
       },
-      "id" : 54
+      "id" : 61
     }, {
       "type" : "stat",
       "title" : "Geçerli",
@@ -5778,9 +6706,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 4,
-        "y" : 161
+        "y" : 188
       },
-      "id" : 55
+      "id" : 62
     }, {
       "type" : "stat",
       "title" : "Uyarı / yüksek / kritik",
@@ -5846,9 +6774,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 8,
-        "y" : 161
+        "y" : 188
       },
-      "id" : 56
+      "id" : 63
     }, {
       "type" : "stat",
       "title" : "Kontrol hatası",
@@ -5909,9 +6837,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 12,
-        "y" : 161
+        "y" : 188
       },
-      "id" : 57
+      "id" : 64
     }, {
       "type" : "stat",
       "title" : "A / A+ notu",
@@ -5975,9 +6903,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 16,
-        "y" : 161
+        "y" : 188
       },
-      "id" : 58
+      "id" : 65
     }, {
       "type" : "stat",
       "title" : "Süresi dolmuş",
@@ -6043,9 +6971,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 20,
-        "y" : 161
+        "y" : 188
       },
-      "id" : 59
+      "id" : 66
     }, {
       "type" : "piechart",
       "title" : "Sertifika durumu",
@@ -6223,9 +7151,9 @@
         "h" : 9,
         "w" : 8,
         "x" : 0,
-        "y" : 165
+        "y" : 192
       },
-      "id" : 60
+      "id" : 67
     }, {
       "type" : "barchart",
       "title" : "TLS yapılandırma notları",
@@ -6318,9 +7246,9 @@
         "h" : 9,
         "w" : 8,
         "x" : 8,
-        "y" : 165
+        "y" : 192
       },
-      "id" : 61
+      "id" : 68
     }, {
       "type" : "timeseries",
       "title" : "Bitişe kalan süre kovaları",
@@ -6491,9 +7419,9 @@
         "h" : 9,
         "w" : 8,
         "x" : 16,
-        "y" : 165
+        "y" : 192
       },
-      "id" : 62
+      "id" : 69
     }, {
       "type" : "bargauge",
       "title" : "En yakında dolacak $topn sertifika",
@@ -6566,9 +7494,9 @@
         "h" : 10,
         "w" : 10,
         "x" : 0,
-        "y" : 174
+        "y" : 201
       },
-      "id" : 63
+      "id" : 70
     }, {
       "type" : "table",
       "title" : "30 gün içinde dolan sertifikalar",
@@ -6953,9 +7881,9 @@
         "h" : 10,
         "w" : 14,
         "x" : 10,
-        "y" : 174
+        "y" : 201
       },
-      "id" : 64
+      "id" : 71
     }, {
       "type" : "bargauge",
       "title" : "Kaydı en yakında bitecek $topn alan adı",
@@ -7028,9 +7956,9 @@
         "h" : 9,
         "w" : 10,
         "x" : 0,
-        "y" : 184
+        "y" : 211
       },
-      "id" : 65
+      "id" : 72
     }, {
       "type" : "table",
       "title" : "60 gün içinde bitecek alan adı kayıtları",
@@ -7202,9 +8130,9 @@
         "h" : 9,
         "w" : 14,
         "x" : 10,
-        "y" : 184
+        "y" : 211
       },
-      "id" : 66
+      "id" : 73
     }, {
       "type" : "timeseries",
       "title" : "Alan adı kaydı kovaları",
@@ -7375,9 +8303,9 @@
         "h" : 8,
         "w" : 24,
         "x" : 0,
-        "y" : 193
+        "y" : 220
       },
-      "id" : 67
+      "id" : 74
     } ]
   }, {
     "type" : "row",
@@ -7387,9 +8315,9 @@
       "h" : 1,
       "w" : 24,
       "x" : 0,
-      "y" : 201
+      "y" : 228
     },
-    "id" : 68,
+    "id" : 75,
     "panels" : [ {
       "type" : "stat",
       "title" : "E-posta gönderildi (24 sa)",
@@ -7447,9 +8375,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 0,
-        "y" : 202
+        "y" : 229
       },
-      "id" : 69
+      "id" : 76
     }, {
       "type" : "stat",
       "title" : "E-posta başarısız (24 sa)",
@@ -7510,9 +8438,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 4,
-        "y" : 202
+        "y" : 229
       },
-      "id" : 70
+      "id" : 77
     }, {
       "type" : "stat",
       "title" : "Webhook başarısız (24 sa)",
@@ -7573,9 +8501,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 8,
-        "y" : 202
+        "y" : 229
       },
-      "id" : 71
+      "id" : 78
     }, {
       "type" : "stat",
       "title" : "Push başarısız (24 sa)",
@@ -7636,9 +8564,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 12,
-        "y" : 202
+        "y" : 229
       },
-      "id" : 72
+      "id" : 79
     }, {
       "type" : "stat",
       "title" : "Push kuyruğu",
@@ -7710,9 +8638,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 16,
-        "y" : 202
+        "y" : 229
       },
-      "id" : 73
+      "id" : 80
     }, {
       "type" : "stat",
       "title" : "Push devre kesici",
@@ -7788,9 +8716,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 20,
-        "y" : 202
+        "y" : 229
       },
-      "id" : 74
+      "id" : 81
     }, {
       "type" : "stat",
       "title" : "Push kanalı",
@@ -7866,9 +8794,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 0,
-        "y" : 206
+        "y" : 233
       },
-      "id" : 75
+      "id" : 82
     }, {
       "type" : "timeseries",
       "title" : "E-posta bildirimleri (son 24 sa, kayan)",
@@ -8016,9 +8944,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 4,
-        "y" : 206
+        "y" : 233
       },
-      "id" : 76
+      "id" : 83
     }, {
       "type" : "bargauge",
       "title" : "Tetiğe göre bildirimler (24 sa)",
@@ -8077,9 +9005,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 214
+        "y" : 241
       },
-      "id" : 77
+      "id" : 84
     }, {
       "type" : "table",
       "title" : "Başarısız bildirimler — tetik ve kanal",
@@ -8184,9 +9112,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 214
+        "y" : 241
       },
-      "id" : 78
+      "id" : 85
     }, {
       "type" : "timeseries",
       "title" : "Push teslimleri (son 24 sa, kayan)",
@@ -8357,9 +9285,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 222
+        "y" : 249
       },
-      "id" : 79
+      "id" : 86
     }, {
       "type" : "timeseries",
       "title" : "Aktif fırtınalar ve üyeleri — takıma göre",
@@ -8442,9 +9370,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 222
+        "y" : 249
       },
-      "id" : 80
+      "id" : 87
     }, {
       "type" : "stat",
       "title" : "Aktif fırtına (tüm takımlar)",
@@ -8510,9 +9438,9 @@
         "h" : 4,
         "w" : 12,
         "x" : 0,
-        "y" : 230
+        "y" : 257
       },
-      "id" : 81
+      "id" : 88
     } ]
   }, {
     "type" : "row",
@@ -8522,9 +9450,9 @@
       "h" : 1,
       "w" : 24,
       "x" : 0,
-      "y" : 234
+      "y" : 261
     },
-    "id" : 82,
+    "id" : 89,
     "panels" : [ {
       "type" : "stat",
       "title" : "Ayakta pod",
@@ -8601,9 +9529,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 0,
-        "y" : 235
+        "y" : 262
       },
-      "id" : 83
+      "id" : 90
     }, {
       "type" : "stat",
       "title" : "Sürüm",
@@ -8661,9 +9589,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 4,
-        "y" : 235
+        "y" : 262
       },
-      "id" : 84
+      "id" : 91
     }, {
       "type" : "stat",
       "title" : "En yeni başlatma",
@@ -8724,9 +9652,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 8,
-        "y" : 235
+        "y" : 262
       },
-      "id" : 85
+      "id" : 92
     }, {
       "type" : "stat",
       "title" : "Tarama lideri",
@@ -8790,9 +9718,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 12,
-        "y" : 235
+        "y" : 262
       },
-      "id" : 86
+      "id" : 93
     }, {
       "type" : "stat",
       "title" : "Veritabanı",
@@ -8876,9 +9804,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 16,
-        "y" : 235
+        "y" : 262
       },
-      "id" : 87
+      "id" : 94
     }, {
       "type" : "stat",
       "title" : "Sistem bakımı",
@@ -8978,9 +9906,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 20,
-        "y" : 235
+        "y" : 262
       },
-      "id" : 88
+      "id" : 95
     }, {
       "type" : "state-timeline",
       "title" : "Kendi kendini izleme kontrolleri",
@@ -9077,9 +10005,9 @@
         "h" : 8,
         "w" : 16,
         "x" : 0,
-        "y" : 239
+        "y" : 266
       },
-      "id" : 89
+      "id" : 96
     }, {
       "type" : "stat",
       "title" : "Son değerlendirme",
@@ -9143,9 +10071,9 @@
         "h" : 4,
         "w" : 8,
         "x" : 16,
-        "y" : 239
+        "y" : 266
       },
-      "id" : 90
+      "id" : 97
     }, {
       "type" : "stat",
       "title" : "Şema yaması hatası",
@@ -9206,9 +10134,9 @@
         "h" : 4,
         "w" : 8,
         "x" : 0,
-        "y" : 247
+        "y" : 274
       },
-      "id" : 91
+      "id" : 98
     }, {
       "type" : "timeseries",
       "title" : "Tarama liderliği kirası",
@@ -9286,9 +10214,9 @@
         "h" : 7,
         "w" : 12,
         "x" : 8,
-        "y" : 247
+        "y" : 274
       },
-      "id" : 92
+      "id" : 99
     }, {
       "type" : "table",
       "title" : "Tutulan zamanlayıcı kilitleri",
@@ -9369,9 +10297,9 @@
         "h" : 7,
         "w" : 12,
         "x" : 0,
-        "y" : 254
+        "y" : 281
       },
-      "id" : 93
+      "id" : 100
     }, {
       "type" : "stat",
       "title" : "Saklama işi",
@@ -9435,9 +10363,9 @@
         "h" : 4,
         "w" : 6,
         "x" : 12,
-        "y" : 254
+        "y" : 281
       },
-      "id" : 94
+      "id" : 101
     }, {
       "type" : "stat",
       "title" : "Saklama hatası",
@@ -9498,9 +10426,9 @@
         "h" : 4,
         "w" : 6,
         "x" : 18,
-        "y" : 254
+        "y" : 281
       },
-      "id" : 95
+      "id" : 102
     }, {
       "type" : "stat",
       "title" : "Aktarıcı tazeliği",
@@ -9564,9 +10492,9 @@
         "h" : 4,
         "w" : 6,
         "x" : 0,
-        "y" : 261
+        "y" : 288
       },
-      "id" : 96
+      "id" : 103
     }, {
       "type" : "stat",
       "title" : "Okunamayan kaynak",
@@ -9627,9 +10555,9 @@
         "h" : 4,
         "w" : 6,
         "x" : 6,
-        "y" : 261
+        "y" : 288
       },
-      "id" : 97
+      "id" : 104
     }, {
       "type" : "timeseries",
       "title" : "En büyük tablolar",
@@ -9696,9 +10624,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 261
+        "y" : 288
       },
-      "id" : 98
+      "id" : 105
     }, {
       "type" : "stat",
       "title" : "Veritabanı boyutu",
@@ -9761,9 +10689,9 @@
         "h" : 8,
         "w" : 6,
         "x" : 0,
-        "y" : 269
+        "y" : 296
       },
-      "id" : 99
+      "id" : 106
     }, {
       "type" : "stat",
       "title" : "Dolmaya kalan gün",
@@ -9832,9 +10760,9 @@
         "h" : 8,
         "w" : 6,
         "x" : 6,
-        "y" : 269
+        "y" : 296
       },
-      "id" : 100
+      "id" : 107
     }, {
       "type" : "timeseries",
       "title" : "Ölçüm aktarıcısı",
@@ -9945,9 +10873,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 269
+        "y" : 296
       },
-      "id" : 101
+      "id" : 108
     }, {
       "type" : "timeseries",
       "title" : "Veritabanı boyutu (eğilim)",
@@ -10014,9 +10942,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 277
+        "y" : 304
       },
-      "id" : 102
+      "id" : 109
     }, {
       "type" : "stat",
       "title" : "Elle kontrol gelen kutusu",
@@ -10080,9 +11008,9 @@
         "h" : 4,
         "w" : 6,
         "x" : 12,
-        "y" : 277
+        "y" : 304
       },
-      "id" : 103
+      "id" : 110
     }, {
       "type" : "stat",
       "title" : "Pod saatleri arası fark",
@@ -10146,9 +11074,9 @@
         "h" : 4,
         "w" : 6,
         "x" : 18,
-        "y" : 277
+        "y" : 304
       },
-      "id" : 104
+      "id" : 111
     }, {
       "type" : "stat",
       "title" : "Kaybedilen kilit (24 sa)",
@@ -10212,9 +11140,9 @@
         "h" : 4,
         "w" : 6,
         "x" : 0,
-        "y" : 285
+        "y" : 312
       },
-      "id" : 105
+      "id" : 112
     }, {
       "type" : "stat",
       "title" : "Push kira hatası (24 sa)",
@@ -10278,9 +11206,9 @@
         "h" : 4,
         "w" : 6,
         "x" : 6,
-        "y" : 285
+        "y" : 312
       },
-      "id" : 106
+      "id" : 113
     }, {
       "type" : "timeseries",
       "title" : "Saat farkı (pod başına)",
@@ -10347,9 +11275,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 285
+        "y" : 312
       },
-      "id" : 107
+      "id" : 114
     }, {
       "type" : "timeseries",
       "title" : "Küme olayları (pod başına, saatlik)",
@@ -10438,9 +11366,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 293
+        "y" : 320
       },
-      "id" : 108
+      "id" : 115
     }, {
       "type" : "stat",
       "title" : "Değerlendirme durumu kipi",
@@ -10524,9 +11452,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 12,
-        "y" : 293
+        "y" : 320
       },
-      "id" : 109
+      "id" : 116
     }, {
       "type" : "stat",
       "title" : "Doğrulama uyuşmazlığı",
@@ -10587,9 +11515,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 16,
-        "y" : 293
+        "y" : 320
       },
-      "id" : 110
+      "id" : 117
     }, {
       "type" : "stat",
       "title" : "Son doğrulama",
@@ -10653,9 +11581,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 20,
-        "y" : 293
+        "y" : 320
       },
-      "id" : 111
+      "id" : 118
     }, {
       "type" : "stat",
       "title" : "Bekleyen durum yazımı",
@@ -10719,9 +11647,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 0,
-        "y" : 301
+        "y" : 328
       },
-      "id" : 112
+      "id" : 119
     }, {
       "type" : "stat",
       "title" : "Durum yazma hatası (24 sa)",
@@ -10785,9 +11713,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 4,
-        "y" : 301
+        "y" : 328
       },
-      "id" : 113
+      "id" : 120
     }, {
       "type" : "stat",
       "title" : "Kurum ölçülerini yayan pod",
@@ -10848,9 +11776,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 8,
-        "y" : 301
+        "y" : 328
       },
-      "id" : 114
+      "id" : 121
     }, {
       "type" : "timeseries",
       "title" : "Doğrulama uyuşmazlığı (tür)",
@@ -10917,9 +11845,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 301
+        "y" : 328
       },
-      "id" : 115
+      "id" : 122
     }, {
       "type" : "timeseries",
       "title" : "Kurum ölçüleri ve durum kaydı (pod başına)",
@@ -10997,9 +11925,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 309
+        "y" : 336
       },
-      "id" : 116
+      "id" : 123
     }, {
       "type" : "stat",
       "title" : "Bekleyen kontrol işi",
@@ -11062,9 +11990,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 12,
-        "y" : 309
+        "y" : 336
       },
-      "id" : 117
+      "id" : 124
     }, {
       "type" : "stat",
       "title" : "En eski bekleyen iş",
@@ -11128,9 +12056,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 16,
-        "y" : 309
+        "y" : 336
       },
-      "id" : 118
+      "id" : 125
     }, {
       "type" : "stat",
       "title" : "En eski değerlendirilmeyen sonuç",
@@ -11194,9 +12122,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 20,
-        "y" : 309
+        "y" : 336
       },
-      "id" : 119
+      "id" : 126
     }, {
       "type" : "stat",
       "title" : "Kontrol yuvası doluluğu",
@@ -11260,9 +12188,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 0,
-        "y" : 317
+        "y" : 344
       },
-      "id" : 120
+      "id" : 127
     }, {
       "type" : "stat",
       "title" : "Sahiplenme gecikmesi p95",
@@ -11326,9 +12254,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 4,
-        "y" : 317
+        "y" : 344
       },
-      "id" : 121
+      "id" : 128
     }, {
       "type" : "stat",
       "title" : "Kayıp kontrol işi (24 sa)",
@@ -11392,9 +12320,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 8,
-        "y" : 317
+        "y" : 344
       },
-      "id" : 122
+      "id" : 129
     }, {
       "type" : "timeseries",
       "title" : "Kontrol kuyruğu (tür ve durum)",
@@ -11461,9 +12389,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 12,
-        "y" : 317
+        "y" : 344
       },
-      "id" : 123
+      "id" : 130
     }, {
       "type" : "timeseries",
       "title" : "Kontrol gecikmesi",
@@ -11541,9 +12469,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 0,
-        "y" : 325
+        "y" : 352
       },
-      "id" : 124
+      "id" : 131
     }, {
       "type" : "timeseries",
       "title" : "Kontrol işçileri (pod başına, 5 dk)",
@@ -11621,9 +12549,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 8,
-        "y" : 325
+        "y" : 352
       },
-      "id" : 125
+      "id" : 132
     }, {
       "type" : "stat",
       "title" : "Bekleyen sertifika parçası",
@@ -11686,9 +12614,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 16,
-        "y" : 325
+        "y" : 352
       },
-      "id" : 126
+      "id" : 133
     }, {
       "type" : "stat",
       "title" : "Parçalı tur ilerlemesi",
@@ -11746,9 +12674,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 20,
-        "y" : 325
+        "y" : 352
       },
-      "id" : 127
+      "id" : 134
     }, {
       "type" : "stat",
       "title" : "Son saatlik sertifika taraması",
@@ -11812,9 +12740,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 0,
-        "y" : 333
+        "y" : 360
       },
-      "id" : 128
+      "id" : 135
     }, {
       "type" : "stat",
       "title" : "Devralınan parça (24 sa)",
@@ -11878,9 +12806,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 4,
-        "y" : 333
+        "y" : 360
       },
-      "id" : 129
+      "id" : 136
     }, {
       "type" : "stat",
       "title" : "İkinci görüş (24 sa)",
@@ -11941,9 +12869,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 8,
-        "y" : 333
+        "y" : 360
       },
-      "id" : 130
+      "id" : 137
     }, {
       "type" : "stat",
       "title" : "Geç tamamlanan parça (24 sa)",
@@ -12007,9 +12935,9 @@
         "h" : 4,
         "w" : 4,
         "x" : 12,
-        "y" : 333
+        "y" : 360
       },
-      "id" : 131
+      "id" : 138
     }, {
       "type" : "timeseries",
       "title" : "Parçalı tur parçaları (durum)",
@@ -12076,9 +13004,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 16,
-        "y" : 333
+        "y" : 360
       },
-      "id" : 132
+      "id" : 139
     }, {
       "type" : "timeseries",
       "title" : "Sertifika taraması süresi (tür, kip)",
@@ -12145,9 +13073,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 0,
-        "y" : 341
+        "y" : 368
       },
-      "id" : 133
+      "id" : 140
     }, {
       "type" : "timeseries",
       "title" : "Parça işçileri (pod başına, 1 sa)",
@@ -12214,9 +13142,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 8,
-        "y" : 341
+        "y" : 368
       },
-      "id" : 134
+      "id" : 141
     } ]
   }, {
     "type" : "row",
@@ -12226,9 +13154,9 @@
       "h" : 1,
       "w" : 24,
       "x" : 0,
-      "y" : 349
+      "y" : 376
     },
-    "id" : 135,
+    "id" : 142,
     "panels" : [ {
       "type" : "timeseries",
       "title" : "HTTP istek hızı",
@@ -12295,9 +13223,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 0,
-        "y" : 350
+        "y" : 377
       },
-      "id" : 136
+      "id" : 143
     }, {
       "type" : "timeseries",
       "title" : "API gecikmesi (p50 / p95 / p99)",
@@ -12386,9 +13314,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 8,
-        "y" : 350
+        "y" : 377
       },
-      "id" : 137
+      "id" : 144
     }, {
       "type" : "stat",
       "title" : "5xx oranı (5 dk)",
@@ -12453,9 +13381,9 @@
         "h" : 8,
         "w" : 4,
         "x" : 16,
-        "y" : 350
+        "y" : 377
       },
-      "id" : 138
+      "id" : 145
     }, {
       "type" : "stat",
       "title" : "≤ 500 ms API isteği",
@@ -12520,9 +13448,9 @@
         "h" : 8,
         "w" : 4,
         "x" : 20,
-        "y" : 350
+        "y" : 377
       },
-      "id" : 139
+      "id" : 146
     }, {
       "type" : "timeseries",
       "title" : "En yoğun uçlar",
@@ -12589,9 +13517,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 358
+        "y" : 385
       },
-      "id" : 140
+      "id" : 147
     }, {
       "type" : "timeseries",
       "title" : "En yavaş uçlar (ortalama)",
@@ -12658,9 +13586,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 358
+        "y" : 385
       },
-      "id" : 141
+      "id" : 148
     }, {
       "type" : "timeseries",
       "title" : "JVM bellek (heap)",
@@ -12738,9 +13666,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 0,
-        "y" : 366
+        "y" : 393
       },
-      "id" : 142
+      "id" : 149
     }, {
       "type" : "timeseries",
       "title" : "JVM bellek (non-heap)",
@@ -12807,9 +13735,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 8,
-        "y" : 366
+        "y" : 393
       },
-      "id" : 143
+      "id" : 150
     }, {
       "type" : "timeseries",
       "title" : "GC duraklaması",
@@ -12876,9 +13804,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 16,
-        "y" : 366
+        "y" : 393
       },
-      "id" : 144
+      "id" : 151
     }, {
       "type" : "timeseries",
       "title" : "CPU",
@@ -12956,9 +13884,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 0,
-        "y" : 374
+        "y" : 401
       },
-      "id" : 145
+      "id" : 152
     }, {
       "type" : "timeseries",
       "title" : "İş parçacıkları",
@@ -13025,9 +13953,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 8,
-        "y" : 374
+        "y" : 401
       },
-      "id" : 146
+      "id" : 153
     }, {
       "type" : "timeseries",
       "title" : "Günlük uyarı / hata hızı",
@@ -13094,9 +14022,9 @@
         "h" : 8,
         "w" : 8,
         "x" : 16,
-        "y" : 374
+        "y" : 401
       },
-      "id" : 147
+      "id" : 154
     }, {
       "type" : "timeseries",
       "title" : "Veritabanı bağlantı havuzu",
@@ -13196,9 +14124,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 382
+        "y" : 409
       },
-      "id" : 148
+      "id" : 155
     }, {
       "type" : "timeseries",
       "title" : "Bağlantı alma süresi",
@@ -13276,9 +14204,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 382
+        "y" : 409
       },
-      "id" : 149
+      "id" : 156
     }, {
       "type" : "timeseries",
       "title" : "Kontrol iş havuzu",
@@ -13367,9 +14295,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 390
+        "y" : 417
       },
-      "id" : 150
+      "id" : 157
     }, {
       "type" : "timeseries",
       "title" : "Sentetik (k6) koşucu",
@@ -13469,9 +14397,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 12,
-        "y" : 390
+        "y" : 417
       },
-      "id" : 151
+      "id" : 158
     }, {
       "type" : "timeseries",
       "title" : "Önbellek isabet oranı",
@@ -13538,9 +14466,9 @@
         "h" : 8,
         "w" : 12,
         "x" : 0,
-        "y" : 398
+        "y" : 425
       },
-      "id" : 152
+      "id" : 159
     } ]
   } ],
   "refresh" : "1m",
@@ -13810,6 +14738,6 @@
   "timezone" : "browser",
   "title" : "SiteMonitor — Uçtan uca izleme",
   "uid" : "sitemonitor-overview",
-  "version" : 15,
+  "version" : 17,
   "weekStart" : "monday"
 }

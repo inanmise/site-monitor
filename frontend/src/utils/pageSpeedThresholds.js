@@ -64,5 +64,34 @@ export function suggestThresholds(r) {
  * Arayüz bu durumda öneriyi gizlemez ama uyarır — karar kullanıcınındır.
  */
 export function suggestionIsPartial(r) {
-  return Boolean(r?.capped) || Boolean(r?.bytes_truncated)
+  // Süre tavanı da (inceleme F4): kesilen ölçümün yükleme süresi ve boyutu alt sınırdır — ondan türeyen eşik ilk tam
+  // ölçümde hemen aşılırdı.
+  return Boolean(r?.capped) || Boolean(r?.bytes_truncated) || r?.time_truncated === true
+}
+
+/** Tür bütçeleri + asgari boyut alanları (2026-11-14) — sunucu kuralının istemci aynası (MonitoringController.requirePageSpeedBudgets). */
+export const KB_FIELDS = ['maxJsKb', 'maxImgKb', 'maxFontKb', 'maxThirdPartyKb', 'minPageKb']
+export const KB_MAX = 10_000_000
+
+/**
+ * Bütçe alanlarının istemci denetimi: boş geçerli (eşik yok); dolu ise 0 ile {@link KB_MAX} arası TAM sayı; asgari boyut
+ * azami boyuttan büyük olamaz (ikisi de > 0 iken). Hata haritası `fe.check`'e eklenir — sunucu da aynı kuralı uygular.
+ * `base` (düzenlemede kayıtlı değerlerin form hâli) verilirse DEĞİŞMEYEN alan yeniden denetlenmez (eski kayıt
+ * düzenlenebilir kalır — sunucu kuralıyla aynı).
+ */
+export function kbFieldErrors(form, t, base = null) {
+  const out = {}
+  const same = (key) => base != null && String(base[key] ?? '') === String(form?.[key] ?? '')
+  for (const key of KB_FIELDS) {
+    const raw = form?.[key]
+    if (raw === '' || raw == null || same(key)) continue
+    const n = Number(raw)
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0 || n > KB_MAX) out[key] = t('pspd.err.kbRange')
+  }
+  const filled = (v) => v !== '' && v != null
+  const min = Number(form?.minPageKb), max = Number(form?.maxPageKb)
+  const changed = !same('minPageKb') || !same('maxPageKb')
+  if (!out.minPageKb && changed && filled(form?.minPageKb) && filled(form?.maxPageKb)
+      && min > 0 && max > 0 && min > max) out.minPageKb = t('pspd.err.minAboveMax')
+  return out
 }

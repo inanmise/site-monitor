@@ -1642,7 +1642,9 @@ class SchedulerServiceTest {
                 "https://x.com/a.js", "JS", 5000L, 120L, 200, false, false, false);
         return new PageSpeedCheckerService.Result(
                 breached.isEmpty() ? "OK" : "SLOW", 200, 40L, 90L, 300L,
-                20000L, 3, 0, false, false, breached, null, java.util.List.of(res));
+                20000L, 3, 0, false, false, breached, null, java.util.List.of(res),
+                // TTFB (2026-11-14, inceleme B2) = faz probunun SON adımının sunucu fazı — ana isteğin ilk baytı değil
+                new com.sitemonitor.service.page.HttpPhaseProbe.Phases(5, 10, null, 40, null), 0);
     }
 
     @SuppressWarnings("unchecked")

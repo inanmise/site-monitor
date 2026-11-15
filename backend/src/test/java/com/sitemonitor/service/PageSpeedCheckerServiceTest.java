@@ -280,6 +280,166 @@ class PageSpeedCheckerServiceTest {
         return m;
     }
 
+    // ── 2026-11-14 Sayfa Hızı zenginleştirme: tür kırılımı, süre tavanı, gerçek TTFB, yeni eşikler ─────────────────────
+
+    @Test
+    @DisplayName("Tür kırılımı (madde 9): bayt ölçülen, adet sayfanın istediği; html + türler + birinci/üçüncü taraf = toplam")
+    void typeBreakdownIsComputed() {
+        var r = checker.check(monitor("/"));
+        var b = r.breakdown();
+        assertThat(b).isNotNull();
+        assertThat(b.cssBytes()).isEqualTo(CSS_BYTES);
+        assertThat(b.cssCount()).isEqualTo(1);
+        assertThat(b.imgBytes()).isEqualTo(IMG_BYTES);
+        assertThat(b.imgCount()).isEqualTo(1);
+        assertThat(b.jsCount()).as("kendi betik + tracker").isEqualTo(2);
+        assertThat(b.jsBytes()).isGreaterThanOrEqualTo(JS_BYTES);
+        assertThat(b.fontCount()).isZero();
+        assertThat(b.htmlBytes()).isPositive();
+        assertThat(b.htmlBytes() + b.jsBytes() + b.cssBytes() + b.imgBytes() + b.fontBytes() + b.otherBytes())
+                .isEqualTo(r.totalBytes());
+        assertThat(b.firstPartyBytes() + b.thirdPartyBytes()).isEqualTo(r.totalBytes());
+        assertThat(r.timeTruncated()).isFalse();
+        // Alınamayan sayfada kırılım yok (bilinmiyor ≠ 0)
+        assertThat(checker.check(monitor("/hata")).breakdown()).isNull();
+    }
+
+    @Test
+    @DisplayName("Süre tavanı (madde 4): duvar saati dolunca atlanan kaynak varsa ölçüm İŞARETLİ (time_truncated), alt sınır")
+    void wallClockCutIsFlagged() {
+        // Yavaş kaynaklı sayfa: her kaynak 1,5 sn; tavan 10 sn (alt sınır) — 40 kaynak, eşzamanlılık 1 → bitemez.
+        StringBuilder html = new StringBuilder("<html><head>");
+        for (int i = 0; i < 40; i++) html.append("<script src='/yavas").append(i).append(".js'></script>");
+        html("/yavas", html.append("</head><body>x</body></html>").toString());
+        for (int i = 0; i < 40; i++) {
+            server.createContext("/yavas" + i + ".js", ex -> {
+                record(ex);
+                try { Thread.sleep(1500); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                byte[] b = "x".getBytes(StandardCharsets.UTF_8);
+                ex.sendResponseHeaders(200, b.length);
+                try (OutputStream os = ex.getResponseBody()) { os.write(b); }
+            });
+        }
+        PageSpeedMonitor m = monitor("/yavas");
+        m.setResourceConcurrency(1);
+        var r = checker.checkForDiagnostics(m, false, 10);
+        assertThat(r.timeTruncated()).as("süre tavanı işaretlenmeli").isTrue();
+        assertThat(r.lowerBound()).isTrue();
+        assertThat(r.requestCount()).as("istek sayısı sayfanın istediği kadar").isEqualTo(41);
+        assertThat(r.breakdown().jsCount()).isEqualTo(40);
+    }
+
+    @Test
+    @DisplayName("TTFB (madde 2, inceleme B2): faz probu izlemenin koşullarıyla — kimlik + UA gider, yönlendirme izlenir; SON adımın sunucu fazı eşiğe girer")
+    void ttfbThresholdUsesTheMonitorsConditions() {
+        // /eski → 301 → /auth-yavas. Kimliksiz istek 401'i HEMEN alır; kimlikli istek 600 ms bekler. Eski prob kimliksizdi ve
+        // yönlendirme izlemiyordu: 301'in (ya da 401'in) birkaç ms'sini ölçer, eşik hiç aşılmazdı.
+        server.createContext("/eski", ex -> {
+            record(ex);
+            ex.getResponseHeaders().add("Location", "/auth-yavas");
+            ex.sendResponseHeaders(301, -1);
+            ex.close();
+        });
+        java.util.List<String> probeUas = new java.util.concurrent.CopyOnWriteArrayList<>();
+        server.createContext("/auth-yavas", ex -> {
+            record(ex);
+            probeUas.add(String.valueOf(ex.getRequestHeaders().getFirst("User-Agent")));
+            boolean authed = ex.getRequestHeaders().getFirst("Authorization") != null;
+            if (!authed) { ex.sendResponseHeaders(401, -1); ex.close(); return; }
+            try { Thread.sleep(600); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+            byte[] b = "<html><body>x</body></html>".getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().add("Content-Type", "text/html");
+            ex.sendResponseHeaders(200, b.length);
+            try (OutputStream os = ex.getResponseBody()) { os.write(b); }
+        });
+        PageSpeedMonitor m = monitor("/eski");
+        m.setBasicAuthUser("u");
+        m.setBasicAuthPassEnc("p");
+        m.setUserAgent("Izleme-UA/1.0");
+        m.setMaxTtfbMs(300);
+        var r = checker.check(m);
+        assertThat(r.reachable()).isTrue();
+        // eşiğin okuduğu sayı = probun SON adımının sunucu fazı (kimlikli 200'ün 600 ms'si)
+        assertThat(r.serverTtfbMs()).isNotNull().isGreaterThanOrEqualTo(550);
+        assertThat(r.measurement().ttfbMs()).isEqualTo(r.serverTtfbMs());
+        assertThat(r.breached()).contains(com.sitemonitor.service.page.PageSpeedRules.BREACH_TTFB);
+        // prob da izlemenin UA'sını gönderdi (eski "SiteMonitor-PhaseProbe" değil)
+        assertThat(probeUas).isNotEmpty().allMatch("Izleme-UA/1.0"::equals);
+    }
+
+    @Test
+    @DisplayName("TTFB (inceleme B2): faz probu her ölçümde TAZE bağlantı açar — havuz sıcaklığı sayıyı değiştirmez (bağlantı kapatılır)")
+    void phaseProbeOpensAFreshConnectionEachTime() throws Exception {
+        java.util.List<String> conn = new java.util.concurrent.CopyOnWriteArrayList<>();
+        server.createContext("/taze", ex -> {
+            conn.add(String.valueOf(ex.getRequestHeaders().getFirst("Connection")));
+            byte[] b = "<html><body>x</body></html>".getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().add("Content-Type", "text/html");
+            ex.sendResponseHeaders(200, b.length);
+            try (OutputStream os = ex.getResponseBody()) { os.write(b); }
+        });
+        var t = new com.sitemonitor.service.page.HttpPhaseProbe.Target(base + "/taze", 5000, "UA", java.util.Map.of(), false);
+        var p1 = phaseProbe.measure(t);
+        var p2 = phaseProbe.measure(t);
+        assertThat(p1.serverMs()).isNotNull();
+        assertThat(p2.serverMs()).isNotNull();
+        // her adım "Connection: close" ile kendi soketini açıp kapatır — paylaşılan havuz yok
+        assertThat(conn).hasSize(2).allMatch(c -> c.equalsIgnoreCase("close"));
+    }
+
+    @Test
+    @DisplayName("TTFB (inceleme B1 / B2): prob ölçemezse TTFB BİLİNMİYOR — 0 değil; tanımlı TTFB eşiği kararsız, ölçüm 'eşik içinde' sayılmaz")
+    void ttfbUnknownWhenProbeFails() {
+        var stub = new com.sitemonitor.service.page.HttpPhaseProbe(new SsrfGuard(appSettings)) {
+            @Override public Phases measure(Target target, long hardDeadlineMs) { return new Phases(null, null, null, null, "ölçülemedi"); }
+        };
+        SecretCipher cipher = mock(SecretCipher.class);
+        PublicSuffixService psl = new PublicSuffixService();
+        psl.load();
+        var c = new PageSpeedCheckerService(core, stub, psl, appSettings, cipher);
+        PageSpeedMonitor m = monitor("/");
+        m.setMaxTtfbMs(5000);
+        var r = c.check(m);
+        assertThat(r.reachable()).isTrue();
+        assertThat(r.serverTtfbMs()).isNull();
+        assertThat(r.breached()).isEmpty();
+        assertThat(r.undecided()).containsExactly(com.sitemonitor.service.page.PageSpeedRules.BREACH_TTFB);
+        assertThat(r.status()).isEqualTo("OK");
+    }
+
+    @Test
+    @DisplayName("Zaman aşımı kuralı (2026-11-15): faz probu kontrolün bütçesinin İÇİNDE — en çok yarısı (max-check-seconds / 2)")
+    void phaseProbeRunsInsideTheCheckBudget() {
+        java.util.concurrent.atomic.AtomicLong seen = new java.util.concurrent.atomic.AtomicLong();
+        var stub = new com.sitemonitor.service.page.HttpPhaseProbe(new SsrfGuard(appSettings)) {
+            @Override public Phases measure(Target target, long hardDeadlineMs) {
+                seen.set(hardDeadlineMs);
+                return new Phases(1, 1, null, 10, null);
+            }
+        };
+        PublicSuffixService psl = new PublicSuffixService();
+        psl.load();
+        var c = new PageSpeedCheckerService(core, stub, psl, appSettings, mock(SecretCipher.class));
+        long before = System.currentTimeMillis();
+        c.check(monitor("/"));
+        long budgetMs = Math.max(10, appSettings.getInt("site.monitor.pagespeed.max-check-seconds", 120)) * 1000L;
+        assertThat(seen.get()).as("son tarih verilmeli (0 = sınırsız olurdu)").isGreaterThan(before);
+        assertThat(seen.get() - before).as("prob bütçenin en çok yarısını kullanır").isLessThanOrEqualTo(budgetMs / 2 + 50);
+    }
+
+    @Test
+    @DisplayName("Tür bütçesi ve asgari boyut ölçümde değerlendirilir; aşım SLOW'dur (kesinti değil)")
+    void typeBudgetsAndMinSize() {
+        PageSpeedMonitor m = monitor("/");
+        m.setMaxImgKb(5);            // 12 000 bayt görsel > 5 KB
+        m.setMinPageKb(100_000);     // sayfa ~20 KB < 100 000 KB
+        var r = checker.check(m);
+        assertThat(r.status()).isEqualTo("SLOW");
+        assertThat(r.reachable()).isTrue();
+        assertThat(r.breached()).contains(com.sitemonitor.service.page.PageSpeedRules.BREACH_IMG,
+                com.sitemonitor.service.page.PageSpeedRules.BREACH_MINSIZE);
+    }
+
     // ── Ölçümün doğruluğu ────────────────────────────────────────────────────
 
     @Test

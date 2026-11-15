@@ -188,6 +188,60 @@ async function downloadAlarmFeedExport(qs) {
   return { success: true, name: name || fallback }
 }
 
+/**
+ * Sayfa Hızı kaynak listesinin TAM CSV'si (2026-11-14, madde 6): seçili ölçümün (son ölçüm ya da bir ihlal anı) bütün satırları,
+ * süzgeçlerle — sunucu akıtır. Sözleşme {@link downloadAlarmFeedExport} ile aynı: 401 oturum yolu, JSON olmayan / ağ hatası
+ * çevrilmiş metin, tarayıcı indirmeyi başlatamadıysa `DOWNLOAD_FAILED`.
+ */
+export const EXPORT_FETCH_TIMEOUT_MS = 180_000
+
+async function downloadPageSpeedResourcesCsv(id, qs, timeoutMs = EXPORT_FETCH_TIMEOUT_MS) {
+  // Süre sınırı (2026-11-15, zaman aşımı kuralı): istek VE gövde okuması tek son tarihle sınırlı — asılı bir bağlantı
+  // indirmeyi sonsuza dek bekletmez; süre dolunca çevrilmiş "zaman aşımı" metni döner.
+  const dl = deadlineSignal(null, timeoutMs)
+  try {
+    return await readPageSpeedResourcesCsv(id, qs, dl.signal)
+  } finally {
+    dl.done()
+  }
+}
+
+async function readPageSpeedResourcesCsv(id, qs, sig) {
+  const path = `/monitoring/pagespeed/${encodeURIComponent(id)}/resources/export`
+  let res
+  try {
+    res = await fetch(`${BASE}${path}${qs ? `?${qs}` : ''}`, { credentials: 'include', headers: { 'X-Lang': uiLang() }, ...(sig ? { signal: sig } : {}) })
+  } catch (e) {
+    if (e?.name === 'AbortError' || e?.name === 'TimeoutError' || sig?.aborted) return noResponsePayload('timeout')
+    return networkFailurePayload()
+  }
+  if (!res.ok) {
+    recordFailure(path, res.status)
+    if (res.status === 401) pingSessionPath()
+    let body = null
+    try { body = await res.json() } catch { body = null }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return nonJsonErrorPayload(res.status, res)
+    const normalized = normalizeErrorBody(body, {
+      status: res.status, requestId: headerOf(res, 'X-Request-Id'), retryAfter: headerOf(res, 'Retry-After'), lang: uiLang(), exposeStatus: false,
+    })
+    normalized.success = false
+    normalized.status = res.status
+    return normalized
+  }
+  let blob
+  try {
+    blob = await res.blob()
+  } catch (e) {
+    if (e?.name === 'AbortError' || e?.name === 'TimeoutError' || sig?.aborted) return noResponsePayload('timeout')
+    return networkFailurePayload()
+  }
+  const disp = headerOf(res, 'Content-Disposition') || ''
+  const plain = /filename="?([^";]+)"?/.exec(disp)
+  const name = plain ? plain[1] : `pagespeed-resources-${id}.csv`
+  if (!downloadBlob(name, blob)) return { success: false, status: 0, code: 'DOWNLOAD_FAILED', error: null }
+  return { success: true, name }
+}
+
 /** Aktivite uçlarının sorgu metni: boş / null değerler yazılmaz (getActivity ile aynı kural). */
 function activityQuery(params = {}) {
   const qs = new URLSearchParams()
@@ -2754,11 +2808,29 @@ export const api = {
       ).toString()
       return request(`/monitoring/pagespeed/${id}/response-series${q ? `?${q}` : ''}`)
     },
-    getPageSpeedResources: (id, { checkId, limit } = {}) => {
+    // Sunucu sayfalaması + süzgeç (2026-11-14, madde 6): page / size (≤ 200), type (js|css|img|font|other),
+    // party (first|third), failed. Yanıt: resources, total, filtered_total, page, size, facets, breaches.
+    getPageSpeedResources: (id, { checkId, limit, page, size, type, party, failed } = {}) => {
       const q = new URLSearchParams(
-        Object.fromEntries(Object.entries({ checkId, limit }).filter(([, v]) => v != null && v !== '')),
+        Object.fromEntries(Object.entries({ checkId, limit, page, size, type, party, failed: failed ? 'true' : undefined })
+          .filter(([, v]) => v != null && v !== '' && v !== 'all')),
       ).toString()
       return request(`/monitoring/pagespeed/${id}/resources${q ? `?${q}` : ''}`)
+    },
+    // Seçili ölçümün TÜM kaynakları CSV (sunucu akıtır) — tavan: ölçümün kaynak tavanı.
+    downloadPageSpeedResourcesCsv: (id, { checkId, type, party, failed } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ checkId, type, party, failed: failed ? 'true' : undefined })
+          .filter(([, v]) => v != null && v !== '' && v !== 'all')),
+      ).toString()
+      return downloadPageSpeedResourcesCsv(id, q)
+    },
+    // Tür kırılımı zaman serisi (madde 15): {points:[{ts, html, js, css, img, font, other, n}]} — kırılımsız kova null.
+    getPageSpeedTypeSeries: (id, { from, to, days } = {}) => {
+      const q = new URLSearchParams(
+        Object.fromEntries(Object.entries({ from, to, days }).filter(([, v]) => v != null && v !== '')),
+      ).toString()
+      return request(`/monitoring/pagespeed/${id}/type-series${q ? `?${q}` : ''}`, { withStatus: true })
     },
     // Sayfa Hızı uçtan uca tanılama (2026-10-05) — Sayfa Bütünlüğü ile aynı sözleşme.
     diagnosePageSpeed: async (id, { compare = true } = {}, { signal } = {}) => {

@@ -134,6 +134,22 @@ public final class MonitoringMetricNames {
     /** Kapasiteye kadar tahmini gün (geçmişe dayalı, en az 7 günlük görüntü). Kapasite tanımsız / geçmiş kısa / 10 yılda dolmuyor → YOK. */
     public static final String DB_DAYS_UNTIL_FULL = "sitemonitor.db.days.until.full";
 
+    // ── Sayfa Hızı (2026-11-14, Sayfa Hızı zenginleştirme madde 20) — son ölçümün ayrıntısı ─────────────────────────────
+    /** İzleme başına son ölçümün yükleme süresi (ms; süre tavanına takıldıysa alt sınır). Alınamayan / ölçülmemiş izlemede YOK. */
+    public static final String PAGESPEED_LOAD_MS = "sitemonitor.pagespeed.load.ms";
+    /** İzleme başına son ölçümün TTFB'si (ms) — kontrolün KENDİ isteğinin ilk baytı (eşik bu değere bakar). */
+    public static final String PAGESPEED_TTFB_MS = "sitemonitor.pagespeed.ttfb.ms";
+    /** İzleme başına son ölçümün toplam ağırlığı (bayt; tavanda kesildiyse alt sınır). */
+    public static final String PAGESPEED_BYTES = "sitemonitor.pagespeed.bytes";
+    /** İzleme başına son ölçümün istek sayısı. */
+    public static final String PAGESPEED_REQUESTS = "sitemonitor.pagespeed.requests";
+    /** İzleme başına son ölçüm bir eşiği / bütçeyi aştı mı (1 / 0; sayfa alınamadıysa YOK — bilinmiyor ≠ 0). */
+    public static final String PAGESPEED_BUDGET_BREACHED = "sitemonitor.pagespeed.budget.breached";
+    /** Sayfa hızı izlemeleri takım ve son duruma göre ({@code ok | over_budget | down | unknown | paused}; sıfırlar dahil). */
+    public static final String PAGESPEED_PAGES = "sitemonitor.pagespeed.pages";
+    /** Son ölçümde ilgili eşiği aşan ETKİN sayfa hızı izlemesi sayısı, takım ve ölçüye göre (sıfırlar dahil). */
+    public static final String PAGESPEED_BREACHES = "sitemonitor.pagespeed.breaches";
+
     // ── Dinamik taban çizgisi (2026-11-12) — benimseme ───────────────────────────────────────────────────────────────
     /** Dinamik taban çizgisi (yanıt-süresi anomalisi) AÇIK izleme sayısı, türe göre (kurum geneli; 7 tür, sıfır dahil). */
     public static final String BASELINE_ENABLED = "sitemonitor.baseline.enabled.monitors";
@@ -233,6 +249,21 @@ public final class MonitoringMetricNames {
         // Dinamik taban çizgisi benimseme (2026-11-12) — kaç izleme öğrenen-bant kullanıyor (türe göre, sıfır dahil)
         l.add(new Def(BASELINE_ENABLED, Scope.AGGREGATE, List.of("type"),
                 "Monitors with the dynamic response-time baseline enabled, by type"));
+        // Sayfa Hızı (2026-11-14)
+        l.add(new Def(PAGESPEED_LOAD_MS, Scope.ENTITY, MONITOR_LABELS,
+                "Load time of the last page speed measurement in milliseconds (a lower bound when the time limit cut it); absent when the page could not be measured"));
+        l.add(new Def(PAGESPEED_TTFB_MS, Scope.ENTITY, MONITOR_LABELS,
+                "Time to first byte of the check's own request in the last page speed measurement, in milliseconds"));
+        l.add(new Def(PAGESPEED_BYTES, Scope.ENTITY, MONITOR_LABELS,
+                "Total page weight of the last page speed measurement in bytes (a lower bound when a cap cut it)"));
+        l.add(new Def(PAGESPEED_REQUESTS, Scope.ENTITY, MONITOR_LABELS, "Requests of the last page speed measurement"));
+        l.add(new Def(PAGESPEED_BUDGET_BREACHED, Scope.ENTITY, MONITOR_LABELS,
+                "1 when the last page speed measurement went over a threshold or a type budget, 0 when within; absent when the page could not be measured, the measurement was partial and a threshold stayed undecided, or the monitor defines no threshold"));
+        l.add(new Def(PAGESPEED_PAGES, Scope.AGGREGATE, List.of("team", "team_id", "state"),
+                "Page speed monitors per team and last state (ok, over_budget, down, unknown = never measured or a partial measurement left a threshold undecided, no_budget = no threshold defined, paused; zeros included)"));
+        l.add(new Def(PAGESPEED_BREACHES, Scope.AGGREGATE, List.of("team", "team_id", "metric"),
+                "Active page speed monitors whose last measurement went over the threshold, per team and metric (LOAD, TTFB, SIZE, "
+                        + "REQUESTS, MINSIZE, JS, IMG, FONT, THIRD; zeros included)"));
         // Alarmlar
         l.add(new Def(ALERTS_OPEN, Scope.AGGREGATE,
                 List.of("family", "alert_type", "team", "team_id", "ug_team", "ug_team_id", "level", "acknowledged"),
