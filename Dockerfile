@@ -110,7 +110,14 @@ WORKDIR /app
 # openssl (derin SSL/TLS tanılama), iproute2 (ip addr/route), traceroute
 # (ağ derin analizi — NetworkDiagnosticsService)
 # iputils: ping monitor için non-root ICMP (net.ipv4.ping_group_range sysctl ile DGRAM-ICMP).
-RUN apk add --no-cache curl bash bind-tools busybox-extras less openssl iproute2 traceroute iputils
+# Güvenlik yamaları (2026-11-15 prod kapısı): taban digest'i ve bu komut değişmediği için CI'ın katman önbelleği (type=gha)
+# bu satırı HİÇ yeniden koşmuyordu → imaja Alpine'in yamalanmış paketleri girmiyordu (Trivy: 50 HIGH/CRITICAL, hepsi
+# "fixed"). APK_REFRESH her yayında değişir (release.yml / docker-build.yml derleme anını verir) → katman yenilenir;
+# `apk upgrade` taban imajdan gelen paketleri de (musl, zlib, krb5, expat, brotli …) güncel yamaya çıkarır.
+ARG APK_REFRESH=
+RUN echo "apk yenileme: ${APK_REFRESH:-yok}" \
+    && apk upgrade --no-cache \
+    && apk add --no-cache curl bash bind-tools busybox-extras less openssl iproute2 traceroute iputils
 
 # Varsayılan YOK: parametresiz build eskiden sessizce "1.0.0" etiketliyordu; yanlış sürüm > boş sürüm.
 ARG VERSION=
