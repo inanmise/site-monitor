@@ -80,7 +80,13 @@ describe('manuel sertifika ayıklayıcısı — tembel parça kapısı', () => {
     const SQL_EXPORT = 'components/admin/sql/sqlExcelExport.js'
     // 2026-11-15: Sayfa Hızı performans raporu (Excel / PDF) — PageSpeedDeepTab onu YALNIZ tıklamada import() ile alır (aşağıda)
     const PAGESPEED_REPORT = 'components/pagespeed/deep/pageSpeedReport.js'
-    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT, CHANNEL_EXPORT, RESOURCE_SCAN_EXPORT, ACTIVITY_EXPORT, STATS_EXPORT, INCIDENTS_EXPORT, SQL_EXPORT, PAGESPEED_REPORT].sort())
+    // 2026-11-15: eksikler penceresi dışa aktarımı (kopyala / Excel) — GapsDialog onu YALNIZ tıklamada import() ile alır (aşağıda)
+    const GAPS_EXPORT = 'components/gaps/gapsExport.js'
+    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT, CHANNEL_EXPORT, RESOURCE_SCAN_EXPORT, ACTIVITY_EXPORT, STATS_EXPORT, INCIDENTS_EXPORT, SQL_EXPORT, PAGESPEED_REPORT, GAPS_EXPORT].sort())
+    expect(FILES.filter(({ src }) => staticImports(src).some((s) => /gapsExport(\.js)?$/.test(s))).map((x) => x.rel),
+      'eksikler dışa aktarımı statik içe aktarılmaz').toEqual([])
+    expect(FILES.filter(({ src }) => /import\(\s*'\.\/gapsExport\.js'\s*\)/.test(src)).map((x) => x.rel))
+      .toEqual(['components/gaps/GapsDialog.jsx'])
     expect(FILES.filter(({ src }) => staticImports(src).some((s) => /pageSpeedReport(\.js)?$/.test(s))).map((x) => x.rel),
       'Sayfa Hızı raporu statik içe aktarılmaz').toEqual([])
     expect(FILES.filter(({ src }) => /import\(\s*'\.\/pageSpeedReport\.js'\s*\)/.test(src)).map((x) => x.rel))
