@@ -38,7 +38,8 @@ function Kpi({ kpiKey, icon: Icon, label, value, tone = 'default', valueTone, ba
       {bar != null && <span className="w-full">{bar}</span>}
       <span className="flex w-full min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
         {badge != null && <ToneBadge tone={badgeTone} className="max-w-full truncate font-semibold">{badge}</ToneBadge>}
-        {sub ? <span className={cn('line-clamp-2 min-w-0 max-w-full break-words', subMono && 'font-mono text-[11px] break-all')}>{sub}</span> : null}
+        {/* Kod önizlemesi (en yavaş sorgu) zaten 40 karakterle sınırlı (snippet): ayrıca satırda KESİLMEZ — dar telefonda kutucuk bir satır uzar */}
+        {sub ? <span className={cn('min-w-0 max-w-full', subMono ? 'font-mono text-[11px] break-all' : 'line-clamp-2 break-words')}>{sub}</span> : null}
       </span>
     </Button>
   )
