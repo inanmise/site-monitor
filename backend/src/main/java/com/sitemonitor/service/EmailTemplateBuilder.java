@@ -324,8 +324,15 @@ public class EmailTemplateBuilder {
         // edilemez sertifika) → metrik yerine tip etiketli uyarı gösterilir.
         if (days != null && EscalationService.isDurationAlert(m.alertType())) {
             d.title(nz(m.domain()), summary);
-            d.metricCard(String.valueOf(days), "gün kaldı", tone.strong, Math.round(days * 100f / PROGRESS_WINDOW_DAYS),
-                    "Bitişe " + days + " gün" + (expiryIso != null ? " · Son tarih: " + formatHuman(expiryIso) : ""));
+            if (days < 0) {
+                // Süresi GEÇMİŞ (2026-11-15): "-5 gün kaldı" / "Bitişe -5 gün" yerine "5 gün önce doldu" (ilerleme çubuğu yok —
+                // hatırlatma postasının kuralı). Süresi geçmemişte metrik bayt bayt aynı.
+                d.metricCard(String.valueOf(Math.abs(days)), "gün önce doldu", tone.strong, null,
+                        expiredDaysText(days) + (expiryIso != null ? " · Son tarih: " + formatHuman(expiryIso) : ""));
+            } else {
+                d.metricCard(String.valueOf(days), "gün kaldı", tone.strong, Math.round(days * 100f / PROGRESS_WINDOW_DAYS),
+                        "Bitişe " + days + " gün" + (expiryIso != null ? " · Son tarih: " + formatHuman(expiryIso) : ""));
+            }
         } else {
             d.title(nz(m.domain()), null);
             d.alert(tone, heroLabel(m.alertType()), summary);
@@ -384,11 +391,39 @@ public class EmailTemplateBuilder {
         d.card("Önerilen Aksiyon", null, html.toString(), text.toString());
     }
 
+    /** Süresi geçmiş gün ifadesi — "Süresi 5 gün önce doldu" (HTML metrik açıklaması = düz metin satırı). */
+    static String expiredDaysText(int days) {
+        return "Süresi " + Math.abs(days) + " gün önce doldu";
+    }
+
+    /** "Kalan Süre" satırı: "12 gün" ya da süresi geçmişse "Süresi 3 gün önce doldu" (HTML = düz metin, 2026-11-15). */
+    static String remainingText(String daysText) {
+        try {
+            int d = Integer.parseInt(daysText.trim());
+            if (d < 0) return expiredDaysText(d);
+        } catch (NumberFormatException ignore) { /* sayı değil → bugünkü ifade */ }
+        return daysText + " gün";
+    }
+
+    /** Metin gün değeri ("12" / "-3") → "12 gün kaldı" ya da süresi geçmişse "Süresi 3 gün önce doldu"; sayı değilse bugünkü ifade. */
+    static String expiredOrLeft(String daysText) {
+        try {
+            int d = Integer.parseInt(daysText.trim());
+            if (d < 0) return expiredDaysText(d);
+        } catch (NumberFormatException ignore) { /* sayı değil → aşağıdaki bugünkü ifade */ }
+        return daysText + " gün kaldı";
+    }
+
+    /** Süresi geçmişte düz metin başlığı / konu bölümü — "5 GÜN ÖNCE DOLDU" ("ACİL -5 GÜN KALDI" yerine). */
+    public static String expiredDaysHead(int days) {
+        return Math.abs(days) + " GÜN ÖNCE DOLDU";
+    }
+
     /** Plain-text multipart alternatifi — sayaç/timeline/adımlar HTML ile pariteli. */
     public String buildText(AlertMail m) {
         Integer days = m.daysRemaining();
         String head = days != null
-                ? (days <= 3 ? "ACİL " : "") + days + " GÜN KALDI"
+                ? (days < 0 ? expiredDaysHead(days) : (days <= 3 ? "ACİL " : "") + days + " GÜN KALDI")
                 : severityLabel(m.level());
         String expiryIso = firstNonNull(strCtx(m.ctx(), "expiry_date"), strCtx(m.ctx(), "not_after"));
 
@@ -396,7 +431,8 @@ public class EmailTemplateBuilder {
         sb.append("[Site Monitor] ").append(head).append(" · ").append(nz(m.domain())).append('\n');
         sb.append(shortSummary(m)).append("\n\n");
         if (days != null) {
-            sb.append("Bitişe ").append(days).append(" gün / ").append(PROGRESS_WINDOW_DAYS).append(" günlük pencere");
+            if (days < 0) sb.append(expiredDaysText(days));   // HTML metrik kartıyla aynı ifade (2026-11-15)
+            else sb.append("Bitişe ").append(days).append(" gün / ").append(PROGRESS_WINDOW_DAYS).append(" günlük pencere");
             if (expiryIso != null) sb.append(" · Son tarih: ").append(formatHuman(expiryIso));
             sb.append('\n');
         }
@@ -480,7 +516,7 @@ public class EmailTemplateBuilder {
         if (ctx != null) {
             if (expiryIso != null)
                 rows.add(Row.of(domainType && renewed ? "Yeni Bitiş Tarihi" : "Bitiş Tarihi", formatHuman(expiryIso)));
-            if (daysRem != null) rows.add(Row.of("Kalan Süre", daysRem + " gün"));
+            if (daysRem != null) rows.add(Row.of("Kalan Süre", remainingText(daysRem)));
             if (domainType) {
                 String reg = strCtx(ctx, "registrar");
                 if (reg != null) rows.add(Row.of("Kayıt Kuruluşu", reg));
@@ -573,7 +609,7 @@ public class EmailTemplateBuilder {
         // Yeni bitiş tarihini öne çıkaran vurgu (varsa) — "yeni expire ne oldu?" sorusuna doğrudan yanıt.
         if (expiryIso != null) {
             doc.alert(Tone.SUCCESS, (domainType && renewed ? "Yeni bitiş tarihi: " : "Güncel bitiş tarihi: ") + formatHuman(expiryIso),
-                    daysRem != null ? daysRem + " gün kaldı" : null);
+                    daysRem != null ? expiredOrLeft(daysRem) : null);
         }
         doc.keyValue("Ayrıntılar", rows);
         doc.button(href, "Site Monitor'de Görüntüle");
@@ -596,7 +632,7 @@ public class EmailTemplateBuilder {
                 + resolvedHeadline(alertType, expiryIso != null, resolvedBy));
         if (expiryIso != null)
             sb.append("\n").append(domainType && renewed ? "Yeni Bitiş Tarihi: " : "Bitiş Tarihi: ").append(formatHuman(expiryIso));
-        if (daysRem != null) sb.append("\nKalan Süre: ").append(daysRem).append(" gün");
+        if (daysRem != null) sb.append("\nKalan Süre: ").append(remainingText(daysRem));
         if (ctx != null && domainType) {
             String reg = strCtx(ctx, "registrar"); if (reg != null) sb.append("\nKayıt Kuruluşu: ").append(reg);
             String epp = strCtx(ctx, "status_codes"); if (epp != null && !epp.isBlank()) sb.append("\nEPP Durum Kodları: ").append(eppText(epp));
@@ -883,7 +919,9 @@ public class EmailTemplateBuilder {
             addIf(out, "Sertifika CN", strCtx(c, "subject"));
             String fp = strCtx(c, "fingerprint");
             if (fp != null) out.add(new Row("SHA-256 Parmak İzi", MailKit.mono(shortFp(fp)), shortFp(fp)));
-            addIf(out, "Kalan Gün", m.daysRemaining() != null ? String.valueOf(m.daysRemaining()) : null);
+            addIf(out, "Kalan Gün", m.daysRemaining() != null
+                    ? (m.daysRemaining() < 0 ? "Süresi doldu (" + Math.abs(m.daysRemaining()) + " gün önce)" : String.valueOf(m.daysRemaining()))
+                    : null);
         } else if (isPage(m.alertType())) {   // sayfa bütünlüğü
             addIf(out, "Durum", pageStatusTr(strCtx(c, "page_status")));
             addIf(out, "Mod", pageModeTr(strCtx(c, "page_mode")));
@@ -990,7 +1028,8 @@ public class EmailTemplateBuilder {
             return s.length() > 180 ? s.substring(0, 177) + "…" : s;
         }
         if (isDomain(m.alertType()) && m.daysRemaining() != null)
-            return m.domain() + " alan adının kaydı " + m.daysRemaining() + " gün içinde doluyor.";
+            return m.domain() + " alan adının kaydı " + (m.daysRemaining() < 0
+                    ? Math.abs(m.daysRemaining()) + " gün önce doldu." : m.daysRemaining() + " gün içinde doluyor.");
         return "Site Monitor bir izleme olayı tespit etti.";
     }
 
@@ -1102,6 +1141,8 @@ public class EmailTemplateBuilder {
     /** ≤7 gün kaldıysa aksiyon listesinin başındaki uyarı satırı; değilse null. */
     private String urgentLine(AlertMail m, String expiryIso) {
         if (m.daysRemaining() == null || m.daysRemaining() > 7) return null;
+        if (m.daysRemaining() < 0)   // süresi geçmiş: "son tarih -5 gün sonra" değil (2026-11-15)
+            return "Bugün aksiyon alın — süre " + (expiryIso != null ? formatHuman(expiryIso) + " tarihinde" : Math.abs(m.daysRemaining()) + " gün önce") + " doldu";
         return "Bugün aksiyon alın — son tarih " + (expiryIso != null ? formatHuman(expiryIso) : m.daysRemaining() + " gün sonra");
     }
 

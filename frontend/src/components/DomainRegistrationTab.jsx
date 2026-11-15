@@ -30,6 +30,14 @@ export default function DomainRegistrationTab({ monitor, onLiveRecord }) {
   const [loading, setLoading] = useState(true)
   const [stale, setStale] = useState(false)          // live başarısız → DB'deki son bilgi gösteriliyor
   const [err, setErr] = useState(null)
+  // Canlı sorgu sınırı (2026-11-15, A4): 429 RATE_LIMITED → sunucunun metni gösterilir, ekrandaki veri KORUNUR (DB'ye
+  // düşülmez — sınır bir hata değil), Yenile bekleme süresi bitince yeniden açılır (zamanlayıcı ≤ 120 sn, söküldüğünde iptal).
+  const [limitText, setLimitText] = useState(null)
+  const [limitedUntil, setLimitedUntil] = useState(0)
+  const limitTimer = useRef(null)
+  useEffect(() => () => clearTimeout(limitTimer.current), [])
+  const regRef = useRef(null)   // load'un bağımlılığı değil (yoksa her veri değişiminde açılış okuması yeniden koşardı)
+  useEffect(() => { regRef.current = reg }, [reg])
   const [rem, setRem] = useState(null)   // hatırlatmalar (2026-09-22, E): { thresholds, items }
   const [remError, setRemError] = useState(false)
   // Geri çağrı ref'te: sayfa her saniye yeniden çizilir (geri sayım) — satır içi işlev load'u her seferinde yeniden
@@ -40,12 +48,23 @@ export default function DomainRegistrationTab({ monitor, onLiveRecord }) {
   const load = useCallback(async (live = true) => {
     if (!id) return
     setLoading(true); setErr(null); setStale(false)
+    if (live) setLimitText(null)
     try {
       try {
         const res = await api.monitoring.getDomainRegistration(id, { live })
         if (res?.success) {
           setReg(res.data)
           if (live && res.data) onLiveRef.current?.(res.data)
+        } else if (live && res?.code === 'RATE_LIMITED') {
+          const wait = Math.min(120, Math.max(1, Number(res.retry_after_seconds) || 10))
+          setLimitText(res.error || t('dreg.liveLimited', wait))
+          setLimitedUntil(Date.now() + wait * 1000)
+          clearTimeout(limitTimer.current)
+          limitTimer.current = setTimeout(() => setLimitedUntil(0), wait * 1000)
+          if (!regRef.current) {
+            const fb = await api.monitoring.getDomainRegistration(id)
+            if (fb?.success) setReg(fb.data); else setErr(res.error || t('dreg.error'))
+          }
         } else if (live) {
           // live başarısız → DB'deki son bilgiye düş
           const fb = await api.monitoring.getDomainRegistration(id)
@@ -89,7 +108,7 @@ export default function DomainRegistrationTab({ monitor, onLiveRecord }) {
 
   return (
     <DomainRegistrationPanel reg={reg} rem={rem} remError={remError} remPager={remPager}
-      stale={stale} loading={loading}
+      stale={stale} loading={loading} notice={limitText} refreshBlocked={limitedUntil > 0}
       // Anlık sorgu (live) yazar ve dışarı çıkar: sunucu çalıştırma kapısı ister (canExecuteTeam). Satır `can_check` false
       // ise (salt okunur paylaşım / başka takım) Yenile çizilmez — basılıp 403 yiyen düğme yok (2026-10-12)
       onRefresh={monitor?.can_check === false ? undefined : () => load(true)} />

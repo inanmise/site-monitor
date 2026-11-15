@@ -288,6 +288,39 @@ class EscalationServiceTest {
     }
 
     @Test
+    @DisplayName("2026-11-15: süresi GEÇMİŞ sertifikanın konusu \"ACİL -3 GÜN KALDI\" değil \"3 GÜN ÖNCE DOLDU\"; gövde \"3 gün önce doldu\"")
+    void processResults_expiredCert_subjectSaysExpiredAgo() {
+        String domain = "expired.example.com";
+        when(contactRepo.findByTeamIdAndMinAlertLevelAndActiveTrue(eq(OWNER), anyString()))
+                .thenReturn(List.of(contact("po@test.com", "PO", "WARNING")));
+        when(alertEventRepo.findOpenAlert(domain, "EXPIRY")).thenReturn(Optional.empty());
+        when(alertEventRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        Map<String, Object> r = expiryResult(domain, -3, true);
+        r.put("status", "expired");
+
+        service.processResults(List.of(r));
+
+        ArgumentCaptor<String> subject = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(emailService, atLeast(1)).buildAlertEmailHtml(subject.capture(), body.capture(), eq(domain), any(), eq("EXPIRY"), eq(-3), any());
+        assertThat(subject.getValue()).contains("3 GÜN ÖNCE DOLDU").contains("(3 gün önce doldu)")
+                .doesNotContain("-3").doesNotContain("GÜN KALDI");
+        assertThat(body.getValue()).contains("3 gün önce doldu").doesNotContain("-3 gün");
+    }
+
+    @Test
+    @DisplayName("2026-11-15: süre ifadesi yardımcıları — negatif gün \"N gün önce doldu\", diğerleri bayt bayt eski ifade")
+    void expiryPhraseHelpers() {
+        assertThat(EscalationService.expiryPhrase(14)).isEqualTo(" 14 gün içinde doluyor");
+        assertThat(EscalationService.expiryPhrase(0)).isEqualTo(" 0 gün içinde doluyor");
+        assertThat(EscalationService.expiryPhrase(-5)).isEqualTo(" 5 gün önce doldu");
+        assertThat(EscalationService.expiryPhrase("-2")).isEqualTo(" 2 gün önce doldu");
+        assertThat(EscalationService.expiryPhrase("?")).isEqualTo(" ? gün içinde doluyor");
+        assertThat(EscalationService.sslDaysPhrase(12)).isEqualTo(" — bitişe 12 gün");
+        assertThat(EscalationService.sslDaysPhrase(-1)).isEqualTo(" — süresi 1 gün önce doldu");
+    }
+
+    @Test
     @DisplayName("2026-09-11 (prod): ESCALATION push'u YENİ seviyeyle çözülür — terfi, push tetiğinden ÖNCE kalıcılaşır")
     void processResults_levelEscalation_persistsLevelBeforePush() {
         // Prod 2026-09-07: WARNING → HIGH terfisinde e-posta HIGH gitti, kişi-webhook "bu seviyede kimse yok"

@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils'
 import {
   DomainChangedChip, DomainEppChips, DomainHero, DomainPlanChip, DomainProtection, DomainRegistrarLine, DomainSourceTag,
 } from './DomainCardParts.jsx'
-import { alarmMatchesStatus, expiryTone, lifeOf, planChipOf } from './domainCardModel.js'
+import { alarmMatchesStatus, expiryTone, lifeOf, liveRow, planChipOf } from './domainCardModel.js'
 
 /**
  * Uzun alan adı (IDN punycode / uzun etiket) KESİLMEZ, kartın genişliğinde sarar (2026-11-14, kullanıcı kararı — adlar ve
@@ -52,9 +52,10 @@ const TITLE = 'mb-0 w-auto max-w-full min-w-0 shrink font-mono text-[14.5px] lea
  * @param {Function} onPlanRenewal yenileme planı penceresini aç; verilmezse plan çipi salt bilgi, kısayol yok
  */
 export default function DomainMonitorCard({
-  monitor: m, density = 'rich', status = 'unknown', badge, alarmLabel, onOpen, onPlanRenewal, select, meta, actions, running = false, canEdit = false,
+  monitor: rawMonitor, density = 'rich', status = 'unknown', badge, alarmLabel, onOpen, onPlanRenewal, select, meta, actions, running = false, canEdit = false,
 }) {
   const t = useT()
+  const m = liveRow(rawMonitor)   // A1: kalan gün bitiş tarihinden canlı (sayfa zaten uygular; tek başına kullanımda da doğru)
   const compact = density === 'compact'
   const alarm = !!m.active_alarm
   const paused = !m.active

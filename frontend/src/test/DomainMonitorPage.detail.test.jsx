@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+await vi.hoisted(async () => (await import('./helpers/orgNoonClock.js')).freezeOrgNoon())   // kalan gün İstanbul günüyle (LOW 2): sabit 09:00Z
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import DomainMonitorPage from '../components/DomainMonitorPage.jsx'
 import { addDays, todayKey } from '../components/domain/detail/domainDetailModel.js'
@@ -93,7 +94,7 @@ describe('DomainMonitorPage — Alan Adı detay penceresi (yeni başlık)', () =
   })
 
   it('Domain Kaydı anlık sorgusu taze satırı başlığa işler (son kontrol + kalan gün)', async () => {
-    const fresh = { ...monitor, days_remaining: 19, checked_at: hoursAgo(0) }
+    const fresh = { ...monitor, days_remaining: 19, expiry_date: day(19), checked_at: hoursAgo(0) }   // kalan gün bitişten canlı (A1)
     api.monitoring.getDomainRegistration.mockResolvedValue({ success: true, data: fresh })
     await openFromCard()
     expect(header().querySelector('[data-slot="domain-days"]')).toHaveTextContent('20')
@@ -105,11 +106,19 @@ describe('DomainMonitorPage — Alan Adı detay penceresi (yeni başlık)', () =
   })
 
   it('başlıktaki "Şimdi kontrol et" sayfanın kontrol yolunu çalıştırır ve sonucu başlığa işler', async () => {
-    api.monitoring.triggerDomainCheck.mockResolvedValue({ success: true, data: { ...monitor, days_remaining: 18, status: 'WARNING' } })
+    api.monitoring.triggerDomainCheck.mockResolvedValue({ success: true, data: { ...monitor, days_remaining: 18, expiry_date: day(18), status: 'WARNING' } })
     await openFromCard()
     fireEvent.click(within(header()).getByRole('button', { name: 'example.com — Check now' }))
     await waitFor(() => expect(api.monitoring.triggerDomainCheck).toHaveBeenCalledWith(1))
     await waitFor(() => expect(header().querySelector('[data-slot="domain-days"]')).toHaveTextContent('18'))
+  })
+
+  it('M1: tekil "Şimdi kontrol et" 429 RATE_LIMITED alırsa sunucunun bekleme süreli metni gösterilir (sessiz kalmaz)', async () => {
+    api.monitoring.triggerDomainCheck.mockResolvedValue({ success: false, code: 'RATE_LIMITED',
+      error: 'Too many live lookups: at most 6 per minute. Try again in 42 s.' })
+    await openFromCard()
+    fireEvent.click(within(header()).getByRole('button', { name: 'example.com — Check now' }))
+    expect(await screen.findByText('Too many live lookups: at most 6 per minute. Try again in 42 s.')).toBeInTheDocument()
   })
 
   it('bitişi bilinmeyen izlemede yönetici başlıktan Sorun Tanıla açar (detayın üstünde ikinci pencere)', async () => {

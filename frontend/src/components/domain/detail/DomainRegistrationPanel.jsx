@@ -19,7 +19,7 @@ import { Button } from '@/components/shadcn/button'
 import { Card, CardContent, CardHeader } from '@/components/shadcn/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { cn } from '@/lib/utils'
-import { WHOIS_PROVIDER_LABEL, dnssecOf, fmtExpiry, nsOf, sourceTag } from '../domainCardModel.js'
+import { WHOIS_PROVIDER_LABEL, dnssecOf, fmtExpiry, liveRow, nsOf, sourceTag } from '../domainCardModel.js'
 import {
   blacklistEntriesOf, eppListOf, fmtClock, locksOf, rawJsonOf, relativeDays, sameExpiryDay, sourceFamily, timelineOf,
 } from './domainDetailModel.js'
@@ -492,12 +492,21 @@ function csv(v) {
  * @param {boolean}  stale      anlık sorgu başarısız, kayıtlı bilgi gösteriliyor
  * @param {boolean}  loading    anlık sorgu sürüyor (Yenile düğmesi döner)
  * @param {Function} onRefresh  anlık sorguyu yeniden çalıştır (verilmezse Yenile çizilmez — çalıştırma yetkisi yok)
+ * @param {string}   notice     canlı sorgu sınırına takıldı (2026-11-15, A4): sunucunun metni — ekrandaki veri korunur
+ * @param {boolean}  refreshBlocked  bekleme süresi dolana dek Yenile kapalı (sonra yeniden kullanılabilir)
  */
-export default function DomainRegistrationPanel({ reg: d, rem, remError = false, remPager, stale = false, loading = false, onRefresh }) {
+export default function DomainRegistrationPanel({ reg: rawReg, rem, remError = false, remPager, stale = false, loading = false, onRefresh,
+  notice = null, refreshBlocked = false }) {
   const t = useT()
+  const d = liveRow(rawReg)   // A1 (2026-11-15): kalan gün bitiş tarihinden canlı — zaman çizelgesi ve eşik çipleri kartla aynı günü söyler
   const at = d.checked_at
   return (
     <div data-slot="domain-registration" className="@container flex min-w-0 flex-col gap-3">
+      {notice && (
+        <AlertBanner tone="warning" role="status" className="mb-0 min-w-0" data-slot="domain-reg-limited">
+          <span className="[overflow-wrap:anywhere]">{notice}</span>
+        </AlertBanner>
+      )}
       <div className="flex min-w-0 flex-col gap-2 @md:flex-row @md:items-center @md:justify-between">
         {stale ? (
           <AlertBanner tone="warning" className="mb-0 min-w-0 flex-1">{t('dreg.stale').replace('{0}', formatDateSec(at))}</AlertBanner>
@@ -507,7 +516,8 @@ export default function DomainRegistrationPanel({ reg: d, rem, remError = false,
           </p>
         )}
         {onRefresh && (
-          <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading} aria-busy={loading || undefined}
+          <Button type="button" variant="outline" size="sm" onClick={onRefresh} disabled={loading || refreshBlocked} aria-busy={loading || undefined}
+            data-slot="domain-reg-refresh"
             title={t('domdet.refreshHint')} className="shrink-0 self-end pointer-coarse:h-10 @md:self-auto">
             {loading ? <Spinner size={13} inline decorative /> : <RefreshCw aria-hidden="true" />}{t('dreg.refresh')}
           </Button>

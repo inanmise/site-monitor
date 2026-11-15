@@ -6,6 +6,7 @@ import com.sitemonitor.service.CertificateService;
 import com.sitemonitor.service.CheckHistoryService;
 import com.sitemonitor.service.CheckHistoryService.CsvColumn;
 import com.sitemonitor.service.DnsCheckerService;
+import com.sitemonitor.service.DomainLiveLookupLimiter;
 import com.sitemonitor.service.ActivityLogService;
 import com.sitemonitor.service.AuditDiff;
 import com.sitemonitor.service.AuditDetail;
@@ -938,6 +939,16 @@ public class MonitoringController {
         if (k6 != null && k6OldName != null && !k6OldName.equals(k6.getName())
                 && scriptedMonitorRepo.existsDuplicate(k6.getName(), k6.getTeamId(), k6.getId()))
             return badRequest("Bu ad bu takımda zaten kullanılıyor; bu kayda geri dönülemez.");
+        // A5 (2026-11-15): alan adı izlemesinin geri yüklemesi oluşturma / güncellemeyle AYNI mükerrer kuralına uyar — aynı takımda
+        // aynı alan adına ikinci izleme (iki hatırlatma serisi, iki alarm kaynağı) oluşamaz; 400 field=domain, HİÇBİR ŞEY yazılmaz.
+        DomainMonitor domainE = entity instanceof DomainMonitor dmr ? dmr : null;
+        String domainBefore = domainE != null && before.get("domain") != null ? before.get("domain").toString() : null;
+        if (domainE != null && domainBefore != null && domainE.getDomain() != null && !domainBefore.equalsIgnoreCase(domainE.getDomain())
+                && domainMonitorRepo.existsDuplicate(domainE.getDomain(), domainE.getTeamId(), domainE.getId())) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("domain", com.sitemonitor.util.Msg.t(
+                    "Bu kayda geri dönülemez: bu alan adı bu takımda zaten izleniyor.",
+                    "This entry can't be restored: this domain is already monitored by this team."));
+        }
         // Duraklatılmış izleme geri yüklemeyle YENİDEN açılıyorsa anomali kapatmasının sebebi düşer (updateScripted ile
         // aynı kural) — yoksa etkin izlemenin üstünde "anomali nedeniyle kapatıldı" bandı kalırdı
         if (k6 != null && Boolean.FALSE.equals(before.get("active")) && Boolean.TRUE.equals(k6.getActive())
@@ -1003,7 +1014,7 @@ public class MonitoringController {
             }
             closeAlertsOnPause(before.get("active") instanceof Boolean b ? b : null, k6.getActive(), k6.getName(), k6Types, owner);
         } else {
-            applyRestoreAlarmRules(resolved, entity, before);
+            applyRestoreAlarmRules(resolved, entity, before);   // A3: eski alan adının DOMAINMON_* alarmları (birebir fark) burada kapanır
             if (entity instanceof KeywordMonitor km) {   // kw-be2 §7.2: geri yükleme güncellemeyle aynı kural
                 Object bu = before.get("url");
                 keywordChangeSettingsChanged(km, before.get("changeDetect") instanceof Boolean bd ? bd : null,
@@ -1017,6 +1028,9 @@ public class MonitoringController {
         var restoreRow = monitorHistory.record(resolved, id, row.getResourceName(), row.getTeamId(),
                 MonitorHistoryService.RESTORE, before, after,
                 "#" + seq + " numaralı kayda geri döndürüldü" + noteSuffix(body), session);
+        // A3 + LOW 7: alan adı (harf dışında) değiştiyse eski alan adının yenileme planı kaldırılır — geçmişte RESTORE satırından SONRA
+        if (domainE != null && domainBefore != null && domainE.getDomain() != null && !domainBefore.equalsIgnoreCase(domainE.getDomain()))
+            clearPlanForDomainChange(domainE, domainBefore, session);
         // Aktivite (2026-11-05, aktivite zenginleştirmesi C): geri yükleme bir yapılandırma değişikliğidir — akışta
         // CONFIG_CHANGED (geri yüklemenin kendi değişiklik kaydına bağlı) + active değiştiyse PAUSED / RESUMED. Eskiden akışta
         // hiç görünmüyordu. Yalnız izleme türleri (envanter kaydının değişikliği sertifika satırı değil).
@@ -1152,10 +1166,12 @@ public class MonitoringController {
         boolean keyChanged = oldKey != null && k.key() != null
                 && (MonitorHistoryService.DNS.equals(kind) ? !oldKey.equalsIgnoreCase(k.key()) : !oldKey.equals(k.key()));
         if (keyChanged && (MonitorHistoryService.DNS.equals(kind) || MonitorHistoryService.PING.equals(kind)
-                || MonitorHistoryService.KEYWORD.equals(kind))) {
-            // B7 (kw sözleşmesi §12): anahtar kelime izlemesinde alarm anahtarı URL — eski URL'nin açık alarmları kapanır
+                || MonitorHistoryService.KEYWORD.equals(kind) || MonitorHistoryService.DOMAIN.equals(kind))) {
+            // B7 (kw sözleşmesi §12): anahtar kelime izlemesinde alarm anahtarı URL — eski URL'nin açık alarmları kapanır.
+            // A3 (2026-11-15): alan adı izlemesinde de — eski alan adının DOMAINMON_* alarmları hemen sessiz kapanır.
             escalationService.resolveOpenAlertsSilently(oldKey, k.types(),
                     MonitorHistoryService.DNS.equals(kind) ? "Sistem (domain değişti)"
+                            : MonitorHistoryService.DOMAIN.equals(kind) ? DOMAIN_CHANGED_BY
                             : MonitorHistoryService.KEYWORD.equals(kind) ? KEYWORD_URL_CHANGED_BY : "Sistem (host değişti)", k.owner());
         }
         closeAlertsOnPause(before.get("active") instanceof Boolean b ? b : null, k.active(),
@@ -9403,6 +9419,8 @@ public class MonitoringController {
     /** "Test Çalıştır" kullanıcı başına sınırı (2026-10-31, k6 inceleme A4) — pod belleği, yük sınırı. */
     private final com.sitemonitor.service.scripted.ScriptedTestLimiter scriptedTestLimiter =
             new com.sitemonitor.service.scripted.ScriptedTestLimiter();
+    /** Alan adı Kayıt sekmesi canlı sorgusunun yük sınırı (2026-11-15, A4) — pod belleği. */
+    final DomainLiveLookupLimiter domainLiveLimiter = new DomainLiveLookupLimiter();
 
     /**
      * Ad-hoc test — kaydetmeden, formdaki script + env ile tek çalıştırma; sonucu + (maskeli) çıktıyı döndürür.
@@ -10410,6 +10428,8 @@ public class MonitoringController {
         return domainMonitorRepo.findById(id).map(m -> {
             if (!canOperateTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini düzenleyemezsiniz");
             guardSharedNotificationFields(session, m.getTeamId(), body, m);   // paylaşım bildirim yönlendirmesini değiştirmez
+            final String oldDomain = m.getDomain();
+            final Long oldTeam = m.getTeamId();
             // Alan adı + takım doğrulaması YAN ETKİDEN ÖNCE (2026-11-15): geçersiz alan adı eskiden SESSİZCE yok sayılıyordu
             // (200 + eski alan adı; istemci "x, y olarak kaydedildi" diyordu) ve oluşturmadaki mükerrer kuralı güncellemede
             // yoktu (aynı takımda aynı alan adına iki izleme → iki hatırlatma serisi). DEĞİŞMEYEN alan adı yeniden doğrulanmaz.
@@ -10453,6 +10473,7 @@ public class MonitoringController {
             var changeRow = monitorHistory.record(MonitorHistoryService.DOMAIN, saved.getId(), saved.getName(), saved.getTeamId(),
                     MonitorHistoryService.UPDATE, _before, AuditDiff.snapshot(saved, MON_FIELDS), changeNote(body), session);
             noteConfigChanged(changeRow, ActivityLogService.DOMAIN, saved.getDomain(), session);
+            domainKeyChanged(saved, oldDomain, oldTeam, session);   // A3: doğrulama + kayıttan SONRA (yan etki yalnız başarıda)
             return ok(enrichDomain(saved, domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
                     teamNameMap(), openDomainMonAlarm(saved.getDomain())));
         }).orElse(notFound("Domain monitor not found"));
@@ -10619,7 +10640,7 @@ public class MonitoringController {
             if (!SessionScope.canViewWithGrants(session, m.getTeamId())) return notFound("Domain monitor not found");
             if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu takımın izlemesini yönetemezsiniz");
             String date = body.get("date") == null ? "" : String.valueOf(body.get("date")).trim();
-            if (!date.matches("^\\d{4}-\\d{2}-\\d{2}$")) return badRequest("date: YYYY-MM-DD");
+            if (!com.sitemonitor.service.DomainRenewalPlanService.validDay(date)) throw invalidPlanDate();
             String note = body.get("note") == null ? null : String.valueOf(body.get("note"));
             String currentExpiry = domainCheckRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(id, "NONE").map(DomainCheck::getExpiryDate).orElse(null);
             DomainMonitor saved = domainRenewalPlans.plan(m, date, note, currentExpiry, session);
@@ -10638,10 +10659,141 @@ public class MonitoringController {
             if (!canOperateTeam(session, m.getTeamId())) return forbidden("Bu takımın izlemesini yönetemezsiniz");
             String was = m.getRenewalPlannedAt();
             DomainMonitor saved = domainRenewalPlans.unplan(m, session);
-            auditService.recordAction("MONITOR_RENEWAL_PLAN_CLEARED", session, "DOMAIN_MONITOR", String.valueOf(saved.getId()), saved.getDomain(),
-                    AuditDetail.of("domain", saved.getDomain(), "was_planned_at", was == null ? "" : was));
+            // Koşullu kaldırma (M2): plan arada değiştiyse yazılmadı — denetim satırı da yok
+            if (was == null || saved.getRenewalPlannedAt() == null)
+                auditService.recordAction("MONITOR_RENEWAL_PLAN_CLEARED", session, "DOMAIN_MONITOR", String.valueOf(saved.getId()), saved.getDomain(),
+                        AuditDetail.of("domain", saved.getDomain(), "was_planned_at", was == null ? "" : was));
             return ok(enrichDomain(saved, domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null), teamNameMap(), null));
         }).orElse(notFound("Domain monitor not found"));
+    }
+
+    /** Toplu yenileme planının tek istekteki en çok izleme sayısı (2026-11-15, D1) — öteki toplu uçlarla aynı sınır. */
+    static final int DOMAIN_PLAN_BULK_MAX = 200;
+
+    /**
+     * Toplu yenileme planı (2026-11-15, D1): seçili alan adı izlemelerine aynı planı KOY ya da KALDIR. Tekil uçların kuralları
+     * satır başına aynen uygulanır — her satır yeniden okunur, görünmeyen satır {@code not_found} (adı sızmaz), yönetilemeyen
+     * {@code out_of_scope}; koyarken bitişi bilinmeyen {@code no_expiry}, zaten o durumdaki {@code unchanged} (atlandı). Her
+     * değişen satır tekil uçla aynı denetim / geçmiş / etkinlik satırını yazar; boş istek hiçbir şey yazmaz (400).
+     * Gövde: {@code {action: set|clear, ids: [..≤200], date?: yyyy-MM-dd, note?}}. Döngü kimlik sayısıyla sınırlı (≤ 200).
+     */
+    @PostMapping("/domain/renewal-plan/bulk")
+    public ResponseEntity<Map<String, Object>> bulkDomainRenewalPlan(@RequestBody Map<String, Object> body, HttpSession session) {
+        permissionService.require(session, "monitoring.crud", "edit");
+        if (domainRenewalPlans == null) return badRequest("renewal plan unavailable");
+        String action = body == null || body.get("action") == null ? "" : String.valueOf(body.get("action")).trim().toLowerCase(Locale.ROOT);
+        if (!"set".equals(action) && !"clear".equals(action)) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("action",
+                    com.sitemonitor.util.Msg.t("İşlem \"set\" (planla) ya da \"clear\" (planı kaldır) olmalı.",
+                            "The action must be \"set\" (plan) or \"clear\" (remove the plan)."));
+        }
+        List<Long> ids = parseBulkIds(body.get("ids"));
+        String date = null;
+        String note = null;
+        if ("set".equals(action)) {
+            date = body.get("date") == null ? "" : String.valueOf(body.get("date")).trim();
+            if (!com.sitemonitor.service.DomainRenewalPlanService.validDay(date)) throw invalidPlanDate();
+            note = body.get("note") == null ? null : String.valueOf(body.get("note"));
+            if (note != null && note.trim().length() > 500) {
+                throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("note",
+                        com.sitemonitor.util.Msg.t("Not en çok 500 karakter olabilir.", "The note can be at most 500 characters."));
+            }
+        }
+        String noteNorm = note == null || note.isBlank() ? null : note.trim();
+        List<Map<String, Object>> results = new ArrayList<>(ids.size());
+        int done = 0, skipped = 0, failed = 0;
+        for (Long id : ids) {
+            DomainMonitor m = domainMonitorRepo.findById(id).orElse(null);
+            if (m == null || !SessionScope.canViewWithGrants(session, m.getTeamId())) {
+                results.add(bulkPlanRow(id, null, null, "skipped", "not_found")); skipped++; continue;
+            }
+            String name = m.getName() != null && !m.getName().isBlank() ? m.getName() : m.getDomain();
+            if (!canOperateTeam(session, m.getTeamId())) {
+                results.add(bulkPlanRow(id, name, m.getDomain(), "skipped", "out_of_scope")); skipped++; continue;
+            }
+            try {
+                if ("clear".equals(action)) {
+                    if (m.getRenewalPlannedAt() == null) {
+                        results.add(bulkPlanRow(id, name, m.getDomain(), "skipped", "unchanged")); skipped++; continue;
+                    }
+                    String was = m.getRenewalPlannedAt();
+                    DomainMonitor saved = domainRenewalPlans.unplan(m, session);
+                    if (saved.getRenewalPlannedAt() != null) {   // koşullu kaldırma 0 satır (M2): plan arada değişti
+                        results.add(bulkPlanRow(id, name, m.getDomain(), "skipped", "changed_meanwhile")); skipped++; continue;
+                    }
+                    auditService.recordAction("MONITOR_RENEWAL_PLAN_CLEARED", session, "DOMAIN_MONITOR", String.valueOf(saved.getId()), saved.getDomain(),
+                            AuditDetail.of("domain", saved.getDomain(), "was_planned_at", was, "via", "bulk"));
+                } else {
+                    String currentExpiry = domainCheckRepo.findTopByMonitorIdAndSourceNotOrderByCheckedAtDesc(id, "NONE")
+                            .map(DomainCheck::getExpiryDate).orElse(null);
+                    if (currentExpiry == null || currentExpiry.isBlank()) {
+                        results.add(bulkPlanRow(id, name, m.getDomain(), "skipped", "no_expiry")); skipped++; continue;
+                    }
+                    if (date.equals(m.getRenewalPlannedAt()) && Objects.equals(noteNorm, m.getRenewalPlannedNote())) {
+                        results.add(bulkPlanRow(id, name, m.getDomain(), "skipped", "unchanged")); skipped++; continue;
+                    }
+                    DomainMonitor saved = domainRenewalPlans.plan(m, date, note, currentExpiry, session);
+                    auditService.recordAction("MONITOR_RENEWAL_PLANNED", session, "DOMAIN_MONITOR", String.valueOf(saved.getId()), saved.getDomain(),
+                            AuditDetail.of("domain", saved.getDomain(), "planned_at", date, "note", note == null ? "" : note, "via", "bulk"));
+                }
+                results.add(bulkPlanRow(id, name, m.getDomain(), "done", "done")); done++;
+            } catch (java.util.NoSuchElementException e) {   // arada silindi (hedefli yazım 0 satır)
+                results.add(bulkPlanRow(id, null, null, "skipped", "not_found")); skipped++;
+            } catch (Exception e) {
+                Map<String, Object> r = bulkPlanRow(id, name, m.getDomain(), "failed", "error");
+                r.put("message", com.sitemonitor.util.ErrorTexts.safeMessage(e, "Plan kaydedilemedi.", "The plan couldn't be saved."));
+                results.add(r); failed++;
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("action", action);
+        out.put("done", done);
+        out.put("skipped", skipped);
+        out.put("failed", failed);
+        out.put("results", results);
+        return ok(out);
+    }
+
+    /** Geçersiz plan tarihi (biçim ya da takvim — "2026-02-31") → 400, alan {@code date}. Tekil ve toplu uç aynı. */
+    private static com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException invalidPlanDate() {
+        return new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("date",
+                com.sitemonitor.util.Msg.t("Plan tarihi geçerli bir gün olmalı (YYYY-AA-GG).", "The plan date must be a valid day (YYYY-MM-DD)."));
+    }
+
+    private static Map<String, Object> bulkPlanRow(Long id, String name, String domain, String status, String reason) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("id", id);
+        r.put("name", name);
+        r.put("domain", domain);
+        r.put("status", status);
+        r.put("reason", reason);
+        return r;
+    }
+
+    /** Kimlik listesi: tekrarlar atılır (sıra korunur), boş liste 400, &gt; {@link #DOMAIN_PLAN_BULK_MAX} 400 (alan {@code ids}). */
+    static List<Long> parseBulkIds(Object raw) {
+        java.util.LinkedHashSet<Long> out = new java.util.LinkedHashSet<>();
+        if (raw instanceof java.util.Collection<?> c) {
+            if (c.size() > DOMAIN_PLAN_BULK_MAX * 4) throw bulkTooMany(c.size());
+            for (Object o : c) {
+                if (o instanceof Number n) out.add(n.longValue());
+                else if (o instanceof String str && !str.isBlank()) {
+                    try { out.add(Long.parseLong(str.trim())); } catch (NumberFormatException ignore) { /* geçersiz kimlik atlanır */ }
+                }
+            }
+        }
+        if (out.isEmpty()) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("ids",
+                    com.sitemonitor.util.Msg.t("En az bir izleme seçin.", "Select at least one monitor."));
+        }
+        if (out.size() > DOMAIN_PLAN_BULK_MAX) throw bulkTooMany(out.size());
+        return new ArrayList<>(out);
+    }
+
+    private static com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException bulkTooMany(int n) {
+        return new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("ids", com.sitemonitor.util.Msg.t(
+                "Tek seferde en çok " + DOMAIN_PLAN_BULK_MAX + " izleme işlenebilir (seçilen: " + n + ").",
+                "At most " + DOMAIN_PLAN_BULK_MAX + " monitors can be processed at once (selected: " + n + ")."));
     }
 
     @PostMapping("/domain/{id}/check")
@@ -10649,6 +10801,10 @@ public class MonitoringController {
         permissionService.require(session, "monitoring.trigger", "execute");
         return domainMonitorRepo.findById(id).map(m -> {
             if (!canExecuteTeam(session, m.getTeamId())) throw new SecurityException("Bu takımın izlemesini çalıştıramazsınız");
+            // Yük sınırı (2026-11-15, M1): canlı sorguyla AYNI izleme penceresi (izleme başına dakikada 6, iki yol birlikte sayılır).
+            // Kullanıcı penceresi / eşzamanlılık reddi YOK — sayfanın toplu "Şimdi kontrol et"i her izleme için bir istek atar.
+            long wait = domainLiveLimiter.tryAcquireMonitor(m.getId());
+            if (wait > 0) throw DbQueryApiException.tooMany("RATE_LIMITED", domainLookupLimitText(wait), wait);
             Map<String, Object> r = domainChecker.checkManual(m);   // DomainCheck persist eder (manual=true — zamanlanmış değişiklik tabanı olmaz)
             // Eşik HATIRLATMASI elle kontrolde DEĞERLENDİRİLMEZ (2026-09-29, 2026-09-22 E kararının yerine): elle kontrol
             // yalnız gözlemdir, e-posta/push üretmez. Hatırlatmayı günlük ve kritik ikinci zamanlanmış kontrol gönderir.
@@ -10680,13 +10836,35 @@ public class MonitoringController {
                 // Canlı sorgu = ÇALIŞTIRMA ("Şimdi kontrol et" eşi): erişim paylaşımında EXECUTE+ da (2026-10-12)
                 if (!SessionScope.canExecuteTeam(session, m.getTeamId()))
                     return forbidden("Bu izleme üzerinde canlı sorgu yetkiniz yok");
-                Map<String, Object> r = domainChecker.checkManual(m);   // taze RDAP/WHOIS + persist (manual=true, 2026-09-29)
+                // Yük sınırı (2026-11-15, A4): kullanıcı + izleme başına dakikada 6, pod başına aynı anda 2 — her canlı sorgu
+                // dışarıya RDAP / WHOIS isteği atar (registry'lerin oran sınırı zamanlanmış turu da etkiler).
+                var decision = domainLiveLimiter.tryAcquire(testUserKey(session), m.getId());
+                if (!decision.allowed()) {
+                    throw DbQueryApiException.tooMany("RATE_LIMITED", decision.busy()
+                            ? com.sitemonitor.util.Msg.t("Canlı sorgu kuyruğu dolu — birkaç saniye sonra yeniden deneyin.",
+                                    "The live lookup queue is full — try again in a few seconds.")
+                            : domainLookupLimitText(decision.retryAfterSeconds()),
+                            decision.retryAfterSeconds());
+                }
+                Map<String, Object> r;
+                try (var ticket = decision.ticket()) {
+                    r = domainChecker.checkManual(m);   // taze RDAP/WHOIS + persist (manual=true, 2026-09-29); kendi zaman aşımlarıyla
+                }
+                // Yenileme planı zamanlanmış sonuç gibi değerlendirilir (A4): canlı sorgu yenilemeyi görürse plan kapanır.
+                if (domainRenewalPlans != null) domainRenewalPlans.onCheckResult(m, r);
                 try { schedulerService.evaluateDomainAlarmsNow(m, r); }
                 catch (Exception e) { log.warn("Registration live alarm değerlendirmesi başarısız: {} — {}", m.getDomain(), e.getMessage()); }
             }
             return ok(enrichDomain(m, domainCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(id).orElse(null),
                     teamNameMap(), openDomainMonAlarm(m.getDomain())));
         }).orElse(notFound("Domain monitor not found"));
+    }
+
+    /** Alan adı canlı sorgu / "Şimdi kontrol et" sınırının metni (A4 + M1 — iki yol aynı metni söyler). */
+    private static String domainLookupLimitText(long waitSeconds) {
+        return com.sitemonitor.util.Msg.t("Çok sık canlı sorgu: dakikada en çok " + DomainLiveLookupLimiter.PER_MINUTE
+                        + " sorgu. " + waitSeconds + " sn sonra yeniden deneyin.",
+                "Too many live lookups: at most " + DomainLiveLookupLimiter.PER_MINUTE + " per minute. Try again in " + waitSeconds + " s.");
     }
 
     /** Ad-hoc domain testi — kaydetmeden RDAP/WHOIS ile bir kez sorgular (persist YOK). */
@@ -10700,6 +10878,46 @@ public class MonitoringController {
         auditService.recordAction("MONITOR_TEST", session, "DOMAIN_MONITOR", "test",
                 AuditDetail.of("domain", domain), null);
         return ok(domainChecker.test(domain, warn, crit));
+    }
+
+    /** A3: alan adı değişince eski alan adının alarmlarını kapatan sistem kişisi (geçmişte / çözümde görünen ad). */
+    static final String DOMAIN_CHANGED_BY = "Sistem (alan adı değişti)";
+
+    /**
+     * A3 (2026-11-15): izlemenin alan adı değişti (güncelleme YA DA değişiklik geçmişinden geri yükleme) — ESKİ alan adının açık
+     * DOMAINMON_* alarmları HEMEN ve SESSİZCE kapanır (bu izlemenin sahip bağlamıyla, {@code SilentAlarmCloser} — asla bütün varlık
+     * kaydı değil; eskiden yetim temizliği ≤ 1 saat sonra kapatıyordu) ve eski alan adına konmuş yenileme planı kaldırılır (elle
+     * kaldırma gibi geçmiş + etkinlik + denetim satırı). Alan adı değişmediyse hiçbir şey yapılmaz. Çağrı doğrulama ve kayıttan SONRA.
+     */
+    private void domainKeyChanged(DomainMonitor saved, String oldDomain, Long oldTeam, HttpSession session) {
+        // Alarm anahtarı alan adının KENDİSİ (büyük / küçük harf dahil): eski yazımın alarmları her farkta kapanır (LOW 1 —
+        // eski karışık harfli kaydı küçük harfe çeviren güncelleme de); plan yalnız GERÇEKTEN başka alan adında kaldırılır.
+        if (saved == null || oldDomain == null || saved.getDomain() == null || oldDomain.equals(saved.getDomain())) return;
+        try {
+            escalationService.resolveOpenAlertsSilently(oldDomain, DOMAINMON_ALERT_TYPES, DOMAIN_CHANGED_BY,
+                    ownerCtx(saved.getId(), oldTeam, null));
+        } catch (Exception e) {
+            log.warn("Alan adı değişti ama eski alan adının alarmları kapatılamadı: {} → {} — {}", oldDomain, saved.getDomain(), e.toString());
+        }
+        if (oldDomain.equalsIgnoreCase(saved.getDomain())) return;   // yalnız harf değişti — plan aynı alan adına
+        clearPlanForDomainChange(saved, oldDomain, session);
+    }
+
+    /**
+     * A3 plan kaldırma + denetim — HATA YUTULUR (LOW 7): güncelleme / geri yükleme zaten kaydedildi, plan kaldırılamadı diye 500 dönmez
+     * (WARN; plan sonraki elle kaldırmada ya da yenileme tespitinde kapanır).
+     */
+    private void clearPlanForDomainChange(DomainMonitor saved, String oldDomain, HttpSession session) {
+        if (domainRenewalPlans == null) return;
+        try {
+            String was = domainRenewalPlans.clearForDomainChange(saved, oldDomain, session);
+            if (was != null) {
+                auditService.recordAction("MONITOR_RENEWAL_PLAN_CLEARED", session, "DOMAIN_MONITOR", String.valueOf(saved.getId()), saved.getDomain(),
+                        AuditDetail.of("domain", saved.getDomain(), "was_planned_at", was, "reason", "domain_changed", "old_domain", oldDomain));
+            }
+        } catch (Exception e) {
+            log.warn("Alan adı değişti ama yenileme planı kaldırılamadı: {} → {} — {}", oldDomain, saved.getDomain(), e.toString());
+        }
     }
 
     /** Domain form alanlarını (thresholds/warning/critical/interval) body'den uygular. */

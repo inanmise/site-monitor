@@ -20,7 +20,7 @@ export const PAGE_STATE_PARAMS = ['group', 'tag', 'team', 'q', 'stat', 'sort', '
   // Aktivite zenginleştirmesi (2026-11-05): özel aralık, takım, kişi, olay grubu, hata nedeni, izleme süzgeci + rota
   // (act = ayrıntı sayfası, amon = izleme zaman çizelgesi, atl* = çizelgenin aralığı) — activityModel LIST/ROUTE_URL_KEYS
   'afrom', 'ato', 'ateam', 'aactor', 'agroup', 'areason', 'amf', 'amfl', 'act', 'amon', 'atlr', 'atlf', 'atlt',
-  'via', 'dq',   // izleme sayfaları vekil süzgeci; alan adı hızlı süzgeci (2026-09-22)
+  'via', 'dq', 'dr', 'ds', 'dx',   // izleme sayfaları vekil süzgeci; alan adı hızlı süzgeci (2026-09-22) + ek süzgeçleri (registrar / kaynak / süre, 2026-11-15)
   'platform',    // Genel Bakış platform süzgeci (2026-09-25; utils/platformFilter.js PLATFORM_URL_KEY)
   'scope',       // Durum İzleme "Takımlarım | Tüm takımlar" anahtarı (2026-09-26; envanter i_scope, sertifikalar c_scope önekli) + Olaylar kapsamı mine|others|all (2026-09-28)
   'src',         // Alarm Geçmişi kategori süzgeci (İzleme menüsü rozetleri, 2026-09-30)

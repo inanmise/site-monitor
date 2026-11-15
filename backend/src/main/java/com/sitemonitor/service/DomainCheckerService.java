@@ -484,7 +484,13 @@ public class DomainCheckerService {
      * takvimden bir gün kaymış. Yalnız-tarih → kurum gününe göre TAKVİM GÜNÜ farkı (bugün 0, yarın 1); saatli damgada
      * (RDAP) {@code floorDiv} kalır (CertificateCheckerService ile aynı kural).
      */
-    static Integer daysUntil(String iso) {
+    static Integer daysUntil(String iso) { return daysUntil(iso, Instant.now()); }
+
+    /**
+     * {@link #daysUntil(String)} — "şimdi" verilerek (2026-11-15, inceleme LOW 2). Kart canlı kalan günü bu kuralla hesaplar
+     * ({@code domainCardModel.domainDaysUntil}); iki taraf {@code DomainDaysUntilTableTest.DAYS_TABLE}'ı paylaşır.
+     */
+    static Integer daysUntil(String iso, Instant now) {
         if (iso == null || iso.isBlank()) return null;
         try {
             Instant when;
@@ -493,12 +499,12 @@ public class DomainCheckerService {
                 try { when = Instant.parse(iso); }
                 catch (Exception e2) {
                     LocalDate day = LocalDate.parse(iso.substring(0, 10));
-                    return (int) ChronoUnit.DAYS.between(LocalDate.now(ORG_ZONE), day);
+                    return (int) ChronoUnit.DAYS.between(now.atZone(ORG_ZONE).toLocalDate(), day);
                 }
             }
             // D5: ChronoUnit.DAYS sıfıra doğru kırpar — dolalı <24 saat olmuş domain 0 gün
             // gösterirdi. floorDiv negatifi korur (CertificateCheckerService ile aynı kural).
-            return (int) Math.floorDiv(when.toEpochMilli() - Instant.now().toEpochMilli(), 86_400_000L);
+            return (int) Math.floorDiv(when.toEpochMilli() - now.toEpochMilli(), 86_400_000L);
         } catch (Exception e) { return null; }
     }
 

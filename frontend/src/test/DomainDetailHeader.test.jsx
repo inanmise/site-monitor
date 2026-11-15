@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+await vi.hoisted(async () => (await import('./helpers/orgNoonClock.js')).freezeOrgNoon())   // kalan gün İstanbul günüyle (LOW 2): sabit 09:00Z
 import { render, screen, fireEvent, within } from './test-utils.jsx'
 import DomainDetailHeader from '../components/domain/detail/DomainDetailHeader.jsx'
 import { addDays, todayKey } from '../components/domain/detail/domainDetailModel.js'

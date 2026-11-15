@@ -2363,7 +2363,28 @@ public class MonitoringOutageService implements EvalStateSource {
             int ms = appSettings.getInt("site.monitor.uptime.recovery-interval-ms", 30000);
             return ms > 0 ? (long) ms : null;
         }
+        // Alan adı (2026-11-15, canlı şikâyet: wingscard.com.tr'nin DOMAINMON_UNKNOWN alarmı veri 4 gün üst üste geldiği hâlde
+        // açık kaldı). İzlemenin kurtarma ARALIĞI yoksa (eski kayıtlar NULL) kurtarma PASİFTİ: 3 ardışık ZAMANLANMIŞ sağlıklı
+        // tur beklenir, sayaç pod belleğinde tutulur — alan adı turu GÜNLÜK, her yeniden başlatma sayacı sıfırlar, eşik hiç
+        // dolmaz (prod'da bile ≥ 3 gün). ACCESSIBILITY dalının aynısı: varsayılan AKTİF aralık; ilk sağlıklı turdan sonra
+        // ~(gerekli − 1) × aralık içinde kapanır. 0 = eski pasif davranış.
+        if (!items.isEmpty() && items.get(0).alertType() != null && items.get(0).alertType().startsWith("DOMAINMON_")) {
+            return domainRecoveryIntervalMs(appSettings.getInt(DOMAIN_RECOVERY_INTERVAL_KEY, DEFAULT_DOMAIN_RECOVERY_INTERVAL_MS));
+        }
         return null;
+    }
+
+    /** Alan adı alarmlarının varsayılan aktif kurtarma aralığı ayarı (ms; 0 = pasif). */
+    public static final String DOMAIN_RECOVERY_INTERVAL_KEY = "site.monitor.domain.recovery-interval-ms";
+    static final int DEFAULT_DOMAIN_RECOVERY_INTERVAL_MS = 60_000;
+    /** Ayarın sınırları (ms) — kaydetmede doğrulanır, okunurken de kırpılır (elle yazılmış değer zinciri bozmasın). */
+    public static final int DOMAIN_RECOVERY_INTERVAL_MIN_MS = 10_000;
+    public static final int DOMAIN_RECOVERY_INTERVAL_MAX_MS = 3_600_000;
+
+    /** 0 / negatif → null (pasif kurtarma, bugünkü davranış); aksi hâlde [10 sn, 1 sa] aralığına kırpılır. */
+    static Long domainRecoveryIntervalMs(int ms) {
+        if (ms <= 0) return null;
+        return (long) Math.max(DOMAIN_RECOVERY_INTERVAL_MIN_MS, Math.min(DOMAIN_RECOVERY_INTERVAL_MAX_MS, ms));
     }
 
     /**

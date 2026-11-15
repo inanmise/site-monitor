@@ -116,6 +116,45 @@ class PushLanguageTest {
     }
 
     @Test
+    @DisplayName("2026-11-15: süresi GEÇMİŞ süre-bitişi push'u \"-5 gün içinde doluyor\" değil \"5 gün önce doldu\" (TR + EN)")
+    void expiredExpiry_saysExpiredAgo() {
+        AlertEvent exp = event("DOMAINMON_EXPIRY", "CRITICAL", "example.org", "KRİTİK: kayıt", "2026-10-04T08:00:00");
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("days", -5);
+        ctx.put("expiry_date", "2026-09-29");
+        assertThat(service.buildMessage(exp, "OPEN", ctx, "tr"))
+                .isEqualTo("KRİTİK: example.org - alan adı kaydı 5 gün önce doldu (2026-09-29).");
+        assertThat(service.buildMessage(exp, "OPEN", ctx, "en"))
+                .isEqualTo("CRITICAL: example.org - domain registration expired 5 days ago (2026-09-29).");
+        AlertEvent cert = event("EXPIRY", "CRITICAL", "api.example.com", "KRİTİK: sertifika", "2026-10-04T08:00:00");
+        Map<String, Object> cctx = new LinkedHashMap<>();
+        cctx.put("days_remaining", -1);
+        cctx.put("not_after", "2026-10-03T20:59:59");
+        assertThat(service.buildMessage(cert, "OPEN", cctx))
+                .isEqualTo("KRİTİK: api.example.com - SSL sertifikası 1 gün önce doldu (03.10.2026).");
+        assertThat(PushText.isChannelSafe(UserPushService.EXPIRED_TEMPLATE_TR)).isTrue();
+        assertThat(PushText.isChannelSafe(UserPushService.EXPIRED_TEMPLATE_EN)).isTrue();
+        assertThat(PushText.isChannelSafe(UserPushService.EXPIRED_TEMPLATE_EN_ONE)).isTrue();
+        // İngilizce tekil (inceleme LOW 3)
+        Map<String, Object> one = new LinkedHashMap<>(ctx);
+        one.put("days", -1);
+        assertThat(service.buildMessage(exp, "OPEN", one, "en"))
+                .isEqualTo("CRITICAL: example.org - domain registration expired 1 day ago (2026-09-29).");
+    }
+
+    @Test
+    @DisplayName("LOW 3 (2026-11-15): yöneticinin DÜZENLEDİĞİ expiry şablonu süresi geçmiş bitişte de olduğu gibi işlenir (yerleşik metin ezmez)")
+    void customizedExpiryTemplate_isNotReplaced() {
+        when(appSettings.getString(org.mockito.ArgumentMatchers.eq("site.monitor.userpush.template.expiry"), any()))
+                .thenReturn("{seviye}: {ad} bitis {gun} gun ({tarih})");
+        AlertEvent exp = event("DOMAINMON_EXPIRY", "CRITICAL", "example.org", "KRİTİK: kayıt", "2026-10-04T08:00:00");
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("days", -5);
+        ctx.put("expiry_date", "2026-09-29");
+        assertThat(service.buildMessage(exp, "OPEN", ctx, "tr")).isEqualTo("KRİTİK: example.org bitis -5 gun (2026-09-29)");
+    }
+
+    @Test
     @DisplayName("TR: süre birimleri ve seviye sözcüğü eski yardımcılarla AYNI (PushText / EscalationService)")
     void turkish_helpers_delegateToLegacy() {
         for (long s : new long[]{45, 300, 7380, 273600}) {

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+await vi.hoisted(async () => (await import('./helpers/orgNoonClock.js')).freezeOrgNoon())   // kalan gün İstanbul günüyle (LOW 2): sabit 09:00Z
 import { render, screen, fireEvent, within, waitFor } from './test-utils.jsx'
 import DomainRegistrationPanel from '../components/domain/detail/DomainRegistrationPanel.jsx'
 import DomainRegistrationTab from '../components/DomainRegistrationTab.jsx'

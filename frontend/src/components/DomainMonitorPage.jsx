@@ -27,7 +27,7 @@ import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
-import { Trash2, CalendarClock, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Activity, Inbox, LockOpen, ShieldOff, ServerCrash, Ban, CalendarX, Download, ChevronDown, CalendarPlus, Copy } from 'lucide-react'
+import { Trash2, CalendarClock, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Activity, Inbox, LockOpen, ShieldOff, ServerCrash, Ban, CalendarX, Download, ChevronDown, CalendarPlus, Copy, CalendarRange, FilterX } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
@@ -52,6 +52,9 @@ import { exportDomainsCsv, exportDomainsPdf } from '../utils/exportDomains.js'
 import RenewalPlanModal from './RenewalPlanModal.jsx'   // yenileme planı (2026-09-22, H) — sertifikayla ortak modal
 import ModalShell from './ui/ModalShell.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
+import DomainBulkPlanDialog from './domain/DomainBulkPlanDialog.jsx'
+import { DEFAULT_DOMAIN_FILTERS, NO_REGISTRAR, domainFacets, hasDomainFilters, matchesDomainFilters, normalizeDomainFilters } from './domain/domainFilterModel.js'
+import { exportDomainsIcs } from '../utils/exportDomainsIcs.js'
 import NocNotifyField from './noc/forms/NocNotifyField.jsx'
 import { useNocSaveConfirm } from './noc/forms/useNocSaveConfirm.jsx'
 import { nocIdsFrom, nocGroupIdsBody } from './noc/forms/nocFormModel.js'
@@ -67,7 +70,7 @@ import { cn } from '@/lib/utils'
 import { MonitorStatusBadge, CARD_CHECK } from './monitoring/MonitorCard.jsx'
 import DomainMonitorCard from './domain/DomainMonitorCard.jsx'
 import DomainDetailHeader, { DETAIL_PHONE_FULLSCREEN } from './domain/detail/DomainDetailHeader.jsx'
-import { SOON_DAYS, alarmMatchesStatus, daysTone, expiryKey, fmtExpiry, sourceTag, statusKey } from './domain/domainCardModel.js'
+import { SOON_DAYS, alarmMatchesStatus, daysTone, expiryKey, fmtExpiry, sourceTag, statusKey, withLiveDays } from './domain/domainCardModel.js'
 import { useCardDensity } from '../hooks/useCardDensity.js'
 import CardDensityToggle from './ui/CardDensityToggle.jsx'
 import { MonitorDetailModal, DetailDivider, DetailTabs, useDeepLinkTab } from './monitoring/MonitorDetail.jsx'
@@ -174,7 +177,11 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const failRows = useFailureRows()
   const [rawMonitors, setMonitors] = useState([])
   // Silme anında (2026-10-07): silinen kart tam liste yüklemesini BEKLEMEDEN düşer, bayat yanıt geri getiremez.
-  const monitors = useWithoutDeleted(monitorKind('domain'), rawMonitors)
+  const visibleMonitors = useWithoutDeleted(monitorKind('domain'), rawMonitors)
+  // A1 (2026-11-15): kalan gün bitiş tarihinden CANLI — sunucunun değeri son kontrol anınındı (günlük tur, gece yarısından
+  // sonra bir gün bayat). Sıralama (days_asc), süzgeçler, sayaçlar, kart ve dışa aktarım AYNI değeri okur. Liste her 60 sn
+  // yenilenir, değer o anda yeniden hesaplanır; değişmeyen satır aynı nesne kalır.
+  const monitors = useMemo(() => withLiveDays(visibleMonitors), [visibleMonitors])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(null)
   const [selected, setSelected] = useState(null)
@@ -216,6 +223,12 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const [sortBy, setSortBy] = useState(() => (SORTS.includes(readUrlParam('sort', 'days_asc')) ? readUrlParam('sort', 'days_asc') : 'days_asc'))
   const [quick, setQuick] = useState(() => { const v = readUrlParam('dq', 'all'); return QUICK.includes(v) ? v : 'all' })   // hızlı süzgeç (2026-09-22)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })
+  // Ek süzgeçler (2026-11-15, C1): registrar (Türkçe katlanmış anahtar) / veri kaynağı / süre durumu — URL `dr` / `ds` / `dx`,
+  // kayıtlı görünümler de saklar (userPrefsModel VIEW_SPECS.monitor).
+  const [domFilters, setDomFilters] = useState(() => normalizeDomainFilters({
+    registrar: readUrlParam('dr', 'all'), source: readUrlParam('ds', 'all'), expiry: readUrlParam('dx', 'all') }))
+  const setDomFilter = (key, value) => setDomFilters((f) => (f[key] === value ? f : { ...f, [key]: value || 'all' }))
+  const [bulkPlanRows, setBulkPlanRows] = useState(null)   // toplu yenileme planı penceresi (D1): seçili düzenlenebilir satırlar
   // Etkin bir sayım süzgeci (paylaşılan bağlantı / kayıtlı görünüm / yeniden yükleme) şeritle AÇIK gelir: süzgeç bandı ve
   // "Filtreyi temizle" katlanmış şeridin içinde kalıp liste sessizce süzülmesin (2026-10-22, UIM-20)
   const [statsVisible, setStatsVisible] = useState(() => statFilter != null)
@@ -546,8 +559,19 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         setHistReload(k => k + 1)
         return { ok: true, data: res.data }
       }
-      return { ok: false, error: res?.error || null, data: res?.data ?? null }
+      return { ok: false, error: res?.error || null, data: res?.data ?? null, code: res?.code ?? null }
     })
+  }
+
+  /**
+   * Kart / detay düğmesinin "Şimdi kontrol et"i — toplu koşum `checkNow`'u doğrudan çağırır (satır hatayı kendisi gösterir).
+   * Tekil yolda sunucunun izleme başına dakikalık sınırı (429 RATE_LIMITED, M1) sessiz kalmasın: bekleme süreli metin bilgi
+   * iletisi olarak gösterilir (öteki hatalar bugünkü gibi).
+   */
+  async function checkNowSingle(m) {
+    const r = await checkNow(m)
+    if (r && !r.ok && r.code === 'RATE_LIMITED' && r.error) toast.info(r.error)
+    return r
   }
 
   async function diagnose(m) {
@@ -589,6 +613,17 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
       toast.success(t('inv.exportSuccess', n))
     } catch { toast.error(t('inv.exportError')) } finally { setExporting(false) }
   }
+  /** Takvim (.ics, 2026-11-15, C3): GÖRÜNEN listenin bitiş günleri; bitişi bilinmeyen atlanır ve sayılır. İndirme
+   *  başlamazsa (downloadBlob false) hata — asla "aktarıldı" denmez. */
+  function doExportIcs() {
+    if (displayMonitors.length === 0) { toast.error(t('inv.exportNoData')); return }
+    let r
+    try { r = exportDomainsIcs(displayMonitors, t) } catch { toast.error(t('dom.ics.failed')); return }
+    if (r.count === 0) { toast.error(t('dom.ics.none', r.skipped)); return }
+    if (!r.ok) { toast.error(t('dom.ics.failed')); return }
+    if (r.skipped > 0) toast.success(t('dom.ics.doneSkipped', r.count, r.skipped))
+    else toast.success(t('dom.ics.done', r.count))
+  }
 
   const { teamOptions, hasTeamOptions } = useTeamOptions(monitors)
   const teamSelectOptions = useMemo(() => [...(isAdmin ? [{ value: '', label: t('dom.noTeam') }] : []),   // "takımsız" yalnız admin: üye için takım zorunlu (2026-09-18)
@@ -621,7 +656,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const sortOptions = useMemo(() => SORTS.map(s => ({ value: s, label: t('dom.sort_' + s) })), [t])
   const quickOptions = useMemo(() => QUICK.map(q => ({ value: q, label: q === 'soon' ? t('dom.quick_soon', SOON_DAYS) : t('dom.quick_' + q) })), [t])
 
-  const scoped = useMemo(() => monitors.filter(m => {
+  const baseScoped = useMemo(() => monitors.filter(m => {
     if (!matchesTeamAndGroup(m, teamFilter, groupFilter)) return false
     if (!matchesTag(m, tagFilter)) return false
     if (!(QUICK_PRED[quick] || QUICK_PRED.all)(m)) return false
@@ -629,6 +664,20 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     if (!search.trim()) return true
     return matchesSearchText(search, [m.domain, m.name, m.registrar])
   }), [monitors, teamFilter, groupFilter, tagFilter, quick, search])
+  // Ek süzgeçler (C1) kapsamın ÜZERİNE; seçenek sayıları (facet) öteki iki ek süzgeç uygulanmış kapsamdan — dürüst sayım:
+  // bilinmeyen (registrar / kaynak / bitiş yok) kendi seçeneğidir, "0 dolmuş" diye sayılmaz.
+  const scoped = useMemo(() => (hasDomainFilters(domFilters) ? baseScoped.filter((m) => matchesDomainFilters(m, domFilters)) : baseScoped),
+    [baseScoped, domFilters])
+  const facets = useMemo(() => domainFacets(baseScoped, domFilters), [baseScoped, domFilters])
+  const registrarOptions = useMemo(() => [{ value: 'all', label: t('dom.flt.registrarAll', facets.registrarAll) },
+    ...facets.registrars.map((r) => ({ value: r.key, label: `${r.key === NO_REGISTRAR ? t('dom.flt.registrarUnknown') : r.label} (${r.count})` }))],
+    [facets, t])
+  const sourceOptions = useMemo(() => ['all', 'rdap', 'whois', 'unknown'].map((k) => ({ value: k, label: t('dom.flt.source_' + k, facets.source[k]) })), [facets, t])
+  const expiryOptions = useMemo(() => ['all', 'expired', 'valid', 'unknown'].map((k) => ({ value: k, label: t('dom.flt.expiry_' + k, facets.expiry[k]) })), [facets, t])
+  const anyListFilter = hasDomainFilters(domFilters) || quick !== 'all' || groupFilter !== 'all' || tagFilter !== 'all' || teamFilter !== 'all' || !!search.trim()
+  const clearListFilters = () => {
+    setDomFilters(DEFAULT_DOMAIN_FILTERS); setQuick('all'); setGroupFilter('all'); setTagFilter('all'); setTeamFilter('all'); setSearch('')
+  }
 
   const counts = useMemo(() => {
     const c = { total: scoped.length, ok: 0, warning: 0, critical: 0, unknown: 0, changed: 0, soon: 0, nolock: 0, nsfail: 0, unsigned: 0, blacklisted: 0, expired: 0 }
@@ -676,7 +725,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   // Kartlar ham `monitors` uzerinden sayilirsa filtre secilince liste daralir ama kartlar
   // kuresel sayiyi gostermeye devam eder (DNS/Port sayfalarinda tam bu olmustu).
   const pager = usePagination(displayMonitors, {
-    listKey: 'domain-monitors', preset: 'page', resetDeps: [search, teamFilter, groupFilter, tagFilter, quick, statFilter, sortBy],
+    listKey: 'domain-monitors', preset: 'page', resetDeps: [search, teamFilter, groupFilter, tagFilter, quick, statFilter, sortBy, domFilters],
     initialPage: readUrlInt('page', 1), initialSize: readUrlInt('ps', null),
   })
 
@@ -686,6 +735,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     ...monitorUrlState({ teamFilter, groupFilter, tagFilter, search, statFilter, pager }),
     sort: sortBy !== 'days_asc' ? sortBy : null,
     dq: quick !== 'all' ? quick : null,   // hızlı süzgeç (2026-09-22)
+    dr: domFilters.registrar !== 'all' ? domFilters.registrar : null,   // ek süzgeçler (2026-11-15, C1)
+    ds: domFilters.source !== 'all' ? domFilters.source : null,
+    dx: domFilters.expiry !== 'all' ? domFilters.expiry : null,
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
@@ -767,7 +819,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   // Kart ızgarası (2026-11-06, performans PF4 O2): yalnız KENDİ verisi değişince çizilir. Form state'i bu
   // sayfada; eskiden formdaki her tuş 25–100 kartın hepsini yeniden çiziyordu. Çizim girdileri bağımlılık
   // listesinde; olay işleyicileri olay anında en güncel kopyadan okunur (useCardHandlers — bayat kapanış yok).
-  const cardEv = useCardHandlers({ openDetail, toggleBulk, resume, checkNow, openEdit, openDuplicate, deleteMonitor })
+  const cardEv = useCardHandlers({ openDetail, toggleBulk, resume, checkNow: checkNowSingle, openEdit, openDuplicate, deleteMonitor })
   const cardGrid = useMemo(() => (
     <div className="upt-grid" data-density={density}>
       {pager.pageItems.map(m => (
@@ -977,6 +1029,10 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
                 <span className="font-medium">{t('inv.exportPdf')}</span>
                 <span className="text-xs text-muted-foreground">{t('dom.exportPdfHint', displayMonitors.length)}</span>
               </DropdownMenuItem>
+              <DropdownMenuItem onSelect={doExportIcs} className="flex-col items-start gap-0.5" data-slot="domain-export-ics">
+                <span className="inline-flex items-center gap-1.5 font-medium"><CalendarRange aria-hidden="true" className="size-4" />{t('dom.exportIcs')}</span>
+                <span className="text-xs text-muted-foreground">{t('dom.exportIcsHint', displayMonitors.length)}</span>
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )} />
@@ -998,8 +1054,23 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
+          {/* Registrar adları uzundur ("Tucows Domains Inc. dba … (12)"): seçenek ve seçili değer SARAR, kırpılmaz (LOW 6) */}
+          <span data-slot="domain-filter-registrar" className="contents">
+            <SearchableSelect value={domFilters.registrar} onChange={(v) => setDomFilter('registrar', v)} options={registrarOptions} searchThreshold={6} ariaLabel={t('dom.flt.registrar')} wrapLabels />
+          </span>
+          <span data-slot="domain-filter-source" className="contents">
+            <SearchableSelect value={domFilters.source} onChange={(v) => setDomFilter('source', v)} options={sourceOptions} ariaLabel={t('dom.flt.source')} wrapLabels />
+          </span>
+          <span data-slot="domain-filter-expiry" className="contents">
+            <SearchableSelect value={domFilters.expiry} onChange={(v) => setDomFilter('expiry', v)} options={expiryOptions} ariaLabel={t('dom.flt.expiry')} wrapLabels />
+          </span>
           <Input type="text" className="w-full sm:w-auto sm:max-w-xs sm:min-w-[200px]" placeholder={t('dom.searchPlaceholder')} aria-label={t('dom.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} data-page-search="" />
+          {anyListFilter && (
+            <Button type="button" variant="ghost" size="sm" className="pointer-coarse:h-10" onClick={clearListFilters} data-slot="domain-filter-clear">
+              <FilterX aria-hidden="true" />{t('dom.flt.clear')}
+            </Button>
+          )}
         </div>
       )}
 
@@ -1015,7 +1086,17 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         <BulkActionBar selected={bulkSel} items={pager.pageItems.filter(canManageRow)} teams={teams} canDelete={canDeleteRow} nocType="DOMAIN"
           api={{ update: api.monitoring.updateDomainMonitor, remove: api.monitoring.deleteDomainMonitor }}
           onClear={() => setBulkSel(new Set())} onPrune={setBulkSel} onDone={load}
-          onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })} />
+          onToggleAll={() => setBulkSel((s) => { const vis = pager.pageItems.filter(canManageRow); const all = vis.every((m) => s.has(m.id)); return all ? new Set() : new Set(vis.map((m) => m.id)) })}
+          extra={(chosen, { busy }) => (
+            // Toplu yenileme planı (2026-11-15, D1): yalnız düzenlenebilir GÖRÜNÜR seçili satırlar (çubuk zaten canManageRow
+            // ile süzer); karar ve kapsam sunucuda satır satır yeniden denetlenir.
+            <Button type="button" variant="secondary" size="sm" className="pointer-coarse:h-10" disabled={busy}
+              onClick={() => setBulkPlanRows(chosen.filter(canManageRow))} data-slot="domain-bulk-plan">
+              <CalendarClock size={13} aria-hidden="true" /> {t('dom.bulkPlan.btn')}
+            </Button>
+          )} />
+        <DomainBulkPlanDialog open={!!bulkPlanRows} rows={bulkPlanRows || []} onClose={() => setBulkPlanRows(null)}
+          onFinished={() => { setBulkSel(new Set()); load() }} />
         {/* Süzgeç/arama hiçbir izlemeyi bırakmadıysa boş alan yerine açık mesaj (2026-09-22) */}
         {displayMonitors.length === 0 && <StatusBlock tone="neutral" icon={Inbox} title={t('mon.noFilterMatch')} description={t('empty.hintFilter')} />}
         {cardGrid}
@@ -1035,7 +1116,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               onResume={canManageRow(selected) && !selected.active ? () => resume(selected) : undefined}
               resuming={isResuming(selected.id)}
               running={isRunning(selected.id)}
-              onCheck={canCheckRow(selected) ? () => checkNow(selected) : undefined}
+              onCheck={canCheckRow(selected) ? () => checkNowSingle(selected) : undefined}
               checkTitle={t('dom.check')}
               onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
               editTitle={t('dom.edit')}
@@ -1054,7 +1135,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               planı bloğu, özet (registrar/kaynak/son kontrol/sıklık/eşikler + Şimdi kontrol et), bitiş bilinmiyorsa neden +
               sonraki adımlar (Sorun Tanıla), koruma + EPP çipleri. Eski düz DetailSummary satırının yerine; yetki kapıları kartla aynı. */}
           <DomainDetailHeader monitor={selected} running={isRunning(selected.id)}
-            onCheck={canCheckRow(selected) ? () => checkNow(selected) : undefined}
+            onCheck={canCheckRow(selected) ? () => checkNowSingle(selected) : undefined}
             onPlanRenewal={canManageRow(selected) ? () => setPlanRow(selected) : undefined}
             onDiagnose={canDiagnoseRow(selected) ? () => diagnose(selected) : undefined} />
           <DetailDivider />

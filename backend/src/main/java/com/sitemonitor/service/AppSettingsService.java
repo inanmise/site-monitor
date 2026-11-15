@@ -416,6 +416,17 @@ public class AppSettingsService {
                 }
             }
         }
+        // Alan adı aktif kurtarma aralığı (2026-11-15): 0 (pasif) ya da 10 sn – 1 sa.
+        if (MonitoringOutageService.DOMAIN_RECOVERY_INTERVAL_KEY.equals(s.key())) {
+            Integer v = null;
+            try { v = Integer.parseInt(val.trim()); } catch (NumberFormatException ignore) { /* aşağıdaki INT kuralı söyler */ }
+            if (v != null && v != 0 && (v < MonitoringOutageService.DOMAIN_RECOVERY_INTERVAL_MIN_MS
+                    || v > MonitoringOutageService.DOMAIN_RECOVERY_INTERVAL_MAX_MS)) {
+                throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("domain_recovery_interval_ms", Msg.t(
+                        "Alan adı kurtarma aralığı 0 (pasif) ya da 10000–3600000 ms olmalı.",
+                        "Domain recovery interval must be 0 (passive) or 10000–3600000 ms."));
+            }
+        }
         switch (s.type()) {
             case INT -> {
                 try { Integer.parseInt(val); }
