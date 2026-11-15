@@ -193,14 +193,15 @@ export function engineState(p) {
 }
 
 /**
- * Durum rozeti tonu. Bulunamayan ADAY nötrdür (2026-11-16): aday yolu varsayılan olarak imajdaki ikilidir
- * (/opt/k6-candidate/k6); yerel geliştirmede ya da adayı taşımayan bir imajda o dosya yoktur ve hiçbir izleme etkilenmez —
- * tehlike tonu yanlış alarm olurdu. Etkin / yedek ikili bulunamazsa tehlike kalır.
+ * Durum rozeti tonu. Bulunamayan ADAY yalnız imajın VARSAYILAN aday yolundaysa nötrdür (2026-11-16; sunucu
+ * `default_path: true`): yerel geliştirmede ya da adayı taşımayan bir imajda o dosya yoktur ve hiçbir izleme etkilenmez.
+ * Elle yazılmış (bağlı birim, yazım hatası) bulunamayan aday yolu ve bulunamayan etkin / yedek ikili tehlikedir. Alan yoksa
+ * (eski sunucu) eski kural: tehlike.
  */
-export function engineTone(role, state) {
+export function engineTone(role, state, profile) {
   if (state === 'running') return 'success'
   if (state === 'unset') return 'muted'
-  if (state === 'missing' && role === 'candidate') return 'muted'
+  if (state === 'missing' && role === 'candidate' && profile?.default_path === true) return 'muted'
   return 'danger'
 }
 

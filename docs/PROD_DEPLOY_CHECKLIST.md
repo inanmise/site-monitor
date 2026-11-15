@@ -1143,7 +1143,7 @@ gösterdiği 6 HIGH bulgu (go1.26.8, golang.org/x/net v0.58.0) bu sürümde HÂL
       etkin ikili "k6 bulunamadı" olur → senaryo taraması hiç koşmaz (her turda `[K6] Sentetik izleme YÜRÜTÜLMÜYOR — k6
       bulunamadı …` uyarısı), kontrol satırı yazılmaz, alarm açılmaz / kapanmaz; "Şimdi kontrol et" ve form "Test" "k6
       bulunamadı" der. Unutulduysa 20.211.0'da k6 motoru → "Yedeğe geri dön" yine çalışır (yedek = eski etkin yol, o imajda var).
-- [ ] Geçiş YAPILMADIYSA (`k6-bin` = `k6`) geri alma k6 için güvenlidir; 20.211.0 aday varsayılanını bilmez (aday "tanımlı değil").
+- [ ] Geçiş YAPILMADIYSA (`k6-bin` = `k6`) geri alma k6 için güvenlidir; 20.211.0 aday varsayılanını bilmez: aday yolu kayıtlı DEĞİLSE aday "tanımlı değil" görünür; kayıtlıysa (ör. "Öncesi" adımında `none` yerine yol yazıldıysa) "Bulunamadı" görünür — zararsızdır, hiçbir izleme o ikiliyi koşmaz.
 
 ## Geri alma
 

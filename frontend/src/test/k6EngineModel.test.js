@@ -122,8 +122,13 @@ describe('motor durumu ve geçiş hazırlığı', () => {
     expect(engineState({ available: true, unsupported: true })).toBe('running')
   })
 
-  it('engineTone (2026-11-16): bulunamayan ADAY nötr (varsayılan aday yolu yerelde yoktur); etkin / yedek bulunamazsa tehlike', () => {
-    expect(engineTone('candidate', 'missing')).toBe('muted')
+  it('engineTone (2026-11-16): bulunamayan ADAY yalnız varsayılan yoldaysa (default_path) nötr; elle yazılmış yol, eski sunucu '
+    + 've etkin / yedek bulunamazsa tehlike', () => {
+    expect(engineTone('candidate', 'missing', { default_path: true })).toBe('muted')
+    expect(engineTone('candidate', 'missing', { default_path: false })).toBe('danger')
+    expect(engineTone('candidate', 'missing', {})).toBe('danger')
+    expect(engineTone('candidate', 'missing')).toBe('danger')
+    expect(engineTone('active', 'missing', { default_path: true })).toBe('danger')
     expect(engineTone('active', 'missing')).toBe('danger')
     expect(engineTone('rollback', 'missing')).toBe('danger')
     for (const role of ['active', 'rollback', 'candidate']) {

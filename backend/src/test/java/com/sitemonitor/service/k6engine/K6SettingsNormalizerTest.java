@@ -103,6 +103,7 @@ class K6SettingsNormalizerTest {
     }
 
     private void store(String key, String value) {
+        jdbc.update("DELETE FROM app_settings WHERE setting_key = ?", key);   // aynı anahtarı ikinci kez yazmak = güncelleme
         repo.save(new AppSetting(key, value, "2026-10-30T15:47:28", "root"));
         org.springframework.test.util.ReflectionTestUtils.invokeMethod(settings, "refreshFromDb");
     }
@@ -139,6 +140,36 @@ class K6SettingsNormalizerTest {
         assertThat(events.seen).isNotEmpty();
         assertThat(events.seen).noneMatch(e -> e.touches(ScriptedCheckerService.K6_BIN_KEY));
         verify(audit).recordSystemEvent(eq("K6_ENGINE_SETTINGS_NORMALIZE"), eq("SETTINGS"), eq("k6-engine"), anyString());
+    }
+
+    @Test
+    @DisplayName("2026-11-16 inceleme: geçiş yapıldıktan sonra (etkin = /opt/k6-candidate/k6, yedek = k6 = gerçek 2.3) iş "
+            + "yedeği SİLMEZ — 'Yedeğe geri dön' açık kalır; aday ve etkin ayara da dokunulmaz, nişan yazılır")
+    void rollbackKeptAfterSwitchToCandidate() {
+        store(ScriptedCheckerService.K6_BIN_KEY, "/opt/k6-candidate/k6");
+        store(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY, "k6");
+        store(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY, "/opt/k6-next/k6");
+
+        job.run();
+
+        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_KEY)).isEqualTo("/opt/k6-candidate/k6");
+        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY)).isEqualTo("k6");
+        assertThat(settings.getOverride(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY)).isNull();   // eski aday yine temizlenir
+        assertThat(marked()).isTrue();
+    }
+
+    @Test
+    @DisplayName("activeSwitchedAway: kayıt yok / boş / eski 2.3 takma adları → hayır; başka bir yol → evet")
+    void activeSwitchedAwayRule() {
+        assertThat(job.activeSwitchedAway()).isFalse();
+        store(ScriptedCheckerService.K6_BIN_KEY, "k6");
+        assertThat(job.activeSwitchedAway()).isFalse();
+        store(ScriptedCheckerService.K6_BIN_KEY, " /usr/bin/k6 ");
+        assertThat(job.activeSwitchedAway()).isFalse();
+        store(ScriptedCheckerService.K6_BIN_KEY, "/opt/k6-next/k6");
+        assertThat(job.activeSwitchedAway()).isFalse();
+        store(ScriptedCheckerService.K6_BIN_KEY, "/opt/k6-candidate/k6");
+        assertThat(job.activeSwitchedAway()).isTrue();
     }
 
     @Test

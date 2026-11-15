@@ -1226,7 +1226,7 @@ satırı yalnız bilgidir. Sistem metrikleri örneklemesi kapalıysa (`site.moni
 ## k6 sürüm geçişi (0.49 → 2.3)
 
 **Durum (2026-10-30, Yayın B + C tek sürümde):** geçiş tamamlandı (2026-11-16'dan beri imajda ayrıca ADAY v2.4.0 var —
-aşağıdaki "k6 sürüm geçişi (2.3 → 2.4, aday ikili)"). İmajda TEK k6 ikilisi var: `/usr/bin/k6` = **v2.3.0**
+aşağıdaki "k6 sürüm geçişi (2.3 → 2.4, aday ikili)"). Etkin ikili: `/usr/bin/k6` = **v2.3.0**
 (GitHub sürüm tarball'ı, sabit SHA-256). 0.49 imajdan çıktı; uygulama yalnız **v2.0.0 ve üstünü** koşar — daha eski bir
 ikili tanımlanırsa bulunur ama koşmaz ("desteklenmiyor"). Sürüm yalnız `k6 v2.3.0 (…)` biçimindeki satırdan okunur;
 okunamayan bir sürüm (ör. geliştirme derlemesi `k6 (devel) …`) "desteklenmiyor" sayılmaz, ikili koşar. `/opt/k6-next/k6` yalnız

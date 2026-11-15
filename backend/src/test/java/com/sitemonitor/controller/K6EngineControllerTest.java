@@ -203,6 +203,28 @@ class K6EngineControllerTest {
     }
 
     @Test
+    @DisplayName("Aday default_path (2026-11-16 inceleme): aday yolu kayıtlı değilse true (imaj varsayılanı — bulunamaması "
+            + "nötr), kayıtlıysa false; etkin / yedek satırında alan yok; tanımsız aday null kalır")
+    @SuppressWarnings("unchecked")
+    void candidateDefaultPathFlag() {
+        Map<String, Object> eng = (Map<String, Object>) data(ctl.status(session(true))).get("engines");
+        assertThat((Map<String, Object>) eng.get("candidate")).containsEntry("default_path", true);
+        assertThat((Map<String, Object>) eng.get("active")).doesNotContainKey("default_path");
+
+        when(settings.getOverride(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY)).thenReturn("   ");
+        eng = (Map<String, Object>) data(ctl.status(session(true))).get("engines");
+        assertThat((Map<String, Object>) eng.get("candidate")).containsEntry("default_path", true);
+
+        when(settings.getOverride(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY)).thenReturn("/mnt/k6/k6");
+        eng = (Map<String, Object>) data(ctl.status(session(true))).get("engines");
+        assertThat((Map<String, Object>) eng.get("candidate")).containsEntry("default_path", false);
+
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v220, null, null));
+        eng = (Map<String, Object>) data(ctl.status(session(true))).get("engines");
+        assertThat(eng.get("candidate")).isNull();
+    }
+
+    @Test
     @DisplayName("Ayar kaydı: geçersiz GODEBUG alan hatası (godebug) — hiçbir şey yazılmaz")
     void saveRejectsBadGodebug() {
         assertThatThrownBy(() -> ctl.save(Map.of("godebug", "gctrace=1"), session(true), new MockHttpServletRequest()))

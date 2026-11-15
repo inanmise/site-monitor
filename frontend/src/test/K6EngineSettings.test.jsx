@@ -108,12 +108,12 @@ describe('K6EngineSettings — motorlar', () => {
     expect(slot('k6e-rollback')).toBeDisabled()
   })
 
-  it('tanımlı ama çalıştırılamayan aday "Bulunamadı" — NÖTR (yeşil de kırmızı da değil: varsayılan aday yolu yerelde yoktur); '
-    + 'geçiş kapalı ve nedeni yazılı; bulunamayan ETKİN ikili tehlike tonunda kalır', async () => {
+  it('varsayılan yoldaki (default_path) çalıştırılamayan aday "Bulunamadı" — NÖTR (yerelde o dosya yoktur); geçiş kapalı ve '
+    + 'nedeni yazılı; bulunamayan ETKİN ikili tehlike tonunda kalır', async () => {
     api.admin.k6Engine.mockResolvedValue(ok(data({
       engines: {
         active: { ...ACTIVE, available: false, version: null }, rollback: null,
-        candidate: { bin: '/opt/k6-candidate/k6', available: false, version: null, probed_at: '2026-10-29T20:15:04' },
+        candidate: { bin: '/opt/k6-candidate/k6', available: false, version: null, probed_at: '2026-10-29T20:15:04', default_path: true },
       },
       can_switch: false,
     })))
@@ -128,6 +128,51 @@ describe('K6EngineSettings — motorlar', () => {
     expect(within(act0).getByText('Bulunamadı').closest('[data-tone]')).toHaveAttribute('data-tone', 'danger')
     expect(slot('k6e-switch')).toBeDisabled()
     expect(slot('k6e-switch-why')).toHaveTextContent('çalışan ve etkin olandan farklı')
+  })
+
+  it('elle yazılmış (kayıtlı) aday yolu bulunamıyorsa "Bulunamadı" TEHLİKE tonunda; eski sunucu (default_path yok) da tehlike', async () => {
+    api.admin.k6Engine.mockResolvedValue(ok(data({
+      engines: {
+        active: ACTIVE, rollback: null,
+        candidate: { bin: '/mnt/k6/k6', available: false, version: null, probed_at: '2026-10-29T20:15:04', default_path: false },
+      },
+      can_switch: false,
+    })))
+    await mount()
+    let cand = slots('k6e-engine')[2]
+    expect(within(cand).getByText('Bulunamadı').closest('[data-tone]')).toHaveAttribute('data-tone', 'danger')
+    cleanup()
+    api.admin.k6Engine.mockResolvedValue(ok(data({
+      engines: {
+        active: ACTIVE, rollback: null,
+        candidate: { bin: '/opt/k6-candidate/k6', available: false, version: null, probed_at: '2026-10-29T20:15:04' },
+      },
+      can_switch: false,
+    })))
+    await mount()
+    cand = slots('k6e-engine')[2]
+    expect(within(cand).getByText('Bulunamadı').closest('[data-tone]')).toHaveAttribute('data-tone', 'danger')
+  })
+
+  it('GODEBUG kaçış uyarısı rol başına kendi metniyle: etkin "şu anda", yedek "geri dönülürse", aday "geçişten sonra"', async () => {
+    api.admin.k6Engine.mockResolvedValue(ok(data({
+      engines: {
+        active: { ...ACTIVE, go_version: 'go1.27.1', godebug_ignored: ['tlsrsakex'] },
+        rollback: { ...ACTIVE, bin: '/opt/k6-old/k6', go_version: 'go1.27.0', godebug_ignored: ['tls3des'] },
+        candidate: { ...CANDIDATE, version: 'v2.9.0', go_version: 'go1.27.2', godebug_ignored: ['tlsrsakex'] },
+      },
+      settings: { rollback_bin: '/opt/k6-old/k6', candidate_bin: CANDIDATE.bin, godebug: 'tlsrsakex=1,tls3des=1', user_agent: '', excluded_ids: [] },
+    })))
+    await mount()
+    const [a, r, c] = slots('k6e-engine')
+    const band = (row) => row.querySelector('[data-slot="k6e-engine-godebug-ignored"]')
+    expect(band(a)).toHaveTextContent('Etkin motor go1.27.1')
+    expect(band(a)).toHaveTextContent('şu anda TLS hatası')
+    expect(band(r)).toHaveTextContent('Yedek motor go1.27.0')
+    expect(band(r)).toHaveTextContent('geri dönülürse')
+    expect(band(r)).toHaveTextContent('tls3des')
+    expect(band(c)).toHaveTextContent('Aday motor go1.27.2')
+    expect(band(c)).toHaveTextContent('Geçişten sonra')
   })
 
   it('Go sürümü (2026-11-16) sürüm rozetinin yanında sönük metin; eski sunucu (alan yok) → gösterilmez; bugünkü ikililerde '

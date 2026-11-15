@@ -25,6 +25,13 @@ export const TOUCH = 'pointer-coarse:min-h-10'
 export const CHIP = 'h-auto rounded-md overflow-visible whitespace-normal [overflow-wrap:anywhere]'
 
 /** Kart başlığı + isteğe bağlı eylemler — telefonda alt alta, geniş ekranda yan yana. */
+/** GODEBUG kaçış uyarısı rol başına ayrı metin (2026-11-16 inceleme): literal anahtarlar — kullanılan-anahtar kapısı görür. */
+function ignoredText(t, role, keys, go) {
+  if (role === 'active') return t('k6e.godebugIgnored.active', keys, go)
+  if (role === 'rollback') return t('k6e.godebugIgnored.rollback', keys, go)
+  return t('k6e.godebugIgnored.candidate', keys, go)
+}
+
 export function SectionCard({ slot, icon: Icon, title, description, actions, children, className = '', contentClassName = '' }) {
   const id = useId()
   return (
@@ -61,7 +68,7 @@ function EngineRow({ role, profile, lang, minVersion }) {
       className="flex min-w-0 flex-col gap-2 rounded-lg border bg-card px-3 py-3 sm:px-4">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <span className="font-semibold">{t(`k6e.role.${role}`)}</span>
-        <ToneBadge tone={engineTone(role, state)} className={CHIP} data-slot="k6e-engine-state" data-state={state}>
+        <ToneBadge tone={engineTone(role, state, profile)} className={CHIP} data-slot="k6e-engine-state" data-state={state}>
           {t(`k6e.engineState.${state}`)}
         </ToneBadge>
         {profile && (profile.version
@@ -95,7 +102,7 @@ function EngineRow({ role, profile, lang, minVersion }) {
       {/* Kayıtlı TLS kaçışlarından bu motorun Go sürümünün YOK SAYDIKLARI (Go 1.27 tlsrsakex / tls3des'i kaldırdı). */}
       {profile && ignored.length > 0 && (
         <div data-slot="k6e-engine-godebug-ignored" data-keys={ignored.join(',')}>
-          <AlertBanner tone="warning" className="mb-0">{t('k6e.godebugIgnored', ignored.join(', '), go || '—')}</AlertBanner>
+          <AlertBanner tone="warning" className="mb-0">{ignoredText(t, role, ignored.join(', '), go || '—')}</AlertBanner>
         </div>
       )}
     </li>

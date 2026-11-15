@@ -29,8 +29,13 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
   - **k6 motoru sayfası:** her motorun yanında derlendiği **Go sürümü**; kayıtlı GODEBUG kaçışlarından o motorun Go
     sürümünün kaldırdıkları (Go 1.27: `tlsrsakex`, `tls3des`) için motor satırında uyarı. API'de motor başına ek alanlar
     `go_version`, `godebug_ignored` (eski istemci yok sayar). Bugünkü iki ikili de go1.26.x — uyarı çıkmaz.
-  - Bulunamayan **aday** ikili artık nötr görünür (yerel geliştirmede varsayılan aday yolu yoktur; hiçbir izleme
-    etkilenmez). Etkin / yedek ikili bulunamazsa tehlike tonu sürer.
+  - Bulunamayan **aday** ikili, yol imajın varsayılanıysa nötr görünür (yerel geliştirmede o dosya yoktur; hiçbir izleme
+    etkilenmez). Elle yazılmış bir aday yolu ya da etkin / yedek ikili bulunamazsa tehlike tonu sürer. API'de aday
+    satırına `default_path` alanı eklendi. GODEBUG uyarısının metni artık role göre (etkin / yedek / aday) değişir.
+
+### Fixed
+- **k6 ayar normalleştirmesi geçişten sonra yedeği silmez:** etkin ikili eski 2.3 yollarından biri değilse (ör. adaya
+  geçildiyse), bir kerelik iş yedek yolunu (`k6` = gerçek 2.3) artık korur; "Yedeğe geri dön" açık kalır.
   - **Bilinen 2.3 → 2.4 farkı (gerçek ikililerle ölçüldü):** `default()` hiç bitmeyen bir Promise döndürürse 2.4
     `did not finish …` hata satırı basar → kontrol **ERROR** (2.3'te PASS). Uyumluluk taraması böyle bir betiği REGRESSION
     olarak gösterir. Yakalanmamış Promise reddi iki sürümde de ERROR; özet dosyası, çıkış kodları (0 / 99 / 107 / 110),
