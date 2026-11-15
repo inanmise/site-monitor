@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { BellOff, BellRing, SlidersHorizontal, Send, Timer, RefreshCw, X } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
@@ -7,6 +7,7 @@ import AlertBanner from '../ui/AlertBanner.jsx'
 import Field from '../ui/Field.jsx'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import { useFormErrors } from '../../hooks/useFormErrors.js'
+import { readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import {
   PUSH_FAMILIES, PUSH_LEVELS, SNOOZE_PRESETS, prefsToForm, formToBody, formEqual, isDefaultForm, familyLabel, snoozeParts,
 } from '../../utils/pushPrefs.js'
@@ -46,6 +47,10 @@ export default function PushPreferencesCard({ optOut = false }) {
   const critHintId = useId()
 
   const [prefs, setPrefs] = useState(null)
+  const cardRef = useRef(null)
+  // Eksikler penceresinden gelinince (`ma_sec=push`, 2026-11-15) kart yüklenince görünür kaydırılır ve odaklanır; parametre bir
+  // kez tüketilir (adres çubuğunda asılı kalmaz)
+  const focusOnce = useRef(readUrlParam('ma_sec') === 'push')
   const [loadError, setLoadError] = useState(false)
   const [reload, setReload] = useState(0)
   const families = prefs?.available_families?.length ? prefs.available_families : PUSH_FAMILIES
@@ -71,6 +76,17 @@ export default function PushPreferencesCard({ optOut = false }) {
     return () => { alive = false }
   }, [reload])
   useEffect(() => { if (saved) setForm(saved) }, [saved])
+  useEffect(() => {
+    if (!prefs || !form || !focusOnce.current || !cardRef.current) return
+    focusOnce.current = false
+    const el = cardRef.current
+    try { el?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }) } catch { /* yok */ }
+    try { el?.focus?.({ preventScroll: true }) } catch { /* yok */ }
+    try {
+      const url = new URL(window.location.href)
+      if (url.searchParams.has('ma_sec')) { url.searchParams.delete('ma_sec'); window.history.replaceState(window.history.state, '', url) }
+    } catch { /* yok */ }
+  }, [prefs, form])
 
   const dirty = !!(form && saved && !formEqual(form, saved))
 
@@ -164,6 +180,7 @@ export default function PushPreferencesCard({ optOut = false }) {
   const busy = saving || snoozeBusy
 
   return (
+    <div ref={cardRef} tabIndex={-1} className="outline-none" data-slot="push-prefs-anchor">
     <Card data-slot="push-prefs" data-snoozed={snoozed || undefined} className={CARD}>
       <CardHeader className="gap-1.5 px-4">
         <CardTitle className="flex items-center gap-2 text-sm">
@@ -291,5 +308,6 @@ export default function PushPreferencesCard({ optOut = false }) {
         )}
       </CardContent>
     </Card>
+    </div>
   )
 }

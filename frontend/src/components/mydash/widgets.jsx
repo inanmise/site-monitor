@@ -20,6 +20,7 @@ import { STAT_WIDGETS } from './statWidgets.jsx'
 import { DATA_RULES_WIDGETS } from './dataRulesWidget.jsx'
 import { SERIES_WIDGETS } from './seriesWidgets.jsx'
 import { PAGESPEED_WIDGETS } from './pageSpeedWidgets.jsx'
+import { GAPS_WIDGETS } from './gapsWidget.jsx'
 import { useWidgetData } from './useWidgetData.js'
 import {
   WATCHDOG_TONE, alertsSummary, certSummary, formatPct, monitorSummary, oncallRows, qualityTone, statusSummary, stormSummary,
@@ -430,6 +431,7 @@ export const WIDGETS = {
   ...DATA_RULES_WIDGETS,
   ...SERIES_WIDGETS,
   ...PAGESPEED_WIDGETS,
+  ...GAPS_WIDGETS,
   ...STAT_WIDGETS,
 }
 
