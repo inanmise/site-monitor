@@ -355,6 +355,31 @@ for (const vp of VIEWPORTS) {
       await expect(page.getByText(/e-mail: 1, push: 2|e-posta: 1, push: 2/)).toBeVisible()
       await expect(page.getByText(/Kayıt başka biri tarafından değiştirildi/)).toHaveCount(0)
     })
+
+    test('açık İşlemler menüsü arka plan yenilemesi gelince kapanmaz; ardından "Sürdür" yenilemedeki sürümle gider', async ({ page }) => {
+      test.setTimeout(120_000)
+      const calls = { posted: [], put: [] }
+      // Duraklatmanın arka plan yenilemesi 4 sn gecikir — menü AÇIKKEN gelir
+      await mock(page, calls, { slowListMs: 4_000 })
+      await page.goto('/?tab=admin&g_tab=forwards')
+      const row = page.locator('[data-slot="fwd-list"] [data-slot="fwd-row"]').filter({ hasText: LONG_TEAM }).first()
+      await expect(row).toHaveAttribute('data-state', 'active', { timeout: 20_000 })
+      await row.locator('button[data-kebab="labeled"]').click()
+      await page.getByRole('menuitem', { name: /^(Duraklat|Pause)$/ }).click()
+      await expect(row).toHaveAttribute('data-state', 'paused')
+      await expect(page.getByRole('menu')).toHaveCount(0)
+      const refresh = page.locator('[data-slot="fwd-refresh"]')
+      await expect(refresh).toBeDisabled()              // yenileme sürüyor
+      await row.locator('button[data-kebab="labeled"]').click()
+      const resume = page.getByRole('menuitem', { name: /^(Sürdür|Resume)$/ })
+      await expect(resume).toBeVisible()
+      await expect(refresh).toBeDisabled()              // menü, yenileme gelmeden açıldı
+      await expect(refresh).toBeEnabled({ timeout: 15_000 })   // yenileme geldi (satır nesneleri yenilendi)
+      await expect(page.getByRole('menu')).toBeVisible()
+      await resume.click()
+      await expect(row).toHaveAttribute('data-state', 'active')
+      expect(calls.put).toEqual([{ id: '1', body: { enabled: false, version: 2 } }, { id: '1', body: { enabled: true, version: 3 } }])
+    })
   })
 }
 

@@ -29,7 +29,10 @@ vi.mock('../components/gaps/GapsFix.jsx', async () => {
 import { api } from '../api/client'
 import GapsPrompt from '../components/gaps/GapsPrompt.jsx'
 import { getGapsSummary, openGapsDialog, publishGapsSummary, requestGapsRefresh } from '../components/gaps/gapsBus.js'
-import { GAPS_SESSION_KEY, GAPS_STATE_KEY, SNOOZE_MS, SNOOZE_WEEK_MS, hashKey, readState } from '../components/gaps/gapsModel.js'
+import {
+  AUTO_DEFER_MAX_MS, AUTO_DEFER_POLL_MS, AUTO_PROMPT_DELAY_MS, AUTO_QUIET_MS, GAPS_SESSION_KEY, GAPS_STATE_KEY, SNOOZE_MS,
+  SNOOZE_WEEK_MS, hashKey, readState,
+} from '../components/gaps/gapsModel.js'
 import { emitSessionReset } from '../utils/sessionResetBus.js'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import { pressMenuTrigger } from './helpers/dropdownMenu.js'
@@ -271,6 +274,108 @@ describe('eksikler penceresi — kendiliğinden gösterme ve menü', () => {
     expect(api.dataQuality.team).not.toHaveBeenCalled()
     tab(/Takım/)
     expect(slot('gaps-no-permission')).not.toBeNull()
+  })
+})
+
+// Kendiliğinden açılış kullanıcının işini bölmez (2026-11-15, CI hatası: pencere açık "İşlemler" menüsünün üstüne açılıp
+// odağı alıyor, kipsiz menü kapanıyordu — "Sürdür" seçilemeden menü kayboluyordu).
+describe('eksikler penceresi — kullanıcının işini bölmez', () => {
+  /** Açık bir Radix açılır menüsü (yalnız açıkken çizilen popper sarmalayıcısı). */
+  function openPopup() {
+    const el = document.createElement('div')
+    el.setAttribute('data-radix-popper-content-wrapper', '')
+    el.setAttribute('data-test-dialog', '')
+    el.innerHTML = '<div role="menu"><div role="menuitem">Sürdür</div></div>'
+    document.body.appendChild(el)
+    return el
+  }
+
+  it('açık menü varken açılmaz (menü yerinde kalır); menü kapanınca açılır', async () => {
+    const popup = openPopup()
+    await mountAuto()
+    await waitFor(() => expect(api.dataQuality.team).toHaveBeenCalled(), { timeout: 4000 })
+    await new Promise((r) => setTimeout(r, AUTO_DEFER_POLL_MS * 3))
+    expect(slot('gaps-dialog')).toBeNull()
+    expect(popup.isConnected).toBe(true)
+    popup.remove()
+    await waitFor(() => expect(slot('gaps-dialog')).not.toBeNull(), { timeout: 3000 })
+  })
+
+  it('odaktaki tetiğin ipucu (tooltip) bekletmez: menü kapanınca açık kalan ipucu pencereyi süresiz bekletmesin', async () => {
+    const tip = document.createElement('div')
+    tip.setAttribute('data-radix-popper-content-wrapper', '')
+    tip.setAttribute('data-test-dialog', '')
+    tip.innerHTML = '<div data-slot="tooltip-content">Kullanıcı ayarları<span role="tooltip">Kullanıcı ayarları</span></div>'
+    document.body.appendChild(tip)
+    await mountAuto()
+    await waitFor(() => expect(slot('gaps-dialog')).not.toBeNull(), { timeout: 4000 })
+    expect(tip.isConnected).toBe(true)
+  })
+
+  it('kullanıcı yazıyor / tıklıyorken açılmaz; en az AUTO_QUIET_MS sessizlikten sonra açılır', async () => {
+    await mountAuto()
+    const iv = setInterval(() => { fireEvent.keyDown(document.body, { key: 'a' }); fireEvent.pointerDown(document.body) }, 250)
+    try {
+      await waitFor(() => expect(api.dataQuality.team).toHaveBeenCalled(), { timeout: 4000 })
+      await new Promise((r) => setTimeout(r, 1200))
+      expect(slot('gaps-dialog')).toBeNull()
+    } finally {
+      clearInterval(iv)
+    }
+    const stoppedAt = performance.now()
+    await waitFor(() => expect(slot('gaps-dialog')).not.toBeNull(), { timeout: 4000 })
+    expect(performance.now() - stoppedAt).toBeGreaterThanOrEqual(AUTO_QUIET_MS - 300)
+  })
+
+  it('kesintisiz çalışan kullanıcıda bekleme sınırlı: AUTO_DEFER_MAX_MS dolunca bu oturumda açılmaz; menüden yine açılır', async () => {
+    // Tembel pencere modülü önceden yüklensin: sahte saatte dinamik içe aktarma beklenmeden çizilebilsin (yoksa "açılmadı"
+    // denetimi yalnız modül gelmediği için geçerdi)
+    await import('../components/gaps/GapsDialog.jsx')
+    const remove = vi.spyOn(window, 'removeEventListener')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] })
+    try {
+      const popup = openPopup()
+      await mountAuto()
+      await act(async () => { await vi.advanceTimersByTimeAsync(AUTO_PROMPT_DELAY_MS + 50) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(200) })
+      expect(api.dataQuality.team).toHaveBeenCalled()
+      // sınırdan hemen önce: hâlâ bekliyor (dinleyiciler kurulu)
+      await act(async () => { await vi.advanceTimersByTimeAsync(AUTO_DEFER_MAX_MS - AUTO_DEFER_POLL_MS * 2) })
+      expect(remove.mock.calls.some(([t]) => t === 'pointerdown')).toBe(false)
+      await act(async () => { await vi.advanceTimersByTimeAsync(AUTO_DEFER_POLL_MS * 4) })
+      // sınır doldu: vazgeçildi, dinleyiciler kaldırıldı; menü sonradan kapansa da pencere kendiliğinden açılmaz
+      expect(remove.mock.calls.some(([t, , o]) => t === 'pointerdown' && o?.capture === true)).toBe(true)
+      popup.remove()
+      await act(async () => { await vi.advanceTimersByTimeAsync(AUTO_QUIET_MS * 3) })
+      expect(slot('gaps-dialog')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+      remove.mockRestore()
+    }
+    act(() => openGapsDialog())
+    await waitFor(() => expect(slot('gaps-dialog')?.getAttribute('data-status')).toBe('ready'))
+  })
+
+  it('bekleme sürerken çıkış / unmount: bekleyiş düşer, girdi dinleyicileri kaldırılır', async () => {
+    const add = vi.spyOn(window, 'addEventListener')
+    const remove = vi.spyOn(window, 'removeEventListener')
+    try {
+      const popup = openPopup()
+      const r = render(<GapsPrompt username="ayse" myTeamIds={[4]} manageTeamIds={[]} />)
+      await waitFor(() => expect(api.dataQuality.team).toHaveBeenCalled(), { timeout: 4000 })
+      expect(add.mock.calls.some(([type]) => type === 'pointerdown')).toBe(true)
+      act(() => emitSessionReset())
+      popup.remove()
+      await new Promise((r2) => setTimeout(r2, AUTO_DEFER_POLL_MS * 3))
+      expect(slot('gaps-dialog')).toBeNull()
+      for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+        expect(remove.mock.calls.some(([t, , o]) => t === type && o?.capture === true), type).toBe(true)
+      }
+      r.unmount()
+    } finally {
+      add.mockRestore()
+      remove.mockRestore()
+    }
   })
 })
 
