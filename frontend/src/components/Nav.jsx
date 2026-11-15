@@ -5,6 +5,7 @@ import { useT } from '../i18n/index.jsx'
 import CommandPaletteLauncher from './CommandPaletteLauncher.jsx'
 import KeyboardShortcuts from './KeyboardShortcuts.jsx'
 import { SHORTCUTS_EVENT } from '../utils/keyboardShortcuts.js'
+import { openGapsDialog } from './gaps/gapsBus.js'
 import InboxBell from './InboxBell.jsx'
 import {
   LayoutDashboard, LayoutGrid, ShieldCheck, FileBadge, Boxes, FileKey2, MonitorCheck, CalendarRange, RefreshCw, BookOpenText,
@@ -356,6 +357,7 @@ function Nav({ activeTab, onTabChange, username, teamName, myTeams = [], systemR
             onChangePassword={() => { closeMobile(); onChangePassword?.() }}
             onStartTour={() => { closeMobile(); tour.start('main') }}
             onShowShortcuts={() => { closeMobile(); window.dispatchEvent(new CustomEvent(SHORTCUTS_EVENT)) }}
+            onOpenGaps={() => { closeMobile(); openGapsDialog() }}
             onLogout={logout} />
         </SidebarFooter>
         <SidebarRail />

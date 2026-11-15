@@ -978,7 +978,8 @@ export const api = {
   /** Takım veri kalitesi puanı (2026-10-10) — data_quality.view; kapsam sunucuda, 60 sn paylaşılan bellek (`fresh` Yenile). */
   dataQuality: {
     summary: (fresh = false) => request(fresh === true ? '/data-quality?fresh=1' : '/data-quality'),
-    team: (key, fresh = false) => request(`/data-quality/teams/${encodeURIComponent(key)}${fresh === true ? '?fresh=1' : ''}`),
+    // `opts.timeoutMs`: çağıranın süre sınırı (eksikler penceresi 20 sn; yoksa okuma varsayılanı)
+    team: (key, fresh = false, opts = {}) => request(`/data-quality/teams/${encodeURIComponent(key)}${fresh === true ? '?fresh=1' : ''}`, opts),
   },
   /**
    * Kripto envanteri / PQC hazırlık (2026-10-10) — Zayıf Algoritma sayfasının sekmesi; `weak_algo.read` + görüş kapsamı.

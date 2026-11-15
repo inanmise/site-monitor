@@ -17,7 +17,7 @@
  * (oturum-kesintisi yedeği tam da bunun için) korunur ({@link claimPersonalStorage}). Kardeş desen: `inbox-seen:<kullanıcı>`.
  */
 export const OWNER_KEY = 'sm.storage.owner'
-export const PERSONAL_PREFIXES = ['sm.palette.recent', 'sm.dexp.recent', 'wr.draft.', 'sm.te.draft.', 'sm.te.tpl.', 'sm.te.open.', 'sm.activity.', 'sm.sql.tabs', 'sm.noc.noAsk']
+export const PERSONAL_PREFIXES = ['sm.palette.recent', 'sm.dexp.recent', 'wr.draft.', 'sm.te.draft.', 'sm.te.tpl.', 'sm.te.open.', 'sm.activity.', 'sm.sql.tabs', 'sm.noc.noAsk', 'sm.gaps.state', 'sm.gaps.session']
 
 function store() {
   try { return globalThis.localStorage || null } catch { return null }

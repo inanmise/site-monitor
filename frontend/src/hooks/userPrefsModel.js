@@ -55,6 +55,8 @@ export const LOCAL_PREF_KEYS = Object.freeze([
   'site-monitor-theme',
   // Kayıtta 7/24 onayı (2026-11-15): "bu izleme için bir daha sorma" listesi — başka cihazda da sorulmaz.
   'sm.noc.noAsk',
+  // Giriş sonrası eksikler penceresi (2026-11-15): "daha sonra hatırlat" / "bir daha gösterme" — başka cihazda da geçerli.
+  'sm.gaps.state',
 ])
 
 /** Tema tercihinin localStorage anahtarı — ThemeProvider (i18n/theme.jsx) ile aynı. */

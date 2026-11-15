@@ -112,7 +112,9 @@ public class UserPreferencesService {
             "sm.checkRun.teams",
             "site-monitor-theme",
             // Kayıtta 7/24 onayı (2026-11-15): bu izleme için bir daha sorma listesi
-            "sm.noc.noAsk");
+            "sm.noc.noAsk",
+            // Giriş sonrası eksikler penceresi (2026-11-15): daha sonra hatırlat / bir daha gösterme kararı — başka cihazda da
+            "sm.gaps.state");
 
     /** Önekli aileler (liste başına sayfa boyutu, izleme türü başına "Şimdi Kontrol Et" takım seçimi). */
     public static final List<String> LOCAL_PREFIXES = List.of("sm.pageSize.", "sm.checkRun.teams.");

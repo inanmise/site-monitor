@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-15T03:10:58Z",
+  "generatedAt": "2026-11-15T04:32:14Z",
   "repo": "inanmise/site-monitor",
-  "count": 837,
+  "count": 838,
   "releases": [
+    {
+      "version": "20.204.0",
+      "tag": "v20.204.0",
+      "releasedAt": "2026-11-15T04:32:03Z",
+      "commit": "c9044ee02430ef8969dcc51b8da7b1852e420ecc",
+      "prevVersion": "20.203.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": "e2e",
+          "breaking": false,
+          "sha": "b891cdd6",
+          "subject": "eksikler penceresi ortak mock'ta kendiliğinden açılmaz — yalnız kendi testi açar"
+        },
+        {
+          "type": "fix",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "17bf4092",
+          "subject": "eksikler penceresi inceleme düzeltmeleri — eksik düzeyinde gösterme kaydı, 404 takım atlanır, üst süre, kapat / sekme / tur çakışması"
+        },
+        {
+          "type": "feat",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "c316ef99",
+          "subject": "giriş sonrası eksikler penceresi — profil, takım, izleme ve envanter eksikleri; daha sonra hatırlat / bir daha gösterme; menüden aç"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.203.0",
       "tag": "v20.203.0",
