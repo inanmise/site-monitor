@@ -801,6 +801,43 @@ WHERE owner_team_id = :hedef AND enabled = FALSE AND note LIKE '%Takım taşıma
 Erişim paylaşımı: iletimle birlikte "görüntüleme erişimi ver" ile açılan VIEW paylaşımı iletim silinince / duraklatılınca GERİ
 ALINMAZ — Yönetim → Erişim paylaşımı ekranından yönetilir.
 
+## Haftalık nöbet bildirimi
+
+Takım kendisi açar (Takımlar → takım menüsü → Nöbet çizelgesi → "Haftalık nöbet bildirimi"; varsayılan KAPALI). Seçilen
+gün + saatte (varsayılan Pazartesi 08:30, Türkiye saati) o haftanın nöbetçisi — her devir ve yer değiştirmeyle, e-postada
+telefon ve e-postasıyla — takımın alarm adresine (varsayılan bildirim grubu, yoksa takım e-postası) ve takım üyelerine push
+olarak gider. Nöbet bilgisi olmayan (çizelge kapalı / sırada kimse yok / hafta boyunca var olan bir hesaba çözülen nöbetçi
+yok) haftada hiçbir şey gönderilmez; o hafta "SKIPPED: nöbet bilgisi yok" diye bir kez kaydedilir.
+
+- Takım × ISO hafta EN ÇOK BİR kez: `oncall_weekly_notices` satırı gönderimden ÖNCE eklenir (benzersiz takım × hafta; hafta
+  anahtarı = haftanın Pazartesi'si). İş `scheduler_lock` `oncall-weekly-notice` altında dakikada bir bakar.
+- Pod dilim anında çalışmıyorsa aynı gün içinde (gece yarısına yakın dilimde en az 1 saat) gönderir; gün de geçtiyse
+  "SKIPPED: zamanı kaçırıldı" izi kalır, gönderilmez.
+- Yarıda kalan gönderim (pod öldü, satır 15 dk'dan uzun SENDING) YENİDEN GÖNDERİLMEZ: UNKNOWN olur ve
+  "FAILED: sonuç bilinmiyor …" izi yazılır (gönderimin izi zaten yazılmışsa ikinci iz yazılmaz).
+- Aynı gün içinde 10 dk arayla, toplam en çok 3 deneme: hiçbir kanalın ulaşmadığı FAILED (iki kanal yeniden) ve
+  e-postası iletilemeyen PARTIAL (yalnız e-posta; push zaten ulaştı). En-az-bir-kez: posta sunucusu postayı kabul edip
+  yanıtı zaman aşımına uğrattıysa yeniden deneme aynı postayı ikinci kez gönderebilir.
+- Sistem bakımı susturması açıkken gönderim BEKLER (satır yazılmaz); bakım aynı gün içinde biterse bildirim gider. Telafi
+  penceresi bakım sürerken kapanırsa o hafta tek "SKIPPED: sistem bakımı" satırı + izi yazılır.
+- İş yan iş koşucusunda (`oncall-weekly-notice`) koşar; çok takımlı yavaş SMTP turu zamanlayıcı havuzunu tutmaz.
+
+"Bildirim gelmedi" denetimi: pencerenin "Son sonuç" satırı durumu ve nedeni söyler; ayrıntı SMTP günlüğünde (tetikleyici
+"Haftalık nöbet bildirimi", `ONCALL_WEEKLY`) ve push günlüğünde. Veritabanından:
+
+```sql
+SELECT team_id, week_key, status, reason, mail_status, push_count, attempts, claimed_at, finished_at
+FROM oncall_weekly_notices ORDER BY week_key DESC, team_id LIMIT 50;
+```
+
+Bir haftayı elle yeniden göndermek için o satırı silmek yeterlidir — ama yalnız dilimin günü içinde (telafi
+penceresi) iş yeniden gönderir; gün geçtiyse "zamanı kaçırıldı" izi yazılır. Satırı silmeden önce takıma gerçekten ulaşmadığını
+SMTP / push günlüğünden doğrulayın (çift bildirim olmasın).
+
+Dağıtım sırasında (eski + yeni pod birlikte): eski pod `weekly_notice` alanını tanımaz. Pencere bunu "bu sunucu sürümü
+haftalık nöbet bildirimini henüz tanımıyor" diye söyler (ayar kaydedilmemiştir) — dağıtım bitince yeniden kaydedin. Eski
+pod bildirim göndermez.
+
 ## Merkezi izleme alarm akışı
 
 Kurum içi izleme ekibi alarmları tek merkezde toplar; SiteMonitor'den **her dakika** `GET /api/public/alarm-feed` ile çeker

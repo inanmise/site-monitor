@@ -86,7 +86,8 @@ export function SortHead({ label, field, sort, onSort, className = '' }) {
   const [cur, dir] = String(sort || '').split(',')
   return (
     <TableHead className={cn('px-2', className)}>
-      <Button type="button" variant="ghost" size="xs" className="-ml-1 h-auto px-1 py-0.5 font-medium hover:text-primary"
+      {/* Dokunmatikte 40 px (2026-11-15, yayın öncesi e2e B — 20 px idi); fare görünümü değişmez */}
+      <Button type="button" variant="ghost" size="xs" className="-ml-1 h-auto px-1 py-0.5 font-medium hover:text-primary pointer-coarse:min-h-10"
         onClick={() => onSort(field)}>
         {label} {cur === field ? (dir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : null}
       </Button>

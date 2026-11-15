@@ -1,9 +1,72 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-15T19:39:03Z",
+  "generatedAt": "2026-11-15T20:10:10Z",
   "repo": "inanmise/site-monitor",
-  "count": 846,
+  "count": 847,
   "releases": [
+    {
+      "version": "20.211.0",
+      "tag": "v20.211.0",
+      "releasedAt": "2026-11-15T20:10:02Z",
+      "commit": "802778a885b53855017d83e52669641bff45dc4a",
+      "prevVersion": "20.210.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 4,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "802778a8",
+          "subject": "DB analizi \"en yavaş sorgu\" kutucuğunda kod önizlemesi satırda kesilmez"
+        },
+        {
+          "type": "fix",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "3999aa43",
+          "subject": "yayın öncesi e2e B bulguları — kırpılan adlar, dokunma hedefleri, sunucu alan hatası alanın altında"
+        },
+        {
+          "type": "test",
+          "scope": "e2e",
+          "breaking": false,
+          "sha": "6f121f6a",
+          "subject": "prod gate — missing Playwright specs for ten flows"
+        },
+        {
+          "type": "fix",
+          "scope": "security",
+          "breaking": false,
+          "sha": "cac186d4",
+          "subject": "imaj Alpine yamalarını alır (katman önbelleği yenilenir) + Spring Boot 4.1.2 (Tomcat 11.0.27, Jackson 2.21.7 / 3.1.7)"
+        },
+        {
+          "type": "fix",
+          "scope": "oncall",
+          "breaking": false,
+          "sha": "455f6745",
+          "subject": "haftalık nöbet bildirimi inceleme düzeltmeleri"
+        },
+        {
+          "type": "feat",
+          "scope": "oncall",
+          "breaking": false,
+          "sha": "69e464b3",
+          "subject": "haftalık nöbet bildirimi — takım kendi açar, gün / saat / kanal seçer"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.210.0",
       "tag": "v20.210.0",

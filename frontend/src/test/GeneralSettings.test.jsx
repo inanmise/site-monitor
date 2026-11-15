@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
-import GeneralSettings from '../components/admin/GeneralSettings.jsx'
+import GeneralSettings, { settingKeyFor } from '../components/admin/GeneralSettings.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
@@ -178,6 +178,60 @@ describe('GeneralSettings', () => {
     expect(await screen.findByText(/kaydedilemedi/)).toBeInTheDocument()
     // Degisiklik silinirse kullanici ne yazdigini kaybeder.
     expect(container.querySelector('input[type="number"]').value).toBe('9000')
+  })
+})
+
+/**
+ * 2026-11-15 (yayın öncesi e2e B): sunucunun 400 VALIDATION_FAILED alan hatası yalnız tost olarak görünüyordu — artık
+ * ALANIN ALTINDA (Field `error`, `data-field` = ayar anahtarı, aria-invalid + aria-describedby); alan düzenlenince kalkar.
+ */
+describe('GeneralSettings — sunucu alan hatası alanın altında', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.admin.getGeneralSettings.mockResolvedValue({ success: true, data: ITEMS })
+  })
+
+  it('field = tam anahtar → hata metni o alanın altında; düzenleyince kalkar', async () => {
+    const msg = 'Maximum must be at least 20 — enter 20 or more.'
+    api.admin.saveGeneralSettings.mockResolvedValue({ success: false, code: 'VALIDATION_FAILED', field: 'site.monitor.http.timeout-ms',
+      fields: { 'site.monitor.http.timeout-ms': msg }, error: msg })
+    const { container } = render(<GeneralSettings />)
+    await waitFor(() => expect(saveBtn()).not.toBeNull())
+    const input = container.querySelector('input[type="number"]')
+    fireEvent.change(input, { target: { value: '1' } })
+    fireEvent.click(saveBtn())
+    await waitFor(() => expect(api.admin.saveGeneralSettings).toHaveBeenCalled())
+    const box = container.querySelector('[data-field="site.monitor.http.timeout-ms"]')
+    await waitFor(() => expect(box?.getAttribute('data-invalid')).toBe('true'))
+    expect(box.textContent).toContain(msg)
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    const ids = (input.getAttribute('aria-describedby') || '').split(/\s+/)
+    expect(ids.map((id) => document.getElementById(id)?.textContent || '').join(' ')).toContain(msg)
+    // Başka alan işaretlenmez; değer korunur
+    expect(container.querySelectorAll('[data-invalid="true"]').length).toBe(1)
+    expect(input.value).toBe('1')
+    fireEvent.change(input, { target: { value: '2' } })
+    await waitFor(() => expect(box.getAttribute('data-invalid')).toBeNull())
+    expect(input).not.toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('alan adı ekranda yoksa yalnız tost (alan işaretlenmez)', async () => {
+    api.admin.saveGeneralSettings.mockResolvedValue({ success: false, code: 'VALIDATION_FAILED', field: 'baska_alan', error: 'olmadı' })
+    const { container } = render(<GeneralSettings />)
+    await waitFor(() => expect(saveBtn()).not.toBeNull())
+    fireEvent.change(container.querySelector('input[type="number"]'), { target: { value: '1' } })
+    fireEvent.click(saveBtn())
+    expect(await screen.findByText(/olmadı/)).toBeInTheDocument()
+    expect(container.querySelectorAll('[data-invalid="true"]').length).toBe(0)
+  })
+
+  it('settingKeyFor: tam anahtar, kısa ad (önek atılır, . / - → _), belirsiz / yok → null', () => {
+    const keys = ['site.monitor.dbquery.local-timezone', 'site.monitor.domain.recovery-interval-ms', 'site.monitor.a.x-y', 'site.monitor.b.x-y']
+    expect(settingKeyFor('site.monitor.dbquery.local-timezone', keys)).toBe('site.monitor.dbquery.local-timezone')
+    expect(settingKeyFor('dbquery_local_timezone', keys)).toBe('site.monitor.dbquery.local-timezone')
+    expect(settingKeyFor('domain_recovery_interval_ms', keys)).toBe('site.monitor.domain.recovery-interval-ms')
+    expect(settingKeyFor('x_y', keys)).toBeNull()          // iki anahtar eşleşir → belirsiz
+    expect(settingKeyFor('nope', keys)).toBeNull()
   })
 })
 

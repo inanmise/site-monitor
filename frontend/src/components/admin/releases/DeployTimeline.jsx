@@ -125,9 +125,10 @@ export function DeployCard({ d, duration, showEnv = false, canEdit = false, onDe
               </span>
             )}
             {pod && (
-              <span className="inline-flex min-w-0 items-center gap-1 text-muted-foreground" title={d.instanceId || undefined}>
+              <span className="inline-flex min-w-0 flex-wrap items-center gap-1 text-muted-foreground" title={d.instanceId || undefined}>
                 <Server aria-hidden="true" className="size-3.5 shrink-0" />
-                <span className="min-w-0 truncate font-mono text-foreground">{pod}</span>
+                {/* Pod adı KESİLMEZ, sarar (2026-11-15, yayın öncesi e2e B — dokunmatikte `title` açılmıyordu) */}
+                <span className="min-w-0 font-mono [overflow-wrap:anywhere] text-foreground">{pod}</span>
                 {d.node && <span className="shrink-0">· {d.node}</span>}
               </span>
             )}

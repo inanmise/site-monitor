@@ -546,6 +546,15 @@ public final class RetentionCatalog {
                 "Takımın teknik hata raporu şablon kütüphanesi (2026-10-18): takım başına en çok 20 adlandırılmış şablon "
                 + "(≤ 64 KB), takım varsayılanı işareti ve ekleyen / güncelleyenin adı ve kullanıcı kimliği. Ekip kararıyla "
                 + "silinir (ASLA otomatik değil); takımı silinmiş kütüphane satırı burada temizlenir (kanallarla aynı yol)."),
+        age("oncall-weekly-notices", "oncall_weekly_notices", "created_at", "site.monitor.oncall.weekly-notice.retention-days",
+                400, 90, false, DataClass.OPERATIONAL,
+                "Haftalık nöbet bildirimi gönderim kaydı (2026-11-15): takım × hafta başına TEK satır — durum, neden kodu, e-posta "
+                + "sonucu, push adedi (kişisel veri yok). 'Takım × hafta en çok bir kez' kapısıdır; pencere son sonucu buradan "
+                + "gösterir. Yılda takım başına 52 satır; bir yıl + birkaç hafta (400 gün) yeter."),
+        orphan("oncall-weekly-notices-orphan", "oncall_weekly_notices",
+                "NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = oncall_weekly_notices.team_id)", DataClass.OPERATIONAL,
+                "Haftalık nöbet bildirimi gönderim kaydı: takım silinince OnCallService aynı anda siler; silme hatası ya da "
+                + "eski bir sürümün takım silmesi yetim satır bırakırsa burada temizlenir."),
         orphan("alert-forwards-orphan", "alert_forwards",
                 "NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = alert_forwards.owner_team_id) "
                 + "OR NOT EXISTS (SELECT 1 FROM teams t WHERE t.id = alert_forwards.recipient_team_id)", DataClass.PERSONAL,

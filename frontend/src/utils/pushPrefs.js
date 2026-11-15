@@ -77,6 +77,8 @@ export const PUSH_TYPE_ALIASES = {
   storm: 'storm',
   // Alarm iletimi (2026-11-05): iletim eklenince alıcı takım / üyelere giden bilgi push'u (tür ALERT_FORWARD)
   alert_forward: 'alert_forward',
+  // Haftalık nöbet bildirimi (2026-11-15): takım üyelerine giden push (tür ONCALL)
+  oncall: 'oncall',
 }
 
 /**

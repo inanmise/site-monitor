@@ -891,6 +891,13 @@ public class SchedulerService {
         // Alarm fırtınası (alert storm) bağı + per-group scoping (ddl-auto zaten ekler — güvenlik ağı).
         patch("ALTER TABLE alert_events ADD COLUMN storm_id BIGINT");
         patch("ALTER TABLE alert_events ADD COLUMN oncall_emails TEXT");   // nöbetçi olarak bildirilenler (2026-10-12)
+        // Haftalık nöbet bildirimi (2026-11-15) — takım kendisi açar; hepsi boş olabilir (boş = kapalı / varsayılan)
+        patch("ALTER TABLE oncall_schedules ADD COLUMN weekly_notice_enabled BOOLEAN");
+        patch("ALTER TABLE oncall_schedules ADD COLUMN weekly_notice_mail BOOLEAN");
+        patch("ALTER TABLE oncall_schedules ADD COLUMN weekly_notice_push BOOLEAN");
+        patch("ALTER TABLE oncall_schedules ADD COLUMN weekly_notice_day INTEGER");
+        patch("ALTER TABLE oncall_schedules ADD COLUMN weekly_notice_time VARCHAR(5)");
+        patch("ALTER TABLE oncall_schedules ADD COLUMN weekly_notice_since VARCHAR(19)");
         patch("ALTER TABLE alert_events ADD COLUMN forward_emails TEXT");  // alarm iletimiyle bildirilenler (2026-11-05)
         patch("ALTER TABLE sql_query_history ADD COLUMN cancelled BOOLEAN"); // SQL Playground "Durdur" (2026-11-13)
         // Sertifika alarmında gerçek son geçerlilik anı (kapalı alarm kartı artık hesaplamaz, okur).

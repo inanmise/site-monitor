@@ -194,7 +194,8 @@ export default function WeeklyReportCreate({ initial, isAdmin, teams = [], teamI
                   options={teams.map((tm) => ({ value: String(tm.id), label: tm.name }))} />
               </div>
             ) : (
-              <span className="inline-flex w-fit rounded-md border px-2 py-1.5 text-sm"><TeamBadge teamId={teamId} teamName={teamName} /></span>
+              // Uzun AD takım adı kesilmez, kartın içinde sarar (2026-11-15, yayın öncesi e2e B): `max-w-full` + TeamBadge `wrap`
+              <span className="inline-flex w-fit max-w-full min-w-0 rounded-md border px-2 py-1.5 text-sm"><TeamBadge wrap teamId={teamId} teamName={teamName} /></span>
             )}
             {teamError && (
               <div role="alert" data-slot="wr-create-team-error">

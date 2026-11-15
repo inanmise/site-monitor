@@ -299,9 +299,10 @@ export function NumInput({ label, value, onChange, editable, tone, extra, below,
 
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      {/* Etiket satırı SABİT yükseklik: fark rozeti olan/olmayan alanların kutuları aynı hizada kalsın */}
-      <div className="flex h-6 min-w-0 items-center justify-between gap-1">
-        <Label htmlFor={id} className="min-w-0 gap-1.5 truncate text-[.82em] font-semibold text-muted-foreground">
+      {/* Etiket satırı en az 24 px: fark rozeti olan/olmayan alanların kutuları tek satırlık etikette aynı hizada kalır.
+          Etiket KESİLMEZ, dar sütunda sarar (2026-11-15, yayın öncesi e2e B — 768 tablette "In progress" kırpılıyordu). */}
+      <div className="flex min-h-6 min-w-0 items-center justify-between gap-1">
+        <Label htmlFor={id} className="min-w-0 gap-1.5 text-[.82em] leading-tight font-semibold [overflow-wrap:anywhere] text-muted-foreground">
           {tone && <span aria-hidden="true" className={cn('size-2 shrink-0 rounded-full', DOT[tone])} />}
           {label}
         </Label>
