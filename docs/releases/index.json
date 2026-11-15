@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-15T12:18:29Z",
+  "generatedAt": "2026-11-15T16:45:15Z",
   "repo": "inanmise/site-monitor",
-  "count": 843,
+  "count": 844,
   "releases": [
+    {
+      "version": "20.209.0",
+      "tag": "v20.209.0",
+      "releasedAt": "2026-11-15T16:45:09Z",
+      "commit": "94e2bebcf68943cd42476b8fe5bafc474b1b28cd",
+      "prevVersion": "20.208.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "resource-scan",
+          "breaking": false,
+          "sha": "94e2bebc",
+          "subject": "önbellek sınıfları inceleme düzeltmeleri — ömürsüz kova, tarih biçimleri, Pragma, tek doğrulayıcı kuralı"
+        },
+        {
+          "type": "feat",
+          "scope": "resource-scan",
+          "breaking": false,
+          "sha": "6d0a6e15",
+          "subject": "tüm site taraması 2500 sayfaya çıktı"
+        },
+        {
+          "type": "fix",
+          "scope": "resource-scan",
+          "breaking": false,
+          "sha": "6247ea2e",
+          "subject": "önbellek sınıfları — \"önbelleğe alınmıyor\" bulgusu doğru sınıflara ayrıldı (algoritma 4)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.208.0",
       "tag": "v20.208.0",
