@@ -1112,6 +1112,8 @@ export const TR = {
   "gaps.permUnknown": "Yetkileriniz şu an okunamadığı için bu kategori denetlenmedi. Pencereyi kapatıp \"Eksiklerim\"den yeniden açın.",
   "gaps.profileFailed": "Profil bilgileriniz okunamadı; bu kategori şu an denetlenemedi. Pencereyi kapatıp Eksiklerim'den yeniden açın.",
   "gaps.emptyCategory": "Bu kategoride tamamlanması gereken bir şey yok.",
+  "gaps.categoryUnchecked": "Bu kategorideki bazı denetimler yapılamadı ya da okunamadı; iş olmadığı kesin değil.",
+  "gaps.teamUnchecked": "Bu takımın bazı denetimleri okunamadı ya da yapılamadı; eksik olmadığı kesin değil.",
   "gaps.profile.PROFILE_NO_EMAIL.title": "E-posta adresiniz yok ya da geçersiz",
   "gaps.profile.PROFILE_NO_EMAIL.why": "Alarm, rapor ve hatırlatma e-postaları size ulaşmaz.",
   "gaps.profile.PROFILE_NO_PHONE.title": "Telefon numaranız yok",

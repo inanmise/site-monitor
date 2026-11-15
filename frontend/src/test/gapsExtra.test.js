@@ -68,13 +68,14 @@ describe('eksikler — bekleyen işler', () => {
     channels: [
       { id: 1, team_id: 4, name: 'Açılmamış', active: true, can_report: true, period_report: null },
       { id: 2, team_id: 4, name: 'Taslak', active: true, can_report: true, period_report: { id: 20, status: 'draft' } },
-      { id: 3, team_id: 4, name: 'Değişti', active: true, can_report: true, period_report: { id: 30, status: 'changed', approval: { state: 'pending' } } },
+      { id: 3, team_id: 4, name: 'Değişti', active: true, can_report: true, approval_required: true, period_report: { id: 30, status: 'changed', approval: { state: 'pending' } } },
+      { id: 31, team_id: 4, name: 'Akış kalktı', active: true, can_report: false, approval_required: false, period_report: { id: 31, status: 'sent', approval: { state: 'pending' } } },
       { id: 4, team_id: 4, name: 'Gönderildi', active: true, can_report: true, period_report: { id: 40, status: 'sent' } },
       { id: 5, team_id: 4, name: 'Kuyrukta', active: true, can_report: true, period_report: { id: 50, status: 'queued' } },
       { id: 6, team_id: 4, name: 'Paylaşım', active: true, can_report: true, shared_access: true, period_report: null },
       { id: 7, team_id: 4, name: 'Pasif', active: false, can_report: true, period_report: null },
       { id: 8, team_id: 4, name: 'Okur', active: true, can_report: false, period_report: null },
-      { id: 9, team_id: 5, name: 'Öteki', active: true, can_report: true, period_report: { id: 90, status: 'draft', approval: { state: 'pending' } } },
+      { id: 9, team_id: 5, name: 'Öteki', active: true, can_report: true, approval_required: true, period_report: { id: 90, status: 'draft', approval: { state: 'pending' } } },
     ],
   }
 
@@ -86,9 +87,19 @@ describe('eksikler — bekleyen işler', () => {
 
   it('onay bekleyen: yalnız sunucunun onaylayıcı dediği takımın onay bekleyen raporu (okunan takımlar arasında)', () => {
     const [gap] = approvalTasks([TEAM, { id: 5, name: 'Beş' }], ov)
-    expect(gap.key).toBe('k:TASK_APPROVAL_PENDING')
+    expect(gap.key).toBe('k:TASK_APPROVAL_PENDING:30')      // onay akışı kaldırılmış kanal (31) iş değil
     expect(gap.items.map((i) => [i.name, i.reportId, i.teamName])).toEqual([['Değişti', 30, 'Dijital Kanallar']])
     expect(approvalTasks([{ id: 5 }], ov)).toEqual([])                              // takım 4 okunmadı
+  })
+
+  it('iş anahtarları dönem ve kimlik taşır: aynı SAYIDA farklı işler "gösterme" kaydına takılmaz', () => {
+    const one = (id, period) => channelReportTasks(TEAM, { period, channels: [{ id, team_id: 4, name: 'K', active: true, can_report: true, period_report: null }] })[0].key
+    expect(one(1, { year: 2026, month: 10 })).toBe('4:TASK_CHANNEL_REPORT:2026-10:1')
+    expect(one(1, { year: 2026, month: 10 })).not.toBe(one(1, { year: 2026, month: 11 }))
+    expect(one(1, { year: 2026, month: 10 })).not.toBe(one(2, { year: 2026, month: 10 }))
+    const act = (ids) => actionTasks({ total: 1, items: ids.map((id) => ({ id, title: 'x' })) })[0].key
+    expect(act([7])).not.toBe(act([8]))
+    expect(act([2, 1])).toBe(act([1, 2]))
   })
 
   it('gecikmiş aksiyonlar: toplam sayı kalem sayısından büyük olabilir (en çok 5 kalem okunur)', () => {
@@ -109,6 +120,8 @@ describe('eksikler — bekleyen işler', () => {
     expect(onCallMembership([{ status: 'skipped' }], 'ayse')).toBe(false)
     expect(onCallMembership([{ status: 'failed' }, v([{ username: 'ayse' }])], 'ayse')).toBe(true)
     expect(onCallMembership([], 'ayse')).toBe(false)
+    // değiştirme (override) ile şu an nöbetçi — üye listesinde olmasa da
+    expect(onCallMembership([{ status: 'ok', data: { enabled: true, members: [{ username: 'ali' }], current: { username: 'Ayse' } } }], 'ayse')).toBe(true)
   })
 
   it('her ek kod ve iş için başlık / neden / ne yapmalı / aç metni iki dilde; durum metinleri iki dilde', () => {
@@ -193,6 +206,11 @@ describe('eksikler — kaynak yükleyici', () => {
     expect(api.incidents.actions).not.toHaveBeenCalled()
     // önem bağlamı: nöbetçi + kodla girişte telefon zorunlu
     expect(contextOf(src, 'ayse')).toEqual({ onCall: true, noc: false, otpPhone: true, otpEmail: false })
+    // denetlenmeyen takım varsa "nöbetçi değil" bilinmez; global yöneticinin kodla girişi ayrı ayar → bilinmiyor
+    const notMember = { ...src, teams: [{ ...src.teams[0], oncall: { status: 'ok', data: { enabled: true, members: [] } } }] }
+    expect(contextOf(notMember, 'ayse').onCall).toBe(false)
+    expect(contextOf({ ...notMember, moreTeams: 2 }, 'ayse').onCall).toBeNull()
+    expect(contextOf({ ...src, globalAdmin: true }, 'ayse')).toMatchObject({ otpPhone: null, otpEmail: null })
     const g = collectGaps({ profile: src.me, ctx: contextOf(src, 'ayse'), prefs: src.prefs.data, prefsStatus: src.prefs.status, teams: src.teams })
     expect(g.total).toBe(0)
   })

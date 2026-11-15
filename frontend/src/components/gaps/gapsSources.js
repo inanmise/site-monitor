@@ -111,7 +111,7 @@ export async function loadGapSources({ api, can = {}, myTeamIds, manageTeamIds, 
   const [login, prefs, groups, forwards, channels, actions, directory] = results
   const teams = ids.map((id, i) => ({ id, name: teamNameOf(me, id, directory), dq: results[shared.length + 2 * i], oncall: results[shared.length + 2 * i + 1] }))
   return {
-    me, login, prefs, groups, forwards, channels, actions, directory, teams,
+    me, login, prefs, groups, forwards, channels, actions, directory, teams, globalAdmin: globalAdmin === true,
     autoTeamIds: ids, restTeamIds: own.rest.slice(0, MAX_LOADED_TEAMS - ids.length), moreTeams: own.more,
   }
 }
@@ -146,11 +146,15 @@ export function teamNameOf(me, id, directory) {
 export function contextOf(src, username) {
   const login = src?.login?.status === 'ok' && isObj(src.login.data) ? src.login.data : null
   const me = isObj(src?.me) ? src.me : null
-  const onCall = onCallMembership((src?.teams || []).map((t) => t.oncall).filter(Boolean), username)
+  const member = onCallMembership((src?.teams || []).map((t) => t.oncall).filter(Boolean), username)
+  // Denetlenmeyen takım (ilk 10'un dışı) varsa "nöbetçi değil" BİLİNMEZ — orada nöbetçi olabilir
+  const onCall = member === false && (src?.moreTeams ?? 0) > 0 ? null : member
+  // Global yöneticinin kodla girişi ayrı bir ayara bağlı (allow-global-admins, genel uçta yok) → bilinmiyor
+  const otpKnown = login && src?.globalAdmin !== true
   return makeContext({
     onCall,
     noc: me && typeof me.noc_operator === 'boolean' ? me.noc_operator : null,
-    otpPhone: login ? (login.otp_push === true && login.push_requires_phone === true) : null,
-    otpEmail: login ? (login.otp_email === true && login.email_requires_email === true) : null,
+    otpPhone: otpKnown ? (login.otp_push === true && login.push_requires_phone === true) : null,
+    otpEmail: otpKnown ? (login.otp_email === true && login.email_requires_email === true) : null,
   })
 }

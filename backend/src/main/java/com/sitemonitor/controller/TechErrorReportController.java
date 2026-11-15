@@ -159,6 +159,12 @@ public class TechErrorReportController {
         }
         boolean mayApprove = permissions.allows(session, APPROVE, "execute");
         Long me = userId(session);
+        // Yalnız kişinin KENDİ takımları (üyelik + yönetim kapsamı) — eksikler penceresi yalnız onları okur; global izleyicinin
+        // kurum geneli genel bakışında takım başına onaylayıcı okuması yapılmaz (takım sayısı kadar sorgu olurdu)
+        Set<Long> ownTeams = new HashSet<>(SessionScope.memberTeamIds(session));
+        List<Long> managed = SessionScope.manageTeamIds(session);
+        if (managed != null) ownTeams.addAll(managed);
+        approvalTeams.retainAll(ownTeams);
         List<Map<String, Object>> teamRows = new ArrayList<>();
         java.text.Collator col = java.text.Collator.getInstance(Locale.forLanguageTag("tr"));
         List<Team> sortedTeams = new ArrayList<>(teamMap.values());

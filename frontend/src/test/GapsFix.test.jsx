@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { act, fireEvent, render, screen, waitFor } from './test-utils.jsx'
 
-vi.mock('../api/client', () => ({ api: { users: { directory: vi.fn() } } }))
+vi.mock('../api/client', () => ({ api: { admin: { getUsers: vi.fn() } } }))
 const nav = vi.fn()
 vi.mock('../utils/navigate.js', () => ({ navigateTo: (...a) => nav(...a) }))
 const stub = vi.hoisted(() => (slotName) => async () => {
@@ -33,9 +33,9 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers() })
 
 describe('eksikler — yerinde düzeltme', () => {
-  it('eskalasyon kişisi: yalnız etkin kullanıcılar; okunurken bekleme penceresi (boş ekran yok), kaydedince yenileme', async () => {
+  it('eskalasyon kişisi: Takımlar ekranının kapsamlı listesi (/admin/users), yalnız etkin kullanıcılar; okunurken bekleme penceresi (boş ekran yok), kaydedince yenileme', async () => {
     let resolve
-    api.users.directory.mockReturnValue(new Promise((r) => { resolve = r }))
+    api.admin.getUsers.mockReturnValue(new Promise((r) => { resolve = r }))
     const onClose = vi.fn()
     const onChanged = vi.fn()
     render(<GapsFix fix={{ kind: 'contact', team: TEAM }} onClose={onClose} onChanged={onChanged} />)
@@ -51,7 +51,7 @@ describe('eksikler — yerinde düzeltme', () => {
 
   it('kişi listesi takılırsa üst sürede boş listeyle açılır (süresiz bekleme yok); bekleme penceresi kapatılabilir', async () => {
     vi.useFakeTimers()
-    api.users.directory.mockReturnValue(new Promise(() => {}))
+    api.admin.getUsers.mockReturnValue(new Promise(() => {}))
     const onClose = vi.fn()
     render(<GapsFix fix={{ kind: 'contact', team: TEAM }} onClose={onClose} onChanged={() => {}} />)
     await act(async () => { await vi.advanceTimersByTimeAsync(10) })
@@ -64,14 +64,16 @@ describe('eksikler — yerinde düzeltme', () => {
 
   it('varsayılan grup ve nöbet: kendi pencereleri; "grup oluştur" bildirim gruplarına götürür', async () => {
     const onClose = vi.fn()
-    const r = render(<GapsFix fix={{ kind: 'group', team: TEAM }} onClose={onClose} onChanged={() => {}} />)
+    const onNavigate = vi.fn()
+    const r = render(<GapsFix fix={{ kind: 'group', team: TEAM }} onClose={onClose} onChanged={() => {}} onNavigate={onNavigate} />)
     await waitFor(() => expect(slot('stub-group')).not.toBeNull())
     fireEvent.click(screen.getByRole('button', { name: 'grup oluştur' }))
-    expect(onClose).toHaveBeenCalled()
-    expect(nav).toHaveBeenCalledWith('admin', { g_tab: 'notifyGroups', g_team: '4' })
+    // Gezinme çağıranın (eksikler penceresini de kapatır, aynı sekmede yeniden bağlar)
+    expect(onNavigate).toHaveBeenCalledWith({ tab: 'admin', params: { g_tab: 'notifyGroups', g_team: '4' } })
+    expect(nav).not.toHaveBeenCalled()
     r.unmount()
     render(<GapsFix fix={{ kind: 'oncall', team: TEAM }} onClose={() => {}} onChanged={() => {}} />)
     await waitFor(() => expect(slot('stub-oncall')).not.toBeNull())
-    expect(api.users.directory).not.toHaveBeenCalled()
+    expect(api.admin.getUsers).not.toHaveBeenCalled()
   })
 })

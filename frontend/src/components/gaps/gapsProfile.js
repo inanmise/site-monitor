@@ -131,8 +131,9 @@ export function profileGaps(profile, ctx = {}, prefs = null, now = Date.now()) {
           scope: 'pp', reasons, until: prefs.snooze_until })
       }
       if (c.onCall === true && String(prefs.min_level || '').toUpperCase() === 'CRITICAL') {
+        // Kapsam 'ppo': bu eksik nöbet bilgisine de bağlı — nöbet okunamadığı turda "düzeldi" sayılmasın (gapsModel readScopes)
         out.push({ key: 'PROFILE_PUSH_CRITICAL_ONLY', category: 'profile', code: 'PROFILE_PUSH_CRITICAL_ONLY', severity: 'MEDIUM',
-          scope: 'pp', reasons: ['ONCALL'] })
+          scope: 'ppo', reasons: ['ONCALL'] })
       }
     }
   }

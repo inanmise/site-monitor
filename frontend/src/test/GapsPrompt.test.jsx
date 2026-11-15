@@ -322,6 +322,37 @@ describe('eksikler penceresi — zenginleştirme (2026-11-15)', () => {
     expect(getGapsSummary().complete).toBe(false)
   })
 
+  it('denetlenmeyen kategori / takım "eksik yok" demez: iş kaynağı okunamadıysa ve takımın nöbeti okunamadıysa ayrı not', async () => {
+    api.dataQuality.team.mockResolvedValue({ success: true, data: { team: { id: 4, name: 'X' }, rules: [] } })
+    api.incidents.actions.mockResolvedValue(err(500))
+    api.oncall.get.mockResolvedValue(err(500))
+    await openReady()
+    tab(/Bekleyen işler/)
+    expect(slot('gaps-tasks-unchecked')).not.toBeNull()
+    expect(slot('gaps-empty', document.querySelector('[data-slot="gaps-panel"][data-category="tasks"]'))).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Takıma göre' }))
+    const team = document.querySelector('[data-slot="gaps-team-group"][data-team="4"]')
+    expect(slot('gaps-team-unchecked', team)).not.toBeNull()  // nöbet okunamadı → "eksik yok" denmez
+    expect(slot('gaps-team-clean', team)).toBeNull()
+  })
+
+  it('ortak kaynak okunamadığı turda "bir daha gösterme" o kaynağın eski kayıtlarını SİLMEZ (sonraki girişte yeniden açılmaz)', async () => {
+    api.notificationGroups.list.mockResolvedValue({ success: true, data: { groups: [
+      { id: 31, team_id: 4, name: 'G', active: true, is_default: true, emails: ['a@x.com'], inactive_emails: ['a@x.com'] }] } })
+    await openReady()
+    fireEvent.click(slot('gaps-dismiss'))
+    await waitFor(() => expect(slot('gaps-dialog')).toBeNull())
+    const before = JSON.parse(localStorage.getItem(GAPS_STATE_KEY)).dismissed.map((d) => d[0])
+    expect(before).toContain(hashKey('4:TEAM_GROUP_ALL_PASSIVE'))
+    // gruplar bu kez okunamıyor; yeniden "gösterme" → grup eksiğinin kaydı korunur
+    api.notificationGroups.list.mockResolvedValue(err(500))
+    act(() => openGapsDialog())
+    await waitFor(() => expect(slot('gaps-dialog')?.getAttribute('data-status')).toBe('ready'))
+    fireEvent.click(slot('gaps-dismiss'))
+    await waitFor(() => expect(slot('gaps-dialog')).toBeNull())
+    expect(JSON.parse(localStorage.getItem(GAPS_STATE_KEY)).dismissed.map((d) => d[0])).toContain(hashKey('4:TEAM_GROUP_ALL_PASSIVE'))
+  })
+
   it('tek eksiği gizleme ve geri alma: gizlenen sayılmaz, listesi açılır, geri alınca yeniden görünür', async () => {
     await openReady()
     tab(/İzlemeler/)
@@ -393,6 +424,12 @@ describe('eksikler penceresi — zenginleştirme (2026-11-15)', () => {
     await waitFor(() => expect(api.dataQuality.team).toHaveBeenCalledTimes(12))
     await waitFor(() => expect(slot('gaps-more-teams')).toBeNull())
     await waitFor(() => expect(slot('gaps-none')).not.toBeNull())
+    // Yenileme elle eklenen takımları düşürmez: 10 + 2 takım yeniden denetlenir
+    api.dataQuality.team.mockClear()
+    fireEvent.click(slot('gaps-refresh'))
+    await waitFor(() => expect(api.dataQuality.team).toHaveBeenCalledTimes(12))
+    await waitFor(() => expect(slot('gaps-dialog')?.getAttribute('data-status')).toBe('ready'))
+    expect(slot('gaps-more-teams')).toBeNull()
   })
 
   it('pencereden düzeltme yalnız takımı yöneten ve yetkili kişiye: düzeltme açılınca pencere gizlenir, bitince taze okumayla döner', async () => {
