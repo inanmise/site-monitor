@@ -4,7 +4,7 @@ import PageSpeedMonitorPage from '../components/PageSpeedMonitorPage.jsx'
 import { growthFieldErrors, GROWTH_FIELDS } from '../utils/pageSpeedThresholds.js'
 import { compareSnapshots, CMP_CUT_SENSITIVE } from '../components/pagespeed/deep/pageSpeedDeepModel.js'
 import { CHANGE_EVENTS } from '../components/responsechart/chartEvents.js'
-import { EXTRA_BREACH_KEYS } from '../components/pagespeed/pageSpeedCardModel.js'
+import { EXTRA_BREACH_KEYS, hasUndecided, pageSpeedStatusOf } from '../components/pagespeed/pageSpeedCardModel.js'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 
@@ -66,6 +66,22 @@ describe('Sayfa Hızı 2c — modeller', () => {
     expect(same.rows.find((r) => r.key === 'bytes').worse).toBe(true)
   })
 
+  it('inceleme 2026-11-15: aşım yokken karara bağlanamayan eşik → UNDECIDED (yeşil değil); aşım ve kesinti olduğu gibi', () => {
+    expect(hasUndecided(['GROWSIZE'])).toBe(true)
+    expect(hasUndecided('GROWSIZE,SIZEBAND')).toBe(true)
+    expect(hasUndecided([])).toBe(false)
+    expect(hasUndecided(['', '  '])).toBe(false)
+    expect(hasUndecided('')).toBe(false)
+    expect(hasUndecided(null)).toBe(false)
+    expect(hasUndecided(undefined)).toBe(false)
+    expect(pageSpeedStatusOf({ status: 'OK', undecided_metrics: ['GROWSIZE'] })).toBe('UNDECIDED')
+    expect(pageSpeedStatusOf({ status: 'OK', undecided_metrics: [] })).toBe('OK')
+    expect(pageSpeedStatusOf({ status: 'OK' })).toBe('OK')   // eski sunucu: alan yok → bugünkü gibi
+    expect(pageSpeedStatusOf({ status: 'SLOW', undecided_metrics: ['GROWSIZE'] })).toBe('SLOW')
+    expect(pageSpeedStatusOf({ status: 'DOWN', undecided_metrics: ['TTFB'] })).toBe('DOWN')
+    expect(pageSpeedStatusOf(null)).toBeUndefined()
+  })
+
   it('grafik olay katmanı kip değişimini tanır; kart büyüme ihlallerini adlandırır', () => {
     expect(CHANGE_EVENTS).toContain('MODE')
     expect(EXTRA_BREACH_KEYS).toEqual(expect.arrayContaining(['GROWSIZE', 'GROWREQ', 'SIZEBAND']))
@@ -125,6 +141,38 @@ describe('Sayfa Hızı 2c — form', () => {
     save()
     await waitFor(() => expect(api.monitoring.updatePageSpeedMonitor).toHaveBeenCalled())
     expect(api.monitoring.updatePageSpeedMonitor.mock.calls[0][1]).toMatchObject({ extendedMeasurement: true })
+  })
+
+  it('inceleme 2026-11-15: karara bağlanamayan son ölçüm nötr "henüz karar verilemedi" — kart ve rozet yeşil değil, Normal kutusunda sayılmaz', async () => {
+    api.monitoring.getPageSpeedMonitors.mockResolvedValue({ success: true,
+      data: [{ ...monitor, status: 'OK', breached_metrics: [], undecided_metrics: ['GROWSIZE'], growth_bytes_pct: 20 },
+             { ...monitor, id: 2, name: 'Ana sayfa', url: 'https://ana.example.com/', undecided_metrics: [] }] })
+    render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="card"]').length).toBe(2))
+    const cards = [...document.querySelectorAll('[data-slot="card"]')]
+    const healthy = cards.find((c) => /ana\.example\.com/.test(c.textContent))   // kart başlığı adresi gösterir
+    const undecided = cards.find((c) => c !== healthy)
+    expect(undecided.getAttribute('data-status')).toBe('unknown')
+    expect(healthy.getAttribute('data-status')).toBe('up')
+    expect(undecided.textContent).toMatch(/not decidable yet|henüz karar verilemedi/i)
+    const badge = undecided.querySelector('[data-slot="badge"][data-status]')
+    expect(badge.getAttribute('data-status')).toBe('unknown')
+  })
+
+  it('inceleme 2026-11-15: ?stat=ok — "Normal" kutusu ve süzgeci karara bağlanamayan ölçümü saymaz', async () => {
+    window.history.replaceState({}, '', '/?tab=pagespeed&stat=ok')
+    try {
+      api.monitoring.getPageSpeedMonitors.mockResolvedValue({ success: true,
+        data: [{ ...monitor, status: 'OK', breached_metrics: [], undecided_metrics: ['GROWSIZE'], growth_bytes_pct: 20 },
+               { ...monitor, id: 2, name: 'Ana sayfa', url: 'https://ana.example.com/', undecided_metrics: [] }] })
+      const { container } = render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+      await waitFor(() => expect(container.querySelector('[data-slot="stat-item"][data-key="ok"] [data-slot="stat-value"]')).not.toBeNull())
+      expect(container.querySelector('[data-slot="stat-item"][data-key="ok"] [data-slot="stat-value"]').textContent).toBe('1')
+      await waitFor(() => expect(container.querySelectorAll('[data-slot="card"][data-status]').length).toBe(1))
+      expect(container.querySelector('[data-slot="card"][data-status]').textContent).toMatch(/ana\.example\.com/)
+    } finally {
+      window.history.replaceState({}, '', '/')
+    }
   })
 
   it('kart büyüme ihlalini adlandırır; geçmiş satırı genişletilmiş kip rozetini taşır', async () => {

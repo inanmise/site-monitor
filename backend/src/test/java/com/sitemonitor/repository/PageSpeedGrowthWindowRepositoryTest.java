@@ -86,4 +86,54 @@ class PageSpeedGrowthWindowRepositoryTest {
 
         assertThat(checks.growthWindow(1L, "2026-11-08T00:00:00", "2026-11-15T00:00:00", 2)).hasSize(2);
     }
+
+    private static final java.time.format.DateTimeFormatter ISO =
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(java.time.ZoneOffset.UTC);
+
+    private static com.sitemonitor.service.PageSpeedCheckerService.Result measured(long bytes) {
+        return new com.sitemonitor.service.PageSpeedCheckerService.Result("OK", 200, 100, 200, 1000, bytes, 10, 0, false, false,
+                List.of(), null, List.of(), null, 0, null, false, null, List.of(), null);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("İnceleme 2026-11-15: ölçüm tanımı değişince (growth_since) eski tanımın ölçümleri referans DEĞİL — sonraki "
+            + "ölçümün büyüme anahtarları kararsız, GROWSIZE yok; growth_since olmadan aynı geçmiş GROWSIZE açar")
+    void growthSinceResetsTheReference() {
+        java.time.Instant now = java.time.Instant.now();
+        for (int i = 1; i <= 8; i++) checks.save(row(7, ISO.format(now.minus(java.time.Duration.ofHours(6L * i))), 100_000, 10));
+        com.sitemonitor.model.PageSpeedMonitor m = new com.sitemonitor.model.PageSpeedMonitor();
+        m.setId(7L);
+        m.setUrl("https://yeni.example.com/");
+        m.setGrowthBytesPct(20);
+
+        // tanım değişmedi (2c öncesi izleme, growth_since boş): eski sayfanın 8 ölçümü referans → %200 büyüme ihlal
+        var before = com.sitemonitor.service.SchedulerServiceGrowthAccess.readAndApply(checks, m, measured(300_000));
+        assertThat(before.breached()).containsExactly("GROWSIZE");
+
+        // URL / kip değişti → growth_since = şimdi − 1 dk: pencere ondan başlar, referans boş → kararsız, ihlal YOK
+        m.setGrowthSince(ISO.format(now.minus(java.time.Duration.ofMinutes(1))));
+        var after = com.sitemonitor.service.SchedulerServiceGrowthAccess.readAndApply(checks, m, measured(300_000));
+        assertThat(after.breached()).isEmpty();
+        assertThat(after.status()).isEqualTo("OK");
+        assertThat(after.undecided()).containsExactly("GROWSIZE");
+
+        // yeni tanımla 5 tam ölçüm birikince karar yeniden verilir (yalnız growth_since sonrası satırlar)
+        for (int i = 0; i < 5; i++) checks.save(row(7, ISO.format(now.minusSeconds(50 - i * 5L)), 290_000, 10));
+        var again = com.sitemonitor.service.SchedulerServiceGrowthAccess.readAndApply(checks, m, measured(300_000));
+        assertThat(again.breached()).isEmpty();
+        assertThat(again.undecided()).isEmpty();
+        assertThat(again.growth().medianBytes()).isEqualTo(290_000L);
+    }
+
+    @Test
+    @DisplayName("Pencerenin başı: max(şimdi − 7 gün, growth_since) — boş ya da daha eski growth_since 7 günü değiştirmez")
+    void windowStart() {
+        java.time.Instant now = java.time.Instant.parse("2026-11-15T12:00:00Z");
+        assertThat(com.sitemonitor.service.SchedulerServiceGrowthAccess.windowStart(now, null)).isEqualTo("2026-11-08T12:00:00");
+        assertThat(com.sitemonitor.service.SchedulerServiceGrowthAccess.windowStart(now, "2026-11-01T00:00:00"))
+                .isEqualTo("2026-11-08T12:00:00");
+        assertThat(com.sitemonitor.service.SchedulerServiceGrowthAccess.windowStart(now, "2026-11-15T11:30:00"))
+                .isEqualTo("2026-11-15T11:30:00");
+    }
 }

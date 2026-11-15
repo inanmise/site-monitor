@@ -111,14 +111,26 @@ public final class PageSpeedRules {
         return new Growth(samples.size(), b[mid], r[mid], null);
     }
 
-    /** Öğrenilen bayt bandı: {@link #BAND_PARAMS} ile {@code BaselineMath} (saf). Değer ya da örnek yoksa null. */
+    /** Öğrenilen bayt bandı, geçmiş tamlığı bilinmeden (kesik sayılır) — {@link #bandVerdict(Long, List, boolean)}. */
     public static com.sitemonitor.service.baseline.BaselineMath.Verdict bandVerdict(Long totalBytes, List<GrowthSample> samples) {
+        return bandVerdict(totalBytes, samples, false);
+    }
+
+    /**
+     * Öğrenilen bayt bandı: {@link #BAND_PARAMS} ile {@code BaselineMath} (saf). Değer ya da örnek yoksa null.
+     *
+     * <p>{@code complete} (inceleme 2026-11-15): okuma SINIRA takılmadıysa örnekler referans penceresinin TAMAMIdır (7 gün ya
+     * da tanım değişiminden beri) — o zaman pencerenin başına dek uzanan ve en az {@code minSamples} uzunluğundaki ardışık
+     * aşım dizisi yeni düzey sayılır (kontrollü uyum). Eskiden hep {@code false} geçiliyordu: seyrek izlemede (aralık ≳ 3,4 sa,
+     * ör. günlük cron) 7 günde 50 örnek hiç birikmediği için uyum HİÇ olmuyor, bant alarmı haftalarca açık kalıyordu.
+     */
+    public static com.sitemonitor.service.baseline.BaselineMath.Verdict bandVerdict(Long totalBytes, List<GrowthSample> samples,
+                                                                                  boolean complete) {
         if (totalBytes == null || samples == null) return null;
         List<com.sitemonitor.service.baseline.BaselineMath.Sample> pts = new ArrayList<>(samples.size());
         for (GrowthSample s : samples) pts.add(new com.sitemonitor.service.baseline.BaselineMath.Sample(s.totalBytes(), s.bandBreach()));
-        // complete=false: 7 günlük pencere geçmişin tamamı değildir — kontrollü uyum yalnız pencere uzunluğunda ardışık aşımla
         return com.sitemonitor.service.baseline.BaselineMath.evaluate(totalBytes,
-                new com.sitemonitor.service.baseline.BaselineMath.History(pts, false, false), BAND_PARAMS);
+                new com.sitemonitor.service.baseline.BaselineMath.History(pts, complete, false), BAND_PARAMS);
     }
 
     /**

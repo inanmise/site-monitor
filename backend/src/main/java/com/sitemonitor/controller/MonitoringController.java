@@ -863,6 +863,7 @@ public class MonitoringController {
         String kwPrevRequestFp = entity instanceof KeywordMonitor kwBefore ? keywordRequestFingerprint(kwBefore) : null;
         // Dinamik taban hedefi geri yüklemeden ÖNCE (hata taraması 2026-11-13 #7: güncellemeyle aynı örnek temizliği)
         String baselineTargetBefore = baselineTargetOf(resolved, entity);
+        List<Object> psGrowthDefBefore = entity instanceof com.sitemonitor.model.PageSpeedMonitor psPre ? pageSpeedGrowthDefinition(psPre) : null;
         var result = MonitorHistoryService.applySnapshot(entity, snapshot, fields, skip);
         List<String> maskedSkipped = result.get(1);
         if (!skippedFields.isEmpty()) maskedSkipped = maskedSkipped.stream().filter(f -> !"rulesJson".equals(f)).toList();
@@ -982,6 +983,8 @@ public class MonitoringController {
         // Geri alma da bir GÜNCELLEMEDİR: kaydın "son değiştiren/son değişiklik" künyesi
         // güncellenmezse kart, geri almayı yapan kişiyi ve zamanı hiç göstermez.
         touchUpdated(entity, session);
+        // Sayfa hızı ölçüm tanımı değiştiyse büyüme referansı KAYITTAN ÖNCE sıfırlanır (güncellemeyle aynı sıra ve gerekçe)
+        if (entity instanceof com.sitemonitor.model.PageSpeedMonitor psNow) pageSpeedResetGrowthIfChanged(id, psGrowthDefBefore, psNow);
         if (dbq != null) {
             // Ad tüm takımlarda tekil (K1): ad geri dönüyorsa denetim + kayıt aynı ad kilidi altında; yarış = 409
             boolean nameChanged = dbqOldName != null && !dbqOldName.equals(dbq.getName());
@@ -1066,7 +1069,11 @@ public class MonitoringController {
         return switch (kind) {
             case MonitorHistoryService.HTTP -> ((HttpMonitor) entity).getUrl();
             case MonitorHistoryService.KEYWORD -> ((KeywordMonitor) entity).getUrl();
-            case MonitorHistoryService.PAGESPEED -> ((com.sitemonitor.model.PageSpeedMonitor) entity).getUrl();
+            case MonitorHistoryService.PAGESPEED -> {
+                // Ölçüm kipi yük süresi düzeyini değiştirir (inceleme 2026-11-15) — güncellemeyle aynı kural
+                var m = (com.sitemonitor.model.PageSpeedMonitor) entity;
+                yield Boolean.TRUE.equals(m.getExtendedMeasurement()) ? m.getUrl() + "|ext" : m.getUrl();
+            }
             case MonitorHistoryService.PING -> ((com.sitemonitor.model.PingMonitor) entity).getHost();
             case MonitorHistoryService.PORT -> {
                 var m = (com.sitemonitor.model.PortMonitor) entity;
@@ -5787,6 +5794,7 @@ public class MonitoringController {
         m.setExtendedMeasurement(true);
         applyPageSpeedFields(m, body, session);
         if (psSched != null) applyPageSpeedSchedule(psSched, m);   // madde 14: kolonlar + etkin aralık
+        m.setGrowthSince(now);   // büyüme referansı bu tanımla başlar (inceleme 2026-11-15)
         m.setCreatedAt(now);
         m.setUpdatedAt(now);
         com.sitemonitor.model.PageSpeedMonitor saved = pageSpeedMonitorRepo.save(m);
@@ -5811,6 +5819,9 @@ public class MonitoringController {
             // Madde 14: zamanlama doğrulaması da alarm kapatma / kayıttan ÖNCE; plan sıfırlama kararı için önceki tanım
             com.sitemonitor.service.dbquery.DbQuerySchedule.Spec psSched = pageSpeedScheduleOrThrow(body, m);
             com.sitemonitor.model.PageSpeedMonitor psBefore = pageSpeedScheduleCopy(m);
+            // Ölçüm tanımı + kip DEĞİŞİMDEN ÖNCE (inceleme 2026-11-15): büyüme referansı ve dinamik yük tabanı bunlara bağlı
+            List<Object> psGrowthDefBefore = pageSpeedGrowthDefinition(m);
+            boolean psExtBefore = Boolean.TRUE.equals(m.getExtendedMeasurement());
             if (body.get("name") != null) m.setName((String) body.get("name"));
             if (body.get("url")  != null) {
                 String u = MonitorUrls.normalize(body.get("url").toString());
@@ -5826,10 +5837,16 @@ public class MonitoringController {
             applyPageSpeedFields(m, body, session);
             if (psSched != null) applyPageSpeedSchedule(psSched, m);   // madde 14
             m.setUpdatedAt(ISO.format(Instant.now()));
+            // Referans sıfırlama KAYITTAN ÖNCE (ayrı, hedefli yazım): yazım düşerse kayıt da yapılmaz (500, tutarlı); kayıt düşerse
+            // gereksiz bir sıfırlama kalır (temkinli taraf) — tersi "kaydedildi ama eski referansla sahte büyüme alarmı" olurdu
+            pageSpeedResetGrowthIfChanged(m.getId(), psGrowthDefBefore, m);
             com.sitemonitor.model.PageSpeedMonitor saved = pageSpeedMonitorRepo.save(m);
             boolean psReplanned = pageSpeedReplanIfChanged(psBefore, saved);   // madde 14: önce ya da sonra zamanlamalıysa plan sıfırlanır
-            if (baselineConfigService != null && _before != null && _before.get("url") != null
-                    && !_before.get("url").toString().equals(saved.getUrl()))   // URL (taban çizgisi hedefi) değişti → eski örnekler karışmasın
+            boolean psUrlChanged = _before != null && _before.get("url") != null && !_before.get("url").toString().equals(saved.getUrl());
+            // Ölçüm kipi de yük süresinin DÜZEYİNİ değiştirir (genişletilmiş = CSS içi kaynaklar + ertelenen görseller): kip
+            // değişince dinamik yük tabanının eski örnekleri yeni düzeye karışmasın — URL değişimiyle aynı (inceleme 2026-11-15)
+            boolean psModeChanged = psExtBefore != Boolean.TRUE.equals(saved.getExtendedMeasurement());
+            if (baselineConfigService != null && (psUrlChanged || psModeChanged))   // taban çizgisi hedefi değişti → eski örnekler karışmasın
                 baselineConfigService.clearSamples(com.sitemonitor.service.baseline.BaselineTypes.PAGESPEED, saved.getId());
             auditService.recordAction("MONITOR_UPDATE", session, "PAGESPEED_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                     AuditDiff.diff(_before, AuditDiff.snapshot(saved, PAGESPEED_FIELDS)));
@@ -6414,7 +6431,9 @@ public class MonitoringController {
         applyKbThreshold(body, "maxThirdPartyKb", m::setMaxThirdPartyKb);
         applyKbThreshold(body, "minPageKb",       m::setMinPageKb);
         // Genişletilmiş ölçüm + büyüme alarmı (2026-11-15, madde 10 / 13) — biçim requirePageSpeedGrowth'ta doğrulandı
-        if (body.get("extendedMeasurement") instanceof Boolean b) m.setExtendedMeasurement(b);
+        // TRUE ya da null (inceleme 2026-11-15): kapalı kip 2c öncesi izlemelerle AYNI değerde (null) saklanır — eski bir
+        // izlemenin ilk düzenlemesinde formun gönderdiği false geçmişe / denetime sahte "— → Hayır" satırı yazmasın
+        if (body.get("extendedMeasurement") instanceof Boolean b) m.setExtendedMeasurement(b ? Boolean.TRUE : null);
         applyGrowthPct(body, "growthBytesPct",    m::setGrowthBytesPct);
         applyGrowthPct(body, "growthRequestsPct", m::setGrowthRequestsPct);
         if (body.containsKey("growthBytesBand")) m.setGrowthBytesBand(Boolean.TRUE.equals(body.get("growthBytesBand")) ? Boolean.TRUE : null);
@@ -6453,6 +6472,29 @@ public class MonitoringController {
             String raw = blank(body.get("customHeaders")) ? null : body.get("customHeaders").toString();
             m.setCustomHeadersEnc(raw == null ? null : secretCipher.encrypt(raw));
         }
+    }
+
+    /**
+     * Büyüme referansının bağlı olduğu ÖLÇÜM TANIMI (inceleme 2026-11-15): URL, ölçüm kipi, izleyici hariç tutma + desenleri,
+     * User-Agent, özel başlıklar, temel kimlik. Başlık / parola ŞİFRELİ değerle karşılaştırılır — form bunları yalnız yazılınca
+     * gönderir; aynı değer yeniden yazılırsa referans (temkinli tarafta) sıfırlanır.
+     */
+    static List<Object> pageSpeedGrowthDefinition(com.sitemonitor.model.PageSpeedMonitor m) {
+        if (m == null) return null;
+        return java.util.Arrays.asList(m.getUrl(), Boolean.TRUE.equals(m.getExtendedMeasurement()),
+                Boolean.TRUE.equals(m.getExcludeTrackers()), m.getTrackerPatterns(), m.getUserAgent(),
+                m.getCustomHeadersEnc(), m.getBasicAuthUser(), m.getBasicAuthPassEnc());
+    }
+
+    /**
+     * Ölçüm tanımı değiştiyse büyüme referansı "şimdi"den başlar (hedefli UPDATE — varlık kaydı bu kolonu yazmaz): eski
+     * sayfanın / eski kipin ölçümleri yeni tanımın 7 günlük referansı olmaz, eşik ve bant yeni ölçümler birikene dek karar
+     * vermez (D-7). Okunamayan önceki tanım (null) değişmiş sayılmaz.
+     */
+    private void pageSpeedResetGrowthIfChanged(Long id, List<Object> before, com.sitemonitor.model.PageSpeedMonitor after) {
+        if (id == null || before == null || after == null) return;
+        if (Objects.equals(before, pageSpeedGrowthDefinition(after))) return;
+        pageSpeedMonitorRepo.updateGrowthSince(id, ISO.format(Instant.now()));
     }
 
     /** Büyüme yüzdesi: sayı (1–1000) → tam sayı, açık null / boş → kapalı, yoksa dokunma. Doğrulama {@link #requirePageSpeedGrowth}. */

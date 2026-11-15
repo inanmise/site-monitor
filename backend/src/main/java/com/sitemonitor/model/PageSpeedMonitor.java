@@ -169,6 +169,16 @@ public class PageSpeedMonitor implements MonitorAlertPrefs, MonitorSchedule, Noc
     @Column(name = "growth_bytes_band")
     private Boolean growthBytesBand;
 
+    /**
+     * Büyüme referansının başlangıcı (UTC ISO, 2026-11-15 inceleme düzeltmesi): ölçüm TANIMI değişince (URL, ölçüm kipi,
+     * izleyici hariç tutma / desenleri, User-Agent, özel başlıklar, temel kimlik) eski sayfanın ölçümleri yeni tanımın
+     * referansı olmasın diye büyüme penceresi {@code max(şimdi − 7 gün, growth_since)}'ten okunur. Oluşturulurken yazılır,
+     * sonra YALNIZ hedefli UPDATE ({@code PageSpeedMonitorRepository.updateGrowthSince}) — varlık kaydı bayat okumayla geri
+     * yazmasın ({@code updatable = false}). Null (2c öncesi izleme) = yalnız 7 günlük pencere.
+     */
+    @Column(name = "growth_since", length = 30, updatable = false)
+    private String growthSince;
+
     // ── Gelişmiş ölçüm seçenekleri ────────────────────────────────────────────
 
     /** Gönderilecek User-Agent; boş/null ise {@link #DEFAULT_UA}. WAF/bot koruması olan sayfalar için gerekir. */

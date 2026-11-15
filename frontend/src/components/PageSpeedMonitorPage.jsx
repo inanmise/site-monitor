@@ -54,7 +54,7 @@ import { matchesTeamAndGroup, matchesTag, tagNamesOf, matchesGroupOrTagText, mat
 import { markMonitorDeleted, monitorKind, useWithoutDeleted } from '../utils/recentlyDeleted.js'
 import MonitorCardMeta from './MonitorCardMeta.jsx'
 import PageSpeedMonitorCard from './pagespeed/PageSpeedMonitorCard.jsx'
-import { budgetCompliance, budgetFor } from './pagespeed/pageSpeedCardModel.js'
+import { budgetCompliance, budgetFor, hasUndecided, pageSpeedStatusOf } from './pagespeed/pageSpeedCardModel.js'
 import { failureKind } from './pagespeed/pageSpeedInsightsModel.js'
 import PageSpeedInsights from './pagespeed/PageSpeedInsights.jsx'
 import { useServerPagination } from '../hooks/useServerPagination.js'
@@ -134,7 +134,7 @@ const RES_ICON = { IMG: Image, CSS: FileCode, JS: FileCode, IFRAME: Frame, FONT:
  */
 const STATUS_TEXT = {
   OK: 'text-success', SLOW: 'text-amber-600 dark:text-amber-400', DOWN: 'text-destructive',
-  CONFIG_ERROR: 'text-violet-600 dark:text-violet-400', unknown: 'text-muted-foreground',
+  CONFIG_ERROR: 'text-violet-600 dark:text-violet-400', UNDECIDED: 'text-muted-foreground', unknown: 'text-muted-foreground',
 }
 const statusText = (s) => STATUS_TEXT[s] || STATUS_TEXT.unknown
 /** Sekme içi küçük bölüm etiketi (eski .pspd-metric-label). */
@@ -885,7 +885,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   const counts = useMemo(() => {
     const c = { total: scoped.length, ok: 0, slow: 0, down: 0, alarm: 0, unacked: 0 }
     for (const m of scoped) {
-      if (m.status === 'OK') c.ok++
+      // Kararsız ölçüm (inceleme 2026-11-15) "Normal" sayılmaz — yalnız toplamda
+      if (pageSpeedStatusOf(m) === 'OK') c.ok++
       else if (m.status === 'SLOW') c.slow++
       else if (m.status === 'DOWN') c.down++
       if (m.active_alarm) { c.alarm++; if (!m.alarm_acknowledged) c.unacked++ }
@@ -896,7 +897,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   const displayMonitors = useMemo(() => {
     if (!statFilter || statFilter === 'total') return scoped
     const pred = {
-      ok:      m => m.status === 'OK',
+      ok:      m => pageSpeedStatusOf(m) === 'OK',
       slow:    m => m.status === 'SLOW',
       down:    m => m.status === 'DOWN',
       alarm:   m => m.active_alarm,
@@ -942,15 +943,20 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
 
   // Durum sözlüğü (kart şeridi / rozet / detay kenarı): up | warn | down | unknown.
   // SLOW ayrı bir ton (warn): kesinti DEĞİL, sayfa ayakta ama hedeflenenden ağır/yavaş.
-  const statusKey = (m) => (m?.status === 'OK' ? 'up' : m?.status === 'SLOW' ? 'warn' : m?.status === 'DOWN' ? 'down' : 'unknown')
+  // Kanıtlı aşım yok ama tanımlı bir eşik karara bağlanamadı (UNDECIDED, inceleme 2026-11-15) → nötr, ASLA yeşil değil.
+  const statusKey = (m) => {
+    const s = pageSpeedStatusOf(m)
+    return s === 'OK' ? 'up' : s === 'SLOW' ? 'warn' : s === 'DOWN' ? 'down' : 'unknown'
+  }
   const statusLabel = (s) => s === 'OK' ? t('pspd.statusOk') : s === 'SLOW' ? t('pspd.statusSlow')
     : s === 'DOWN' ? t('pspd.statusDown') : s === 'CONFIG_ERROR' ? t('pspd.statusConfigError')
+    : s === 'UNDECIDED' ? t('pspd.statusUndecided')
     : t('pspd.statusUnknown')
   function statusBadge(m) {
     // CONFIG_ERROR paylaşılan sözlükte yok (unknown şeridi) ama rozet kendi mor tonunu korur.
     return (
       <MonitorStatusBadge status={statusKey(m)} className={m?.status === 'CONFIG_ERROR' ? STATUS_TEXT.CONFIG_ERROR : undefined}>
-        {statusLabel(m?.status)}
+        {statusLabel(pageSpeedStatusOf(m))}
       </MonitorStatusBadge>
     )
   }
@@ -1655,7 +1661,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
                   // satırı (altında tam genişlik): neden rozeti + tek satır + aç/kapa, açılınca panel (hata metni, HTTP kodu,
                   // faz süreleri). Özet ara sütuna konmaz — tabloyu genişletip kabından taşırırdı (Sayfa Bütünlüğü ile aynı).
                   const failed = c.ok === false
-                  const st = failed ? (c.failure_reason === 'CONFIG_ERROR' ? 'CONFIG_ERROR' : 'DOWN') : breached ? 'SLOW' : 'OK'
+                  const st = failed ? (c.failure_reason === 'CONFIG_ERROR' ? 'CONFIG_ERROR' : 'DOWN') : breached ? 'SLOW'
+                    : hasUndecided(c.undecided_metrics) ? 'UNDECIDED' : 'OK'   // kararsız ölçüm yeşil değil (inceleme 2026-11-15)
                   const k = failureRowKey(c)
                   const when = formatDateSec(c.checked_at)
                   return (<>
