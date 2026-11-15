@@ -20,6 +20,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/shadcn/dropdown-menu'
 import { cn } from '@/lib/utils'
+import ImageInsights from './ImageInsights.jsx'
 
 const ITEM = 'pointer-coarse:min-h-10 whitespace-normal [overflow-wrap:anywhere]'
 
@@ -221,6 +222,7 @@ export function ResultLine({ result, t, locale, className }) {
   const saving = savingPctOf(result)
   // Ölçü öznitelikleri motorun sonucundan (sınama ve inceleme için: ekrandaki sayı motorun sayısı mı?)
   return (
+    <>
     <span data-slot="prs-it-result" data-kept={result.kept ? 'true' : undefined} data-tone={tone}
       data-bytes={result.bytes ?? undefined} data-before={result.original?.bytes ?? undefined} data-saving={saving ?? undefined}
       data-similarity={result.similarity ?? undefined} className={cn('flex min-w-0 flex-col gap-1', className)}>
@@ -238,6 +240,9 @@ export function ResultLine({ result, t, locale, className }) {
         </span>
       )}
     </span>
+    {/* Ayrıntılı karşılaştırma: sonuç satırının KARDEŞİ (blok içerik span içinde olmasın) */}
+    <ImageInsights result={result} />
+    </>
   )
 }
 
