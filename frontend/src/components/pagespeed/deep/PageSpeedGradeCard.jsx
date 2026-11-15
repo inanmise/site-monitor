@@ -43,13 +43,15 @@ export function recText(r, t) {
  * görseller / yavaş kaynaklar adresleriyle). Yük süresi bilinmiyorsa not yok ("hesaplanamadı"); ölçüm süre / bayt tavanında
  * kesildiyse not ÜST SINIRDIR — nötr tonda "kısmi" denir, yeşil gösterilmez. Hafif bir tahmindir (tarayıcı çalıştırılmaz).
  */
-export default function PageSpeedGradeCard({ grade, checkedAt, isLatest }) {
+export default function PageSpeedGradeCard({ grade, checkedAt, isLatest, older = false }) {
   const t = useT()
   if (!grade) return null
-  const tone = grade.partial || grade.letter == null ? 'text-muted-foreground' : LETTER_TONE[grade.letter]
+  // Kısmi ölçüm ya da son ölçümden ESKİ bir ölçüm (son ölçümde kaynak saklanmadı — örn. sayfa açılamadı): durum tonu yok
+  const tone = grade.partial || older || grade.letter == null ? 'text-muted-foreground' : LETTER_TONE[grade.letter]
   const comps = grade.components.filter((c) => c.score !== null)
   return (
     <section data-slot="pspd-grade" data-letter={grade.letter || undefined} data-partial={grade.partial ? 'true' : undefined}
+      data-older={older ? 'true' : undefined}
       className="flex min-w-0 flex-col gap-3 rounded-xl border bg-card p-3 sm:p-4">
       <div className="flex min-w-0 flex-wrap items-center gap-3">
         <div className="flex size-16 shrink-0 flex-col items-center justify-center rounded-full border-4 border-border" aria-hidden="true">
@@ -66,7 +68,7 @@ export default function PageSpeedGradeCard({ grade, checkedAt, isLatest }) {
                 : t('pspd.grade.score', grade.score, grade.letter)}
           </p>
           <p className={cn('m-0 text-xs text-muted-foreground', WRAP)}>
-            {t(isLatest ? 'pspd.grade.basisLatest' : 'pspd.grade.basisSnapshot', checkedAt ? formatDate(checkedAt) : '—')}
+            {t(older ? 'pspd.grade.basisOlder' : isLatest ? 'pspd.grade.basisLatest' : 'pspd.grade.basisSnapshot', checkedAt ? formatDate(checkedAt) : '—')}
           </p>
         </div>
       </div>

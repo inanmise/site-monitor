@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   WF_TYPES, wfType, buildWaterfall, niceTicks, barBox, typeTotals, CMP_METRICS, compareSnapshots, GRADE_COMPONENTS, GRADE_RECS,
-  gradeLetterOf, curveScore, gradeSnapshot, imageItemOf, imageScopeKey, withDeadline, DEADLINE,
+  gradeLetterOf, curveScore, gradeSnapshot, imageItemOf, imageScopeKey, withDeadline, DEADLINE, isLowerBound, CMP_CUT_SENSITIVE,
 } from '../components/pagespeed/deep/pageSpeedDeepModel.js'
 import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
@@ -44,7 +44,7 @@ describe('buildWaterfall', () => {
     expect(wf.unknownStart).toBe(1)
   })
 
-  it('satırlar başlangıca göre sıralı; HTML çubuğu 0 → html_ms, ilk bayt içinde; fazlar ayrı', () => {
+  it('satırlar başlangıca göre sıralı; HTML çubuğu 0 → html_ms (ayrı bağlantıdaki ilk bayt çizilmez); fazlar ayrı', () => {
     const wf = buildWaterfall(snap({}, [
       res('https://a/late.js', 'JS', 500, 100, 2000),
       res('https://a/early.css', 'CSS', 310, 50, 1000),
@@ -53,15 +53,19 @@ describe('buildWaterfall', () => {
     expect(wf.ok).toBe(true)
     expect(wf.rows.map((r) => r.url)).toEqual(['https://a/early.css', 'https://a/late.js'])
     expect(wf.rows[0]).toMatchObject({ type: 'css', start: 310, end: 360, duration: 50 })
-    expect(wf.html).toMatchObject({ start: 0, end: 300, ttfb: 120, bytes: 40 * KB })
+    expect(wf.html).toMatchObject({ start: 0, end: 300, bytes: 40 * KB })
+    expect(wf.html.ttfb).toBeUndefined()
     expect(wf.html.phases.map((p) => p.key)).toEqual(['dns', 'connect', 'tls', 'server'])
     expect(wf.totalMs).toBe(600)
     expect(wf.unknownStart).toBe(1)
     expect(wf.shown).toBe(2)
   })
 
-  it('ilk bayt HTML süresinden büyükse çizilmez (tutarsız ölçüm)', () => {
-    expect(buildWaterfall(snap({ ttfb_ms: 900, html_ms: 300 }, [res('https://a/x', 'CSS', 0, 1, 1)])).html.ttfb).toBeNull()
+  it('alt sınır: süre / kaynak / bayt tavanı ya da liste kesimi — üçü de sunucunun lowerBound kuralı', () => {
+    expect(isLowerBound(snap())).toBe(false)
+    for (const over of [{ time_truncated: true }, { capped: true }, { bytes_truncated: true }]) expect(isLowerBound(snap(over)), JSON.stringify(over)).toBe(true)
+    expect(isLowerBound({ ...snap(), truncated: true })).toBe(true)
+    expect(isLowerBound(null)).toBe(false)
   })
 
   it('satır sınırı: fazlası kesilir ve "truncated"', () => {
@@ -130,6 +134,17 @@ describe('compareSnapshots', () => {
     expect(c.resourcesKnown).toBe(true)
   })
 
+  it('kesik ölçümde süre / boyut / sayı satırları YÖN almaz (küçülme iyileşme değildir); ilk bayt ve HTML süresi alır', () => {
+    const full = snap({ response_ms: 3000, total_bytes: 2 * MB, request_count: 90, ttfb_ms: 200, html_ms: 400 })
+    const cut = snap({ response_ms: 2000, total_bytes: 1 * MB, request_count: 40, ttfb_ms: 600, html_ms: 300, capped: true })
+    const c = compareSnapshots(full, cut)
+    expect(c.partial).toBe(true)
+    for (const k of CMP_CUT_SENSITIVE) expect(c.rows.find((r) => r.key === k).worse, k).toBeNull()
+    expect(c.rows.find((r) => r.key === 'ttfb').worse).toBe(true)
+    expect(c.rows.find((r) => r.key === 'html').worse).toBe(false)
+    expect(c.rows.find((r) => r.key === 'bytes').delta).toBe(-1 * MB)   // fark yine gösterilir, yalnız rengi yok
+  })
+
   it('bilinmeyen değerde yön yok; kaynak saklanmamışsa resourcesKnown=false; kesik ölçüm partial', () => {
     const c = compareSnapshots(snap({ ttfb_ms: null }), { ...snap({}), truncated: true })
     expect(c.rows.find((r) => r.key === 'ttfb')).toMatchObject({ delta: null, worse: null })
@@ -159,11 +174,13 @@ describe('hız notu', () => {
     expect(g.recs.map((r) => r.code)).toEqual(['ALL_GOOD'])
   })
 
-  it('yük süresi yoksa not yok; kesik ölçüm partial ve ALL_GOOD verilmez', () => {
+  it('yük süresi yoksa not yok; kesik ölçüm (süre / kaynak / bayt tavanı) partial ve ALL_GOOD verilmez', () => {
     expect(gradeSnapshot(snap({ response_ms: null })).score).toBeNull()
-    const g = gradeSnapshot(snap({ time_truncated: true }, [res('https://a/x.css', 'CSS', 0, 50, 1)]))
-    expect(g.partial).toBe(true)
-    expect(g.recs.some((r) => r.code === 'ALL_GOOD')).toBe(false)
+    for (const over of [{ time_truncated: true }, { capped: true }, { bytes_truncated: true }]) {
+      const g = gradeSnapshot(snap(over, [res('https://a/x.css', 'CSS', 0, 50, 1)]))
+      expect(g.partial, JSON.stringify(over)).toBe(true)
+      expect(g.recs.some((r) => r.code === 'ALL_GOOD')).toBe(false)
+    }
   })
 
   it('kaynak okunmadıysa (boş liste) ALL_GOOD yok — bilinmeyen ≠ temiz', () => {

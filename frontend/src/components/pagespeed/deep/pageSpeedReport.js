@@ -3,7 +3,7 @@ import { drawBrandHeader } from '../../../utils/pdfBrand.js'
 import { registerRobotoFont, triggerDownload } from '../../../utils/exportInventory.js'
 import { buildXlsx, XLSX_MIME } from '../../../utils/xlsxWriter.js'
 import { formatBytes } from '../../../utils/formatBytes.js'
-import { WF_TYPES, typeTotals, wfType } from './pageSpeedDeepModel.js'
+import { DEADLINE, SNAPSHOT_DEADLINE_MS, WF_TYPES, isLowerBound, typeTotals, wfType, withDeadline } from './pageSpeedDeepModel.js'
 import { recText } from './PageSpeedGradeCard.jsx'
 
 // Sayfa Hızı 2. sürüm (2026-11-15, madde 19): performans raporu — PDF ve Excel. Sekme bu modülü TEMBEL yükler (jsPDF yalnız
@@ -34,7 +34,7 @@ function summaryRows(monitor, data, grade, t) {
     [t('pspd.cmp.m.requests'), c.request_count ?? ''],
     [t('pspd.cmp.m.unloaded'), c.failed_count ?? ''],
     [t('pspd.rep.grade'), grade?.score == null ? t('pspd.grade.unknownShort') : `${grade.score} (${grade.letter})${grade.partial ? ` ${t('pspd.rep.partialMark')}` : ''}`],
-    [t('pspd.rep.partial'), c.time_truncated === true || data?.truncated === true ? t('pspd.rep.yes') : t('pspd.rep.no')],
+    [t('pspd.rep.partial'), isLowerBound(data) ? t('pspd.rep.yes') : t('pspd.rep.no')],
   ]
 }
 
@@ -89,8 +89,12 @@ export async function exportPageSpeedXlsx({ monitor, data, grade, t }) {
 
 /** PDF (A4 dikey): marka başlığı, özet, hız notu + bileşenler, öneriler, türler, en ağır 30 kaynak. İndirme başlamadıysa false. */
 export async function exportPageSpeedPdf({ monitor, data, grade, t }) {
-  const { jsPDF } = await import('jspdf')
-  const { default: autoTable } = await import('jspdf-autotable')
+  // Parça yüklemeleri süre sınırlı (kullanıcı kuralı) — dolarsa hata fırlar, sekme "hazırlanamadı" der
+  const pdfMod = await withDeadline(import('jspdf'), SNAPSHOT_DEADLINE_MS)
+  const tableMod = await withDeadline(import('jspdf-autotable'), SNAPSHOT_DEADLINE_MS)
+  if (pdfMod === DEADLINE || tableMod === DEADLINE) throw new Error('PDF_LIBRARY_TIMEOUT')
+  const { jsPDF } = pdfMod
+  const autoTable = tableMod.default
   const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' })
   await registerRobotoFont(doc)
   const MARGIN = 36
@@ -105,7 +109,8 @@ export async function exportPageSpeedPdf({ monitor, data, grade, t }) {
     headStyles: { font: 'Roboto', fontStyle: 'bold', fillColor: [229, 231, 235], textColor: 30 }, alternateRowStyles: { fillColor: [250, 250, 251] } }
   const cell = (v) => (v === null || v === undefined ? '' : String(v))
   const section = (title) => {
-    y = (doc.lastAutoTable?.finalY ?? y) + 16
+    // Tablodan SONRA yazılan bir not varsa (kısmi uyarısı) başlık notun altından başlar — üst üste binmez
+    y = Math.max(doc.lastAutoTable?.finalY ?? y, y) + 16
     if (y > doc.internal.pageSize.getHeight() - 60) { doc.addPage(); y = MARGIN }
     doc.setFont('Roboto', 'bold').setFontSize(11).setTextColor(30)
     doc.text(title, MARGIN, y)
@@ -122,7 +127,9 @@ export async function exportPageSpeedPdf({ monitor, data, grade, t }) {
   if (grade?.partial) {
     y = (doc.lastAutoTable?.finalY ?? y) + 12
     doc.setFontSize(8.5).setTextColor(90)
-    doc.text(doc.splitTextToSize(t('pspd.grade.partialNote'), doc.internal.pageSize.getWidth() - 2 * MARGIN), MARGIN, y)
+    const lines = doc.splitTextToSize(t('pspd.grade.partialNote'), doc.internal.pageSize.getWidth() - 2 * MARGIN)
+    doc.text(lines, MARGIN, y)
+    y += (Array.isArray(lines) ? lines.length : 1) * 11   // 8,5 pt satır yüksekliği ≈ 11 pt
     doc.setTextColor(40)
   }
   section(t('pspd.grade.recsTitle'))
