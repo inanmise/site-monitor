@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-15T05:07:47Z",
+  "generatedAt": "2026-11-15T06:43:16Z",
   "repo": "inanmise/site-monitor",
-  "count": 839,
+  "count": 840,
   "releases": [
+    {
+      "version": "20.206.0",
+      "tag": "v20.206.0",
+      "releasedAt": "2026-11-15T06:43:09Z",
+      "commit": "88deae9d689e6d839fbf4e6436118a8cd8ca2e21",
+      "prevVersion": "20.205.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "88deae9d",
+          "subject": "zamanlama önizlemesi denetim muafiyetinde (salt hesap, kayıt değiştirmez)"
+        },
+        {
+          "type": "fix",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "f617347f",
+          "subject": "zamanlama inceleme düzeltmeleri — değişmeyen plan yeniden doğrulanmaz, koşullu plan yazımı, sıfırlanmış planda bekletilen dönem yok, sorgu süre sınırı"
+        },
+        {
+          "type": "feat",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "f48c1bae",
+          "subject": "ölçüm zamanlaması — aralık / cron + izinli / yasak pencere + tatil (2. sürüm madde 14)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.205.0",
       "tag": "v20.205.0",
