@@ -1,9 +1,142 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-15T17:21:35Z",
+  "generatedAt": "2026-11-15T19:39:03Z",
   "repo": "inanmise/site-monitor",
-  "count": 845,
+  "count": 846,
   "releases": [
+    {
+      "version": "20.210.0",
+      "tag": "v20.210.0",
+      "releasedAt": "2026-11-15T19:38:56Z",
+      "commit": "31429436e6efd2933de39da418c89815ef27c800",
+      "prevVersion": "20.209.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 3,
+        "fix": 8,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 3,
+        "other": 2
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "availability-week",
+          "breaking": false,
+          "sha": "31429436",
+          "subject": "tamamlanmış tür okuması uçuş haritasında kalmaz — ardından gelen istek bayat okumayı yeniden kullanmaz"
+        },
+        {
+          "type": "docs",
+          "scope": "claude",
+          "breaking": false,
+          "sha": "d857a97c",
+          "subject": "eksikler penceresi açık menüyü kapatmaz kuralı"
+        },
+        {
+          "type": "fix",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "3f97a0ec",
+          "subject": "eksikler penceresi açık menüyü kapatmaz — kullanıcı durunca açılır; alarm iletimi menüsü yenilemede yerinde kalır"
+        },
+        {
+          "type": "test",
+          "scope": "gates",
+          "breaking": false,
+          "sha": "6092b3a5",
+          "subject": "AVIF'in iki sınırlı isteği zaman aşımı kapısı istisna listesinde (gerekçeli)"
+        },
+        {
+          "type": "fix",
+          "scope": "holiday",
+          "breaking": false,
+          "sha": "65939fea",
+          "subject": "boş takvim bilinçli sayılır + PostgreSQL kanıtı"
+        },
+        {
+          "type": "feat",
+          "scope": "holiday",
+          "breaking": false,
+          "sha": "9bfcc5d7",
+          "subject": "2026–2035 resmî tatil takvimi (10 yıl) — eksik yıllar tek seferlik işle eklenir"
+        },
+        {
+          "type": "test",
+          "scope": "gates",
+          "breaking": false,
+          "sha": "1230177b",
+          "subject": "birleşik dal kapıları — geri test denetim muafiyeti, neden zinciri sayaç adı"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "4ea2b955",
+          "subject": "Grafana pano revizyonu 18 (kontrol listesi + CLAUDE.md)"
+        },
+        {
+          "type": "docs",
+          "scope": "guide",
+          "breaking": false,
+          "sha": "f9c2eceb",
+          "subject": "kılavuzdaki ağ geçidi değerleri güncel (960 sn, 16 MB)"
+        },
+        {
+          "type": "fix",
+          "scope": "prod-gate",
+          "breaking": false,
+          "sha": "cd5e2bb4",
+          "subject": "ön yüz inceleme düzeltmeleri — ağ geçidi süresi, dinamik import son tarihi, kalan indirme ve renk hataları"
+        },
+        {
+          "type": "fix",
+          "scope": "prod-gate",
+          "breaking": false,
+          "sha": "6ba70e26",
+          "subject": "arka uç inceleme düzeltmeleri — geri test belleği, gövde sınırı, günlük maskesi, öksüz oturum"
+        },
+        {
+          "type": "fix",
+          "scope": "prod-gate",
+          "breaking": false,
+          "sha": "0c0e3468",
+          "subject": "yayın öncesi kapı düzeltmeleri — sızıntı, kesin SLA, istemci zaman aşımları, belgeler"
+        },
+        {
+          "type": "fix",
+          "scope": "image-tool",
+          "breaking": false,
+          "sha": "67162262",
+          "subject": "AVIF inceleme düzeltmeleri — kodlayıcı dosyası 404'ü motoru kilitlemez, süre bütçesi, yükleme hatası hatırlanır"
+        },
+        {
+          "type": "feat",
+          "scope": "image",
+          "breaking": false,
+          "sha": "d03cbba1",
+          "subject": "gerçek AVIF çıktısı (libavif WASM, ayrı Worker), kaynağın PPI değeri korunur, görsel aracı görünümü sağlamlaştırıldı"
+        },
+        {
+          "type": "fix",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "2b0d1870",
+          "subject": "büyüme referansı tanım değişince sıfırlanır, bütçe SQL'i büyümeyi sayar, kip değişimi yük tabanını temizler"
+        },
+        {
+          "type": "feat",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "61654e9b",
+          "subject": "genişletilmiş ölçüm + büyüme alarmı (Sayfa Hızı 2c, madde 10 ve 13)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.209.1",
       "tag": "v20.209.1",

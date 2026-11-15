@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.210.0] — 2026-11-15
+
 ### Changed (uygulama — prod kapısı 2026-11-15)
 - **⚠ Davranış:** `site.monitor.scripted.manual-wait-seconds` (elle k6 "Şimdi kontrol et" ucunun sonucu bekleme süresi)
   artık **1–90 sn**: aralık dışı kayıt 400 alan hatası alır, aralık dışı ortam değeri / eski kayıt okunurken 90'a (ya da
@@ -3260,7 +3262,16 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.120.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.210.0...HEAD
+[20.210.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.210.0
+[20.208.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.208.0
+[20.186.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.186.3
+[20.186.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.186.2
+[20.186.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.186.1
+[20.186.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.186.0
+[20.179.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.179.0
+[20.167.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.167.0
+[20.164.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.164.0
 [20.120.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.120.0
 [20.119.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.119.0
 [20.118.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.118.1
