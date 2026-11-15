@@ -2192,7 +2192,8 @@ public class PageResourceScanService {
         // Keşif eksik: site haritası evresi kesildi (dosya / süre / adres tavanı) ya da listelenen bir harita okunamadı —
         // bulunamayan sayfalar olabilir, "her sayfa tarandı" denmez.
         boolean discoveryCut = Boolean.TRUE.equals(sitemap.get("truncated"))
-                || (sitemap.get("errors") instanceof List<?> errs && !errs.isEmpty());
+                || (sitemap.get("errors") instanceof List<?> errs && !errs.isEmpty())
+                || (sitemap.get("other_host") instanceof Number oh && oh.intValue() > 0);
         List<Map<String, Object>> unscanned = new ArrayList<>();
         String reason = stop == null ? "PAGES" : stop;
         for (SiteCrawl.Entry e : crawl.remaining(MAX_UNSCANNED_LISTED)) {
@@ -2222,7 +2223,7 @@ public class PageResourceScanService {
         extra.put("crawl", info);
         extra.put("unscanned", unscanned);
         extra.put("unscanned_total", crawl.queued());
-        return new FullCrawl(pages, prior, extra, checkpointJson(s, pages, prior, crawl, doneUrls));
+        return new FullCrawl(pages, prior, extra, crawl.queued() == 0 ? null : checkpointJson(s, pages, prior, crawl, doneUrls));
     }
 
     /**
@@ -2286,16 +2287,23 @@ public class PageResourceScanService {
         long until = Math.min(run.deadline, clock.getAsLong() + SITEMAP_PHASE_MS);
         List<String> errors = new ArrayList<>();
         List<String> seeds = new ArrayList<>();
-        byte[] robotsBody = fetchBytes(run, origin + "/robots.txt", ROBOTS_MAX_BYTES, until);
+        byte[] robotsBody = fetchBytes(run, origin + "/robots.txt", ROBOTS_MAX_BYTES, until).body();
         if (robotsBody != null) seeds.addAll(SitemapReader.robotsSitemaps(new String(robotsBody, StandardCharsets.UTF_8), origin + "/"));
         boolean fromRobots = !seeds.isEmpty();
-        if (seeds.isEmpty()) seeds.add(origin + "/sitemap.xml");
         java.util.ArrayDeque<Object[]> todo = new java.util.ArrayDeque<>();
         Set<String> seenFiles = new HashSet<>();
         int otherHost = 0;
         for (String u : seeds) {
+            String h = hostOf(u);
+            if (h == null) { addError(errors, u); continue; }   // okunamayan adres hata sayılır, "başka sunucu" değil
             if (!sameHost(u, origin)) { otherHost++; continue; }   // başka host'taki harita indirilmez
             if (seenFiles.add(u)) todo.add(new Object[]{u, 0});
+        }
+        // robots.txt'te harita yok ya da hepsi başka sunucuda: sitenin kendi /sitemap.xml'i de denenir
+        boolean defaultSeed = false;
+        if (todo.isEmpty() && seenFiles.add(origin + "/sitemap.xml")) {
+            todo.add(new Object[]{origin + "/sitemap.xml", 0});
+            defaultSeed = true;
         }
         int files = 0, read = 0, urls = 0, added = 0;
         boolean truncated = false;
@@ -2309,17 +2317,22 @@ public class PageResourceScanService {
             String url = (String) t[0];
             int depth = (Integer) t[1];
             files++;
-            byte[] body = fetchBytes(run, url, SITEMAP_MAX_BYTES, until);
+            Bytes got = fetchBytes(run, url, SITEMAP_MAX_BYTES, until);
+            byte[] body = got.body();
             if (run.halted()) return info;
             if (body == null) {
                 if (clock.getAsLong() >= until) { truncated = true; break; }
-                if (fromRobots || depth > 0) addError(errors, url);
+                // Varsayılan /sitemap.xml'in YOKLUĞU (404 / 410) hata değil; başka her başarısızlık (5xx, zaman aşımı,
+                // tavanı aşan gövde) keşfi eksik bırakır
+                boolean absent = got.status() == 404 || got.status() == 410;
+                if (!(defaultSeed && depth == 0 && absent)) addError(errors, url);
                 continue;
             }
             // Açma + ayrıştırma arka planda (pod başına tek seferde bir dosya — bellek tepe noktası sınırlı); bekleme kalp
             // atışı yazar, süre / kapanış gelince bırakılır.
             Future<SitemapReader.Parsed> pf = run.submit(() -> {
-                sitemapParse.acquire();
+                long wait = until - clock.getAsLong();
+                if (wait <= 0 || !sitemapParse.tryAcquire(wait, TimeUnit.MILLISECONDS)) return null;   // süre içinde sıra gelmedi
                 try {
                     return SitemapReader.parse(SitemapReader.decode(body));
                 } finally {
@@ -2341,6 +2354,7 @@ public class PageResourceScanService {
                 if (depth < 2) {
                     for (String loc : parsed.locs()) {
                         if (seenFiles.size() >= SITEMAP_MAX_FILES * 4) break;
+                        if (hostOf(loc) == null) { addError(errors, loc); continue; }
                         if (!sameHost(loc, origin)) { otherHost++; continue; }
                         if (seenFiles.add(loc)) todo.add(new Object[]{loc, depth + 1});
                     }
@@ -2350,7 +2364,8 @@ public class PageResourceScanService {
                 List<String> locs = parsed.locs();
                 for (int i = 0; i < locs.size(); i += SiteCrawl.MAX_LINKS_PER_PAGE) {
                     if (run.halted()) return info;
-                    if (clock.getAsLong() >= until || crawl.full()) { truncated = true; break outer; }
+                    if (crawl.full()) { crawl.markDroppedAtLeast(); truncated = true; break outer; }   // kalan adresler sayılamadı
+                    if (clock.getAsLong() >= until) { truncated = true; break outer; }
                     added += crawl.offer(locs.subList(i, Math.min(locs.size(), i + SiteCrawl.MAX_LINKS_PER_PAGE)),
                             SiteCrawl.SOURCE_SITEMAP);
                     run.beat(false);
@@ -2359,6 +2374,7 @@ public class PageResourceScanService {
         }
         info.put("found", read > 0);
         if (otherHost > 0) info.put("other_host", otherHost);
+        info.put("default_seed", defaultSeed);
         info.put("from_robots", fromRobots);
         info.put("files", files);
         info.put("files_read", read);
@@ -2369,15 +2385,24 @@ public class PageResourceScanService {
         return info;
     }
 
+    /** Adresin host'u (kodlanmamış boşluk / | / { … önce kodlanır); mutlak http(s) değilse ya da okunamazsa null. */
+    static String hostOf(String url) {
+        if (url == null || url.isBlank()) return null;
+        try {
+            java.net.URI u = java.net.URI.create(PageFetchCore.normalizeUrl(url.trim()));
+            String scheme = u.getScheme();
+            if (scheme == null || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) return null;
+            return u.getHost();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     /** Aynı host mu (şema farkı — http ↔ https — ve bağlantı noktası serbest; alt alan adı BAŞKA host sayılır). */
     static boolean sameHost(String url, String origin) {
-        try {
-            String a = java.net.URI.create(url).getHost();
-            String b = java.net.URI.create(origin).getHost();
-            return a != null && b != null && a.equalsIgnoreCase(b);
-        } catch (RuntimeException e) {
-            return false;
-        }
+        String a = hostOf(url);
+        String b = hostOf(origin);
+        return a != null && b != null && a.equalsIgnoreCase(b);
     }
 
     private static void addError(List<String> errors, String url) {
@@ -2399,7 +2424,10 @@ public class PageResourceScanService {
      * Ham baytlar (robots.txt, site haritası): SSRF her adımda, tarama zaman aşımı ve {@code until} son tarihi; 200 değilse,
      * gövde tavanı aşarsa ya da süre dolarsa null. Bayt bütçesine sayılır.
      */
-    private byte[] fetchBytes(Run run, String url, int max, long until) throws InterruptedException {
+    /** Ham indirme sonucu: gövde (200 ve tavan içinde; yoksa null) ve HTTP durumu (-1 = yanıt yok / zaman aşımı). */
+    record Bytes(byte[] body, int status) {}
+
+    private Bytes fetchBytes(Run run, String url, int max, long until) throws InterruptedException {
         boolean via = run.via(url);
         // countBytes=false: tavandan sonra gövde okunmaz (sayım için boşa indirme yok)
         PageFetchCore.FetchOptions o = new PageFetchCore.FetchOptions(run.c.requestTimeoutMs(), run.ua, null, true, false, via);
@@ -2409,13 +2437,14 @@ public class PageResourceScanService {
         try {
             of = awaitBeating(run, f, until);
         } catch (IllegalStateException e) {
-            return null;   // çekim hatası (bağlantı / zaman aşımı) — site haritası yalnız eksik kalır
+            return new Bytes(null, -1);   // çekim hatası (bağlantı / zaman aşımı) — site haritası yalnız eksik kalır
         }
-        if (of == null || of.fetch() == null) return null;
+        if (of == null || of.fetch() == null) return new Bytes(null, -1);
         PageFetchCore.Fetch fe = of.fetch();
-        run.spent.addAndGet(Math.max(0, fe.bytes()));
-        if (fe.status() != 200 || fe.body() == null || fe.body().length > max) return null;
-        return fe.body();
+        // Bütçeye yalnız gerçekten okunabilen kadar (tavanı aşan bildirilen Content-Length okunmadan sayılmaz)
+        run.spent.addAndGet(Math.max(0, Math.min(fe.bytes(), (long) max + 1)));
+        if (fe.status() != 200 || fe.body() == null || fe.body().length > max) return new Bytes(null, fe.status());
+        return new Bytes(fe.body(), fe.status());
     }
 
     /** Ölçülen sayfa yükü nesnesini önbelleğe alır (belge / bağlantı yoklaması, indirilmeyen ve önbellekten gelen hariç). */
@@ -2676,8 +2705,9 @@ public class PageResourceScanService {
                     + "sonuç yazılmadı", s.id());
             return;
         }
-        if (checkpoint != null) {
+        if (checkpoint != null || (s.site() != null && s.site().full())) {
             try {
+                // Tüm site: son nokta (kuyruk boşsa NULL — çalışırken yazılan ara nokta silinir)
                 jdbc.update(SQL_CHECKPOINT_FINAL, checkpoint, s.id());
             } catch (RuntimeException e) {
                 log.warn("Kaynak analizi {} sürdürme noktası yazılamadı — bu analiz sürdürülemez: {}", s.id(),

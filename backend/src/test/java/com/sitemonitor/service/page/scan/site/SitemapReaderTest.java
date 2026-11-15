@@ -113,6 +113,13 @@ class SitemapReaderTest {
         assertThat(idx.index()).isTrue();
         assertThat(idx.locs()).containsExactly("https://a.example/s1.xml");
         assertThat(SitemapReader.isIndex("<!-- kapanmayan yorum")).isFalse();
+        // kök öncesi çöp (PHP uyarısı): dizin kararı ilk kayıt öğesinden
+        SitemapReader.Parsed junkIdx = SitemapReader.parse("<br /><b>Warning</b>: x<?xml version=\"1.0\"?><sitemapindex><sitemap>"
+                + "<loc>https://a.example/s2.xml</loc></sitemap></sitemapindex>");
+        assertThat(junkIdx.index()).isTrue();
+        SitemapReader.Parsed junkSet = SitemapReader.parse("<br /><b>Warning</b>: x<urlset><url><loc>https://a.example/p</loc></url></urlset>");
+        assertThat(junkSet.index()).isFalse();
+        assertThat(junkSet.locs()).containsExactly("https://a.example/p");
         assertThat(SitemapReader.isIndex("")).isFalse();
     }
 
