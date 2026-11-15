@@ -61,6 +61,8 @@ class PageResourceFullSiteScanTest {
     AppSettingsService settings;
     final Map<String, AtomicInteger> hits = new ConcurrentHashMap<>();
     volatile boolean withRobots = true;
+    /** robots.txt başka sunucudaki bir site haritasını da listeler (indirilmemeli). */
+    volatile boolean robotsOtherHost;
     /** Doluysa site haritası isteği bu kadar ms bekletilir (sınırlı) — süre sınırı denetimi. */
     volatile long sitemapStallMs;
     final AtomicInteger userSeq = new AtomicInteger();
@@ -105,7 +107,8 @@ class PageResourceFullSiteScanTest {
                 case "/s.css" -> { body = "body{color:red}".getBytes(StandardCharsets.UTF_8); ct = "text/css"; }
                 case "/robots.txt" -> {
                     if (!withRobots) { body = "no".getBytes(); status = 404; ct = "text/plain"; break; }
-                    body = ("User-agent: *\nSitemap: " + host + "/sm-index.xml\n").getBytes(StandardCharsets.UTF_8);
+                    body = ("User-agent: *\n" + (robotsOtherHost ? "Sitemap: http://other.example.invalid/sm.xml\n" : "")
+                            + "Sitemap: " + host + "/sm-index.xml\n").getBytes(StandardCharsets.UTF_8);
                     ct = "text/plain";
                 }
                 case "/sm-index.xml" -> {
@@ -213,6 +216,8 @@ class PageResourceFullSiteScanTest {
         assertThat(crawl.get("mode")).isEqualTo("full");
         assertThat(crawl.get("complete")).isEqualTo(true);
         assertThat(crawl.get("stop_reason")).isNull();
+        assertThat(crawl).doesNotContainKey("discovery_incomplete");
+        assertThat(scan.get("resumable")).as("tüm site taramasının denetim noktası var").isEqualTo(true);
         assertThat((Integer) crawl.get("from_sitemap")).as("yalnız haritada olan sayfa").isEqualTo(1);
         Map<String, Object> sm = get(crawl, "sitemap");
         assertThat(sm).containsEntry("found", true).containsEntry("from_robots", true).containsEntry("files_read", 2)
@@ -280,6 +285,38 @@ class PageResourceFullSiteScanTest {
     }
 
     @Test
+    @DisplayName("başka sunucudaki site haritası indirilmez, sayılır; site-only taramada resumable alanı yok")
+    void otherHostSitemapSkipped() throws Exception {
+        robotsOtherHost = true;
+        long id = startFull(7, 1000, null);
+        Map<String, Object> site = get(get(awaitEnd(7, id), "analysis"), "site");
+        Map<String, Object> crawl = get(site, "crawl");
+        Map<String, Object> sm = get(crawl, "sitemap");
+        assertThat(sm.get("other_host")).isEqualTo(1);
+        assertThat((List<?>) get(sm, "errors")).as("denenmedi, hata değil").isEmpty();
+        assertThat(crawl.get("complete")).isEqualTo(true);
+        PageResourceScanService.Start st = svc.start(monitor(8), "u:y", "Ayşe", new PageResourceScanService.SiteOptions(3));
+        long siteId = ((Number) st.scan().get("id")).longValue();
+        Map<String, Object> scan = get(awaitEnd(8, siteId), "scan");
+        assertThat(scan).doesNotContainKey("resumable");
+    }
+
+    @Test
+    @DisplayName("denetim noktası budama: izleme başına en yeni 5 biten taramanınki kalır, çalışan satıra dokunulmaz")
+    void checkpointsArePruned() {
+        String ins = "INSERT INTO page_resource_scans (monitor_id, team_id, url, status, via, started_at, started_ms, heartbeat_ms, "
+                + "owner_pod, requested_by, progress_done, progress_total, capped, items_kept, algorithm_version, scope, site_crawl, "
+                + "site_checkpoint) VALUES (11, 7, 'http://x/', ?, 'direct', '2026-11-15T00:00:00', 0, 0, 'p', 'u', 0, 0, FALSE, FALSE, "
+                + "3, 'site', 'full', '{\"v\":1}')";
+        for (int i = 0; i < 7; i++) jdbc.update(ins, "DONE");
+        jdbc.update(ins, "RUNNING");
+        svc.pruneItems(11);
+        List<String> rows = jdbc.queryForList("SELECT CASE WHEN site_checkpoint IS NULL THEN 'n' ELSE 'y' END || status "
+                + "FROM page_resource_scans WHERE monitor_id = 11 ORDER BY id DESC", String.class);
+        assertThat(rows).containsExactly("yRUNNING", "yDONE", "yDONE", "yDONE", "yDONE", "yDONE", "nDONE", "nDONE");
+    }
+
+    @Test
     @DisplayName("robots / site haritası yok: tarama bağlantılarla sürer, hata yazılmaz")
     void noSitemap() throws Exception {
         withRobots = false;
@@ -306,6 +343,11 @@ class PageResourceFullSiteScanTest {
         assertThat(sm.get("found")).isEqualTo(false);
         assertThat((List<String>) get(sm, "errors")).as("robots'taki harita okunamadı").hasSize(1);
         assertThat((List<?>) get(site, "pages")).hasSize(8);
+        Map<String, Object> crawl = get(site, "crawl");
+        assertThat(crawl.get("stop_reason")).as("kuyruk bitti").isNull();
+        assertThat(crawl.get("complete")).as("listelenen harita okunamadı: 'her sayfa tarandı' denmez").isEqualTo(false);
+        assertThat(crawl.get("discovery_incomplete")).isEqualTo(true);
+        assertThat(site.get("incomplete")).isEqualTo(true);
         assertThat(took).as("15 sn bekletilen harita taramayı bekletmez").isLessThan(14_000);
     }
 }

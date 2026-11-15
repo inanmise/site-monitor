@@ -26,6 +26,8 @@ public final class SiteCrawl {
     public static final int MAX_KNOWN = 20_000;
     /** Tek sayfadan değerlendirilen en çok bağlantı. */
     public static final int MAX_LINKS_PER_PAGE = 2_000;
+    /** Taşma sayacının tekilleştirme tavanı (64 bit özet kümesi); aşılınca sayaç "en az" olur ({@link #droppedAtLeast()}). */
+    public static final int DROPPED_TRACK_MAX = 100_000;
     /** Kaynak etiketi (tel değeri): ana sayfa / iç sayfa bağlantısı, site haritası, önceki taramadan devralınan. */
     public static final String SOURCE_LINK = "link", SOURCE_SITEMAP = "sitemap", SOURCE_RESUME = "resume";
 
@@ -37,6 +39,9 @@ public final class SiteCrawl {
     private final Set<String> known = new HashSet<>();
     private final ArrayDeque<Entry> queue = new ArrayDeque<>();
     private int dropped;
+    /** Taşan adreslerin 64 bit özetleri — aynı adres birden çok sayfada geçse de bir kez sayılır. */
+    private final Set<Long> droppedSeen = new HashSet<>();
+    private boolean droppedAtLeast;
     private int fromSitemap;
     private int fromLinks;
 
@@ -75,7 +80,7 @@ public final class SiteCrawl {
             if (k == null) continue;
             String n = SitePages.normalized(k);
             if (n == null || known.contains(n)) continue;
-            if (known.size() >= MAX_KNOWN) { dropped++; continue; }
+            if (known.size() >= MAX_KNOWN) { noteDropped(n); continue; }
             known.add(n);
             queue.addLast(new Entry(k, source));
             added++;
@@ -83,6 +88,31 @@ public final class SiteCrawl {
             else if (SOURCE_LINK.equals(source)) fromLinks++;
         }
         return added;
+    }
+
+    /** Tavan dolu mu (yeni adres artık kuyruğa giremez). */
+    public boolean full() {
+        return known.size() >= MAX_KNOWN;
+    }
+
+    /** {@link #dropped()} alt sınır mı (tekilleştirme kümesi doldu; daha fazla adres de olabilir). */
+    public boolean droppedAtLeast() {
+        return droppedAtLeast;
+    }
+
+    private void noteDropped(String n) {
+        if (droppedSeen.size() >= DROPPED_TRACK_MAX) { droppedAtLeast = true; return; }
+        if (droppedSeen.add(fnv64(n))) dropped++;
+    }
+
+    /** FNV-1a 64 bit (yalnız tekilleştirme; çakışma sayacı en kötü birkaç eksik gösterir). */
+    static long fnv64(String s) {
+        long h = 0xcbf29ce484222325L;
+        for (int i = 0; i < s.length(); i++) {
+            h ^= s.charAt(i);
+            h *= 0x100000001b3L;
+        }
+        return h;
     }
 
     /** Kuyruğun önündeki adres (null = boş). */
@@ -100,7 +130,7 @@ public final class SiteCrawl {
         return queue.size();
     }
 
-    /** Bilinen adres tavanı yüzünden kuyruğa giremeyen adres sayısı. */
+    /** Bilinen adres tavanı yüzünden kuyruğa giremeyen TEKİL adres sayısı (bkz. {@link #droppedAtLeast()}). */
     public int dropped() {
         return dropped;
     }

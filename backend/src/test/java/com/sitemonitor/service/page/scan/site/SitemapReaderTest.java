@@ -101,6 +101,39 @@ class SitemapReaderTest {
     }
 
     @Test
+    @DisplayName("dizin mi: yalnız KÖK öğe — stil sayfası / ilk adres 'sitemapindex' içerse de urlset; önekli dizin tanınır")
+    void indexIsRootElementOnly() {
+        SitemapReader.Parsed urlset = SitemapReader.parse("<?xml version=\"1.0\"?><?xml-stylesheet href=\"/sitemapindex.xsl\"?>"
+                + "<!-- sitemapindex --><urlset><url><loc>https://a.example/sitemapindex</loc></url></urlset>");
+        assertThat(urlset.index()).isFalse();
+        assertThat(urlset.locs()).containsExactly("https://a.example/sitemapindex");
+        SitemapReader.Parsed idx = SitemapReader.parse("<?xml version=\"1.0\"?><!DOCTYPE x><!-- yorum -->"
+                + "<sm:sitemapindex xmlns:sm=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><sm:sitemap><sm:loc>https://a.example/s1.xml"
+                + "</sm:loc></sm:sitemap></sm:sitemapindex>");
+        assertThat(idx.index()).isTrue();
+        assertThat(idx.locs()).containsExactly("https://a.example/s1.xml");
+        assertThat(SitemapReader.isIndex("<!-- kapanmayan yorum")).isFalse();
+        assertThat(SitemapReader.isIndex("")).isFalse();
+    }
+
+    @Test
+    @DisplayName("uzantı öğeleri: image:loc sayfa adresi sayılmaz; yorumdaki loc okunmaz; bozuk uzantı sonraki kaydı yutmaz")
+    void extensionLocsAndCommentsSkipped() {
+        SitemapReader.Parsed p = SitemapReader.parse("<urlset xmlns:image=\"x\"><url><loc>https://a.example/p1</loc>"
+                + "<image:image><image:loc>https://a.example/i.jpg</image:loc><image:title>t</image:title></image:image></url>"
+                + "<!-- a > <loc>https://a.example/in-comment</loc> -->"
+                + "<url><loc>https://a.example/p2</loc><video:video><video:content_loc>https://a.example/v.mp4</video:content_loc>"
+                + "</video:video><xhtml:link rel=\"alternate\" href=\"https://a.example/en\"/></url>"
+                + "<url><loc>https://a.example/p3</loc><mobile:mobile><mobile:loc>https://a.example/m</mobile:loc></url>"
+                + "<url><loc>https://a.example/p4</loc></url></urlset>");
+        assertThat(p.locs()).containsExactly("https://a.example/p1", "https://a.example/p2", "https://a.example/p3",
+                "https://a.example/p4");
+        SitemapReader.Parsed cdata = SitemapReader.parse("<urlset><![CDATA[<loc>https://a.example/x</loc>]]>"
+                + "<url><loc><![CDATA[https://a.example/q?a=1&b=2]]></loc></url></urlset>");
+        assertThat(cdata.locs()).containsExactly("https://a.example/q?a=1&b=2");
+    }
+
+    @Test
     @DisplayName("mutlak adres: göreli → tabana göre; başka şema / host yok → null")
     void absolute() {
         assertThat(SitemapReader.absolute("/a.xml", "https://a.example/")).isEqualTo("https://a.example/a.xml");

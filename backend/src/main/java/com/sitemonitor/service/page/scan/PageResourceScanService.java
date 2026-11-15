@@ -215,7 +215,7 @@ public class PageResourceScanService {
             + "image_bytes, image_count, document_count, document_bytes, link_count, link_bytes, failed_count, capped, error, "
             + "items_kept, owner_pod, redirect_count, redirect_ms, algorithm_version, cancel_requested, "
             + "js_bytes, css_bytes, font_bytes, security_score, seo_score, a11y_score, scope, pages_count, pages_done, pages_total, "
-            + "site_crawl";
+            + "site_crawl, CASE WHEN site_checkpoint IS NULL THEN FALSE ELSE TRUE END AS site_resumable";
 
     static final String SQL_INSERT = "INSERT INTO page_resource_scans (monitor_id, team_id, url, status, via, started_at, "
             + "started_ms, heartbeat_ms, owner_pod, requested_by, progress_done, progress_total, capped, items_kept, "
@@ -255,6 +255,12 @@ public class PageResourceScanService {
     static final String SQL_KEPT_IDS = "SELECT id FROM page_resource_scans WHERE monitor_id = ? AND items_json IS NOT NULL "
             + "ORDER BY id DESC";
     static final String SQL_DROP_ITEMS = "UPDATE page_resource_scans SET items_json = NULL, items_kept = FALSE WHERE id = ?";
+    /** Tüm site taraması denetim noktası tutulan satırlar (en yeni önce) — {@value #CHECKPOINT_KEEP} dışındakiler bırakılır. */
+    static final String SQL_CHECKPOINT_IDS = "SELECT id FROM page_resource_scans WHERE monitor_id = ? AND site_checkpoint IS NOT NULL "
+            + "AND status <> 'RUNNING' ORDER BY id DESC";
+    static final String SQL_DROP_CHECKPOINT = "UPDATE page_resource_scans SET site_checkpoint = NULL WHERE id = ? AND status <> 'RUNNING'";
+    /** İzleme başına tutulan en çok tüm site denetim noktası (sürdürme yalnız bunlardan). */
+    static final int CHECKPOINT_KEEP = 5;
     static final String SQL_DELETE_MONITOR = "DELETE FROM page_resource_scans WHERE monitor_id = ?";
     /** Tüm site taraması (2026-11-15). */
     static final String SQL_SET_CRAWL = "UPDATE page_resource_scans SET site_crawl = ? WHERE id = ?";
@@ -273,6 +279,8 @@ public class PageResourceScanService {
     private ProxyPolicyService proxyPolicy;
 
     private final Semaphore podSlots = new Semaphore(MAX_PER_POD);
+    /** Site haritası açma + ayrıştırma: pod başına tek dosya (açılmış dosya ≤ 50 MB — iki tarama aynı anda bellek doldurmasın). */
+    private final Semaphore sitemapParse = new Semaphore(1);
     private final Semaphore imageSlots = new Semaphore(OPT_CONCURRENT);
     private final Semaphore imageMemory = new Semaphore(OPT_MEMORY_MB);
     private final Object startLock = new Object();
@@ -668,6 +676,7 @@ public class PageResourceScanService {
         }
         m.put("progress", progress);
         m.put("crawl", rs.getString("site_crawl"));   // tüm site taraması: "full" (2026-11-15); diğerleri null
+        if (CRAWL_FULL.equals(rs.getString("site_crawl"))) m.put("resumable", rs.getBoolean("site_resumable"));
         m.put("grade", intObj(rs, "grade"));
         m.put("grade_letter", rs.getString("grade_letter"));
         m.put("load_ms", longObj(rs, "load_ms"));
@@ -2158,6 +2167,12 @@ public class PageResourceScanService {
             }
             SitePages.Page pg = scanExtraPage(run, e.url(), exclude);
             if (pg == null) return null;
+            if (SitePages.SKIPPED.equals(pg.status())) {
+                // Süre sayfanın HTML'i inerken doldu: sayfa taranmadı — kuyruğun önüne döner (sürdürmede yeniden denenir)
+                crawl.pushFront(e);
+                stop = "TIME";
+                break;
+            }
             pages.add(pg);
             retained += pg.resources().size();
             doneUrls.add(e.url());
@@ -2173,7 +2188,11 @@ public class PageResourceScanService {
                 lastCk = now;
             }
         }
-        if (stop == null && crawl.dropped() > 0) stop = "KNOWN_CAP";
+        if (stop == null && (crawl.dropped() > 0 || crawl.droppedAtLeast())) stop = "KNOWN_CAP";
+        // Keşif eksik: site haritası evresi kesildi (dosya / süre / adres tavanı) ya da listelenen bir harita okunamadı —
+        // bulunamayan sayfalar olabilir, "her sayfa tarandı" denmez.
+        boolean discoveryCut = Boolean.TRUE.equals(sitemap.get("truncated"))
+                || (sitemap.get("errors") instanceof List<?> errs && !errs.isEmpty());
         List<Map<String, Object>> unscanned = new ArrayList<>();
         String reason = stop == null ? "PAGES" : stop;
         for (SiteCrawl.Entry e : crawl.remaining(MAX_UNSCANNED_LISTED)) {
@@ -2191,8 +2210,10 @@ public class PageResourceScanService {
         info.put("from_links", crawl.fromLinks());
         info.put("from_sitemap", crawl.fromSitemap());
         info.put("dropped", crawl.dropped());
+        if (crawl.droppedAtLeast()) info.put("dropped_at_least", true);
         info.put("stop_reason", stop);   // null = kuyruk bitti: bulunan bütün sayfalar tarandı
-        info.put("complete", stop == null);
+        info.put("complete", stop == null && !discoveryCut);
+        if (stop == null && discoveryCut) info.put("discovery_incomplete", true);
         info.put("sitemap", sitemap);
         info.put("resumed_from", resume == null ? null : s.site().resumeFrom());
         info.put("prior_pages", prior.size());
@@ -2271,35 +2292,56 @@ public class PageResourceScanService {
         if (seeds.isEmpty()) seeds.add(origin + "/sitemap.xml");
         java.util.ArrayDeque<Object[]> todo = new java.util.ArrayDeque<>();
         Set<String> seenFiles = new HashSet<>();
-        for (String u : seeds) if (seenFiles.add(u)) todo.add(new Object[]{u, 0});
+        int otherHost = 0;
+        for (String u : seeds) {
+            if (!sameHost(u, origin)) { otherHost++; continue; }   // başka host'taki harita indirilmez
+            if (seenFiles.add(u)) todo.add(new Object[]{u, 0});
+        }
         int files = 0, read = 0, urls = 0, added = 0;
         boolean truncated = false;
+        outer:
         while (!todo.isEmpty()) {
             if (files >= SITEMAP_MAX_FILES) { truncated = true; break; }
             if (run.halted()) return info;
             if (clock.getAsLong() >= until) { truncated = true; break; }
+            run.beat(false);
             Object[] t = todo.pollFirst();
             String url = (String) t[0];
             int depth = (Integer) t[1];
             files++;
             byte[] body = fetchBytes(run, url, SITEMAP_MAX_BYTES, until);
+            if (run.halted()) return info;
             if (body == null) {
+                if (clock.getAsLong() >= until) { truncated = true; break; }
                 if (fromRobots || depth > 0) addError(errors, url);
                 continue;
             }
+            // Açma + ayrıştırma arka planda (pod başına tek seferde bir dosya — bellek tepe noktası sınırlı); bekleme kalp
+            // atışı yazar, süre / kapanış gelince bırakılır.
+            Future<SitemapReader.Parsed> pf = run.submit(() -> {
+                sitemapParse.acquire();
+                try {
+                    return SitemapReader.parse(SitemapReader.decode(body));
+                } finally {
+                    sitemapParse.release();
+                }
+            });
             SitemapReader.Parsed parsed;
             try {
-                parsed = SitemapReader.parse(SitemapReader.decode(body));
-            } catch (java.io.IOException | RuntimeException e) {
+                parsed = awaitBeating(run, pf, until);
+            } catch (IllegalStateException e) {
                 addError(errors, url);
                 continue;
             }
+            if (run.halted()) return info;
+            if (parsed == null) { truncated = true; break; }
             read++;
             if (parsed.truncated()) truncated = true;
             if (parsed.index()) {
                 if (depth < 2) {
                     for (String loc : parsed.locs()) {
                         if (seenFiles.size() >= SITEMAP_MAX_FILES * 4) break;
+                        if (!sameHost(loc, origin)) { otherHost++; continue; }
                         if (seenFiles.add(loc)) todo.add(new Object[]{loc, depth + 1});
                     }
                 }
@@ -2307,12 +2349,16 @@ public class PageResourceScanService {
                 urls += parsed.locs().size();
                 List<String> locs = parsed.locs();
                 for (int i = 0; i < locs.size(); i += SiteCrawl.MAX_LINKS_PER_PAGE) {
+                    if (run.halted()) return info;
+                    if (clock.getAsLong() >= until || crawl.full()) { truncated = true; break outer; }
                     added += crawl.offer(locs.subList(i, Math.min(locs.size(), i + SiteCrawl.MAX_LINKS_PER_PAGE)),
                             SiteCrawl.SOURCE_SITEMAP);
+                    run.beat(false);
                 }
             }
         }
         info.put("found", read > 0);
+        if (otherHost > 0) info.put("other_host", otherHost);
         info.put("from_robots", fromRobots);
         info.put("files", files);
         info.put("files_read", read);
@@ -2321,6 +2367,17 @@ public class PageResourceScanService {
         info.put("truncated", truncated);
         info.put("errors", errors);
         return info;
+    }
+
+    /** Aynı host mu (şema farkı — http ↔ https — ve bağlantı noktası serbest; alt alan adı BAŞKA host sayılır). */
+    static boolean sameHost(String url, String origin) {
+        try {
+            String a = java.net.URI.create(url).getHost();
+            String b = java.net.URI.create(origin).getHost();
+            return a != null && b != null && a.equalsIgnoreCase(b);
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     private static void addError(List<String> errors, String url) {
@@ -2344,7 +2401,8 @@ public class PageResourceScanService {
      */
     private byte[] fetchBytes(Run run, String url, int max, long until) throws InterruptedException {
         boolean via = run.via(url);
-        PageFetchCore.FetchOptions o = new PageFetchCore.FetchOptions(run.c.requestTimeoutMs(), run.ua, null, true, true, via);
+        // countBytes=false: tavandan sonra gövde okunmaz (sayım için boşa indirme yok)
+        PageFetchCore.FetchOptions o = new PageFetchCore.FetchOptions(run.c.requestTimeoutMs(), run.ua, null, true, false, via);
         Future<PageFetchCore.OriginalFetch> f = run.submit(() -> core.fetchOriginal(url, o,
                 PageFetchCore.ScanTuning.original(run.clients, max + 1)));
         PageFetchCore.OriginalFetch of;
@@ -2656,6 +2714,8 @@ public class PageResourceScanService {
         try {
             List<Long> ids = jdbc.queryForList(SQL_KEPT_IDS, Long.class, monitorId);
             for (int i = DETAIL_RUNS; i < ids.size(); i++) jdbc.update(SQL_DROP_ITEMS, ids.get(i));
+            List<Long> cks = jdbc.queryForList(SQL_CHECKPOINT_IDS, Long.class, monitorId);
+            for (int i = CHECKPOINT_KEEP; i < cks.size(); i++) jdbc.update(SQL_DROP_CHECKPOINT, cks.get(i));
         } catch (RuntimeException e) {
             log.warn("Eski kaynak analizi ayrıntıları bırakılamadı (izleme {}): {}", monitorId, e.getClass().getSimpleName());
         }
