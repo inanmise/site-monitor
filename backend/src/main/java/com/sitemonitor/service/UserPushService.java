@@ -3330,22 +3330,29 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
         vals.put("bitis", nowClock);   // çözüm tetiginde "şimdi" = normale dönüş anı
         String key = templateKeyFor(event.getAlertType(), trigger);
         // Süresi GEÇMİŞ süre-bitişi (2026-11-15): "{gun} gün içinde doluyor" şablonu "-5 gün içinde doluyor" yazıyordu. Gün
-        // negatifse yerleşik "N gün önce doldu" metni kullanılır (düzenlenebilir şablon değil — yer tutucuları aynı); gün
-        // pozitif / bilinmiyorken çıktı bayt bayt aynı.
+        // negatifse ve "expiry" şablonu VARSAYILANSA (düzenlenmemiş) yerleşik "N gün önce doldu" metni kullanılır (yer tutucuları
+        // aynı). Yöneticinin DÜZENLEDİĞİ şablon olduğu gibi işlenir (inceleme LOW 3 — sessizce ezilmez; negatif gün kendi metninde
+        // görünür). Gün pozitif / bilinmiyorken çıktı bayt bayt aynı.
+        String tpl = template(key, lang);
         if ("expiry".equals(key)) {
             Integer g = parseIntOrNull(vals.get("gun"));
-            if (g != null && g < 0) {
-                vals.put("gun", String.valueOf(Math.abs(g)));
-                return fillTemplate(PushI18n.isEn(lang) ? EXPIRED_TEMPLATE_EN : EXPIRED_TEMPLATE_TR, vals);
+            boolean en = PushI18n.isEn(lang);
+            String def = en ? PushI18n.DEFAULT_TEMPLATES_EN.get("expiry") : DEFAULT_TEMPLATES.get("expiry");
+            if (g != null && g < 0 && tpl != null && tpl.trim().equals(def)) {
+                long n = Math.abs((long) g);
+                vals.put("gun", String.valueOf(n));
+                return fillTemplate(en ? (n == 1 ? EXPIRED_TEMPLATE_EN_ONE : EXPIRED_TEMPLATE_EN) : EXPIRED_TEMPLATE_TR, vals);
             }
         }
-        return fillTemplate(template(key, lang), vals);
+        return fillTemplate(tpl, vals);
     }
 
     /** Süresi geçmiş süre-bitişi push metni (Türkçe) — yer tutucular "expiry" şablonuyla aynı. */
     static final String EXPIRED_TEMPLATE_TR = "{seviye}: {ad} - {ne} {gun} gün önce doldu ({tarih}).";
     /** Süresi geçmiş süre-bitişi push metni (İngilizce). */
     static final String EXPIRED_TEMPLATE_EN = "{seviye}: {ad} - {ne} expired {gun} days ago ({tarih}).";
+    /** İngilizce tekil: "expired 1 day ago". */
+    static final String EXPIRED_TEMPLATE_EN_ONE = "{seviye}: {ad} - {ne} expired 1 day ago ({tarih}).";
 
     private static Integer parseIntOrNull(String v) {
         if (v == null) return null;

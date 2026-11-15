@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+await vi.hoisted(async () => (await import('./helpers/orgNoonClock.js')).freezeOrgNoon())   // kalan gün İstanbul günüyle (LOW 2): sabit 09:00Z
 import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
 import DomainMonitorPage from '../components/DomainMonitorPage.jsx'
 import { addDays, todayKey } from '../components/domain/detail/domainDetailModel.js'
@@ -110,6 +111,14 @@ describe('DomainMonitorPage — Alan Adı detay penceresi (yeni başlık)', () =
     fireEvent.click(within(header()).getByRole('button', { name: 'example.com — Check now' }))
     await waitFor(() => expect(api.monitoring.triggerDomainCheck).toHaveBeenCalledWith(1))
     await waitFor(() => expect(header().querySelector('[data-slot="domain-days"]')).toHaveTextContent('18'))
+  })
+
+  it('M1: tekil "Şimdi kontrol et" 429 RATE_LIMITED alırsa sunucunun bekleme süreli metni gösterilir (sessiz kalmaz)', async () => {
+    api.monitoring.triggerDomainCheck.mockResolvedValue({ success: false, code: 'RATE_LIMITED',
+      error: 'Too many live lookups: at most 6 per minute. Try again in 42 s.' })
+    await openFromCard()
+    fireEvent.click(within(header()).getByRole('button', { name: 'example.com — Check now' }))
+    expect(await screen.findByText('Too many live lookups: at most 6 per minute. Try again in 42 s.')).toBeInTheDocument()
   })
 
   it('bitişi bilinmeyen izlemede yönetici başlıktan Sorun Tanıla açar (detayın üstünde ikinci pencere)', async () => {

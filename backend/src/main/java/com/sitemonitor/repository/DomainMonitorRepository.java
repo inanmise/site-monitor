@@ -43,6 +43,30 @@ public interface DomainMonitorRepository extends JpaRepository<DomainMonitor, Lo
      *  toplu tasima icin. Talep uzerine calisir (silme/kullanim ekrani), sweep yolunda DEGIL. */
     java.util.List<DomainMonitor> findByNotificationGroupId(Long notificationGroupId);
 
+    /**
+     * Yenileme planını yaz (2026-11-15, M2) — YALNIZ plan kolonları + {@code updated_at}; varlığın tamamı kaydedilmez (okumadan sonra
+     * yapılan eşik / alan adı düzenlemesi ezilmesin). 0 satır = izleme silinmiş.
+     */
+    @Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("UPDATE DomainMonitor m SET m.renewalPlannedAt = :at, m.renewalPlannedBy = :by, m.renewalPlannedByName = :byName, "
+         + "m.renewalPlannedNote = :note, m.renewalPlannedExpiry = :expiry, m.updatedAt = :updatedAt WHERE m.id = :id")
+    int writeRenewalPlan(@Param("id") Long id, @Param("at") String at, @Param("by") String by, @Param("byName") String byName,
+                         @Param("note") String note, @Param("expiry") String expiry, @Param("updatedAt") String updatedAt);
+
+    /**
+     * Planı KOŞULLU kaldır (2026-11-15, M2): yalnız okunan plan hâlâ yerindeyse (tarih + kıyas tabanı + not; boş = {@code ""}).
+     * 0 satır = arada değişti (elle kaldırıldı / yeniden kondu / izleme silindi) — çağıran iz yazmaz.
+     */
+    @Modifying
+    @org.springframework.transaction.annotation.Transactional
+    @Query("UPDATE DomainMonitor m SET m.renewalPlannedAt = NULL, m.renewalPlannedBy = NULL, m.renewalPlannedByName = NULL, "
+         + "m.renewalPlannedNote = NULL, m.renewalPlannedExpiry = NULL, m.updatedAt = :updatedAt "
+         + "WHERE m.id = :id AND m.renewalPlannedAt = :seenAt AND COALESCE(m.renewalPlannedExpiry, '') = :seenExpiry "
+         + "AND COALESCE(m.renewalPlannedNote, '') = :seenNote")
+    int clearRenewalPlanIfUnchanged(@Param("id") Long id, @Param("seenAt") String seenAt, @Param("seenExpiry") String seenExpiry,
+                                    @Param("seenNote") String seenNote, @Param("updatedAt") String updatedAt);
+
     /** Bildirim grubu → referans sayısı (toplu kullanım — kullanılmayan grup tespiti, 2026-11-12). */
     @Query("SELECT m.notificationGroupId, COUNT(m) FROM DomainMonitor m WHERE m.notificationGroupId IS NOT NULL GROUP BY m.notificationGroupId")
     java.util.List<Object[]> countByNotificationGroup();

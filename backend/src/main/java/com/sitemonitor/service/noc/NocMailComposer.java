@@ -66,7 +66,10 @@ public final class NocMailComposer {
     /** Alarm türünün NOC için kısa, düz Türkçe karşılığı ("ne oldu"). */
     public static String problemLabel(String alertType, Integer days) {
         if (alertType == null) return "İzleme sorunu";
-        String d = days == null ? "" : " (" + days + " gün kaldı)";
+        // Süresi GEÇMİŞ (negatif gün, 2026-11-15): "(-5 gün kaldı)" yerine "süresi doldu (5 gün önce)" — alarm postasıyla aynı kural.
+        // Gün yoksa (alarm akışı RCI'ı, haftalık rapor) çıktı bayt bayt aynı.
+        boolean expired = days != null && days < 0;
+        String d = days == null ? "" : expired ? " (" + (-(long) days) + " gün önce)" : " (" + days + " gün kaldı)";
         return switch (alertType) {
             case "ACCESSIBILITY" -> "Erişim kesintisi";
             case "HTTP_DOWN" -> "HTTP/Web erişilemez";
@@ -88,13 +91,13 @@ public final class NocMailComposer {
             case "DNS_UNEXPECTED" -> "DNS beklenmeyen değer döndürüyor";
             case "DNS_INCONSISTENT" -> "DNS çözümleyicileri tutarsız";
             case "HTTP_SSL", "KEYWORD_SSL" -> "SSL sertifika sorunu";
-            case "DOMAIN_EXPIRY", "DOMAINMON_EXPIRY", "KEYWORD_DOMAIN_EXPIRY" -> "Alan adı süresi doluyor" + d;
+            case "DOMAIN_EXPIRY", "DOMAINMON_EXPIRY", "KEYWORD_DOMAIN_EXPIRY" -> (expired ? "Alan adı süresi doldu" : "Alan adı süresi doluyor") + d;
             case "DOMAINMON_UNKNOWN" -> "Alan adı kayıt verisi alınamıyor";
             case "DOMAINMON_STATUS" -> "Alan adı durum kodu uyarısı";
             case "DOMAINMON_CHANGED" -> "Alan adı kaydı değişti";
             case "DOMAINMON_TRANSFER_LOCK" -> "Alan adı transfer kilidi kapalı";
             case "DOMAINMON_BLACKLIST" -> "Alan adı kara listede";
-            case "EXPIRY" -> "Sertifika süresi doluyor" + d;
+            case "EXPIRY" -> (expired ? "Sertifika süresi doldu" : "Sertifika süresi doluyor") + d;
             case "REVOKED" -> "Sertifika iptal edildi";
             case "CHAIN_BROKEN" -> "Sertifika zinciri kırık";
             case "MISMATCH" -> "Sertifika dağıtım uyuşmazlığı";

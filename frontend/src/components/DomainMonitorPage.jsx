@@ -559,8 +559,19 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
         setHistReload(k => k + 1)
         return { ok: true, data: res.data }
       }
-      return { ok: false, error: res?.error || null, data: res?.data ?? null }
+      return { ok: false, error: res?.error || null, data: res?.data ?? null, code: res?.code ?? null }
     })
+  }
+
+  /**
+   * Kart / detay düğmesinin "Şimdi kontrol et"i — toplu koşum `checkNow`'u doğrudan çağırır (satır hatayı kendisi gösterir).
+   * Tekil yolda sunucunun izleme başına dakikalık sınırı (429 RATE_LIMITED, M1) sessiz kalmasın: bekleme süreli metin bilgi
+   * iletisi olarak gösterilir (öteki hatalar bugünkü gibi).
+   */
+  async function checkNowSingle(m) {
+    const r = await checkNow(m)
+    if (r && !r.ok && r.code === 'RATE_LIMITED' && r.error) toast.info(r.error)
+    return r
   }
 
   async function diagnose(m) {
@@ -808,7 +819,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   // Kart ızgarası (2026-11-06, performans PF4 O2): yalnız KENDİ verisi değişince çizilir. Form state'i bu
   // sayfada; eskiden formdaki her tuş 25–100 kartın hepsini yeniden çiziyordu. Çizim girdileri bağımlılık
   // listesinde; olay işleyicileri olay anında en güncel kopyadan okunur (useCardHandlers — bayat kapanış yok).
-  const cardEv = useCardHandlers({ openDetail, toggleBulk, resume, checkNow, openEdit, openDuplicate, deleteMonitor })
+  const cardEv = useCardHandlers({ openDetail, toggleBulk, resume, checkNow: checkNowSingle, openEdit, openDuplicate, deleteMonitor })
   const cardGrid = useMemo(() => (
     <div className="upt-grid" data-density={density}>
       {pager.pageItems.map(m => (
@@ -1043,14 +1054,15 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
+          {/* Registrar adları uzundur ("Tucows Domains Inc. dba … (12)"): seçenek ve seçili değer SARAR, kırpılmaz (LOW 6) */}
           <span data-slot="domain-filter-registrar" className="contents">
-            <SearchableSelect value={domFilters.registrar} onChange={(v) => setDomFilter('registrar', v)} options={registrarOptions} searchThreshold={6} ariaLabel={t('dom.flt.registrar')} />
+            <SearchableSelect value={domFilters.registrar} onChange={(v) => setDomFilter('registrar', v)} options={registrarOptions} searchThreshold={6} ariaLabel={t('dom.flt.registrar')} wrapLabels />
           </span>
           <span data-slot="domain-filter-source" className="contents">
-            <SearchableSelect value={domFilters.source} onChange={(v) => setDomFilter('source', v)} options={sourceOptions} ariaLabel={t('dom.flt.source')} />
+            <SearchableSelect value={domFilters.source} onChange={(v) => setDomFilter('source', v)} options={sourceOptions} ariaLabel={t('dom.flt.source')} wrapLabels />
           </span>
           <span data-slot="domain-filter-expiry" className="contents">
-            <SearchableSelect value={domFilters.expiry} onChange={(v) => setDomFilter('expiry', v)} options={expiryOptions} ariaLabel={t('dom.flt.expiry')} />
+            <SearchableSelect value={domFilters.expiry} onChange={(v) => setDomFilter('expiry', v)} options={expiryOptions} ariaLabel={t('dom.flt.expiry')} wrapLabels />
           </span>
           <Input type="text" className="w-full sm:w-auto sm:max-w-xs sm:min-w-[200px]" placeholder={t('dom.searchPlaceholder')} aria-label={t('dom.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} data-page-search="" />
@@ -1104,7 +1116,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               onResume={canManageRow(selected) && !selected.active ? () => resume(selected) : undefined}
               resuming={isResuming(selected.id)}
               running={isRunning(selected.id)}
-              onCheck={canCheckRow(selected) ? () => checkNow(selected) : undefined}
+              onCheck={canCheckRow(selected) ? () => checkNowSingle(selected) : undefined}
               checkTitle={t('dom.check')}
               onEdit={canManageRow(selected) ? () => openEdit(selected) : undefined}
               editTitle={t('dom.edit')}
@@ -1123,7 +1135,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               planı bloğu, özet (registrar/kaynak/son kontrol/sıklık/eşikler + Şimdi kontrol et), bitiş bilinmiyorsa neden +
               sonraki adımlar (Sorun Tanıla), koruma + EPP çipleri. Eski düz DetailSummary satırının yerine; yetki kapıları kartla aynı. */}
           <DomainDetailHeader monitor={selected} running={isRunning(selected.id)}
-            onCheck={canCheckRow(selected) ? () => checkNow(selected) : undefined}
+            onCheck={canCheckRow(selected) ? () => checkNowSingle(selected) : undefined}
             onPlanRenewal={canManageRow(selected) ? () => setPlanRow(selected) : undefined}
             onDiagnose={canDiagnoseRow(selected) ? () => diagnose(selected) : undefined} />
           <DetailDivider />

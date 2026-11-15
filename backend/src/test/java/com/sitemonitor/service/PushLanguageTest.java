@@ -134,6 +134,24 @@ class PushLanguageTest {
                 .isEqualTo("KRİTİK: api.example.com - SSL sertifikası 1 gün önce doldu (03.10.2026).");
         assertThat(PushText.isChannelSafe(UserPushService.EXPIRED_TEMPLATE_TR)).isTrue();
         assertThat(PushText.isChannelSafe(UserPushService.EXPIRED_TEMPLATE_EN)).isTrue();
+        assertThat(PushText.isChannelSafe(UserPushService.EXPIRED_TEMPLATE_EN_ONE)).isTrue();
+        // İngilizce tekil (inceleme LOW 3)
+        Map<String, Object> one = new LinkedHashMap<>(ctx);
+        one.put("days", -1);
+        assertThat(service.buildMessage(exp, "OPEN", one, "en"))
+                .isEqualTo("CRITICAL: example.org - domain registration expired 1 day ago (2026-09-29).");
+    }
+
+    @Test
+    @DisplayName("LOW 3 (2026-11-15): yöneticinin DÜZENLEDİĞİ expiry şablonu süresi geçmiş bitişte de olduğu gibi işlenir (yerleşik metin ezmez)")
+    void customizedExpiryTemplate_isNotReplaced() {
+        when(appSettings.getString(org.mockito.ArgumentMatchers.eq("site.monitor.userpush.template.expiry"), any()))
+                .thenReturn("{seviye}: {ad} bitis {gun} gun ({tarih})");
+        AlertEvent exp = event("DOMAINMON_EXPIRY", "CRITICAL", "example.org", "KRİTİK: kayıt", "2026-10-04T08:00:00");
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("days", -5);
+        ctx.put("expiry_date", "2026-09-29");
+        assertThat(service.buildMessage(exp, "OPEN", ctx, "tr")).isEqualTo("KRİTİK: example.org bitis -5 gun (2026-09-29)");
     }
 
     @Test

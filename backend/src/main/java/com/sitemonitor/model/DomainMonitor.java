@@ -168,12 +168,14 @@ public class DomainMonitor implements MonitorAlertPrefs, MonitorSchedule, NocTar
     // ── Planlanan yenileme (2026-09-22, madde H; sertifika envanterindeki renewal_planned_* eşi) ─────────────
     // Operatör "bu tarihte yenileyeceğiz" der; plan tarihi geçip bitiş ileri gitmemişse kart "gecikmiş" gösterir; gerçek
     // yenileme (bitiş > plan anındaki bitiş) görülünce sunucu planı kendiliğinden kapatır. Hepsi nullable, eski satırlar null.
-    @Column(name = "renewal_planned_at", length = 10)      private String renewalPlannedAt;      // YYYY-MM-DD
-    @Column(name = "renewal_planned_by", length = 100)     private String renewalPlannedBy;
-    @Column(name = "renewal_planned_by_name")              private String renewalPlannedByName;
-    @Column(name = "renewal_planned_note", length = 500)   private String renewalPlannedNote;
+    // updatable = false (2026-11-15, M2): plan YALNIZ DomainRenewalPlanService'in hedefli UPDATE'leriyle yazılır — izleme düzenlemesi /
+    // geri yüklemenin varlık kaydı (okunduğu andaki planla) eşzamanlı bir plan koyma / kaldırma / yenileme tespitini geri ALMAZ.
+    @Column(name = "renewal_planned_at", length = 10, updatable = false)      private String renewalPlannedAt;      // YYYY-MM-DD
+    @Column(name = "renewal_planned_by", length = 100, updatable = false)     private String renewalPlannedBy;
+    @Column(name = "renewal_planned_by_name", updatable = false)              private String renewalPlannedByName;
+    @Column(name = "renewal_planned_note", length = 500, updatable = false)   private String renewalPlannedNote;
     /** Plan konduğu andaki bitiş (ham ISO) — otomatik kapatmanın kıyas tabanı. */
-    @Column(name = "renewal_planned_expiry", length = 40)  private String renewalPlannedExpiry;
+    @Column(name = "renewal_planned_expiry", length = 40, updatable = false)  private String renewalPlannedExpiry;
 
     // MonitorSchedule (2026-09-19): "Sizin için — bugün" bayat-izleme kartı
     @Override public String scheduleType() { return "DOMAIN"; }

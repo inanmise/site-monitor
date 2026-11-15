@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { liveDays, liveRow, withLiveDays } from '../components/domain/domainCardModel.js'
+import { domainDaysUntil, liveDays, liveRow, withLiveDays } from '../components/domain/domainCardModel.js'
+import { javaStringTable, readJavaTest } from './helpers/javaTable.js'
 import {
   DEFAULT_DOMAIN_FILTERS, NO_REGISTRAR, domainFacets, expiryKind, hasDomainFilters, matchesDomainFilters,
   normalizeDomainFilters, registrarKey, sourceKind,
@@ -7,8 +8,38 @@ import {
 import { domainExpiring, domainRowState } from '../components/mydash/domainExpiringModel.js'
 import { bulkPlanPreview, DOMAIN_PLAN_BULK_MAX } from '../components/domain/DomainBulkPlanDialog.jsx'
 
-/** Sabit "şimdi": 2026-11-15 12:00 yerel. */
-const NOW = new Date(2026, 10, 15, 12, 0, 0).getTime()
+/** Sabit "şimdi": 2026-11-15 12:00 İstanbul (09:00 UTC) — kalan gün İstanbul takvimiyle sayılır, tarayıcı diliminden bağımsız. */
+const NOW = Date.UTC(2026, 10, 15, 9, 0, 0)
+
+describe('LOW 2 — domainDaysUntil = DomainCheckerService.daysUntil (DomainDaysUntilTableTest.DAYS_TABLE)', () => {
+  const rows = javaStringTable(readJavaTest('service/DomainDaysUntilTableTest.java'), 'DAYS_TABLE')
+
+  it('tablo okundu ve her satır sunucuyla aynı', () => {
+    expect(rows.length).toBeGreaterThan(40)
+    for (const [iso, now, expected] of rows) {
+      expect(domainDaysUntil(iso, Date.parse(now)), `domainDaysUntil(${iso}, ${now})`)
+        .toBe(expected == null ? null : Number(expected))
+    }
+  })
+
+  it('tarayıcı saat dilimi sonucu değiştirmez (gece yarısına yakın; New York / Tokyo / UTC)', () => {
+    const prev = process.env.TZ
+    try {
+      for (const tz of ['America/New_York', 'Asia/Tokyo', 'UTC', 'Europe/Istanbul']) {
+        process.env.TZ = tz
+        // İstanbul 2 Ekim 00:30 = 1 Ekim 21:30 UTC: bitişi 2 Ekim olan alan adı BUGÜN biter (0) — UTC/New York tarayıcısı
+        // yerel takvimle 1 derdi; ofsetsiz damga da İstanbul günü sayılır (UTC sayılsaydı 1).
+        expect(domainDaysUntil('2026-10-02', Date.parse('2026-10-01T21:30:00Z')), tz).toBe(0)
+        expect(domainDaysUntil('2026-10-02T23:30:00', Date.parse('2026-10-01T21:30:00Z')), tz).toBe(0)
+        expect(domainDaysUntil('2026-10-02', Date.parse('2026-10-01T20:59:00Z')), tz).toBe(1)
+        expect(liveDays({ expiry_date: '2026-10-02', days_remaining: 5 }, Date.parse('2026-10-01T21:30:00Z')), tz).toBe(0)
+      }
+    } finally {
+      if (prev === undefined) delete process.env.TZ
+      else process.env.TZ = prev
+    }
+  })
+})
 
 describe('A1 — kalan gün bitiş tarihinden CANLI', () => {
   it('yalnız tarih (WHOIS): yerel takvim günü farkı; kayıtlı (bayat) değer yok sayılır', () => {
@@ -117,6 +148,16 @@ describe('D1 — toplu yenileme planı önizlemesi', () => {
     expect(set).toMatchObject({ change: 1, skip: 2, check: 0 })
     const clear = bulkPlanPreview(rows, 'clear')
     expect(clear.rows.map((r) => r.state)).toEqual(['skip', 'skip', 'change'])
+  })
+  it('LOW 4: en son kontrol kaynaksızsa (NONE) daha eski kontrolün bitişi olabilir → "sunucu denetleyecek", atlandı sayılmaz', () => {
+    const p = bulkPlanPreview([
+      { id: 4, domain: 'd.com', expiry_date: null, source: 'NONE' },
+      { id: 5, domain: 'e.com', expiry_date: null, source: 'RDAP' },
+      { id: 6, domain: 'f.com', expiry_date: null, source: null },
+      { id: 7, domain: 'g.com', expiry_date: null, source: 'NONE', renewal_planned_at: '2026-12-20', renewal_planned_note: null },
+    ], 'set', '2026-12-20')
+    expect(p.rows.map((r) => [r.id, r.state, r.reason || null])).toEqual([[4, 'check', null], [5, 'skip', 'no_expiry'], [6, 'skip', 'no_expiry'], [7, 'check', null]])
+    expect(p).toMatchObject({ change: 0, skip: 2, check: 2 })
   })
   it('sunucu tavanı kadar satır gönderilir', () => {
     const many = Array.from({ length: DOMAIN_PLAN_BULK_MAX + 5 }, (_, i) => ({ id: i + 1, domain: `d${i}.com`, expiry_date: '2027-01-01' }))

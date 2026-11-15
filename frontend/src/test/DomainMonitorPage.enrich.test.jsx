@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+await vi.hoisted(async () => (await import('./helpers/orgNoonClock.js')).freezeOrgNoon())   // kalan gün İstanbul günüyle (LOW 2): sabit 09:00Z
 import { render, screen, fireEvent, waitFor, within, act } from './test-utils.jsx'
 import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
@@ -85,6 +86,30 @@ describe('DomainMonitorPage — C1 ek süzgeçler', () => {
     expect(document.querySelector('[data-slot="domain-filter-clear"]')).toBeNull()
   })
 
+  it('LOW 6: uzun registrar adı kırpılmaz — seçenekler ve seçili değer sarar (registrar / kaynak / süre durumu)', async () => {
+    const long = 'Tucows Domains Inc. dba OpenSRS Reseller Services (Toronto / Canada Registrar Operations)'
+    api.monitoring.getDomainMonitors.mockResolvedValue({ success: true, data: [...rows, { ...base, id: 9, name: 'uzun', domain: 'uzun.com',
+      registrar: long, source: 'RDAP', expiry_date: day(200), days_remaining: 200 }] })
+    render(<DomainMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('godaddy-1.com')
+    for (const name of ['Registrar', 'Data source', 'Expiry state']) {
+      const trig = combo(name)
+      expect(trig.className, name).toMatch(/whitespace-normal/)
+      expect(trig.querySelector('span').className, name).toMatch(/overflow-wrap:anywhere/)
+      expect(trig.querySelector('span').className, name).not.toMatch(/\btruncate\b/)
+    }
+    fireEvent.mouseDown(combo('Registrar'))
+    const opt = [...document.querySelectorAll('[role="listbox"] [role="option"]')].find((o) => o.textContent.includes('Tucows'))
+    expect(opt).toHaveTextContent(`${long} (1)`)
+    // seçeneğin metin taşıyan EN İÇTEKİ span'i (sarmalayıcı flex sütunu değil)
+    const label = [...opt.querySelectorAll('span')].find((x) => !x.querySelector('span') && x.textContent.includes('Tucows'))
+    expect(label.className).toMatch(/overflow-wrap:anywhere/)
+    expect(label.className).not.toMatch(/\btruncate\b/)
+    fireEvent.mouseDown(opt)
+    await waitFor(() => expect(cards()).toEqual(['uzun.com']))
+    expect(combo('Registrar')).toHaveTextContent(long)
+  })
+
   it('URL\'den okunur (kayıtlı görünüm / paylaşılan bağlantı): ?dx=unknown&ds=unknown', async () => {
     window.history.replaceState({}, '', '/?tab=domain&dx=unknown&ds=unknown')
     render(<DomainMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
@@ -132,8 +157,11 @@ describe('DomainMonitorPage — D1 toplu yenileme planı', () => {
     render(<DomainMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     fireEvent.click(await selectAll())
     const dlg = await screen.findByRole('dialog')
-    // bitişi bilinmeyen önizlemede atlanır
-    expect(within(dlg).getAllByText('Expiry date unknown — no plan can be set').length).toBeGreaterThan(0)
+    // en son kontrolü kaynaksız (NONE) satır: daha eski kontrol bitişi bilebilir → "sunucu denetleyecek" (LOW 4), atlandı DEĞİL
+    const row4 = [...dlg.querySelectorAll('[data-slot="bulk-preview-row"]')].find((r) => r.textContent.includes('unknown.com'))
+    expect(row4.dataset.state).toBe('check')
+    expect(within(row4).getByText('Server will check')).toBeInTheDocument()
+    expect(within(dlg).queryAllByText('Expiry date unknown — no plan can be set')).toHaveLength(0)
     fireEvent.click(within(dlg).getByRole('button', { name: 'Apply plan' }))
     expect(await within(dlg).findByText(/a bulk plan needs a date/i)).toBeInTheDocument()
     expect(api.monitoring.domainRenewalPlanBulk).not.toHaveBeenCalled()
@@ -163,6 +191,7 @@ describe('DomainMonitorPage — D1 toplu yenileme planı', () => {
 
 describe('DomainRegistrationTab — A4 canlı sorgu sınırı', () => {
   it('429 → sunucunun metni, veri korunur, Yenile bekleme bitince yeniden kullanılabilir', async () => {
+    vi.useRealTimers()   // dosyanın sabit saati (yalnız Date) yerine tüm zamanlayıcılar sahte — sonra geri alınır
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
       const { default: DomainRegistrationTab } = await import('../components/DomainRegistrationTab.jsx')
@@ -181,6 +210,7 @@ describe('DomainRegistrationTab — A4 canlı sorgu sınırı', () => {
       await waitFor(() => expect(document.querySelector('[data-slot="domain-reg-refresh"]')).not.toBeDisabled())
     } finally {
       vi.useRealTimers()
+      ;(await import('./helpers/orgNoonClock.js')).refreezeOrgNoon()
     }
   })
 })

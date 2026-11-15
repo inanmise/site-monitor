@@ -67,6 +67,22 @@ class AlarmFeedRowsTest {
     }
 
     @Test
+    @DisplayName("2026-11-15: süresi GEÇMİŞ bitişte TEXT \"süresi doldu (N gün önce)\" — eksi gün yazılmaz; RCI gün içermez, bayt bayt aynı")
+    void expiredTextNeverNegative() {
+        Map<String, Object> r = AlarmFeedRows.openRow(alarm("DOMAINMON_EXPIRY", "CRITICAL", "ornek.com.tr", -5), DEF, null);
+        assertThat(r.get("TEXT")).isEqualTo("(ornek.com.tr) Alan adı süresi doldu (5 gün önce)");
+        // RCI günsüz etiketle kurulur — "doldu" sözcüğü RCI'ye GİRMEZ (EVENTKEY değişmez; tür eki benzersizlik kuralından)
+        assertThat((String) r.get("RCI")).startsWith("ornek.com.tr · Alan adı süresi doluyor").doesNotContain("doldu");
+        assertThat((String) r.get("TEXT")).doesNotContain("-5");
+        Map<String, Object> c = AlarmFeedRows.openRow(alarm("EXPIRY", "CRITICAL", "api.example.com", -1), DEF, null);
+        assertThat(c.get("TEXT")).isEqualTo("(api.example.com) Sertifika süresi doldu (1 gün önce)");
+        assertThat((String) c.get("RCI")).startsWith("api.example.com · Sertifika süresi doluyor").doesNotContain("doldu");
+        assertThat(com.sitemonitor.service.noc.NocMailComposer.problemLabel("KEYWORD_DOMAIN_EXPIRY", -3)).isEqualTo("Alan adı süresi doldu (3 gün önce)");
+        assertThat(com.sitemonitor.service.noc.NocMailComposer.problemLabel("DOMAIN_EXPIRY", 0)).isEqualTo("Alan adı süresi doluyor (0 gün kaldı)");
+        assertThat(com.sitemonitor.service.noc.NocMailComposer.problemLabel("EXPIRY", null)).isEqualTo("Sertifika süresi doluyor");
+    }
+
+    @Test
     @DisplayName("Tür etiketi bütün alarm türlerinde TEKİL (aynı hedefte iki alarm türü aynı RCI'yı alamaz)")
     void labelsAreUniquePerAlertType() {
         Map<String, String> seen = new HashMap<>();

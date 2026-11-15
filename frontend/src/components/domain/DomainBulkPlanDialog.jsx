@@ -27,7 +27,12 @@ export function bulkPlanPreview(rows, action, date, note) {
     if (action === 'clear') {
       return m.renewal_planned_at ? { ...base, state: 'change' } : { ...base, state: 'skip', reason: 'unchanged' }
     }
-    if (!expiryKey(m)) return { ...base, state: 'skip', reason: 'no_expiry' }
+    if (!expiryKey(m)) {
+      // Sunucu kuralı (sırası da aynı: önce bitiş, sonra "değişmedi"): kaynağı NONE OLMAYAN en son kontrolün bitişi (inceleme
+      // LOW 4). Satırın bitişi EN SON kontrolden gelir; o kontrol hiçbir kaynaktan yanıt alamadıysa (NONE) daha eski bir kontrol
+      // bitişi bilebilir → "sunucu denetleyecek". Kontrol hiç yoksa ya da en son kaynaklı kontrol bitişsizse sunucu da atlar.
+      return m.source === 'NONE' ? { ...base, state: 'check' } : { ...base, state: 'skip', reason: 'no_expiry' }
+    }
     if (date && m.renewal_planned_at === date && (m.renewal_planned_note || null) === n) return { ...base, state: 'skip', reason: 'unchanged' }
     return { ...base, state: 'change' }
   })
@@ -35,7 +40,7 @@ export function bulkPlanPreview(rows, action, date, note) {
     rows: out,
     change: out.filter((r) => r.state === 'change').length,
     skip: out.filter((r) => r.state === 'skip').length,
-    check: 0,
+    check: out.filter((r) => r.state === 'check').length,
   }
 }
 

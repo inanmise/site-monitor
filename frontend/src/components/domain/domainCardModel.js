@@ -20,7 +20,7 @@
  * eşiğini (`warning_days`, yoksa sayfanın 30 günlük "yakında" süzgeci) kullanır.
  */
 import { domainLife, eppKey, eppLabel } from '../../utils/domainEpp.js'
-import { daysFromToday, localDayKey } from '../../utils/localDay.js'
+import { localDayKey } from '../../utils/localDay.js'
 import { dateLocale } from '../../i18n/dateLocale.js'
 
 /** Sayfanın "yakında dolacak" süzgeci / istatistik kartı ve kartın plan kısayolu için TEK kaynak (gün). */
@@ -49,14 +49,110 @@ export function expiryKey(m) {
   return m?.expiry_date ? localDayKey(String(m.expiry_date)) : null
 }
 
+const DAY_MS = 86_400_000
+const ORG_ZONE = 'Europe/Istanbul'
+let orgDayFormat = null
+
+/** UTC milisaniye — taşan gün sonraki aya / yıla geçer; 0–99 yılları da doğru (Date.UTC onları 1900'e kaydırır). */
+function utcMs(y, mo, d, h = 0, mi = 0, s = 0, ms = 0) {
+  const dt = new Date(0)
+  dt.setUTCFullYear(y, mo - 1, d)
+  dt.setUTCHours(h, mi, s, ms)
+  return dt.getTime()
+}
+
+/** Geçerli takvim günü mü (Java ISO_LOCAL_DATE katı çözümleyicisi: "2026-02-31" geçersiz). */
+function validYmd(y, mo, d) {
+  if (mo < 1 || mo > 12 || d < 1) return false
+  const dt = new Date(utcMs(y, mo, d))
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d
+}
+
+/** "Şimdi"nin İSTANBUL takvim günü (UTC gece yarısı ms) — tarayıcının saat diliminden bağımsız. */
+function orgTodayMs(now) {
+  const at = new Date(now)
+  if (Number.isNaN(at.getTime())) return null
+  try {
+    orgDayFormat ??= new Intl.DateTimeFormat('en-CA', { timeZone: ORG_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' })
+    const p = Object.fromEntries(orgDayFormat.formatToParts(at).map((x) => [x.type, x.value]))
+    return utcMs(Number(p.year), Number(p.month), Number(p.day))
+  } catch {
+    const z = new Date(at.getTime() + 3 * 3_600_000)   // Intl saat dilimi yoksa: İstanbul 2016'dan beri yaz saatsiz UTC+3
+    return utcMs(z.getUTCFullYear(), z.getUTCMonth() + 1, z.getUTCDate())
+  }
+}
+
+// Java OffsetDateTime.parse (ISO_OFFSET_DATE_TIME, T/Z büyük-küçük harf duyarsız): saniye ve 1–9 haneli kesir isteğe bağlı,
+// ofset Z ya da ±HH[:MM[:SS]] (≤ ±18:00).
+const ZONED = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?([Zz]|[+-]\d{2}(?::\d{2}(?::\d{2})?)?)$/
+// Java Instant.parse (ISO_INSTANT) yedeği — yalnız ODT'nin reddettiği 24:00:00 ve artık saniye 23:59:60 biçimleri için:
+// saniye ZORUNLU, ofset Z ya da ±HH:MM[:SS].
+const INSTANT = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?([Zz]|[+-]\d{2}:\d{2}(?::\d{2})?)$/
+
+/** Ofset → saniye; geçersizse (dakika/saniye > 59, toplam > 18 saat) null. */
+function offsetSeconds(o) {
+  if (o === 'Z' || o === 'z') return 0
+  const sign = o[0] === '-' ? -1 : 1
+  const [h, mi = '0', s = '0'] = o.slice(1).split(':')
+  const hh = Number(h), mm = Number(mi), ss = Number(s)
+  if (mm > 59 || ss > 59) return null
+  const total = hh * 3600 + mm * 60 + ss
+  return total > 18 * 3600 ? null : sign * total
+}
+
+/** Kesir hanelerinden milisaniye (toEpochMilli gibi aşağı yuvarlar). */
+const fracMs = (f) => (f ? Number((f + '00').slice(0, 3)) : 0)
+
+/** Ofsetli damga → epoch ms; Java'nın kabul etmediği biçim/değer → null. */
+function zonedMs(s) {
+  let m = ZONED.exec(s)
+  if (m) {
+    const [y, mo, d, h, mi] = [1, 2, 3, 4, 5].map((i) => Number(m[i]))
+    const sec = m[6] == null ? 0 : Number(m[6])
+    const off = offsetSeconds(m[8])
+    if (validYmd(y, mo, d) && h <= 23 && mi <= 59 && sec <= 59 && off != null)
+      return utcMs(y, mo, d, h, mi, sec, fracMs(m[7])) - off * 1000
+  }
+  m = INSTANT.exec(s)
+  if (!m) return null
+  const [y, mo, d, h, mi, sec] = [1, 2, 3, 4, 5, 6].map((i) => Number(m[i]))
+  const off = offsetSeconds(m[8])
+  if (!validYmd(y, mo, d) || off == null) return null
+  if (h === 24 && mi === 0 && sec === 0 && !/[1-9]/.test(m[7] || '')) return utcMs(y, mo, d + 1) - off * 1000
+  if (h === 23 && mi === 59 && sec === 60) return utcMs(y, mo, d, 23, 59, 59, fracMs(m[7])) - off * 1000
+  return null
+}
+
+/**
+ * Bitişe kalan gün — sunucunun `DomainCheckerService.daysUntil(iso, now)` kuralının BİREBİR eşi (2026-11-15, inceleme LOW 2;
+ * iki taraf `DomainDaysUntilTableTest.DAYS_TABLE`'ı paylaşır): ofsetli zaman damgası (RDAP, `Z` / `±HH[:MM[:SS]]`) → kalan
+ * TAM gün (floor); geri kalan her şey (WHOIS yalnız tarihi, ofsetsiz zaman damgası) → ilk 10 karakterin İSTANBUL takvim günü
+ * farkı — tarayıcının saat diliminden bağımsız (gece yarısına yakın UTC tarayıcıda bir gün kaymazdı); okunamıyorsa null.
+ * Dizge kırpılmaz (sunucu da kırpmaz).
+ */
+export function domainDaysUntil(iso, now = Date.now()) {
+  if (iso == null) return null
+  const s = String(iso)
+  if (s.trim() === '') return null
+  const nowMs = new Date(now).getTime()
+  if (Number.isNaN(nowMs)) return null
+  const at = zonedMs(s)
+  if (at != null) return Math.floor((at - nowMs) / DAY_MS)
+  const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.slice(0, 10))
+  if (!ymd || s.length < 10) return null
+  const [y, mo, d] = [1, 2, 3].map((i) => Number(ymd[i]))
+  if (!validYmd(y, mo, d)) return null
+  const today = orgTodayMs(nowMs)
+  return today == null ? null : Math.round((utcMs(y, mo, d) - today) / DAY_MS)
+}
+
 /**
  * Kalan gün CANLI (2026-11-15, A1): bitiş tarihinden BUGÜNE — sunucunun `days_remaining`'i son KONTROL anında hesaplanır
- * (günlük tur; gece yarısını geçince kart bir gün bayatlıyordu). Kural sunucununkiyle AYNI (`DomainCheckerService.daysUntil`
- * = `utils/localDay.daysFromToday`): yalnız tarih (WHOIS) → yerel takvim günü farkı, zaman damgası (RDAP) → tam gün (floor).
+ * (günlük tur; gece yarısını geçince kart bir gün bayatlıyordu). Kural sunucununkiyle AYNI ({@link domainDaysUntil}).
  * Tarih yok / okunamıyorsa sunucunun kayıtlı değeri (yedek); o da yoksa null.
  */
 export function liveDays(m, now = Date.now()) {
-  const d = m?.expiry_date ? daysFromToday(String(m.expiry_date), now) : null
+  const d = m?.expiry_date ? domainDaysUntil(m.expiry_date, now) : null
   return Number.isFinite(d) ? d : num(m?.days_remaining)
 }
 

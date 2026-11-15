@@ -1819,6 +1819,91 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("LOW 1 (2026-11-15) PUT /domain/{id}: eski karışık harfli alan adı küçük harfe dönünce ESKİ yazımın alarmları kapanır, plan KALIR")
+    void updateDomain_caseOnlyChange_closesOldKeyKeepsPlan() throws Exception {
+        var m = domainForUpdate();
+        m.setDomain("Ornek.com.tr");
+        m.setRenewalPlannedAt("2026-12-01");
+        when(publicSuffixService.registrableDomain("ornek.com.tr")).thenReturn("ornek.com.tr");
+        mvc.perform(put("/api/monitoring/domain/6").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"ornek.com.tr\"}"))
+                .andExpect(status().isOk());
+        verify(escalationService).resolveOpenAlertsSilently(eq("Ornek.com.tr"), anyCollection(), eq("Sistem (alan adı değişti)"), any());
+        verify(domainRenewalPlans, never()).clearForDomainChange(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("LOW 7 (2026-11-15) PUT /domain/{id}: plan kaldırma hata verse de kaydedilmiş güncelleme 200 döner (500 değil)")
+    void updateDomain_planClearFails_stillOk() throws Exception {
+        var m = domainForUpdate();
+        m.setRenewalPlannedAt("2026-12-01");
+        when(publicSuffixService.registrableDomain("yeni.com.tr")).thenReturn("yeni.com.tr");
+        when(domainRenewalPlans.clearForDomainChange(any(), any(), any())).thenThrow(new RuntimeException("db down"));
+        mvc.perform(put("/api/monitoring/domain/6").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"yeni.com.tr\"}"))
+                .andExpect(status().isOk());
+        verify(domainMonitorRepo).save(any(com.sitemonitor.model.DomainMonitor.class));
+        verify(auditService, never()).recordAction(eq("MONITOR_RENEWAL_PLAN_CLEARED"), any(jakarta.servlet.http.HttpSession.class), any(String.class), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("M1 (2026-11-15) POST /domain/{id}/check: izleme başına dakikada 6 (canlı sorguyla ortak pencere) → 429 + Retry-After; başka izlemeler etkilenmez (kullanıcı penceresi YOK)")
+    void domainCheck_perMonitorWindowOnly() throws Exception {
+        java.util.Map<String, Object> r = new java.util.HashMap<>(java.util.Map.of("status", "OK"));
+        when(domainChecker.checkManual(any())).thenReturn(r);
+        MockHttpSession s = session("ADMIN");
+        s.setAttribute("username", "m1-bulk");
+        for (long id = 7701; id <= 7708; id++) {   // toplu "Şimdi kontrol et": 8 FARKLI izleme, aynı kullanıcı — hepsi geçer
+            var m = new com.sitemonitor.model.DomainMonitor();
+            m.setId(id); m.setDomain("d" + id + ".com.tr"); m.setTeamId(1L); m.setActive(true);
+            when(domainMonitorRepo.findById(id)).thenReturn(Optional.of(m));
+            mvc.perform(post("/api/monitoring/domain/" + id + "/check").session(s)).andExpect(status().isOk());
+        }
+        for (int i = 1; i < com.sitemonitor.service.DomainLiveLookupLimiter.PER_MINUTE; i++)
+            mvc.perform(post("/api/monitoring/domain/7701/check").session(s)).andExpect(status().isOk());
+        mvc.perform(post("/api/monitoring/domain/7701/check").session(s))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().exists("Retry-After"))
+                .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("6")));
+        verify(domainChecker, org.mockito.Mockito.times(8 + com.sitemonitor.service.DomainLiveLookupLimiter.PER_MINUTE - 1)).checkManual(any());
+    }
+
+    @Test
+    @DisplayName("LOW 4 (2026-11-15) yenileme planı tarihi geçerli bir GÜN olmalı: \"2026-02-31\" tekil ve toplu uçta 400 field=date")
+    void renewalPlan_impossibleDate_400() throws Exception {
+        var m = new com.sitemonitor.model.DomainMonitor();
+        m.setId(7710L); m.setDomain("x.com.tr"); m.setTeamId(1L); m.setActive(true);
+        when(domainMonitorRepo.findById(7710L)).thenReturn(Optional.of(m));
+        mvc.perform(post("/api/monitoring/domain/7710/renewal-plan").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"date\":\"2026-02-31\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("date"));
+        mvc.perform(post("/api/monitoring/domain/renewal-plan/bulk").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"set\",\"ids\":[7710],\"date\":\"2026-02-31\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("date"));
+        verify(domainRenewalPlans, never()).plan(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("M2 (2026-11-15) bulk clear: koşullu kaldırma 0 satır (plan arada değişti) → atlandı changed_meanwhile, denetim yok")
+    void bulkRenewalPlan_clear_changedMeanwhile() throws Exception {
+        bulkDomain(7720L, 5L, "2026-12-20");
+        when(domainRenewalPlans.unplan(any(), any())).thenAnswer(i -> i.getArgument(0));   // plan bellekte duruyor = yazılmadı
+        mvc.perform(post("/api/monitoring/domain/renewal-plan/bulk").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"clear\",\"ids\":[7720]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.results[0].status").value("skipped"))
+                .andExpect(jsonPath("$.data.results[0].reason").value("changed_meanwhile"));
+        verify(auditService, never()).recordAction(eq("MONITOR_RENEWAL_PLAN_CLEARED"), any(jakarta.servlet.http.HttpSession.class), any(String.class), any(), any(), any());
+    }
+
+    @Test
     @DisplayName("A4 (2026-11-15) GET /domain/{id}/registration?live=true: plan zamanlanmış sonuç gibi değerlendirilir; dakikada 6'dan sonra 429 + Retry-After")
     void domainRegistration_live_evaluatesPlanAndIsRateLimited() throws Exception {
         var m = domainForUpdate();
@@ -1895,7 +1980,11 @@ class MonitoringControllerTest {
         bulkDomain(1L, 5L, "2026-12-20");
         bulkDomain(2L, 5L, null);
         bulkDomain(3L, 5L, "2026-12-21");
-        when(domainRenewalPlans.unplan(argThat(m -> m != null && m.getId() == 1L), any())).thenAnswer(i -> i.getArgument(0));
+        when(domainRenewalPlans.unplan(argThat(m -> m != null && m.getId() == 1L), any())).thenAnswer(i -> {
+            com.sitemonitor.model.DomainMonitor x = i.getArgument(0);
+            x.setRenewalPlannedAt(null);   // koşullu kaldırma 1 satır → bellek kopyası da temizlenir (M2)
+            return x;
+        });
         when(domainRenewalPlans.unplan(argThat(m -> m != null && m.getId() == 3L), any())).thenThrow(new RuntimeException("SQLState 23505 secret"));
         mvc.perform(post("/api/monitoring/domain/renewal-plan/bulk").session(session("ADMIN"))
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
@@ -4129,6 +4218,11 @@ class MonitoringControllerTest {
                             ctx != null && ctx.get("monitor_id") instanceof Number n && n.longValue() == 13L));
             verify(domainRenewalPlans).clearForDomainChange(any(), eq("yeni.com.tr"), any());
             verify(auditService).recordAction(eq("MONITOR_RENEWAL_PLAN_CLEARED"), any(), eq("DOMAIN_MONITOR"), eq("13"), any(), any());
+            // LOW 7: geçmişte plan kaldırma RESTORE satırından SONRA
+            var order = org.mockito.Mockito.inOrder(monitorHistory, domainRenewalPlans);
+            order.verify(monitorHistory).record(eq("DOMAIN"), eq(13L), any(), any(), eq(com.sitemonitor.service.MonitorHistoryService.RESTORE),
+                    any(), any(), any(), any());
+            order.verify(domainRenewalPlans).clearForDomainChange(any(), eq("yeni.com.tr"), any());
         }
 
         @Test

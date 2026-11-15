@@ -60,4 +60,35 @@ class DomainLiveLookupLimiterTest {
         assertThat(l.inFlight()).isEqualTo(1);
         assertThat(l.tryAcquire("c", 3L).allowed()).isTrue();
     }
+
+    @Test
+    @DisplayName("M1: \"Şimdi kontrol et\" yalnız izleme penceresi — canlı sorguyla ORTAK sayılır, kullanıcı penceresi ve eşzamanlılık reddi yok")
+    void monitorWindowOnly() {
+        AtomicLong now = new AtomicLong(10_000L);
+        var l = new DomainLiveLookupLimiter(now::get);
+        var a = l.tryAcquire("a", 1L);   // iki canlı sorgu uçuşta (pod yuvaları dolu)
+        var b = l.tryAcquire("b", 2L);
+        assertThat(a.allowed() && b.allowed()).isTrue();
+        // aynı kullanıcı 20 FARKLI izlemeyi kontrol edebilir (toplu "Şimdi kontrol et") — eşzamanlılık reddi de yok
+        for (long id = 100; id < 120; id++) assertThat(l.tryAcquireMonitor(id)).isZero();
+        assertThat(l.inFlight()).isEqualTo(2);
+        // izleme 1: canlı sorgu 1 + 5 kontrol = 6 → 7. kontrol bekler
+        for (int i = 1; i < DomainLiveLookupLimiter.PER_MINUTE; i++) assertThat(l.tryAcquireMonitor(1L)).isZero();
+        assertThat(l.tryAcquireMonitor(1L)).isBetween(1L, 60L);
+        assertThat(l.tryAcquire("z", 1L).allowed()).isFalse();
+        now.addAndGet(60_000L);
+        assertThat(l.tryAcquireMonitor(1L)).isZero();
+    }
+
+    @Test
+    @DisplayName("LOW 5: anahtar tavanında budama boş kayıtları siler; sayım kaybolmaz (aynı izleme yine sınırlı)")
+    void pruneKeepsCounting() {
+        AtomicLong now = new AtomicLong(0L);
+        var l = new DomainLiveLookupLimiter(now::get);
+        for (long id = 0; id < DomainLiveLookupLimiter.MAX_KEYS; id++) assertThat(l.tryAcquireMonitor(id)).isZero();
+        now.addAndGet(61_000L);   // hepsinin penceresi doldu → sonraki istek budar
+        for (int i = 0; i < DomainLiveLookupLimiter.PER_MINUTE; i++) assertThat(l.tryAcquireMonitor(5L)).isZero();
+        assertThat(l.keys()).isLessThan(10);
+        assertThat(l.tryAcquireMonitor(5L)).isPositive();
+    }
 }

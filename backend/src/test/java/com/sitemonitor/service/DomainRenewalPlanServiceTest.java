@@ -34,6 +34,9 @@ class DomainRenewalPlanServiceTest {
     void setUp() {
         svc = new DomainRenewalPlanService(repo, history, activityLog);
         when(repo.save(any())).thenAnswer(i -> i.getArgument(0));
+        // M2 (2026-11-15): plan yazımları hedefli — varsayılan 1 satır
+        when(repo.writeRenewalPlan(any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        when(repo.clearRenewalPlanIfUnchanged(any(), any(), any(), any(), any())).thenReturn(1);
     }
 
     private static DomainMonitor monitor() {
@@ -61,6 +64,30 @@ class DomainRenewalPlanServiceTest {
         verify(history).record(eq("DOMAIN"), eq(7L), eq("A"), eq(1L), eq("UPDATE"), any(), any(), eq("renewal-plan"), any());
         verify(activityLog).recordLifecycle(eq("DOMAIN"), eq(7L), eq("A"), eq("a.example.com"), eq(1L), eq("RENEWAL_PLANNED"), eq("ops"), contains("2026-10-15"));
         assertThatThrownBy(() -> svc.plan(monitor(), "15.10.2026", null, null, session())).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> svc.plan(monitor(), "2026-02-31", null, null, session())).isInstanceOf(IllegalArgumentException.class);
+        // Varlığın tamamı kaydedilmez — yalnız plan kolonları (M2)
+        verify(repo).writeRenewalPlan(eq(7L), eq("2026-10-15"), eq("ops"), eq("Ops Kişi"), eq("registrar paneli, otomatik yenileme kapalı"),
+                eq("2026-11-22T00:00:00Z"), any());
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("M2: plan arada değiştiyse (koşullu kaldırma 0 satır) yenileme tespiti / elle kaldırma / alan adı değişimi İZ YAZMAZ")
+    void conditionalClear_zeroRows_writesNoTrace() {
+        DomainMonitor m = monitor();
+        svc.plan(m, "2026-10-15", "n", "2026-11-22T00:00:00Z", session());
+        when(repo.clearRenewalPlanIfUnchanged(any(), any(), any(), any(), any())).thenReturn(0);
+        clearInvocations(history, activityLog);
+        assertThat(svc.onCheckResult(m, new HashMap<>(Map.of("expiry_date", "2027-11-22T00:00:00Z")))).isFalse();
+        assertThat(svc.unplan(m, session()).getRenewalPlannedAt()).isEqualTo("2026-10-15");
+        assertThat(svc.clearForDomainChange(m, "old.example.com", session())).isNull();
+        verifyNoInteractions(history, activityLog);
+        verify(repo, times(3)).clearRenewalPlanIfUnchanged(eq(7L), eq("2026-10-15"), eq("2026-11-22T00:00:00Z"), eq("n"), any());
+        verify(repo, never()).save(any());
+        assertThat(DomainRenewalPlanService.validDay("2026-02-28")).isTrue();
+        assertThat(DomainRenewalPlanService.validDay("2026-02-31")).isFalse();
+        assertThat(DomainRenewalPlanService.validDay("2026-2-1")).isFalse();
+        assertThat(DomainRenewalPlanService.validDay(null)).isFalse();
     }
 
     @Test
