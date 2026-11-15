@@ -48,7 +48,7 @@ for (const vp of VIEWPORTS) {
     const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, hasTouch: vp.touch, isMobile: vp.touch })
     const page = await context.newPage()
     await page.emulateMedia({ reducedMotion: 'reduce' })
-    await mockApi(page, { role: 'USER', globalAdmin: false, teamIds: [1], perms: { 'data_quality.view': { view: true } } })
+    await mockApi(page, { role: 'USER', globalAdmin: false, teamIds: [1], perms: { 'data_quality.view': { view: true } }, gaps: true })
     // Profilde e-posta ve telefon YOK (sonradan kaydedilen yol önce eşleşir)
     await page.route((u) => new URL(u).pathname === '/api/me', (route) => route.fulfill({
       status: 200, contentType: 'application/json',

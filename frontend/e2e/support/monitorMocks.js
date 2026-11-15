@@ -809,9 +809,12 @@ export function userPushSettingsMock() {
 export async function mockApi(page, opts = {}) {
   const { role = 'ADMIN', globalAdmin = role === 'ADMIN', teamIds = [1], monitors = MONITORS, perms = null } = opts
   let prefsDoc = JSON.parse(JSON.stringify(opts.prefs ?? PREFS))
-  await page.addInitScript(() => {
+  await page.addInitScript((showGaps) => {
     try { localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 })) } catch { /* yoksay */ }
-  })
+    // Giriş sonrası eksikler penceresi kendiliğinden açılıp başka testlerin tıklamalarını örtmesin (bu sekmede "soruldu"
+    // say); yalnız pencerenin kendi testi `gaps: true` ile açar.
+    if (!showGaps) { try { sessionStorage.setItem('sm.gaps.prompted', 'demo') } catch { /* yoksay */ } }
+  }, opts.gaps === true)
   await page.route((u) => new URL(u).pathname.startsWith('/api/'), async (route) => {
     const u = new URL(route.request().url())
     const p = u.pathname
