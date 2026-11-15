@@ -9,8 +9,8 @@ self.onmessage = async (e) => {
   const m = e.data || {}
   const id = m.id
   if (m.kind === 'support') {
-    let support = { ok: false, webp: false }
-    try { support = await browserSupport() } catch { /* destek yok say */ }
+    let support = { ok: false, webp: false, avif: false }
+    try { support = await browserSupport({ inWorker: true }) } catch { /* destek yok say */ }
     self.postMessage({ id, type: 'support', support })
     return
   }

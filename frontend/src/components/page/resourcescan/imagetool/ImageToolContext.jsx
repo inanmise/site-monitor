@@ -12,7 +12,9 @@ const ResponsiveSetDialog = lazy(() => import('./ResponsiveSetDialog.jsx'))
  * depo konularından okunur) — bir görselin ilerlemesi sekmenin tamamını yeniden çizmez. Bağlam yoksa (parça tek başına
  * çizildiğinde — eski testler) görsel eylemleri hiç çizilmez.
  */
-const ImageToolContext = createContext(null)
+// HMR / uzun süre açık geliştirme sunucusu: modül yeniden yüklenince yeni bağlam nesnesi oluşmasın (sağlayıcı eski,
+// tüketici yeni nesneyi okursa bağlam null olurdu) — öteki sağlayıcılar gibi globalThis'e sabitlenir (yalnız geliştirmede fark eder)
+const ImageToolContext = (globalThis.__smImageToolCtx ??= createContext(null))
 
 export const useImageTool = () => useContext(ImageToolContext)
 

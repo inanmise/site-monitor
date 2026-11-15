@@ -408,7 +408,9 @@ for (const vp of VIEWPORTS) {
       await first.locator('[data-slot="prs-it-entry-responsive"]').click()
       const rs = page.locator(RS)
       await expect(rs.locator('[data-slot="prs-it-rs-row"]')).toHaveCount(3)
-      expect(await rs.locator('[data-slot="prs-it-rs-format"] option').evaluateAll((els) => els.map((o) => o.value))).toEqual(['webp', 'jpeg', 'png'])
+      expect(await rs.locator('[data-slot="prs-it-rs-format"] option').evaluateAll((els) => els.map((o) => o.value))).toEqual(['webp', 'avif', 'jpeg', 'png'])
+      // taklit motor AVIF desteği bildirmez → AVIF seçeneği görünür ama kapalı (2026-11-15)
+      expect(await rs.locator('[data-slot="prs-it-rs-format"] option[value="avif"]').evaluate((o) => o.disabled)).toBe(true)
       await expect(rs.locator('[data-slot="prs-it-rs-format"]')).toHaveValue('webp')
       await rs.locator('[data-slot="prs-it-rs-format"]').selectOption('jpeg')
       await dialogChecker(page, RS)('duyarlı set (başlamadan)')
@@ -787,6 +789,37 @@ for (const vp of VIEWPORTS) {
       if (!missed) expect(out.length).toBeLessThanOrEqual(100 * 1024)
       const webp = await box.locator('[data-slot="prs-it-format"] option[value="webp"]').evaluate((o) => o.disabled)
       expect(typeof webp).toBe('boolean')
+    })
+
+    test('gerçek motor: AVIF seçilince gerçek AVIF iner (.avif, ftyp avif); ayrıntılı karşılaştırma AVIF ölçeğini söyler; sığar', async ({ page }) => {
+      test.setTimeout(240_000)
+      await routes(page)
+      const root = await open(page, '&prs_v=tool')
+      const view = root.locator('[data-slot="prs-it-view"]')
+      await expect(view).toBeVisible({ timeout: 20_000 })
+      const box = await settings(view)
+      const avifOpt = box.locator('[data-slot="prs-it-format"] option[value="avif"]')
+      await expect.poll(() => avifOpt.evaluate((o) => o.disabled), { timeout: 20_000 }).toBe(false)
+      await box.locator('[data-slot="prs-it-format"]').selectOption('avif')
+      await view.locator('[data-slot="prs-it-file-input"]').setInputFiles(files().slice(0, 1))
+      const row = view.locator('[data-slot="prs-it-entry"]').first()
+      await expect(row).toHaveAttribute('data-state', 'done', { timeout: 180_000 })
+      const result = row.locator('[data-slot="prs-it-result"]')
+      const bytes = Number(await result.getAttribute('data-bytes'))
+      const dl = page.waitForEvent('download')
+      await row.locator('[data-slot="prs-it-entry-download"]').click()
+      const d = await dl
+      expect(d.suggestedFilename()).toMatch(/\.avif$/)
+      const out = readFileSync(await d.path())
+      expect(out.subarray(4, 12).toString('latin1')).toBe('ftypavif')
+      expect(out.length).toBe(bytes)
+      const ins = row.locator('[data-slot="prs-it-insights"]')
+      if (await ins.count()) {
+        const trigger = ins.getByRole('button').first()
+        if ((await trigger.getAttribute('aria-expanded')) !== 'true') await trigger.click()
+        await expect(ins).toContainText(/AVIF/)
+      }
+      await checker(page)('gerçek motor — AVIF işlendi')
     })
 
     test('gerçek motor: tarama görselinin "Küçült + optimize et" indirmesi önerilen genişlikte bir dosya üretir', async ({ page }) => {

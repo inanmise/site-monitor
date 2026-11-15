@@ -167,7 +167,7 @@ test.describe('uçtan uca genel tur — canlı', () => {
       expect(page404.headers()['content-type']).toMatch(/text\/html/)
       expect(await page404.text()).toContain('<div id="root">')
       expect(page404.headers()['cache-control']).toMatch(/no-store/)
-      expect(page404.headers()['content-security-policy']).toMatch(/script-src 'self';/)
+      expect(page404.headers()['content-security-policy']).toMatch(/script-src 'self' 'wasm-unsafe-eval';/)
 
       const api404 = await req.get('/api/e2e-live-olmayan-uc', { headers: { Accept: 'application/json', 'X-Lang': 'tr' } })
       expect(api404.status(), 'bilinmeyen /api').toBe(404)

@@ -562,10 +562,10 @@ describe('görsel motoru — iş akışı: sınırlar, hatalar, iptal', () => {
   })
 
   it('destek sorgusu: platform çalışmıyorsa ok = false; WebP kodlanabilirliği ayrı', async () => {
-    expect(await supportCore(fakePlatform())).toEqual({ ok: true, webp: true })
-    expect(await supportCore(fakePlatform({ webp: false }))).toEqual({ ok: true, webp: false })
-    expect(await supportCore({ available: async () => false, canEncode: async () => true })).toEqual({ ok: false, webp: false })
-    expect(await supportCore({ available: async () => { throw new Error('x') }, canEncode: async () => true })).toEqual({ ok: false, webp: false })
+    expect(await supportCore(fakePlatform())).toEqual({ ok: true, webp: true, avif: false })
+    expect(await supportCore(fakePlatform({ webp: false }))).toEqual({ ok: true, webp: false, avif: false })
+    expect(await supportCore({ available: async () => false, canEncode: async () => true })).toEqual({ ok: false, webp: false, avif: false })
+    expect(await supportCore({ available: async () => { throw new Error('x') }, canEncode: async () => true })).toEqual({ ok: false, webp: false, avif: false })
   })
 })
 

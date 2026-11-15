@@ -38,15 +38,19 @@ export const PROJECTION_MAX_IMAGES = 200
 export const MISSING_FILE = 'missing.txt'
 const BOM = String.fromCharCode(0xfeff)
 
-/** Araç ayarlarının seçenekleri (motorun dışa aktardığı listelerle AYNI — test motor listesini okur). */
-export const FORMATS = Object.freeze(['keep', 'jpeg', 'png', 'webp', 'smallest'])
+/**
+ * Araç ayarlarının seçenekleri (motorun dışa aktardığı listelerle AYNI KÜME — test motor listesini okur). Sıra ekran
+ * sırasıdır: motor AVIF'i listesinin sonuna ekledi (2026-11-15), seçimde "en küçük"ten önce gösterilir.
+ */
+export const FORMATS = Object.freeze(['keep', 'jpeg', 'png', 'webp', 'avif', 'smallest'])
 export const METHODS = Object.freeze(['none', 'scale', 'fit', 'cover', 'thumb'])
 export const QUALITY_MODES = Object.freeze(['auto', 'manual', 'target'])
 export const PHASES = Object.freeze(['decode', 'resize', 'encode', 'search'])
 /** Motor not kodları (sözleşme §2 `NOTE_CODES`) — her biri TR + EN metin taşır (`prs.it.note.<KOD>`). */
 export const NOTE_CODES = Object.freeze(['KEPT_ORIGINAL', 'NOT_UPSCALED', 'TRUECOLOR_KEPT', 'ALPHA_FLATTENED', 'WEBP_UNAVAILABLE',
   'TARGET_NOT_REACHED', 'METADATA_PRESERVED', 'METADATA_NOT_PRESERVED', 'ORIENTATION_APPLIED', 'ANIMATION_DROPPED', 'SMART_CROP',
-  'THUMB_PADDED', 'COLOR_PROFILE_CONVERTED', 'METADATA_STRIPPED', 'ALPHA_COLORS_ROUNDED'])
+  'THUMB_PADDED', 'COLOR_PROFILE_CONVERTED', 'METADATA_STRIPPED', 'ALPHA_COLORS_ROUNDED', 'AVIF_UNAVAILABLE', 'AVIF_TOO_LARGE',
+  'AVIF_NOT_MEASURED'])
 /** Motor hata kodları (sözleşme §2 `ERROR_CODES`) — her biri TR + EN metin taşır (`prs.it.eng.<KOD>`). */
 export const ENGINE_CODES = Object.freeze(['UNSUPPORTED_FORMAT', 'TOO_LARGE', 'TOO_MANY_PIXELS', 'DECODE_FAILED', 'BROWSER_UNSUPPORTED',
   'ENCODE_FAILED', 'CANCELLED', 'INVALID_OPTIONS'])

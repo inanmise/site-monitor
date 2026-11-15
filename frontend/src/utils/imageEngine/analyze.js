@@ -5,6 +5,8 @@
 //    alan null ("bilinmiyor") — asla uydurulmuş değer.
 //  - countColors(rgba, w, h): eşit aralıklı örnekte farklı renk sayısı (en çok COLOR_COUNT_CAP; aşarsa `atLeast`).
 //  - svgCandidate / bandingRisk: öneri kuralları.
+// Yoğunluk (JFIF / pHYs / BMP) density.js'teki ORTAK okuyucuyla okunur — çıktıya aynı değeri yazan kod da onu kullanır.
+import { bmpDensityAt, jfifDensityAt, physDensityAt, ppiOf } from './density.js'
 
 /** Başlıkta en çok bu kadar bayt okunur (JPEG işaretleri, PNG parçaları). */
 export const FACTS_SCAN_BYTES = 512 * 1024
@@ -35,8 +37,6 @@ const u16be = (b, i) => (b[i] << 8) | b[i + 1]
 const u16le = (b, i) => b[i] | (b[i + 1] << 8)
 const u32be = (b, i) => ((b[i] << 24) >>> 0) + ((b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3])
 const u32le = (b, i) => (b[i] | (b[i + 1] << 8) | (b[i + 2] << 16)) + ((b[i + 3] << 24) >>> 0)
-const i32le = (b, i) => b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24)
-const round1 = (v) => Math.round(v * 10) / 10
 
 function empty() {
   // ppiChecked: yoğunluğun yazıldığı başlık gerçekten okundu mu (okunmadıysa "kayıtlı değil" denmez — bilinmiyor)
@@ -79,13 +79,9 @@ function jpegFacts(b, n) {
     const s = i + 4
     const end = i + 2 + len
     if (marker === 0xe0 && len >= 16 && b[s] === 0x4a && b[s + 1] === 0x46 && b[s + 2] === 0x49 && b[s + 3] === 0x46 && b[s + 4] === 0) {
-      const units = b[s + 7]
-      const x = u16be(b, s + 8)
-      const y = u16be(b, s + 10)
       out.ppiChecked = true
-      if (x > 0 && y > 0 && (units === 1 || units === 2)) {
-        out.ppi = units === 1 ? { x, y } : { x: round1(x * 2.54), y: round1(y * 2.54) }
-      }
+      const d = jfifDensityAt(b, s)
+      if (d) out.ppi = ppiOf(d)
     } else if (marker === 0xdb) {
       let p = s
       let guard = 0
@@ -151,10 +147,9 @@ function pngFacts(b, n) {
     if (type === 'IHDR' && len >= 13) {
       out.bitDepth = b[d + 8]
       out.colorModel = PNG_MODEL[b[d + 9]] ?? null
-    } else if (type === 'pHYs' && len >= 9 && b[d + 8] === 1) {
-      const x = u32be(b, d)
-      const y = u32be(b, d + 4)
-      if (x > 0 && y > 0) out.ppi = { x: round1(x * 0.0254), y: round1(y * 0.0254) }
+    } else if (type === 'pHYs') {
+      const dens = physDensityAt(b, d, len)
+      if (dens) out.ppi = ppiOf(dens)
     } else if (type === 'PLTE') {
       out.paletteSize = Math.floor(len / 3)
     } else if (type === 'IDAT' || type === 'IEND') {
@@ -211,9 +206,8 @@ function bmpFacts(b, n) {
     out.ppiChecked = true                                         // çekirdek başlıkta yoğunluk alanı yok
   } else if (hdr >= 40 && n >= 46) {
     bpp = u16le(b, 28)
-    const x = i32le(b, 38)
-    const y = i32le(b, 42)
-    if (x > 0 && y > 0) out.ppi = { x: round1(x * 0.0254), y: round1(y * 0.0254) }
+    const dens = bmpDensityAt(b, n)
+    if (dens) out.ppi = ppiOf(dens)
     out.ppiChecked = true
   } else {
     return out
@@ -222,6 +216,67 @@ function bmpFacts(b, n) {
   out.bitDepth = bpp === 24 || bpp === 32 ? 8 : bpp > 0 && bpp <= 8 ? bpp : null
   // 32 bitte dördüncü kanal çoğu zaman kullanılmaz (X8R8G8B8): saydamlık bilinmiyor
   out.colorModel = bpp > 0 && bpp <= 8 ? 'palette' : bpp === 16 || bpp === 24 ? 'rgb' : null
+  return out
+}
+
+const ascii4 = (b, i) => String.fromCharCode(b[i], b[i + 1], b[i + 2], b[i + 3])
+
+/** ISO BMFF kutularını yürür (en çok `max` kutu, sınır `to`): `visit(type, bodyStart, bodyEnd)`. */
+function boxes(b, from, to, max, visit) {
+  let o = from
+  for (let guard = 0; guard < max && o + 8 <= to; guard++) {
+    let size = u32be(b, o)
+    let head = 8
+    if (size === 1) {
+      if (o + 16 > to || u32be(b, o + 8) !== 0) return
+      size = u32be(b, o + 12)
+      head = 16
+    } else if (size === 0) {
+      size = to - o
+    }
+    if (size < head) return
+    visit(ascii4(b, o + 4), o + head, Math.min(to, o + size))
+    o += size
+  }
+}
+
+/**
+ * AVIF: `meta / iprp / ipco` özellikleri — `pixi` (kanal başına bit), `av1C` (yüksek bit derinliği, tek renk, renk alt
+ * örneklemesi), `auxC` (saydamlık katmanı). Yoğunluk saklanmaz (ppiChecked kalır false — "bilinmiyor").
+ */
+function avifFacts(b, n) {
+  // subsampling (yalnız AVIF'te): renk alt örneklemesi (av1C) — JPEG'inki `jpeg.subsampling`ta kalır
+  const out = { ...empty(), subsampling: null }
+  let pixi = null
+  let av1 = null
+  let alpha = false
+  boxes(b, 0, n, 64, (type, s, e) => {
+    if (type !== 'meta') return
+    boxes(b, s + 4, e, 256, (t1, s1, e1) => {
+      if (t1 !== 'iprp') return
+      boxes(b, s1, e1, 64, (t2, s2, e2) => {
+        if (t2 !== 'ipco') return
+        boxes(b, s2, e2, 1024, (t3, s3, e3) => {
+          if (t3 === 'pixi' && s3 + 5 <= e3 && pixi == null) {
+            const channels = b[s3 + 4]
+            if (channels > 0 && s3 + 5 + channels <= e3) pixi = { channels, bits: b[s3 + 5] }
+          } else if (t3 === 'av1C' && s3 + 3 <= e3 && av1 == null) {
+            const f = b[s3 + 2]
+            av1 = { high: (f & 0x40) !== 0, twelve: (f & 0x20) !== 0, mono: (f & 0x10) !== 0, sx: (f >> 3) & 1, sy: (f >> 2) & 1 }
+          } else if (t3 === 'auxC' && s3 + 4 < e3) {
+            let urn = ''
+            for (let i = s3 + 4; i < e3 && i < s3 + 68 && b[i] !== 0; i++) urn += String.fromCharCode(b[i])
+            if (urn.includes('alpha')) alpha = true
+          }
+        })
+      })
+    })
+  })
+  if (pixi && pixi.bits > 0) out.bitDepth = pixi.bits
+  else if (av1) out.bitDepth = av1.high ? (av1.twelve ? 12 : 10) : 8
+  const mono = av1 ? av1.mono : pixi ? pixi.channels === 1 : null
+  if (mono !== null) out.colorModel = mono ? (alpha ? 'gray-alpha' : 'gray') : (alpha ? 'rgba' : 'rgb')
+  if (av1 && !av1.mono) out.subsampling = av1.sx && av1.sy ? '4:2:0' : av1.sx && !av1.sy ? '4:2:2' : !av1.sx && !av1.sy ? '4:4:4' : null
   return out
 }
 
@@ -238,6 +293,7 @@ export function readImageFacts(bytes, type) {
     if (type === 'gif') return gifFacts(bytes, n)
     if (type === 'webp') return webpFacts(bytes, n)
     if (type === 'bmp') return bmpFacts(bytes, n)
+    if (type === 'avif') return avifFacts(bytes, n)
     return empty()
   } catch {
     return empty()
@@ -293,7 +349,7 @@ export function svgCandidate(colors, width, height) {
  */
 export function bandingRisk({ inputBitDepth, outputBitDepth = null, outputType, outputColors, similarity }) {
   // 8'den derin kaynak gerçekten 8 bite (ya da 8 bitlik kayıplı biçime) indiyse; korunan özgünde / 16 bit çıktıda değil
-  const outEight = outputBitDepth != null ? outputBitDepth <= 8 : (outputType === 'jpeg' || outputType === 'webp')
+  const outEight = outputBitDepth != null ? outputBitDepth <= 8 : (outputType === 'jpeg' || outputType === 'webp' || outputType === 'avif')
   if (inputBitDepth != null && inputBitDepth > 8 && outEight) return 'bit_depth'
   if (outputType === 'png' && outputColors != null && outputColors > 0 && outputColors <= 64
     && similarity != null && similarity < 0.985) return 'palette'

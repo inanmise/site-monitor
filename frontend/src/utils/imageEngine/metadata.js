@@ -378,6 +378,12 @@ export function planMetadata(meta, preserve, outType, orientation = 1) {
   const plan = { exif: null, text: [], kept: [], dropped: [] }
   const keepOrientation = orientation >= 2 && orientation <= 8
   if (!want.length && !keepOrientation) return plan
+  if (outType === 'avif') {
+    // AVIF çıktısına EXIF yazılmaz (kodlayıcı kutu düzeni bizde değil): istenen üst veri taşınamaz; yön zaten piksele
+    // uygulandı (çözme EXIF yönüyle yapılır) — ayrıca yazılmasına gerek yok
+    plan.dropped.push(...want)
+    return plan
+  }
   if (outType === 'png') {
     if (keepOrientation) plan.exif = buildExif({ orientation })        // PNG: eXIf parçası olarak (yalnız yön)
     for (const k of want) {

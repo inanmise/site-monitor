@@ -21,6 +21,7 @@
   "dependencies": {
     "@base-ui/react": "^1.9.0",
     "@fontsource-variable/inter": "^5.3.0",
+    "@jsquash/avif": "2.1.1",
     "@tailwindcss/vite": "^4.3.5",
     "@uiw/react-md-editor": "4.1.1",
     "class-variance-authority": "^0.7.1",
@@ -61,5 +62,8 @@
     "jsdom": "^29.1.1",
     "vite": "^5.4.21",
     "vitest": "^3.2.0"
+  },
+  "overrides": {
+    "wasm-feature-detect": "1.9.0"
   }
 }

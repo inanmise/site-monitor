@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, ChevronDown, Columns2, Download, FileArchive, ImagePlus, Images, MonitorSmartphone, RefreshCw, RotateCw, ShieldCheck,
   SlidersHorizontal, Trash2, TriangleAlert, Upload, X,
@@ -9,6 +9,7 @@ import { clientFailure } from '../../../../utils/errorMessages.js'
 import { useToast } from '../../../ui/Toast.jsx'
 import { useDialog } from '../../../ui/Dialog.jsx'
 import AlertBanner from '../../../ui/AlertBanner.jsx'
+import StatusBlock from '../../../ui/StatusBlock.jsx'
 import { ProgressBar, Spinner } from '../../../ui/Progress.jsx'
 import ToneBadge from '../../../admin/ToneBadge.jsx'
 import { formatNumber, formatPct, formatSize, plural } from '../resourceScanModel.js'
@@ -27,6 +28,39 @@ import { cn } from '@/lib/utils'
 /** Ayar paneli bu kap genişliğinden itibaren kuyruğun YANINDA (altında katlanır). jsdom 0 → yan yana. */
 export const TOOL_WIDE_MIN_PX = 900
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif'
+
+/**
+ * Görünüm GERÇEKTEN görünüyor mu (yapıştırma yalnız o zaman alınır): sekmeler zorla bağlı kalır (gizli sekme
+ * `data-state="inactive"` + CSS ile gizlenir) — gizli araç belgenin yapıştırmalarını sessizce kuyruğa almasın.
+ * Tarayıcıda `checkVisibility` (yoksa yerleşim kutusu); her durumda gizleyen ata (hidden / pasif sekme / aria-hidden) aranır.
+ */
+export function viewVisible(el) {
+  if (!el || !el.isConnected) return false
+  if (el.closest('[hidden],[aria-hidden="true"],[role=tabpanel][data-state=inactive]')) return false
+  if (typeof el.checkVisibility === 'function') {
+    try { return el.checkVisibility() } catch { return true }
+  }
+  return true
+}
+
+const EDITABLE = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]'
+const DIALOG = '[role="dialog"], [role="alertdialog"], dialog'
+
+/**
+ * Yapıştırma bu görünüme mi ait: başka bir bileşen ele aldıysa (`defaultPrevented` — ör. Sorun Bildir penceresinin
+ * ekran görüntüsü yapıştırması) DEĞİL; hedef görünümün DIŞINDAKİ bir yazı alanı ya da pencere içindeyse DEĞİL.
+ */
+export function pasteBelongsToView(e, root) {
+  if (!e || e.defaultPrevented) return false
+  if (!viewVisible(root)) return false
+  const t = e.target
+  if (t && typeof t.closest === 'function' && !root.contains(t)) {
+    if (t.closest(EDITABLE)) return false
+    const dlg = t.closest(DIALOG)
+    if (dlg && !dlg.contains(root)) return false
+  }
+  return true
+}
 
 /** Sürükleme / yapıştırma verisindeki dosyalar (yalnız dosya; metin yapıştırma yok sayılır). */
 function filesOf(dt) {
@@ -55,17 +89,37 @@ function filesOf(dt) {
  * Görünüm, sekmeyi gören HERKESE açıktır (yükleme için ek yetki yok).
  */
 export default function ImageToolView({ onBack }) {
+  const ctx = useImageTool()
+  // Bağlam yoksa (2026-11-15: uzun süre açık kalmış geliştirme sunucusunda karışan modül sürümleri, ya da sağlayıcısız
+  // çizim) izleme sayfasının tamamı çökmez: küçük, nötr bir uyarı + "Sayfayı yenile". Kancalar iç bileşende — sıra sabit.
+  if (!ctx || !ctx.store) return <ToolUnavailable />
+  return <ImageToolBody ctx={ctx} onBack={onBack} />
+}
+
+/** Görsel aracı açılamadı (bağlam yok): nötr durum bloğu + sayfa yenileme düğmesi (dokunmatikte ≥ 40 px). */
+function ToolUnavailable() {
+  const t = useT()
+  return (
+    <div data-slot="prs-it-tool-unavailable">
+      <StatusBlock tone="neutral" icon={RotateCw} title={t('prs.it.tool.unavailable')}
+        actions={<ReloadPageButton t={t} className="h-9 px-3 text-sm" />} />
+    </div>
+  )
+}
+
+function ImageToolBody({ ctx, onBack }) {
   const t = useT()
   const locale = useDateLocale()
   const toast = useToast()
   const { showConfirm } = useDialog()
-  const ctx = useImageTool()
   const store = ctx.store
   const queue = useTopic(store, 'queue', store.queue)
   const settings = useTopic(store, 'settings', store.settings)
   const support = useTopic(store, 'support', store.support)
   const zip = useTopic(store, 'zip', store.zip)
-  const [ref, width] = useElementWidth()
+  const [widthRef, width] = useElementWidth()
+  const rootEl = useRef(null)
+  const ref = useCallback((el) => { rootEl.current = el; widthRef(el) }, [widthRef])
   const [dragging, setDragging] = useState(false)
   const [notice, setNotice] = useState(null)          // { rejected } — sınır nedeniyle eklenmeyen dosya sayısı
   const [touched, setTouched] = useState(() => new Set())
@@ -83,10 +137,12 @@ export default function ImageToolView({ onBack }) {
     setNotice(res.rejected > 0 ? { rejected: res.rejected } : null)
   }
 
-  // Yapıştırma (Ctrl+V): görünüm açıkken belgedeki GÖRSEL yapıştırmaları kuyruğa düşer; metin yapıştırma (ayar alanına
-  // sayı) olağan davranışında kalır — yalnız dosya taşıyan yapıştırma ele alınır.
+  // Yapıştırma (Ctrl+V): görünüm GÖRÜNÜRKEN belgedeki GÖRSEL yapıştırmaları kuyruğa düşer; metin yapıştırma (ayar
+  // alanına sayı) olağan davranışında kalır — yalnız dosya taşıyan yapıştırma ele alınır. Başka bileşenin ele aldığı
+  // (defaultPrevented), görünüm dışındaki yazı alanına / pencereye yapılan yapıştırma ALINMAZ (2026-11-15).
   useEffect(() => {
     const onPaste = (e) => {
+      if (!pasteBelongsToView(e, rootEl.current)) return
       const files = filesOf(e.clipboardData)
       if (!files.length) return
       e.preventDefault()

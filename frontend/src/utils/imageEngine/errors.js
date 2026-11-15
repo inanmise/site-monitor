@@ -2,7 +2,8 @@
 // ve ana iş parçacığı yedeği AYNI modülü kullanır (ana iş parçacığında `instanceof EngineError` çalışsın).
 
 export const ENGINE_LIMITS = Object.freeze({ maxInputBytes: 25 * 1024 * 1024, maxPixels: 50_000_000, maxSide: 30_000 })
-export const OUTPUT_FORMATS = Object.freeze(['keep', 'jpeg', 'png', 'webp', 'smallest'])
+// 'avif' (2026-11-15, kullanıcı kararı "gerçek AVIF üret") sona eklendi: kodlayıcı ayrı Worker'daki WASM'dır (avifClient.js)
+export const OUTPUT_FORMATS = Object.freeze(['keep', 'jpeg', 'png', 'webp', 'smallest', 'avif'])
 export const RESIZE_METHODS = Object.freeze(['none', 'scale', 'fit', 'cover', 'thumb'])
 export const ERROR_CODES = Object.freeze(['UNSUPPORTED_FORMAT', 'TOO_LARGE', 'TOO_MANY_PIXELS', 'DECODE_FAILED',
   'BROWSER_UNSUPPORTED', 'ENCODE_FAILED', 'CANCELLED', 'INVALID_OPTIONS'])
@@ -10,9 +11,16 @@ export const ERROR_CODES = Object.freeze(['UNSUPPORTED_FORMAT', 'TOO_LARGE', 'TO
 //  METADATA_STRIPPED    — özgün dosya korundu (KEPT_ORIGINAL) ama üstverisi kayıpsız ayıklandı; görüntü baytları aynı
 //  ALPHA_COLORS_ROUNDED — kayıpsız PNG, ama yarı saydam piksellerin renk değerleri tarayıcı çözmesinde yuvarlandı
 //                         (görünüm aynı); benzerlik bu yüzden null
+// AVIF (2026-11-15):
+//  AVIF_UNAVAILABLE     — AVIF bu tarayıcıda / şu an üretilemedi (kodlayıcı yüklenemedi, CSP engelledi, süre doldu,
+//                         Worker yok); istenmişse yedek biçim (WebP / JPEG / PNG) döner, "en küçük"te AVIF atlanır
+//  AVIF_TOO_LARGE       — görsel AVIF piksel sınırının (AVIF_MAX_PIXELS) üstünde: AVIF üretilmedi
+//  AVIF_NOT_MEASURED    — AVIF üretildi ama tarayıcı AVIF çözemiyor: benzerlik ölçülemedi (null); otomatik kalite yerine
+//                         sabit kalite kullanıldı; "en küçük"te bu yüzden AVIF yarışa girmez
 export const NOTE_CODES = Object.freeze(['KEPT_ORIGINAL', 'NOT_UPSCALED', 'TRUECOLOR_KEPT', 'ALPHA_FLATTENED',
   'WEBP_UNAVAILABLE', 'TARGET_NOT_REACHED', 'METADATA_PRESERVED', 'METADATA_NOT_PRESERVED', 'ORIENTATION_APPLIED',
-  'ANIMATION_DROPPED', 'SMART_CROP', 'THUMB_PADDED', 'COLOR_PROFILE_CONVERTED', 'METADATA_STRIPPED', 'ALPHA_COLORS_ROUNDED'])
+  'ANIMATION_DROPPED', 'SMART_CROP', 'THUMB_PADDED', 'COLOR_PROFILE_CONVERTED', 'METADATA_STRIPPED', 'ALPHA_COLORS_ROUNDED',
+  'AVIF_UNAVAILABLE', 'AVIF_TOO_LARGE', 'AVIF_NOT_MEASURED'])
 
 /** Çıktı / girdi türü → MIME. */
 export const MIME = Object.freeze({ jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif',

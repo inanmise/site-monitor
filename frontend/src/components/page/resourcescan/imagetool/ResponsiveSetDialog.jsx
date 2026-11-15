@@ -29,15 +29,18 @@ import { cn } from '@/lib/utils'
  * her genişlikte dönüştürür (özgün korunursa da aynı türdür), böylece setin bütün dosyaları TEK türdedir ve `<source type>`
  * doğru söyler (GIF / BMP / AVIF özgünü doğal genişlikte araya karışmaz).
  */
-export const SET_FORMATS = ['webp', 'jpeg', 'png']
+export const SET_FORMATS = ['webp', 'avif', 'jpeg', 'png']
 
 /**
  * Setin varsayılan biçimi: panelin açık biçimi; yoksa WebP (destek henüz bilinmiyorsa da — çoğu tarayıcı üretir, seçim
- * sonradan değişmesin); tarayıcı WebP üretemiyorsa saydam / PNG / GIF görselde PNG, ötekinde JPEG.
+ * sonradan değişmesin); tarayıcı WebP üretemiyorsa saydam / PNG / GIF görselde PNG, ötekinde JPEG. AVIF yalnız panelde
+ * açıkça seçildiyse ve tarayıcı üretebiliyorsa (ya da destek henüz bilinmiyorsa) varsayılan olur.
  * @param {boolean|null} webp tarayıcı WebP üretebilir mi (null = bilinmiyor)
+ * @param {boolean|null} [avif] tarayıcı AVIF üretebilir mi (null = bilinmiyor)
  */
-export function defaultSetFormat(format, info, webp) {
-  if (SET_FORMATS.includes(format) && (format !== 'webp' || webp !== false)) return format
+export function defaultSetFormat(format, info, webp, avif = null) {
+  if (format === 'avif' && avif !== false) return 'avif'
+  if (SET_FORMATS.includes(format) && format !== 'avif' && (format !== 'webp' || webp !== false)) return format
   if (webp !== false) return 'webp'
   const t = String(info?.type || '').toLowerCase()
   return info?.hasAlpha === true || t === 'png' || t === 'gif' ? 'png' : 'jpeg'
@@ -59,11 +62,14 @@ export default function ResponsiveSetDialog({ name, base, blob, info, format = '
   const widths = useMemo(() => responsiveWidths(info?.width), [info?.width])
   const slug = useMemo(() => slugFileBase(base || name), [base, name])
   const [fmtChoice, setFmt] = useState(null)
-  const fmt = fmtChoice ?? defaultSetFormat(format, info, support.state === 'ready' ? support.webp === true : null)
+  const fmt = fmtChoice ?? defaultSetFormat(format, info, support.state === 'ready' ? support.webp === true : null,
+    support.state === 'ready' ? support.avif === true : null)
   const [alt, setAlt] = useState('')
   const [sizes, setSizes] = useState('100vw')
   const [prefix, setPrefix] = useState('')
-  const [kind, setKind] = useState('img')
+  const [kindChoice, setKind] = useState(null)
+  // AVIF seti için varsayılan <picture> (AVIF açamayan tarayıcı yedek <img> ile özgünü gösterir); seçim kullanıcınındır
+  const kind = kindChoice ?? (fmt === 'avif' ? 'picture' : 'img')
   const [rows, setRows] = useState(() => widths.map((w) => ({ width: w, state: 'idle', phase: null, summary: null, name: null, problem: null })))
   const [running, setRunning] = useState(false)
   const [zipping, setZipping] = useState(false)
@@ -173,7 +179,9 @@ export default function ResponsiveSetDialog({ name, base, blob, info, format = '
   }
 
   const webp = support.webp === true
+  const avif = support.avif === true
   const supportKnown = support.state === 'ready'
+  const off = (f) => supportKnown && ((f === 'webp' && !webp) || (f === 'avif' && !avif))
   const tone = { idle: 'muted', waiting: 'muted', processing: 'info', done: 'success', failed: 'danger' }
   return (
     <ModalShell open onClose={onClose} title={t('prs.it.rs.title')} icon={MonitorSmartphone} size="lg" scrollBody closeLabel={t('app.dismiss')}
@@ -205,12 +213,13 @@ export default function ResponsiveSetDialog({ name, base, blob, info, format = '
         ) : (
           <>
             <p className={cn('m-0 text-sm text-foreground', WRAP)}>{t('prs.it.rs.intro', widths.map((w) => formatNumber(w, locale)).join(' · '))}</p>
-            <Field label={t('prs.it.set.format')} name="rsFormat" hint={supportKnown && !webp ? t('prs.it.set.webpOff') : t('prs.it.rs.formatHint')}>
+            <Field label={t('prs.it.set.format')} name="rsFormat"
+              hint={supportKnown && !webp ? t('prs.it.set.webpOff') : fmt === 'avif' && off('avif') ? t('prs.it.set.avifOff') : t('prs.it.rs.formatHint')}>
               {({ id, describedBy }) => (
                 <NativeSelect id={id} aria-describedby={describedBy} value={fmt} disabled={running} data-slot="prs-it-rs-format"
                   className="pointer-coarse:h-10" onChange={(e) => setFmt(e.target.value)}>
                   {SET_FORMATS.map((f) => (
-                    <NativeSelectOption key={f} value={f} disabled={f === 'webp' && supportKnown && !webp}>{t(`prs.it.set.format.${f}`)}</NativeSelectOption>
+                    <NativeSelectOption key={f} value={f} disabled={off(f)}>{t(`prs.it.set.format.${f}`)}</NativeSelectOption>
                   ))}
                 </NativeSelect>
               )}
@@ -246,6 +255,11 @@ export default function ResponsiveSetDialog({ name, base, blob, info, format = '
                 <SegmentedControl value={kind} onChange={setKind} ariaLabel={t('prs.it.rs.kind')}
                   options={[{ value: 'img', label: t('prs.it.rs.kindImg') }, { value: 'picture', label: t('prs.it.rs.kindPicture') }]} />
               </div>
+              {fmt === 'avif' && kind !== 'picture' && (
+                <p data-slot="prs-it-rs-avif-picture" className={cn('m-0 flex items-start gap-1.5 text-xs text-warning', WRAP)}>
+                  <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />{t('prs.it.rs.avifPicture')}
+                </p>
+              )}
               <div className="grid min-w-0 grid-cols-1 gap-x-3 sm:grid-cols-2">
                 <Field label={t('prs.it.rs.alt')} name="rsAlt" hint={t('prs.it.rs.altHint')}>
                   {({ id, describedBy }) => <Input id={id} aria-describedby={describedBy} value={alt} maxLength={300} className="pointer-coarse:h-10"

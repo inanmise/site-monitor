@@ -77,7 +77,7 @@ class SpaNotFoundAdviceTest {
             assertThat(res.getContentType()).as(path).startsWith("text/html");
             assertThat(res.getContentAsString(StandardCharsets.UTF_8)).as(path).contains(SHELL_MARKER).contains("<div id=\"root\">");
             assertThat(res.getHeader("Cache-Control")).as(path).contains("no-store").doesNotContain("max-age").doesNotContain("public");
-            assertThat(res.getHeader("Content-Security-Policy")).as(path).contains("script-src 'self';");
+            assertThat(res.getHeader("Content-Security-Policy")).as(path).contains("script-src 'self' 'wasm-unsafe-eval';");
             assertThat(res.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
         }
     }
@@ -121,6 +121,26 @@ class SpaNotFoundAdviceTest {
 
         MvcResult carried = mvc.perform(get("/assets/app.js")).andExpect(status().isOk()).andReturn();
         assertThat(carried.getResponse().getHeader("Cache-Control")).contains("immutable");
+    }
+
+    /**
+     * AVIF kodlayıcısı (görsel aracı, 2026-11-15): Vite'ın hash'li {@code .wasm} varlığı application/wasm + 1 yıllık
+     * immutable sunulur ({@code WebAssembly.instantiateStreaming} MIME türünü ister); eski bir podda olmayan .wasm düz
+     * metin 404 + no-store alır — ön yüz bunu "sayfa güncellendi" (stale_bundle) olarak okur, HTML kabuğu almaz.
+     */
+    @Test
+    @DisplayName(".wasm: application/wasm + immutable; eksik .wasm → düz metin 404 + no-store")
+    void wasmAssetMimeAndCache() throws Exception {
+        MvcResult ok = mvc.perform(get("/assets/avif_enc-test.wasm")).andExpect(status().isOk()).andReturn();
+        assertThat(ok.getResponse().getContentType()).startsWith("application/wasm");
+        assertThat(ok.getResponse().getHeader("Cache-Control")).contains("immutable");
+        assertThat(ok.getResponse().getContentAsByteArray()).startsWith((byte) 0, (byte) 0x61, (byte) 0x73, (byte) 0x6d);
+
+        MvcResult gone = mvc.perform(get("/assets/avif_enc-deadbeef.wasm").accept(MediaType.ALL))
+                .andExpect(status().isNotFound()).andReturn();
+        assertThat(gone.getResponse().getContentType()).startsWith("text/plain");
+        assertThat(gone.getResponse().getContentAsString(StandardCharsets.UTF_8)).doesNotContain("<html").doesNotContain(SHELL_MARKER);
+        assertThat(gone.getResponse().getHeader("Cache-Control")).contains("no-store").doesNotContain("immutable");
     }
 
     @Test

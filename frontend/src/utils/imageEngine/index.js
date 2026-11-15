@@ -153,7 +153,12 @@ function onMessage(w, e) {
   current = null
   if (m.type === 'result') settle(job, () => job.resolve(m.result))
   else if (m.type === 'support') settle(job, () => job.resolve(m.support))
-  else settle(job, () => job.reject(new EngineError(ERROR_CODES.includes(m.code) ? m.code : 'ENCODE_FAILED', m.params || {})))
+  else {
+    const err = new EngineError(ERROR_CODES.includes(m.code) ? m.code : 'ENCODE_FAILED', m.params || {})
+    // Worker'ın açtığı parça (AVIF kodlayıcısı) sunucuda yoksa: sayfa eski sürümden — sonraki işler hemen biter
+    if (err.code === 'BROWSER_UNSUPPORTED' && err.params?.reason === 'stale_bundle') staleBundle = true
+    settle(job, () => job.reject(err))
+  }
   pump()
 }
 
@@ -190,10 +195,10 @@ async function detectSupport() {
   if (typeof Worker !== 'undefined') {
     try {
       const s = await submit('support', {}, { timeoutMs: SUPPORT_TIMEOUT_MS })
-      if (s && s.ok) return { worker: true, webp: !!s.webp }
+      if (s && s.ok) return { worker: true, webp: !!s.webp, avif: s.avif === true }
     } catch { /* Worker kurulamadı / yanıt vermedi: ana iş parçacığı */ }
   }
-  if (staleBundle) return { worker: false, webp: false, staleBundle: true }
+  if (staleBundle) return { worker: false, webp: false, avif: false, staleBundle: true }
   let webp = false
   try {
     const core = await loadCore()
@@ -203,14 +208,17 @@ async function detectSupport() {
     // çekirdek yüklenemedi: eski paket mi?
     if (await bundleGone()) {
       staleBundle = true
-      return { worker: false, webp: false, staleBundle: true }
+      return { worker: false, webp: false, avif: false, staleBundle: true }
     }
   }
-  return { worker: false, webp }
+  // Ana iş parçacığı yedeğinde AVIF sunulmaz (WASM kodlaması sayfayı dondururdu)
+  return { worker: false, webp, avif: false }
 }
 
 /**
- * Bu tarayıcı ne yapabiliyor (bir kez hesaplanır). `worker` = iş Web Worker'da koşar; `webp` = WebP KODLAYABİLİYOR.
+ * Bu tarayıcı ne yapabiliyor (bir kez hesaplanır). `worker` = iş Web Worker'da koşar; `webp` = WebP KODLAYABİLİYOR;
+ * `avif` = AVIF DENENEBİLİR (Worker'da WebAssembly var ve CSP derlemeye izin veriyor — kodlayıcı yüklenmeden ucuz
+ * denetim; yükleme yine de düşebilir, o zaman sonuç AVIF_UNAVAILABLE notu taşır).
  * `staleBundle: true` (yalnız o durumda, EK alan) = sayfa eski sürümden kalmış, motor dosyaları sunucuda yok.
  */
 export function engineSupport() {

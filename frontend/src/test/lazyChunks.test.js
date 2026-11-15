@@ -212,11 +212,34 @@ describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme gra
     expect(importers('pipeline')).toEqual([`${E}core.js`])
     // üst veri ayıklayıcı (strip — METADATA_STRIPPED) da çekirdek yolundadır: yalnız pipeline alır, o da pngWriter'ı alır
     expect(importers('strip')).toEqual([`${E}pipeline.js`])
-    expect(importers('pngWriter')).toEqual([`${E}pipeline.js`, `${E}strip.js`])
+    // piksel yoğunluğu yazıcısı (density — PNG pHYs CRC'si için pngWriter) da çekirdek yolunda: analyze + pipeline alır
+    expect(importers('pngWriter')).toEqual([`${E}density.js`, `${E}pipeline.js`, `${E}strip.js`])
+    expect(importers('density')).toEqual([`${E}analyze.js`, `${E}pipeline.js`])
+    expect(importers('analyze')).toEqual([`${E}pipeline.js`])
     const outsideUsers = FILES.filter(({ rel: r }) => !r.startsWith(E))
       .filter(({ src }) => [...staticImports(src), ...dynamicImports(src)].some((s) => /imageEngine\/(?!index(\.js)?$)/.test(s))).map((x) => x.rel)
     expect(outsideUsers).toEqual([])
     expect(engineFiles.length).toBeGreaterThan(10)
+  })
+
+  it('AVIF kodlayıcısı (2026-11-15): WASM paketi YALNIZ ayrı AVIF Worker\'ında; Worker yalnız URL olarak (?worker&url) kurulur', () => {
+    const E = 'utils/imageEngine/'
+    const all = (src) => [...staticImports(src), ...dynamicImports(src)]
+    // @jsquash/avif (≈ 3 MB WASM + yapıştırıcı) üretim kaynağında YALNIZ avif.worker.js'ten alınır
+    expect(FILES.filter(({ src }) => all(src).some((s) => /^@jsquash\//.test(s))).map((x) => x.rel)).toEqual([`${E}avif.worker.js`])
+    // avif.worker.js'i hiçbir modül kod olarak almaz: yalnız avifClient.js, Vite'ın `?worker&url` biçimiyle (yalnız adres dizgisi)
+    const workerUsers = FILES.filter(({ src }) => all(src).some((s) => /(^|\/)avif\.worker(\.js)?(\?|$)/.test(s)))
+    expect(workerUsers.map((x) => x.rel)).toEqual([`${E}avifClient.js`])
+    expect(all(read(`${E}avifClient.js`)).filter((s) => /avif\.worker/.test(s))).toEqual(['./avif.worker.js?worker&url'])
+    // istemciyi yalnız çekirdek alır (Worker paketinin ağır yolu; ana iş parçacığı yedeği AVIF sunmaz)
+    expect(FILES.filter(({ rel: r, src }) => all(src).some((s) => (r.startsWith(E) && /^\.\/avifClient(\.js)?$/.test(s)) || /imageEngine\/avifClient/.test(s)))
+      .map((x) => x.rel)).toEqual([`${E}core.js`])
+    // istemci de AVIF Worker'ı modül Worker'ı olarak, ilk AVIF kodlamasında kurar (statik değil)
+    expect(read(`${E}avifClient.js`)).toMatch(/new Worker\(avifWorkerUrl, \{ type: 'module'/)
+    // AVIF Worker'ı yalnız yapıştırıcıyı, ayarları ve WASM ADRESİNİ (?url) alır — eval / new Function yok
+    expect(staticImports(read(`${E}avif.worker.js`)).sort()).toEqual([
+      '@jsquash/avif/codec/enc/avif_enc.js', '@jsquash/avif/codec/enc/avif_enc.wasm?url', '@jsquash/avif/meta.js'])
+    expect(read(`${E}avif.worker.js`)).not.toMatch(/\beval\(|new Function\(/)
   })
 
   it('Aktivite: ayrıntı sayfası, izleme zaman çizelgesi ve Excel yazıcısı yalnız açılınca yüklenir (2026-11-05)', () => {

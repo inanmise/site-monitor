@@ -15,9 +15,11 @@ import { encodePng, textChunk } from './pngWriter.js'
 import { insertPngChunks, pngExifChunk, stripMetadata } from './strip.js'
 import { assembleSample, extractSample, samplePlan, similarityAsync } from './ssim.js'
 import { insertJpegExif, insertWebpExif, planMetadata, readMetadata } from './metadata.js'
+import { densityOverhead, readDensity, withDensity } from './density.js'
 import {
+  AVIF_FALLBACK_QUALITY, AVIF_MAX_PIXELS, AVIF_SEARCH_ENCODES, AVIF_SPEED,
   MAX_DIM_STEPS, MAX_SEARCH_ENCODES, PALETTE_MAX_MSE, PNG_COLOR_LADDER, QUALITY_RANGE, SIMILARITY_TARGET,
-  TARGET_QUALITY_FLOOR, bestQualityUnder, flattenOntoAsync, hasTransparency, pickForTarget, pickSmallest,
+  bestQualityUnder, flattenOntoAsync, hasTransparency, pickForTarget, pickSmallest, targetQualityFloor,
   keepEligible, pngColorsForQuality, resolveFormats, savingPct, searchQuality, shouldKeepOriginal,
 } from './search.js'
 
@@ -232,6 +234,23 @@ async function shrinkImage(image, width, height, ctx) {
 const lossyCandidate = (type, r, notes, image) => ({ type, blob: r.blob, bytes: null, size: r.size, quality: r.q,
   colors: null, similarity: r.similarity, notes: [...notes], width: image.width, height: image.height })
 
+/** AVIF kodlayıcı ayarı (ayrı Worker'a gider). */
+const AVIF_TUNING = Object.freeze({ speed: AVIF_SPEED })
+/** Tarayıcı AVIF çözemediği için benzerlik ölçülemedi (iç işaret — "en küçük"te aday düşer, istenmişse sabit kalite). */
+const avifNotMeasured = () => new EngineError('BROWSER_UNSUPPORTED', { reason: 'avif', detail: 'not_measured' })
+
+/**
+ * Bir AVIF hatası "atla + not" mu, yoksa işi düşürmeli mi? İptal ve eski paket (sunucuda olmayan kodlayıcı dosyası)
+ * işi düşürür (null döner); ötekiler — yüklenemedi, CSP, süre doldu, bellek, kodlayıcı hatası — AVIF'i atlatır.
+ */
+export function avifSkipNote(e) {
+  if (!(e instanceof EngineError)) return 'AVIF_UNAVAILABLE'
+  if (e.code === 'CANCELLED') return null
+  if (e.code === 'BROWSER_UNSUPPORTED' && e.params?.reason === 'stale_bundle') return null
+  if (e.code === 'BROWSER_UNSUPPORTED' && e.params?.reason === 'avif' && e.params?.detail === 'not_measured') return 'AVIF_NOT_MEASURED'
+  return 'AVIF_UNAVAILABLE'
+}
+
 /**
  * Kayıplı kodlayıcı oturumu (JPEG / WebP): kodla, ölç, otomatik kalite ara. Her kodlamadan önce iptal denetlenir (ana iş
  * parçacığı yedeğinde arama, iptalden sonra kalan kodlamaları yapmaz).
@@ -239,6 +258,7 @@ const lossyCandidate = (type, r, notes, image) => ({ type, blob: r.blob, bytes: 
 async function openLossy(type, image, opts, env, ctx) {
   const { platform } = env
   const notes = []
+  const avif = type === 'avif'
   let img = image
   if (type === 'jpeg' && image.hasAlpha) {
     img = { data: await flattenOntoAsync(image.data, image.width * image.height, opts.backgroundRgb, ctx.stepTick),
@@ -248,45 +268,66 @@ async function openLossy(type, image, opts, env, ctx) {
   const plan = samplePlan(img.width, img.height)
   const ref = extractSample(img.data, img.width, img.height, plan)
   const mime = MIME[type]
-  const session = await platform.prepare(img)
+  // AVIF oturumu TEMBEL açılır: kodlayıcı Worker'ı tek görsel tutar — mozaik araması önce, tam görsel sonra gönderilir
+  const open = (image) => (avif ? platform.prepareAvif(image, AVIF_TUNING) : platform.prepare(image))
+  let session = avif ? null : await open(img)
   let proxy = null
-  const encode = async (q) => { await ctx.checkpoint(); return session.encode(mime, q / 100) }
+  const sessionFor = async () => { if (!session) session = await open(img); return session }
+  const encode = async (q) => { await ctx.checkpoint(); return (await sessionFor()).encode(mime, q / 100) }
+  // Tarayıcı AVIF çözemezse benzerlik ölçülemez → null (uydurulmaz); öteki biçimlerde hata olduğu gibi yükselir
+  const decode = async (blob, rects, w, h) => {
+    try {
+      return await platform.decodeRegions(blob, rects, w, h)
+    } catch (e) {
+      if (avif && e instanceof EngineError && e.code === 'DECODE_FAILED') return null
+      throw e
+    }
+  }
   const measure = async (blob) => {
-    const tiles = await platform.decodeRegions(blob, plan.tiles, img.width, img.height)
+    const tiles = await decode(blob, plan.tiles, img.width, img.height)
+    if (!tiles) return null
     return similarityAsync(ref, assembleSample(tiles, plan), plan.width, plan.height, ctx.stepTick)
   }
+  const searchMax = avif ? AVIF_SEARCH_ENCODES : MAX_SEARCH_ENCODES
   const auto = async (lo, hi, onStep) => {
     if (plan.whole) {
       return searchQuality(async (q) => {
         const blob = await encode(q)
         const s = await measure(blob)
+        if (s === null) throw avifNotMeasured()
         onStep()
         return { blob, size: blob.size, similarity: s }
-      }, lo, hi, SIMILARITY_TARGET, MAX_SEARCH_ENCODES)
+      }, lo, hi, SIMILARITY_TARGET, searchMax)
     }
     // Büyük görsel: arama ÖRNEKLEM mozaiği üstünde (aynı pikseller, tam çözünürlük); tam görsel bir kez kodlanır
-    proxy = await platform.prepare({ data: ref, width: plan.width, height: plan.height, hasAlpha: img.hasAlpha })
+    proxy = await open({ data: ref, width: plan.width, height: plan.height, hasAlpha: img.hasAlpha })
     const whole = [{ x: 0, y: 0, w: plan.width, h: plan.height }]
     const found = await searchQuality(async (q) => {
       await ctx.checkpoint()
       const b = await proxy.encode(mime, q / 100)
-      const px = await platform.decodeRegions(b, whole, plan.width, plan.height)
+      const px = await decode(b, whole, plan.width, plan.height)
+      if (!px) throw avifNotMeasured()
       onStep()
       return { similarity: await similarityAsync(ref, px[0], plan.width, plan.height, ctx.stepTick) }
-    }, lo, hi, SIMILARITY_TARGET, MAX_SEARCH_ENCODES - 1)
+    }, lo, hi, SIMILARITY_TARGET, searchMax - 1)
+    if (avif) { try { proxy.close() } catch { /* yok */ } proxy = null }
     const blob = await encode(found.q)
     return { q: found.q, blob, size: blob.size, similarity: await measure(blob), encodes: found.encodes + 1 }
   }
   return {
-    type, notes, encode, measure, auto, image: img,
+    type, notes, encode, measure, auto, image: img, searchMax,
     close() {
       try { proxy?.close() } catch { /* yok */ }
-      try { session.close() } catch { /* yok */ }
+      try { session?.close() } catch { /* yok */ }
     },
   }
 }
 
-async function runLossy(type, image, opts, env, ctx) {
+/**
+ * Kayıplı aday. `avifStrict` = "en küçük biçim": tarayıcı AVIF'i ölçemiyorsa aday üretilmez (eşdeğerlik doğrulanamaz);
+ * değilse (AVIF açıkça istendi) sabit kalitede üretilir, benzerlik null + AVIF_NOT_MEASURED.
+ */
+async function runLossy(type, image, opts, env, ctx, avifStrict = false) {
   await ctx.checkpoint()
   const enc = await openLossy(type, image, opts, env, ctx)
   try {
@@ -295,12 +336,20 @@ async function runLossy(type, image, opts, env, ctx) {
       const [lo, hi] = QUALITY_RANGE[type]
       let step = 0
       ctx.progress('search', 0)
-      r = await enc.auto(lo, hi, () => { step += 1; ctx.progress('search', Math.min(0.95, step / MAX_SEARCH_ENCODES)) })
+      try {
+        r = await enc.auto(lo, hi, () => { step += 1; ctx.progress('search', Math.min(0.95, step / enc.searchMax)) })
+      } catch (e) {
+        if (type !== 'avif' || avifStrict || avifSkipNote(e) !== 'AVIF_NOT_MEASURED') throw e
+        const blob = await enc.encode(AVIF_FALLBACK_QUALITY)
+        r = { q: AVIF_FALLBACK_QUALITY, blob, size: blob.size, similarity: null }
+        enc.notes.push('AVIF_NOT_MEASURED')
+      }
       ctx.progress('search', 1)
     } else {
       ctx.progress('encode', 0)
       const blob = await enc.encode(opts.quality)
       r = { q: opts.quality, blob, size: blob.size, similarity: await enc.measure(blob) }
+      if (type === 'avif' && r.similarity === null) enc.notes.push('AVIF_NOT_MEASURED')
       ctx.progress('encode', 1)
     }
     await ctx.checkpoint()
@@ -433,7 +482,7 @@ function pngMode(opts, smallest) {
 /** Hedef boyut — kayıplı biçim: önce kalite (tabana dek), sonra ölçü. */
 async function fitLossy(type, work, start, target, opts, env, ctx) {
   const hi = start.quality
-  const lo = Math.min(TARGET_QUALITY_FLOOR, hi)
+  const lo = Math.min(targetQualityFloor(type), hi)
   const tryAt = async (image) => {
     const enc = await openLossy(type, image, opts, env, ctx)
     try {
@@ -507,6 +556,21 @@ export function assertDecodedWithinProbe(width, height, info) {
 }
 
 /**
+ * AVIF bu işte denenecek mi (resolveFormats'ın `avif` girdisi): null = platformda AVIF yok ya da gerekmiyor (bugünkü
+ * davranış BİREBİR); 'ok'; ya da neden (not kodu). Kodlayıcıyı YÜKLEMEZ — yükleme ilk AVIF kodlamasında olur.
+ */
+async function avifStateFor(format, sourceType, work, platform) {
+  const capable = typeof platform.prepareAvif === 'function'
+  const needed = format === 'avif' || format === 'smallest' || (format === 'keep' && sourceType === 'avif')
+  if (!needed) return null
+  if (!capable) return format === 'avif' ? 'AVIF_UNAVAILABLE' : null
+  if (work.width * work.height > AVIF_MAX_PIXELS) return 'AVIF_TOO_LARGE'
+  let ok = false
+  try { ok = (await platform.avifAvailable()) === true } catch { ok = false }
+  return ok ? 'ok' : 'AVIF_UNAVAILABLE'
+}
+
+/**
  * TEK görseli işler. @param {Blob} blob @param {object} rawOptions sözleşme §2 seçenekleri
  * @param {{ platform: object, signal?: AbortSignal, onProgress?: Function, cooperative?: boolean }} env
  * @returns {Promise<object>} EngineResult — `kept` ise `blob` null döner (çağıran özgün Blob'u koyar)
@@ -526,6 +590,8 @@ export async function processCore(blob, rawOptions, env) {
   const meta = readMetadata(bytes, info.type)
   // Derin karşılaştırma (2026-11-15): kaynağın başlık bilgileri (bit derinliği, PPI, JPEG kalite tahmini …) — fırlatmaz
   const inputFacts = readImageFacts(bytes, info.type)
+  // Piksel yoğunluğu (PPI, 2026-11-15): kaynağınki yeniden kodlanmış JPEG / PNG'ye AYNEN yazılır (WebP / AVIF'te alan yok)
+  const density = readDensity(bytes, info.type)
   bytes = null
   ctx.progress('decode', 0)
   await ctx.checkpoint()
@@ -552,31 +618,60 @@ export async function processCore(blob, rawOptions, env) {
   }
   ctx.progress('decode', 1)
 
-  const webpNeeded = opts.format === 'webp' || opts.format === 'smallest'
+  const webpNeeded = opts.format === 'webp' || opts.format === 'smallest' || opts.format === 'avif'
     || (opts.format === 'keep' && (info.type === 'webp' || info.type === 'avif'))
   const webpOk = webpNeeded ? await platform.canEncode(MIME.webp) : false
-  const formats = resolveFormats(opts.format, info.type, work.hasAlpha, webpOk)
+  const avifState = await avifStateFor(opts.format, info.type, work, platform)
+  const formats = resolveFormats(opts.format, info.type, work.hasAlpha, webpOk, avifState)
   formats.notes.forEach((n) => notes.add(n))
   const pngText = planMetadata(meta, opts.preserve, 'png')
-  const exifPlan = { jpeg: planMetadata(meta, opts.preserve, 'jpeg'), webp: planMetadata(meta, opts.preserve, 'webp') }
+  const exifPlan = { jpeg: planMetadata(meta, opts.preserve, 'jpeg'), webp: planMetadata(meta, opts.preserve, 'webp'),
+    avif: planMetadata(meta, opts.preserve, 'avif') }
   const smallest = opts.format === 'smallest'
 
-  // "En küçük biçim"de önce kayıplı adaylar üretilir: PNG adayı onların boyutuna bakarak erken elenebilir
-  const order = smallest ? [...formats.list.filter((t) => t !== 'png'), ...formats.list.filter((t) => t === 'png')] : formats.list
+  // "En küçük biçim"de önce kayıplı adaylar üretilir: PNG adayı onların boyutuna bakarak erken elenebilir (AVIF, en yavaş
+  // kodlayıcı, kayıplıların sonunda)
+  const listTypes = [...formats.list]
+  const order = smallest ? [...listTypes.filter((t) => t !== 'png'), ...listTypes.filter((t) => t === 'png')] : [...listTypes]
   const made = new Map()
-  for (const type of order) {
+  for (let i = 0; i < order.length; i++) {
+    const type = order[i]
     await ctx.checkpoint()
     let c
     if (type === 'png') {
       const lossy = [...made.values()].map((x) => x.size)
       const hopelessAbove = smallest && lossy.length ? Math.min(...lossy) * PNG_HOPELESS_FACTOR : 0
-      c = await runPng(work, pngMode(opts, smallest && formats.list.length > 1 && work.width * work.height > SKIP_TRUECOLOR_PIXELS), pngText.text, ctx, hopelessAbove)
+      c = await runPng(work, pngMode(opts, smallest && listTypes.length > 1 && work.width * work.height > SKIP_TRUECOLOR_PIXELS), pngText.text, ctx, hopelessAbove)
+    } else if (type === 'avif') {
+      try {
+        c = await runLossy('avif', work, opts, env, ctx, smallest)
+      } catch (e) {
+        // AVIF üretilemedi (yüklenemedi / süre / bellek / ölçülemedi): iş DÜŞMEZ — not + "en küçük"te atla, istenmişse yedek
+        const skip = avifSkipNote(e)
+        if (!skip) throw e
+        notes.add(skip)
+        c = null
+        if (!smallest) {
+          const fb = resolveFormats(opts.format, info.type, work.hasAlpha, webpOk, skip)
+          fb.notes.forEach((n) => notes.add(n))
+          for (const t of fb.list) if (!listTypes.includes(t)) { listTypes.push(t); order.push(t) }
+        }
+      }
     } else {
       c = await runLossy(type, work, opts, env, ctx)
     }
     if (c) made.set(type, c)
   }
-  const candidates = formats.list.map((t) => made.get(t)).filter(Boolean)        // eşitlikte liste sırası (jpeg, png, webp)
+  const candidates = listTypes.map((t) => made.get(t)).filter(Boolean)          // eşitlikte liste sırası (jpeg, png, webp, avif)
+  // Öneriler için: bu tarayıcıda bu görsel AVIF'e kodlanabilir miydi (null = platformda AVIF yok — alan hiç yazılmaz)
+  let avifPossible = null
+  if (typeof platform.prepareAvif === 'function') {
+    if (avifState !== null) avifPossible = avifState === 'ok'
+    else {
+      try { avifPossible = work.width * work.height <= AVIF_MAX_PIXELS && (await platform.avifAvailable()) === true } catch { avifPossible = false }
+    }
+    if (notes.has('AVIF_UNAVAILABLE') || notes.has('AVIF_NOT_MEASURED')) avifPossible = false
+  }
   if (!candidates.length) candidates.push(await runPng(work, { kind: 'auto' }, pngText.text, ctx))
   // Derin karşılaştırma: denenen her biçimin boyutu (yalnız sayı — Blob tutulmaz) ve çalışılan görselin renk sayısı
   const tried = candidates.map((c) => ({ type: c.type, bytes: c.size, quality: c.quality ?? null, colors: c.colors ?? null,
@@ -591,23 +686,45 @@ export async function processCore(blob, rawOptions, env) {
     const fitted = []
     for (const c of candidates) {
       await ctx.checkpoint()
-      if (c.type === 'png') fitted.push(await fitPng(work, c, opts.targetBytes, pngText.text, ctx))
+      // Sonradan eklenecek yoğunluk alanı (JFIF / pHYs) da hedefe sayılır: son dosya hedefi aşmasın
+      if (c.type === 'png') fitted.push(await fitPng(work, c, Math.max(1, opts.targetBytes - densityOverhead('png', density)), pngText.text, ctx))
       else {
-        const overhead = exifPlan[c.type].exif ? exifPlan[c.type].exif.length + 26 : 0
-        fitted.push(await fitLossy(c.type, work, c, Math.max(1, opts.targetBytes - overhead), opts, env, ctx))
+        const overhead = (exifPlan[c.type].exif ? exifPlan[c.type].exif.length + 26 : 0) + densityOverhead(c.type, density)
+        try {
+          fitted.push(await fitLossy(c.type, work, c, Math.max(1, opts.targetBytes - overhead), opts, env, ctx))
+        } catch (e) {
+          // AVIF hedef araması yarıda kaldı (süre / bellek): elde olan AVIF adayı kalır, not düşülür
+          const skip = c.type === 'avif' ? avifSkipNote(e) : null
+          if (!skip) throw e
+          notes.add(skip === 'AVIF_NOT_MEASURED' ? skip : 'AVIF_UNAVAILABLE')
+          fitted.push(c)
+        }
       }
     }
-    final = pickForTarget(fitted, opts.targetBytes)
+    final = pickForTarget(fitted.map((c) => ({ ...c, size: c.size + densityOverhead(c.type, density) })), opts.targetBytes)
+    final = { ...final, size: final.size - densityOverhead(final.type, density) }
     fittedForTarget = true
   }
   final = { ...final, notes: [...final.notes] }
+
+  // Yoğunluk: kaynağın PPI'ı JPEG (JFIF APP0 yaması / eklemesi) ve PNG (pHYs) çıktısına — boyut / kazanç / "asla daha kötü"
+  // karşılaştırması ve çıktının başlık bilgileri bu SON baytlarla yapılır (EXIF'ten ÖNCE: JFIF APP0 SOI'nin hemen ardında)
+  if (density && (final.type === 'jpeg' || final.type === 'png')) {
+    const raw = final.bytes || await readBlob(final.blob)
+    const withD = withDensity(raw, final.type, density)
+    if (withD) {
+      final.bytes = withD
+      final.blob = null
+      final.size = withD.length
+    }
+  }
 
   // Üstveri: PNG'de metin parçaları kodlamada yazıldı; JPEG / WebP'ye en küçük EXIF bloğu eklenir
   const mplan = final.type === 'png' ? pngText : exifPlan[final.type]
   let kept = mplan.kept
   let dropped = mplan.dropped
   if (final.type !== 'png' && mplan.exif) {
-    const raw = await readBlob(final.blob)
+    const raw = final.bytes || await readBlob(final.blob)
     const withExif = final.type === 'jpeg' ? insertJpegExif(raw, mplan.exif) : insertWebpExif(raw, mplan.exif)
     if (withExif && withExif !== raw) {
       final.bytes = withExif
@@ -645,7 +762,7 @@ export async function processCore(blob, rawOptions, env) {
         resized: false, cropped: false, kept: true, notes: orderNotes(keptNotes),
         analysis: buildAnalysis({ inputFacts, outputFacts: keptFacts, colors, tried, width: srcW, height: srcH,
           outputType: info.type, outputColors: null, similarity: 1, outputBitDepth: inputFacts?.bitDepth ?? null,
-          qualityMode: null, resampled: false, sharpened: false }) }
+          qualityMode: null, resampled: false, sharpened: false, avifPossible }) }
     }
   }
 
@@ -673,7 +790,7 @@ export async function processCore(blob, rawOptions, env) {
   const reshaped = final.width !== work.width || final.height !== work.height   // hedef boyut için ayrıca küçültüldü
   const analysis = buildAnalysis({ inputFacts, outputFacts, colors, tried, width: final.width, height: final.height,
     outputType: final.type, outputColors: final.colors ?? null, similarity: similarityOut, outputBitDepth: outputFacts?.bitDepth ?? null,
-    qualityMode, resampled: work.resampled === true || reshaped, sharpened: reshaped ? null : work.sharpened === true })
+    qualityMode, resampled: work.resampled === true || reshaped, sharpened: reshaped ? null : work.sharpened === true, avifPossible })
   return {
     blob: outBlob, type: final.type, mime: outMime, width: final.width, height: final.height, bytes: final.size, original,
     savingPct: savingPct(sourceBytes, final.size), quality: final.quality, colors: final.colors,
@@ -688,8 +805,11 @@ export async function processCore(blob, rawOptions, env) {
  * renk sayısı, denenen biçimler, SVG adaylığı ve bantlaşma riski. Değer bilinmiyorsa null.
  */
 function buildAnalysis({ inputFacts, outputFacts, colors, tried, width, height, outputType, outputColors, similarity, outputBitDepth = null,
-  qualityMode = null, resampled = null, sharpened = null }) {
+  qualityMode = null, resampled = null, sharpened = null, avifPossible = null }) {
   return {
+    // AVIF bu görsel için bu tarayıcıda denenebilir miydi (öneri: "AVIF'i deneyin" yalnız true iken); platformda AVIF
+    // yoksa alan YOK (eski sonuç biçimi aynen)
+    ...(avifPossible === null ? {} : { avifPossible }),
     input: inputFacts,
     output: outputFacts,
     colors,
@@ -701,11 +821,16 @@ function buildAnalysis({ inputFacts, outputFacts, colors, tried, width, height, 
   }
 }
 
-/** Bu ortam ne yapabiliyor: çözme / tuval var mı, WebP kodlanabiliyor mu. */
+/**
+ * Bu ortam ne yapabiliyor: çözme / tuval var mı, WebP kodlanabiliyor mu, AVIF denenebilir mi (UCUZ denetim — kodlayıcı
+ * yüklenmez; platformda AVIF yoksa false).
+ */
 export async function supportCore(platform) {
   let ok = false
   let webp = false
+  let avif = false
   try { ok = await platform.available() } catch { ok = false }
   if (ok) { try { webp = await platform.canEncode(MIME.webp) } catch { webp = false } }
-  return { ok, webp }
+  if (ok && typeof platform.prepareAvif === 'function') { try { avif = (await platform.avifAvailable()) === true } catch { avif = false } }
+  return { ok, webp, avif }
 }
