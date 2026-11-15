@@ -15,7 +15,58 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.211.0] — 2026-11-15
+
+### Added
+- **Haftalık nöbet bildirimi** (kullanıcı isteği; takım kendi açar, varsayılan **kapalı**). Takım, nöbet çizelgesi
+  penceresinden açar; kanal (e-posta / push), gün ve saati kendisi seçer. Varsayılan Pazartesi 08:30, İstanbul saati.
+  - **Alıcılar:** e-posta takımın alarm adresine gider (varsayılan bildirim grubu, yoksa takım e-postası); push takım
+    üyelerine gider. Kişisel push tercihi ve pasif hesaplar atlanır.
+  - **İçerik:** haftanın nöbetçileri; devir ve yer değiştirmeler, telefon ve e-posta dahil.
+  - **Gönderilmeyen durumlar:** nöbet bilgisi yoksa, çizelge kapalıysa ya da üye yoksa gönderilmez. Her karar
+    `notification_logs`'a tek satır yazılır (tetik `ONCALL_WEEKLY`).
+  - **Takım × hafta en çok bir kez:** önce kayıt, sonra gönderim; yarıda kalan gönderim yeniden gönderilmez.
+  - **Yeni yapılandırma:** `site.monitor.oncall.weekly-notice.retention-days` (env `ONCALL_WEEKLY_NOTICE_RETENTION_DAYS`, 400;
+    en az 90).
+  - **Şema:** yeni tablo `oncall_weekly_notices` ve `oncall_schedules.weekly_notice_*` kolonları (nullable). Eski sürüm
+    bunları kullanmaz; geri almada veri kaybı yok.
+
+### Security
+- **Spring Boot 4.1.1 → 4.1.2** (aynı ana sürüm yaması).
+  - Tomcat **11.0.27**: 11.0.24'teki CRITICAL güvenlik kısıtı atlatma dahil 4 CVE kapanır.
+  - Jackson **2.21.7 / 3.1.7**: HIGH bulgular kapanır.
+- **İmaj artık Alpine güvenlik yamalarını alıyor.** `apk add` katmanı CI'ın katman önbelleğinden hiç yenilenmiyordu;
+  taban digest'i ve komut sabit olduğu için yamalı paketler imaja girmedi.
+  - Düzeltme: `APK_REFRESH` derleme argümanı her yayında katmanı yeniler; ayrıca `apk upgrade` çalışır.
+  - Trivy: Alpine **50 → 0**, `app.jar` **14 → 0**.
+  - **Kalan:** k6 2.3.0 ikilisinde 6 HIGH (Go standart kütüphanesi / `x/net`). k6 2.4.0, ilk yama sürümünde motor
+    sayfasındaki aday ikili + gölge tarama ile gelecek.
+
+### Fixed
+- **7 günlük erişilebilirlik kutusu:** tamamlanmış tür okuması uçuş haritasından çıkarılmadan bitiyordu. Hemen ardından
+  gelen istek bayat sonucu kullanıyor, yeni eklenen izlemeyi görmüyordu.
+- **Eksikler penceresi:** artık açık bir açılır menüyü kapatmıyor. Menü açıkken ya da kullanıcı etkileşimdeyken açılmaz.
+- **Yayın öncesi e2e B:** 10 yeni uçtan uca akış testi, 31 arayüz düzeltmesi (kırpılan adlar, dokunma hedefleri, sunucu
+  alan hatası alanın altında). DB analizi "en yavaş sorgu" kutucuğunda kod önizlemesi artık kesilmiyor.
+
 ## [20.210.0] — 2026-11-15
+
+### Added (2026-11-15)
+- **Sayfa hızı 2c** (Sayfa Hızı 2. sürüm, madde 10 ve 13):
+  - **Genişletilmiş ölçüm:** stil dosyalarının başvurduğu yazı tipi / görsel / `@import` de ölçülür. İzleme başına ayar:
+    yeni izlemelerde açık, mevcutlarda kapalı.
+  - **Büyüme alarmı:** önceki 7 günün medyanına göre sayfa ağırlığı / istek artışı, isteğe bağlı öğrenilen bayt bandı.
+    Yeni eşik anahtarları: `GROWSIZE`, `GROWREQ`, `SIZEBAND`.
+  - **Grafana panosu revizyon 18:** içe aktarın.
+- **Görsel aracı gerçek AVIF üretir:** `@jsquash/avif` 2.1.1 (Apache-2.0, libavif WASM, ayrı Worker). Kaynağın PPI
+  değeri korunur.
+  - **⚠ CSP:** `script-src` artık `'wasm-unsafe-eval'` içeriyor (yalnız WebAssembly derlemesi için).
+  - Ağ geçidi / NetScaler kendi CSP başlığını ekliyorsa bu değeri içermeli; yoksa AVIF WebP'ye düşer.
+  - `.wasm` dosyası `application/wasm` türüyle sunulur.
+- **Tatil takvimi 2026–2035** (10 yıl):
+  - Tek seferlik iş: nişan `2026-11-15-holiday-calendar-10y`, kilit `holiday-calendar-10y`.
+  - Yalnız HİÇ günü olmayan yılları ekler; elle düzenlenmiş yıllara dokunmaz.
+  - Dini bayramlar Diyanet tablolarından alındı; köprü gün yok.
 
 ### Changed (uygulama — prod kapısı 2026-11-15)
 - **⚠ Davranış:** `site.monitor.scripted.manual-wait-seconds` (elle k6 "Şimdi kontrol et" ucunun sonucu bekleme süresi)
@@ -43,6 +94,19 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 > veritabanı yükü, dış trafik, geri alma uyarıları). Özellik ayrıntısı: Yardım → Yenilikler ya da `docs/releases/index.json`.
 > Bu aralıkta BREAKING işaretli commit yoktur. Prod hangi sürümdeyse oradan itibaren okuyun; sürüme bağlı adımların
 > listesi: `docs/PROD_DEPLOY_CHECKLIST.md` → "0. Prod hangi sürümde?".
+
+## [20.209.0 – 20.209.1] — 2026-11-15
+
+### Changed
+- **Kaynak analizi algoritma 4:** "önbelleğe alınmıyor" bulgusu altı sınıfa ayrıldı (saklanan, kısa ömürlü, her
+  ziyarette doğrulanan, tarayıcı tahmini, önbelleklenmeyen, `no-store`). Eski analizlerle not karşılaştırması yapılmaz
+  (algoritma değişimi).
+- **⚠ Dış trafik:** "Tüm siteyi tara" bir koşuda en çok **2 500 sayfa / 150 dk / 7 500 MB / 75 000 nesne** indirir
+  (önce 1 000 / 60 dk / 3 000 MB / 30 000). Yalnız kullanıcı isteyince çalışır; pod'un iki tarama yuvasından birini
+  150 dk'ya dek tutar.
+
+### Fixed
+- **Yayın öncesi e2e A:** 7 yeni uçtan uca akış testi, 11 arayüz düzeltmesi (dokunma hedefleri, kırpılan adlar).
 
 ## [20.208.0] — 2026-11-15
 
