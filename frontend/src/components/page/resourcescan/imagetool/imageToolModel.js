@@ -1,5 +1,6 @@
 import { csvNumber, csvRows } from '../../../../utils/csv.js'
 import { KB, MB, formatNumber, formatPct, formatSize, gradeLetter, problemText, scoreLabelKey, verdictOf } from '../resourceScanModel.js'
+import { analysisSummary } from './imageInsightsModel.js'
 import { isEndpointUnsupported } from '../resourceScanReportModel.js'
 
 /**
@@ -417,6 +418,8 @@ export function resultSummary(r) {
     original: { bytes: num(o.bytes), width: num(o.width), height: num(o.height), type: o.type || null,
       hasAlpha: o.hasAlpha === true, animated: o.animated === true,
       metadata: { copyright: o.metadata?.copyright === true, creation: o.metadata?.creation === true, location: o.metadata?.location === true } },
+    // Derin karşılaştırma (2026-11-15): motorun `analysis` alanının sınırlı kopyası (eski motor / yok → null)
+    analysis: analysisSummary(r.analysis),
   }
 }
 
