@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-15T01:20:39Z",
+  "generatedAt": "2026-11-15T02:44:20Z",
   "repo": "inanmise/site-monitor",
-  "count": 835,
+  "count": 836,
   "releases": [
+    {
+      "version": "20.202.0",
+      "tag": "v20.202.0",
+      "releasedAt": "2026-11-15T02:44:13Z",
+      "commit": "7252a687dfeeca6cefa0b862b069d7548ac08eff",
+      "prevVersion": "20.201.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "page",
+          "breaking": false,
+          "sha": "7252a687",
+          "subject": "tüm site taraması 2. inceleme — başka sunucudaki harita keşfi eksik sayar, varsayılan harita denenir"
+        },
+        {
+          "type": "fix",
+          "scope": "page",
+          "breaking": false,
+          "sha": "943fb067",
+          "subject": "tüm site taraması inceleme düzeltmeleri — site haritası kalp atışı, süre dolunca kuyruğa dönüş, yarıda kalanı sürdürme"
+        },
+        {
+          "type": "feat",
+          "scope": "page",
+          "breaking": false,
+          "sha": "ae54b484",
+          "subject": "kaynak analizinde tüm site taraması — her derinlikte bağlantılar, site haritası, sürdürme"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.201.0",
       "tag": "v20.201.0",
