@@ -36,7 +36,7 @@ const ok = (data, extra = {}) => ({ success: true, data, ...extra })
 const slot = (name, root = document) => root.querySelector(`[data-slot="${name}"]`)
 const slots = (name, root = document) => [...root.querySelectorAll(`[data-slot="${name}"]`)]
 const openTab = (name) => fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0 })
-const FULL_LIMITS = { full_site_max_pages: 1000, full_site_max_seconds: 3600 }
+const FULL_LIMITS = { full_site_max_pages: 2500, full_site_max_seconds: 9000 }
 const t = (k, ...a) => String(tr[k] ?? k).replace(/\{(\d+)\}/g, (_, i) => String(a[Number(i)]))
 
 beforeEach(() => {
@@ -57,7 +57,7 @@ async function mount() {
 }
 
 describe('tüm site taraması — başlatma', () => {
-  it('menüde "Tüm siteyi tara" → pencere → gövde { scope: site, crawl: full, max_pages: 1000 }', async () => {
+  it('menüde "Tüm siteyi tara" → pencere → gövde { scope: site, crawl: full, max_pages: 2500 }', async () => {
     const run = scanSummary(60, { status: 'RUNNING', scope: 'site', crawl: 'full', pages_count: null,
       progress: { done: 0, total: 0, pages_done: 1, pages_total: 20 }, grade: null, finished_at: null })
     api.monitoring.startResourceScan.mockResolvedValue(ok(run))
@@ -65,10 +65,10 @@ describe('tüm site taraması — başlatma', () => {
     pressMenuTrigger(slot('prs-start-more'))
     fireEvent.click(await screen.findByRole('menuitem', { name: /Tüm siteyi tara/ }))
     const dlg = await waitFor(() => { const d = slot('prs-full-dialog'); expect(d).not.toBeNull(); return d })
-    expect(dlg.textContent).toMatch(/En çok 1\.000 sayfa/)
+    expect(dlg.textContent).toMatch(/En çok 2\.500 sayfa/)
     expect(dlg.textContent).toMatch(/kaldığı yerden sürdürülebilir/)
     fireEvent.click(slot('prs-full-confirm'))
-    await waitFor(() => expect(api.monitoring.startResourceScan).toHaveBeenCalledWith(100, { scope: 'site', crawl: 'full', max_pages: 1000 }))
+    await waitFor(() => expect(api.monitoring.startResourceScan).toHaveBeenCalledWith(100, { scope: 'site', crawl: 'full', max_pages: 2500 }))
     await waitFor(() => expect(slot('prs-full-dialog')).toBeNull())
   })
 
@@ -125,7 +125,7 @@ describe('tüm site taraması — Sayfalar görünümü', () => {
 
     fireEvent.click(slot('prs-crawl-resume'))
     await waitFor(() => expect(api.monitoring.startResourceScan).toHaveBeenCalledWith(100,
-      { scope: 'site', crawl: 'full', max_pages: 1000, resume_from: 31 }))
+      { scope: 'site', crawl: 'full', max_pages: 2500, resume_from: 31 }))
   })
 
   it('kuyruk bittiyse: "bütün sayfalar tarandı", sürdür düğmesi ve taranmayan bölümü yok', async () => {
@@ -190,7 +190,7 @@ describe('tüm site taraması — Sayfalar görünümü', () => {
     expect(slot('prs-interrupted-resume-hint').textContent).toMatch(/kaydedilen son noktadan sürdürülebilir/)
     fireEvent.click(btn)
     await waitFor(() => expect(api.monitoring.startResourceScan).toHaveBeenCalledWith(100,
-      { scope: 'site', crawl: 'full', max_pages: 1000, resume_from: 40 }))
+      { scope: 'site', crawl: 'full', max_pages: 2500, resume_from: 40 }))
   })
 
   it('geçmiş satırı "Tüm site · 40 / 74 sayfa analiz edildi"', async () => {
@@ -202,10 +202,13 @@ describe('tüm site taraması — Sayfalar görünümü', () => {
 })
 
 describe('tüm site taraması — model', () => {
-  it('fullSiteLimits: alan yoksa desteklenmez; tavan 1000', () => {
+  it('fullSiteLimits: alan yoksa desteklenmez; tavan sunucununki (2500)', () => {
     expect(fullSiteLimits({}).supported).toBe(false)
-    expect(fullSiteLimits({ full_site_max_pages: 5000, full_site_max_seconds: 1200 })).toEqual({ supported: true, maxPages: 1000, maxSeconds: 1200 })
-    expect(fullSiteLimits({ full_site_max_pages: 300 }).maxSeconds).toBe(3600)
+    expect(fullSiteLimits({ full_site_max_pages: 5000, full_site_max_seconds: 1200 })).toEqual({ supported: true, maxPages: 2500, maxSeconds: 1200 })
+    expect(fullSiteLimits({ full_site_max_pages: 300 }).maxSeconds).toBe(9000)
+    // 2026-11-16 regresyonu: sunucunun gerçek yanıtı (2500 / 9000) istemcide 1000'e kırpılıyordu.
+    expect(fullSiteLimits({ full_site_max_pages: 2500, full_site_max_seconds: 9000 })).toEqual({ supported: true, maxPages: 2500, maxSeconds: 9000 })
+    expect(fullSiteLimits({ full_site_max_pages: 1000 }).maxPages).toBe(1000)
   })
 
   it('canResumeCrawl: yalnız bitmiş + kuyruğu bitmemiş tüm site taraması', () => {

@@ -214,7 +214,7 @@ export function fullSiteDetail(id = 31, over = {}) {
 }
 
 /** Geçmiş: başta 31 tüm site taraması (40 / 74 sayfa), sonra `fgHistory`; tüm site sınırları sunucudan gelir. */
-export function fullSiteHistory(extraLimits = { full_site_max_pages: 1000, full_site_max_seconds: 3600 }) {
+export function fullSiteHistory(extraLimits = { full_site_max_pages: 2500, full_site_max_seconds: 9000 }) {
   const h = fgHistory({ extraLimits })
   const row = scanSummary(31, { started_at: '2026-11-02T09:00:00', finished_at: '2026-11-02T09:40:00', algorithm_version: 3, scope: 'site',
     crawl: 'full', pages_count: 40, budget_status: 'none', progress: { done: 400, total: 400, pages_done: 40, pages_total: 74 } })

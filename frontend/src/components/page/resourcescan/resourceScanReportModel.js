@@ -390,11 +390,13 @@ export const SITE_MAX_PAGES_CAP = 20
 export const SITE_DEFAULT_MAX_SECONDS = 900
 /**
  * Tüm site taraması (2026-11-15): sunucu `limits.full_site_max_pages|full_site_max_seconds` gönderiyorsa sunulur (eski sunucu
- * göndermez → seçenek gizli). Sayfa ≤ 1000, süre ≤ 3600 sn.
+ * göndermez → seçenek gizli). Sınırın SAHİBİ sunucudur (`PageResourceScanService.FULL_MAX_PAGES_*` /
+ * `FULL_MAX_SECONDS_DEFAULT`); buradaki sabitler onun AYNASIDIR — `resourceScanFullSiteLimits.test.js` Java kaynağını okur.
+ * 2026-11-16: tavan 1000'de unutulmuştu; sunucu 2500 gönderse de istemci 1000'e kırpıp `max_pages: 1000` gönderiyordu.
  */
-export const FULL_SITE_DEFAULT_MAX_PAGES = 1000
-export const FULL_SITE_MAX_PAGES_CAP = 1000
-export const FULL_SITE_DEFAULT_MAX_SECONDS = 3600
+export const FULL_SITE_DEFAULT_MAX_PAGES = 2500
+export const FULL_SITE_MAX_PAGES_CAP = 2500
+export const FULL_SITE_DEFAULT_MAX_SECONDS = 9000
 /** Taranmayan sayfanın nedeni (sunucu `unscanned[].reason`) ve kaynağı (`source`); bilinmeyen değer genel metin. */
 export const CRAWL_STOP_REASONS = ['PAGES', 'TIME', 'BYTES', 'OBJECTS', 'KNOWN_CAP']
 export const CRAWL_SOURCES = ['link', 'sitemap', 'resume']
