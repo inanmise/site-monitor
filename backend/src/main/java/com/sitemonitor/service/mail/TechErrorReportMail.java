@@ -19,9 +19,6 @@ import com.sitemonitor.service.techerror.TechErrorTiles;
 import com.sitemonitor.service.techerror.TechErrorTiles.Tile;
 import com.sitemonitor.service.techerror.TechErrorValues.Issue;
 
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -57,10 +54,8 @@ public final class TechErrorReportMail {
     /** PDF kapağının lacivert bandı ({@code TechErrorReportPdfWriter.DARK} = 15, 23, 42). */
     static final String NAVY = "#0f172a";
     static final String NAVY_SUB = "#cbd5e1";
-    static final String NAVY_META = "#94a3b8";
     static final String WHITE = "#ffffff";
     static final String CARD = "#ffffff";
-    private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm").withZone(ZoneId.of("Europe/Istanbul"));
 
     /** Üretilen posta + gövdeye gömülecek görseller (Content-ID) + sayılar (günlük / test). */
     public record Built(MailDoc.Mail mail, List<InlineImage> inline, int embeddedImages, int skippedImages) {}
@@ -177,10 +172,12 @@ public final class TechErrorReportMail {
                                 + " channel; the team address of " + nz(in.teamName()) + " is in Cc."
                         : "Bu e-posta, " + nz(in.channelName()) + " kanalının yönetici (executive) alıcısı olarak tanımlı olduğunuz için geldi; "
                                 + nz(in.teamName()) + " takımının adresi bilgidedir.";
+                // Çıktıda kişi adı ve zaman yok (2026-11-16, kullanıcı isteği: "bunlar Site Monitor içinde kalabilir ama
+                // çıktıda olmaması lazım"): yalnız takımın PO'sunun onayladığı söylenir, kim ve ne zaman uygulamada görünür
                 TechErrorPdfInput.Provenance p = in.provenance();
                 if (p != null && p.approved()) {
-                    base += en ? " The report was approved by " + nz(p.approvedBy()) + (p.approvedAt() == null ? "" : " on " + STAMP.format(p.approvedAt())) + "."
-                            : " Raporu " + nz(p.approvedBy()) + (p.approvedAt() == null ? "" : " " + STAMP.format(p.approvedAt()) + " tarihinde") + " onayladı.";
+                    base += en ? " The report was approved by the team's PO before it was sent."
+                            : " Rapor gönderilmeden önce takımın PO'su tarafından onaylandı.";
                 }
                 yield base;
             }
@@ -196,7 +193,11 @@ public final class TechErrorReportMail {
 
     // ── Kapak bandı ──────────────────────────────────────────────────────────────────────────────────
 
-    /** PDF kapağı gibi lacivert band: üst etiket, başlık, takım · kanal · dönem, hazırlayan / üretim. */
+    /**
+     * PDF kapağı gibi lacivert band: üst etiket, başlık, takım · kanal · dönem. Oluşturan / son düzenleyen / onaylayan /
+     * üretim satırları ÇIKTIYA yazılmaz (2026-11-16, kullanıcı isteği: "bunlar Site Monitor içinde kalabilir ama çıktıda
+     * olmaması lazım") — rapor ekranı ve e-posta önizleme penceresi onları uygulamada gösterir ({@code provenance} alanı).
+     */
     static String bandHtml(TechErrorPdfInput in, String period, boolean en) {
         Locale loc = en ? Locale.ENGLISH : Locale.forLanguageTag("tr");
         String kicker = (en ? "Technical error report" : "Teknik hata raporu").toUpperCase(loc) + " · " + period.toUpperCase(loc);
@@ -207,67 +208,11 @@ public final class TechErrorReportMail {
                 + "<p style=\"margin:0;font-size:22px;line-height:30px;font-weight:600;color:" + WHITE + ";word-break:break-word;overflow-wrap:anywhere\">" + MailKit.esc(in.title()) + "</p>"
                 + "<p style=\"margin:8px 0 0;font-size:14px;line-height:20px;color:" + NAVY_SUB + ";word-break:break-word;overflow-wrap:anywhere\">"
                 + MailKit.esc(join(in.teamName(), in.channelName(), period)) + "</p>"
-                + metaHtml(in, en)
                 + "</td></tr></table>";
     }
 
     static String bandPlain(TechErrorPdfInput in, String period, boolean en) {
-        return in.title() + "\n" + join(in.teamName(), in.channelName(), period) + "\n" + String.join("\n", metaLines(in, en));
-    }
-
-    private static String metaHtml(TechErrorPdfInput in, boolean en) {
-        StringBuilder sb = new StringBuilder();
-        boolean first = true;
-        for (String line : metaLines(in, en)) {
-            sb.append("<p style=\"margin:").append(first ? "6px" : "2px").append(" 0 0;font-size:12px;line-height:16px;color:").append(NAVY_META)
-                    .append("\" data-slot=\"te-mail-provenance\">").append(MailKit.esc(line)).append("</p>");
-            first = false;
-        }
-        return sb.toString();
-    }
-
-    /**
-     * Band alt satırları. Kimlik yoksa (eski imza) tek satır "Hazırlayan · Üretim" — bayt bayt eski çıktı. Kimlik varsa
-     * (2026-10-17, 10. sürüm — kullanıcı isteği: oluşturan ve onaylayan görünsün): "Oluşturan: A · tarih", farklıysa
-     * "Son düzenleyen: B · tarih", onay akışlı kanalda "Onaylayan: C · tarih" ya da onay durumu, sonra "Üretim: tarih (Türkiye saati)".
-     * PDF kapağıyla aynı metinler ({@link #provenanceLines}).
-     */
-    static List<String> metaLines(TechErrorPdfInput in, boolean en) {
-        String generated = (en ? "Generated: " : "Üretim: ") + STAMP.format(in.generatedAt() == null ? Instant.now() : in.generatedAt())
-                + (en ? " (Turkey time)" : " (Türkiye saati)");
-        if (in.provenance() == null) {
-            return List.of((en ? "Prepared by: " : "Hazırlayan: ") + nz(in.preparedBy()) + " · " + generated);
-        }
-        List<String> out = new ArrayList<>(provenanceLines(in.provenance(), en));
-        out.add(generated);
-        return out;
-    }
-
-    /** Oluşturan / son düzenleyen / onay satırları — posta ve PDF kapağı için ortak (sıra ve sözcükler aynı). */
-    public static List<String> provenanceLines(TechErrorPdfInput.Provenance p, boolean en) {
-        List<String> out = new ArrayList<>();
-        out.add((en ? "Created by: " : "Oluşturan: ") + nz(p.createdBy()) + stamp(p.createdAt()));
-        if (p.updatedDiffers() || (p.updatedAt() != null && p.createdAt() != null && !p.updatedAt().equals(p.createdAt()) && p.updatedBy() != null)) {
-            out.add((en ? "Last edited by: " : "Son düzenleyen: ") + nz(p.updatedBy()) + stamp(p.updatedAt()));
-        }
-        if (p.approvalState() != null) {
-            if (p.approved()) out.add((en ? "Approved by: " : "Onaylayan: ") + nz(p.approvedBy()) + stamp(p.approvedAt()));
-            else out.add((en ? "Approval: " : "Onay: ") + approvalText(p.approvalState(), en));
-        }
-        return out;
-    }
-
-    private static String stamp(Instant t) {
-        return t == null ? "" : " · " + STAMP.format(t);
-    }
-
-    static String approvalText(String state, boolean en) {
-        return switch (state == null ? "" : state) {
-            case "pending" -> en ? "awaiting PO approval" : "PO onayı bekleniyor";
-            case "rejected" -> en ? "rejected — back to draft" : "reddedildi — taslağa döndü";
-            case "stale" -> en ? "content changed after approval — re-approval needed" : "içerik onaydan sonra değişti — yeniden onay gerekir";
-            default -> en ? "not requested yet" : "henüz onaya gönderilmedi";
-        };
+        return in.title() + "\n" + join(in.teamName(), in.channelName(), period);
     }
 
     // ── Yönetici özeti ───────────────────────────────────────────────────────────────────────────────
