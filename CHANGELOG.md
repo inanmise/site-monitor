@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.212.1] — 2026-11-16
+
 ### Fixed
 - **Kaynak analizi "Tüm siteyi tara" 1000 sayfada kalıyordu.** Sunucu sınırı 20.209.0'da 2 500 sayfaya çıkarılmıştı, ama
   arayüzdeki tavan 1000'de unutulmuştu. Pencere "En çok 1.000 sayfa" diyordu ve tarama isteği `max_pages: 1000` ile
@@ -3381,7 +3383,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.212.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.212.1...HEAD
+[20.212.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.1
 [20.212.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.0
 [20.211.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.211.0
 [20.210.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.210.0
