@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.212.2] — 2026-11-16
+
 ### Changed
 - **Bağımlılıklar aynı ana sürüm içinde güncellendi.**
   - Arka uç: BouncyCastle 1.87 (sertifika zinciri, OCSP / CRL), jsoup 1.24.1 (sayfa ve keyword ayrıştırma), dnsjava 3.7.1,
@@ -3397,7 +3399,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.212.1...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.212.2...HEAD
+[20.212.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.2
 [20.212.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.1
 [20.212.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.0
 [20.211.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.211.0
