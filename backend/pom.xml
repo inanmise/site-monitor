@@ -531,7 +531,7 @@
                     <plugin>
                         <groupId>org.owasp</groupId>
                         <artifactId>dependency-check-maven</artifactId>
-                        <version>12.1.0</version>
+                        <version>12.2.2</version>
                         <configuration>
                             <failBuildOnCVSS>7</failBuildOnCVSS>
                             <!-- Anahtar ortam değişkeninden okunur (2026-11-16): <nvdApiKey> ile verilen anahtar Maven hata
