@@ -203,10 +203,14 @@ class K6EngineControllerTest {
     }
 
     @Test
-    @DisplayName("Aday default_path (2026-11-16 inceleme): aday yolu kayıtlı değilse true (imaj varsayılanı — bulunamaması "
-            + "nötr), kayıtlıysa false; etkin / yedek satırında alan yok; tanımsız aday null kalır")
+    @DisplayName("Aday default_path (2026-11-16; 2026-11-17 inceleme): ETKİN aday yolu imajın aday yolu "
+            + "(/opt/k6-candidate/k6) ise true (bulunamaması nötr) — kayıt yok, boş kayıt ya da aynı yol kayıtlı fark etmez; "
+            + "SCRIPTED_K6_BIN_CANDIDATE ortam değişkeniyle (kayıt YOK) verilmiş başka yol false, kayıtlı başka yol false; "
+            + "etkin / yedek satırında alan yok; tanımsız aday null kalır")
     @SuppressWarnings("unchecked")
     void candidateDefaultPathFlag() {
+        K6Profile imagePath = K6Profile.fromVersionOutput(K6EngineSettings.CANDIDATE_IMAGE_PATH, null, 1L);
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v220, null, imagePath));
         Map<String, Object> eng = (Map<String, Object>) data(ctl.status(session(true))).get("engines");
         assertThat((Map<String, Object>) eng.get("candidate")).containsEntry("default_path", true);
         assertThat((Map<String, Object>) eng.get("active")).doesNotContainKey("default_path");
@@ -214,8 +218,23 @@ class K6EngineControllerTest {
         when(settings.getOverride(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY)).thenReturn("   ");
         eng = (Map<String, Object>) data(ctl.status(session(true))).get("engines");
         assertThat((Map<String, Object>) eng.get("candidate")).containsEntry("default_path", true);
+        // Aynı yol elle kaydedilmiş: yine imajın yolu → nötr
+        when(settings.getOverride(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY)).thenReturn(K6EngineSettings.CANDIDATE_IMAGE_PATH);
+        eng = (Map<String, Object>) data(ctl.status(session(true))).get("engines");
+        assertThat((Map<String, Object>) eng.get("candidate")).containsEntry("default_path", true);
 
+        // Ortam değişkeniyle verilmiş başka yol (DB kaydı YOK) — eski kural bunu "varsayılan" sayıp nötr gösteriyordu
+        when(settings.getOverride(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY)).thenReturn(null);
+        K6Profile envPath = K6Profile.fromVersionOutput("/srv/k6-env/k6", null, 1L);
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v220, null, envPath));
+        eng = (Map<String, Object>) data(ctl.status(session(true))).get("engines");
+        assertThat((Map<String, Object>) eng.get("candidate")).containsEntry("default_path", false)
+                .containsEntry("available", false);
+
+        // Ekrandan kaydedilmiş başka yol
         when(settings.getOverride(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY)).thenReturn("/mnt/k6/k6");
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v220, null,
+                K6Profile.fromVersionOutput("/mnt/k6/k6", null, 1L)));
         eng = (Map<String, Object>) data(ctl.status(session(true))).get("engines");
         assertThat((Map<String, Object>) eng.get("candidate")).containsEntry("default_path", false);
 

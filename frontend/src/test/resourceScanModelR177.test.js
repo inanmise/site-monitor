@@ -10,6 +10,7 @@ import {
   verdictTone, viewOf, waterfallRows, waterfallSegments, withFindings,
 } from '../components/page/resourcescan/resourceScanModel.js'
 import { forgetStarted, handOff, isWatching, markStartedHere, resetWatchers, startedHere, takeBack } from '../components/page/resourcescan/resourceScanWatcher.js'
+import { emitSessionReset } from '../utils/sessionResetBus.js'
 import { scanDetail, scanDetailV2, scanItems, scanItemsV2 } from './helpers/resourceScanFixtures.js'
 
 // Kaynak analizi — r177 (inceleme sonrası) model kuralları: bulgular (sunucu `findings` / eski kayıtta sunucu kuralıyla
@@ -396,6 +397,39 @@ describe('bitiş bildirimi izleyicisi (bu sekmede başlatılan, sekme sökülün
     expect(poll).not.toHaveBeenCalled()
     expect(takeBack(1, 4)).toBe(false)
     forgetStarted(1, 4)
+  })
+
+  it('oturum sıfırlanınca (çıkış) tüm arka plan izlemeleri durur: sorgu ve bitiş tostu yok, "başlatılan" kayıtları unutulur', async () => {
+    vi.useFakeTimers()
+    markStartedHere(7, 70)
+    const poll = vi.fn(async () => ({ scan: { id: 70, status: 'DONE' } }))
+    const onDone = vi.fn()
+    handOff({ monitorId: 7, scanId: 70, poll, onDone, pollMs: 100 })
+    markStartedHere(8, 80)
+    handOff({ monitorId: 8, scanId: 80, poll, onDone, pollMs: 100 })
+    expect(isWatching(7, 70)).toBe(true)
+    emitSessionReset()
+    expect(isWatching(7, 70)).toBe(false)
+    expect(isWatching(8, 80)).toBe(false)
+    expect(startedHere(7, 70)).toBe(false)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(poll).not.toHaveBeenCalled()
+    expect(onDone).not.toHaveBeenCalled()
+  })
+
+  it('oturum sıfırlaması uçuştaki sorgunun yanıtını da yok sayar (bitiş tostu sonraki kullanıcıya gitmez)', async () => {
+    vi.useFakeTimers()
+    let resolvePoll
+    const poll = vi.fn(() => new Promise((r) => { resolvePoll = r }))
+    const onDone = vi.fn()
+    handOff({ monitorId: 9, scanId: 90, poll, onDone, pollMs: 100 })
+    await vi.advanceTimersByTimeAsync(150)
+    expect(poll).toHaveBeenCalledTimes(1)
+    emitSessionReset()
+    resolvePoll({ scan: { id: 90, status: 'DONE' } })
+    await vi.advanceTimersByTimeAsync(500)
+    expect(onDone).not.toHaveBeenCalled()
+    expect(poll).toHaveBeenCalledTimes(1)
   })
 })
 

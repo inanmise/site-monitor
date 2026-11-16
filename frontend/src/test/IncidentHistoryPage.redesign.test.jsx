@@ -48,6 +48,13 @@ vi.mock('../components/ui/DateTimeField.jsx', () => ({
     <input aria-label={placeholder || 'date'} aria-invalid={invalid || undefined} value={value || ''} onChange={(e) => onChange(e.target.value)} />
   ),
 }))
+// Olay formunun tarih alanı (2026-11-17, ui/SmartDateTimeField): akış testi için ham değer yazan basit giriş — seçicinin kendi
+// davranışı SmartDateTimeField.test.jsx ve smartDateTime.test.js'te
+vi.mock('../components/ui/SmartDateTimeField.jsx', () => ({
+  default: ({ id, value, onChange, invalid }) => (
+    <input id={id} aria-invalid={invalid || undefined} value={value || ''} onChange={(e) => onChange(e.target.value)} />
+  ),
+}))
 // Markdown düzenleyici (@uiw/react-md-editor) jsdom'da ağır: düzenlenebilirken metin kutusu, salt okunurken işlenmiş kap.
 vi.mock('../components/ui/MarkdownEditor.jsx', () => ({
   default: ({ value, onChange, editable = true }) => (editable

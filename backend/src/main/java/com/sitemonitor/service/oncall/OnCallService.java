@@ -81,6 +81,14 @@ public class OnCallService {
         this.weeklyNotices = repo;
     }
 
+    /** Kuyruktaki (421) haftalık bildirim e-postasının sonucu bu günlükten okunur (2026-11-17) — yoksa "kuyrukta" kalır. */
+    private volatile com.sitemonitor.repository.NotificationLogRepository notificationLogs;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setNotificationLogs(com.sitemonitor.repository.NotificationLogRepository repo) {
+        this.notificationLogs = repo;
+    }
+
     /**
      * Bellek kuşağı (çok pod R2-A inceleme): anahtara girer ve her boşaltmada artar — boşaltmadan ÖNCE başlamış bir hesap
      * eski nöbetçiyi eski kuşağın anahtarına yazar, kimse okumaz ({@code TechErrorAnalyticsService} deseni).
@@ -403,7 +411,11 @@ public class OnCallService {
         String stamp = ISO.format(now);
         if (schedules.touchUpdated(teamId, stamp, actor) == 0) throw new java.util.NoSuchElementException("schedule");
         writeNoticeColumns(teamId, patch, existing, draft);
-        OnCallSchedule out = existing;
+        // YANIT için AYRIK kopya (inceleme 2026-11-17): işlem içinde okunan {@code existing} YÖNETİLEN varlıktır ve
+        // {@code @DynamicUpdate} yoktur — üzerinde bir alan (updatedAt / updatedBy) değişirse kesinleşmede Hibernate TÜM satırı
+        // okunan (bayat) değerlerle geri yazar: bu arada kaydedilmiş bir çizelge değişikliği (üyeler, ilk devir, rotasyon,
+        // açık / kapalı) sessizce geri alınırdı. Yalnız-bildirim yolu satıra yalnız hedefli UPDATE'lerle dokunur.
+        OnCallSchedule out = detachedCopy(existing);
         out.setWeeklyNoticeEnabled(draft.getWeeklyNoticeEnabled());
         out.setWeeklyNoticeMail(draft.getWeeklyNoticeMail());
         out.setWeeklyNoticePush(draft.getWeeklyNoticePush());
@@ -488,6 +500,21 @@ public class OnCallService {
         return true;
     }
 
+    /** Yönetilmeyen tam kopya (yanıt / denetim farkı için) — kalıcılık bağlamına girmez, kesinleşmede yazılmaz. */
+    static OnCallSchedule detachedCopy(OnCallSchedule s) {
+        OnCallSchedule c = copyNotice(s);
+        c.setId(s.getId());
+        c.setTeamId(s.getTeamId());
+        c.setEnabled(s.getEnabled());
+        c.setRotation(s.getRotation());
+        c.setAnchor(s.getAnchor());
+        c.setMemberIds(s.getMemberIds());
+        c.setNotifyOncall(s.getNotifyOncall());
+        c.setUpdatedAt(s.getUpdatedAt());
+        c.setUpdatedBy(s.getUpdatedBy());
+        return c;
+    }
+
     private static OnCallSchedule copyNotice(OnCallSchedule s) {
         OnCallSchedule c = new OnCallSchedule();
         c.setWeeklyNoticeEnabled(s.getWeeklyNoticeEnabled());
@@ -515,11 +542,29 @@ public class OnCallService {
         OnCallWeeklyNoticeRepository repo = weeklyNotices;
         try {
             // Hafta "bitti" = satırı var ve yeniden denenmeyecek (yeniden denenecek FAILED / e-postası iletilemeyen PARTIAL
-            // bitmiş sayılmaz — inceleme 2026-11-15)
-            Instant next = OnCallWeeklyNoticeSlots.next(st, now, repo == null ? null
-                    : key -> repo.findByTeamIdAndWeekKey(teamId, key).map(r -> !OnCallWeeklyNoticeService.willRetry(r)).orElse(false));
+            // bitmiş sayılmaz — inceleme 2026-11-15). Aday haftaların (önceki … 2 hafta sonrası) satırları TEK sorguda okunur
+            // (inceleme 2026-11-17: hafta başına bir sorgu — görünüm başına en çok 4); bildirim kapalıyken hiç okunmaz.
+            // Kuyruktaki (421) e-postanın sonucu geldiyse satır önce uzlaştırılır (2026-11-17): "gönderildi (e-posta kuyrukta)"
+            // sonsuza dek kalmaz; iletilemediyse "sıradaki gönderim" yeniden denemeyi gösterir
+            OnCallWeeklyNotice last = repo == null ? null
+                    : OnCallWeeklyNoticeService.settleQueuedMail(repo, notificationLogs,
+                            repo.findTopByTeamIdOrderByWeekKeyDescIdDesc(teamId).orElse(null));
+            java.util.function.Predicate<String> weekDone = null;
+            if (repo != null && st.enabled()) {
+                Map<String, OnCallWeeklyNotice> byWeek = new HashMap<>();
+                for (OnCallWeeklyNotice r : repo.findByTeamIdAndWeekKeyIn(teamId, OnCallWeeklyNoticeSlots.nextWeekKeys(now))) {
+                    if (r == null || r.getWeekKey() == null) continue;
+                    OnCallWeeklyNotice row = last != null && last.getId() != null && last.getId().equals(r.getId()) ? last
+                            : OnCallWeeklyNoticeService.settleQueuedMail(repo, notificationLogs, r);
+                    byWeek.putIfAbsent(row.getWeekKey(), row);
+                }
+                weekDone = key -> {
+                    OnCallWeeklyNotice r = byWeek.get(key);
+                    return r != null && !OnCallWeeklyNoticeService.willRetry(r);
+                };
+            }
+            Instant next = OnCallWeeklyNoticeSlots.next(st, now, weekDone);
             out.put("weekly_notice_next", next == null ? null : ISO.format(next));
-            OnCallWeeklyNotice last = repo == null ? null : repo.findTopByTeamIdOrderByWeekKeyDescIdDesc(teamId).orElse(null);
             out.put("weekly_notice_last", last == null ? null : lastJson(last, now));
         } catch (RuntimeException e) {
             log.debug("Haftalık nöbet bildirimi kayıtları okunamadı (takım {}): {}", teamId, e.toString());

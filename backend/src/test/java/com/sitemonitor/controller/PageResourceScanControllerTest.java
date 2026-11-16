@@ -154,6 +154,14 @@ class PageResourceScanControllerTest {
         mvc.perform(post("/api/monitoring/page/61/resource-scans").session(admin()))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.code").value("RESOURCE_SCAN_BUSY"));
+        // Tüm site yuvası dolu (inceleme 2026-11-17): aynı kod, tüm site taramasını anlatan ayrı ileti, uzun Retry-After
+        when(scans.start(any(PageMonitor.class), anyString(), any()))
+                .thenReturn(new PageResourceScanService.Start(PageResourceScanService.Outcome.FULL_BUSY, null, 60));
+        mvc.perform(post("/api/monitoring/page/61/resource-scans").session(admin()))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().string("Retry-After", "60"))
+                .andExpect(jsonPath("$.code").value("RESOURCE_SCAN_BUSY"))
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("tüm site taraması")));
     }
 
     @Test

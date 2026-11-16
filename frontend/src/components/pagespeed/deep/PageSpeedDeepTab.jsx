@@ -39,54 +39,81 @@ export default function PageSpeedDeepTab({ monitor }) {
   const toast = useToast()
   const id = monitor?.id
   const [checkId, setCheckId] = useState(null)          // null = son ölçüm
-  const [snap, setSnap] = useState({ status: 'loading', data: null, res: null })
+  // basis: okuma BAŞLARKEN izlemenin bilinen son ölçüm anı ("son ölçüm" seçiliyken "daha eski" kararı buna göre — inceleme
+  // 2026-11-17: canlı liste yoklaması last_check'i ileri taşıyınca not yanlışlıkla "daha eski" diyordu)
+  const [snap, setSnap] = useState({ status: 'loading', data: null, res: null, basis: null, followFailed: false })
   const [breaches, setBreaches] = useState([])
   const [compareOpen, setCompareOpen] = useState(false)
   const [exporting, setExporting] = useState(null)
   const seq = useRef(0)
+  const alive = useRef(true)
+  const breachFallback = useRef(false)                   // eski pod: şelale yanıtında breaches yok → kaynak listesi ucu BİR kez
   const cache = useRef(new Map())                        // kontrol kimliği → anlık görüntü (karşılaştırma yeniden okumasın)
+  const monitorLast = monitor?.last_check || monitor?.checked_at || null
+  const lastRef = useRef(monitorLast)
+  lastRef.current = monitorLast
   const fetchImage = useCallback((scanId, url, signal) => api.monitoring.pageSpeedImage(id, url, { signal }), [id])
   const store = useImageToolStore(id, fetchImage)
 
-  const load = useCallback(async (target = checkId) => {
+  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+
+  // İhlal anları — eski pod yolu (şelale yanıtı breaches taşımıyor): kaynak listesi ucunun breaches alanı, süre sınırlı
+  const loadLegacyBreaches = useCallback(() => {
+    withDeadline(api.monitoring.getPageSpeedResources(id, { size: 1 }), SNAPSHOT_DEADLINE_MS).then((res) => {
+      if (alive.current && res !== DEADLINE && res?.success && Array.isArray(res.data?.breaches)) setBreaches(res.data.breaches)
+    }).catch(() => {})
+  }, [id])
+
+  /**
+   * Anlık görüntüyü okur. follow: "son ölçüm" seçiliyken izlemenin son ölçümü ilerledi (canlı yoklama / "Şimdi kontrol et") —
+   * gösterilen veri okunurken yerinde kalır; okunamazsa da kalır ve "yeni ölçüm okunamadı" denir (eski ölçüm sessizce "son
+   * ölçüm" diye sunulmaz).
+   */
+  const load = useCallback(async (target = checkId, { follow = false } = {}) => {
     const my = ++seq.current
+    const basis = lastRef.current
     // Seçilen ölçüm değişti: eski anlık görüntü rapora / karşılaştırmaya gitmesin (inceleme 2026-11-15) — veri atılır
     setSnap((s) => (s.data && target != null && String(s.data.check_id) !== String(target)
-      ? { status: 'loading', data: null, res: null } : { ...s, status: 'loading' }))
+      ? { status: 'loading', data: null, res: null, basis: null, followFailed: false } : { ...s, status: 'loading' }))
     let res = null
     try {
       res = await withDeadline(api.monitoring.getPageSpeedWaterfall(id, { checkId: target ?? undefined }), SNAPSHOT_DEADLINE_MS)
     } catch { res = null }
     if (res === DEADLINE) res = null
-    if (my !== seq.current) return
+    if (my !== seq.current || !alive.current) return
     if (res?.success) {
       if (res.data?.check_id != null) cache.current.set(String(res.data.check_id), res.data)
       if (target == null) cache.current.set('latest', res.data)
-      setSnap({ status: 'ready', data: res.data, res })
+      // İhlal anları şelale yanıtında (inceleme 2026-11-17: ağır kaynak listesi ucu ayrıca çağrılmaz); eski pod → bir kez eski uç
+      if (Array.isArray(res.data?.breaches)) setBreaches(res.data.breaches)
+      else if (!breachFallback.current) { breachFallback.current = true; loadLegacyBreaches() }
+      setSnap({ status: 'ready', data: res.data, res, basis, followFailed: false })
+    } else if (follow) {
+      setSnap((s) => (s.data ? { ...s, status: 'ready', followFailed: true }
+        : { status: failStatus(res), data: null, res, basis: null, followFailed: false }))
     } else {
-      setSnap({ status: failStatus(res), data: null, res })
+      setSnap({ status: failStatus(res), data: null, res, basis: null, followFailed: false })
     }
-  }, [id, checkId])
+  }, [id, checkId, loadLegacyBreaches])
 
   useEffect(() => { load(checkId) }, [load, checkId])
 
-  // İhlal anları (seçici): kaynak listesi ucunun `breaches` alanı (en çok 20). Okunamazsa yalnız "son ölçüm".
+  // "Son ölçüm" seçiliyken izlemenin son ölçümü ilerledi (canlı liste yoklaması, "Şimdi kontrol et") → yeni ölçümü izle
+  const followed = useRef(monitorLast)
   useEffect(() => {
-    let alive = true
-    withDeadline(api.monitoring.getPageSpeedResources(id, { size: 1 }), SNAPSHOT_DEADLINE_MS).then((res) => {
-      if (alive && res !== DEADLINE && res?.success && Array.isArray(res.data?.breaches)) setBreaches(res.data.breaches)
-    }).catch(() => {})
-    return () => { alive = false }
-  }, [id])
+    if (followed.current === monitorLast) return
+    followed.current = monitorLast
+    if (checkId == null && monitorLast) load(null, { follow: true })
+  }, [monitorLast, checkId, load])
 
   const data = snap.data
   const wf = useMemo(() => buildWaterfall(data), [data])
   const grade = useMemo(() => (data ? gradeSnapshot(data) : null), [data])
   const latestId = checkId == null ? data?.check_id ?? null : null
   // "Son ölçüm" seçiliyken saklı kaynakları olan ölçüm izlemenin son ölçümünden ESKİ olabilir (son ölçümde sayfa açılamadı ya
-  // da kaynak saklanmadı) — o zaman not "son ölçüm" diye sunulmaz, nötr tonda tarihiyle söylenir.
-  const monitorLast = monitor?.last_check || monitor?.checked_at || null
-  const older = checkId == null && !!data?.check?.checked_at && !!monitorLast && String(monitorLast) !== String(data.check.checked_at)
+  // da kaynak saklanmadı) — o zaman not "son ölçüm" diye sunulmaz, nötr tonda tarihiyle söylenir. Karşılaştırma OKUMA ANINDAKİ
+  // son ölçümle (basis): yoklama son ölçümü ilerletince yukarıdaki izleme yeni ölçümü okur, arada not "daha eski" demez.
+  const older = checkId == null && !!data?.check?.checked_at && !!snap.basis && String(snap.basis) !== String(data.check.checked_at)
   const options = useMemo(() => {
     const out = [{ value: '', label: t('pspd.deep.latest') }]
     for (const b of breaches) {
@@ -168,6 +195,14 @@ export default function PageSpeedDeepTab({ monitor }) {
       )}
       {snap.status === 'unsupported' && (
         <div data-slot="pspd-deep-unsupported"><AlertBanner tone="info" className="mb-0">{t('pspd.deep.unsupported')}</AlertBanner></div>
+      )}
+      {snap.followFailed && data && (
+        <div data-slot="pspd-deep-follow-failed">
+          <AlertBanner tone="warning" className="mb-0"
+            actions={<Button type="button" variant="outline" size="sm" className={TOUCH} onClick={() => load(null, { follow: true })}><RefreshCw aria-hidden="true" />{t('pspd.deep.retry')}</Button>}>
+            {t('pspd.deep.followFailed')}
+          </AlertBanner>
+        </div>
       )}
       {snap.status === 'failed' && (
         <div data-slot="pspd-deep-failed">

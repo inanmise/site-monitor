@@ -3,7 +3,7 @@ import { X } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import Field from '../ui/Field.jsx'
-import DateTimeField from '../ui/DateTimeField.jsx'
+import SmartDateTimeField from '../ui/SmartDateTimeField.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import MarkdownEditor from '../ui/MarkdownEditor.jsx'
 import { Input } from '@/components/shadcn/input'
@@ -36,12 +36,18 @@ export function TextInput({ label, value, onChange, disabled, type = 'text', req
   )
 }
 
-export function DateInput({ label, value, onChange, disabled, req, min, error, hint }) {
+/**
+ * Olay formunun tarih + saat alanı (2026-11-17, kullanıcı isteği: giriş çok zordu) — `ui/SmartDateTimeField`: yazılabilir
+ * ("16.11 14:30", "dün 09:00", "şimdi"), hızlı seçim çipleri, ay / yıl açılır takvim + saat / dakika listeleri. `anchor`
+ * (tespit / çözüm zamanı için oluş zamanı) verilirse çipler "+N dk" olur ve altında "<anchorLabel> zamanından N sonra" yazar.
+ */
+export function DateInput({ label, value, onChange, disabled, req, min, minLabel, error, hint, anchor, anchorLabel, onProblem }) {
   return (
     <Field label={label} required={req} error={error} hint={hint}>
-      {({ describedBy, invalid }) => (
-        <DateTimeField value={value} onChange={onChange} disabled={disabled} placeholder={label}
-          clearable={!req} min={min} invalid={invalid} describedBy={describedBy} />
+      {({ id, describedBy, invalid }) => (
+        <SmartDateTimeField id={id} value={value} onChange={onChange} disabled={disabled} clearable={!req} min={min}
+          minLabel={minLabel} label={label} anchor={anchor} anchorLabel={anchorLabel} invalid={invalid}
+          describedBy={describedBy} onProblem={onProblem} />
       )}
     </Field>
   )

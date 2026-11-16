@@ -128,6 +128,38 @@ describe('tüm site taraması — Sayfalar görünümü', () => {
       { scope: 'site', crawl: 'full', max_pages: 2500, resume_from: 31 }))
   })
 
+  it('sunucu denetim noktasını tutmuyorsa (resumable false — budandı ya da zaten sürdürüldü) sürdür düğmesi yok', async () => {
+    api.monitoring.resourceScan.mockImplementation((_id, scanId) => {
+      if (scanId !== 31) return Promise.resolve(ok(siteDetail(scanId)))
+      const d = fullDetail(31)
+      return Promise.resolve(ok({ ...d, scan: { ...d.scan, resumable: false } }))
+    })
+    await mount()
+    openTab(/^Sayfalar/)
+    await waitFor(() => expect(slot('prs-crawl')).not.toBeNull())
+    expect(slot('prs-crawl-incomplete')).not.toBeNull()
+    expect(slots('prs-site-unscanned-row').length).toBeGreaterThan(0)
+    expect(slot('prs-crawl-resume')).toBeNull()
+  })
+
+  it('robots.txt okunamadı: "harita yok" denmez, nedeni söylenir; yönlendirmeyle tekrar analiz edilmeyenler sayılır', async () => {
+    api.monitoring.resourceScan.mockImplementation((_id, scanId) => Promise.resolve(scanId === 31
+      ? ok(fullDetail(31, { crawl: { mode: 'full', complete: false, stop_reason: null, discovery_incomplete: true, discovered: 40,
+        from_links: 39, from_sitemap: 0, prior_pages: 0, redirect_aliases: 2,
+        sitemap: { found: false, robots_failed: true, errors: ['https://www.example.com/robots.txt'] } },
+        unscanned: [], unscanned_total: 0 }))
+      : ok(siteDetail(scanId))))
+    await mount()
+    openTab(/^Sayfalar/)
+    await waitFor(() => expect(slot('prs-crawl')).not.toBeNull())
+    expect(slot('prs-crawl-complete')).toBeNull()
+    expect(slot('prs-crawl-incomplete').getAttribute('data-kind')).toBe('discovery')
+    expect(slot('prs-crawl-robots-failed').textContent).toMatch(/robots\.txt okunamadı/)
+    expect(slot('prs-crawl-sitemap-none')).toBeNull()
+    expect(slot('prs-crawl-sitemap-errors').textContent).toMatch(/robots\.txt/)
+    expect(slot('prs-crawl-redirect-aliases').textContent).toMatch(/2 bağlantı yönlendirmeyle/)
+  })
+
   it('kuyruk bittiyse: "bütün sayfalar tarandı", sürdür düğmesi ve taranmayan bölümü yok', async () => {
     api.monitoring.resourceScan.mockImplementation((_id, scanId) => Promise.resolve(scanId === 31
       ? ok(fullDetail(31, { crawl: { mode: 'full', complete: true, stop_reason: null, discovered: 40, from_links: 39, from_sitemap: 0,
@@ -220,6 +252,9 @@ describe('tüm site taraması — model', () => {
     expect(canResumeCrawl({ status: 'DONE' }, doneModel)).toBe(false)
     const unknown = siteModel(fullDetail(31, { crawl: { mode: 'full' } }).analysis.site)
     expect(canResumeCrawl({ status: 'DONE' }, unknown)).toBe(false)
+    // İnceleme 2026-11-17: sunucu denetim noktasını tutmuyor (budandı / zaten sürdürüldü) → düğme yok (409'a gitmez)
+    expect(canResumeCrawl({ status: 'DONE', resumable: false }, m)).toBe(false)
+    expect(canResumeCrawl({ status: 'DONE', resumable: true }, m)).toBe(true)
   })
 
   it('canResumeInterrupted: yarıda kalan / başarısız + denetim noktası olan tüm site taraması', () => {

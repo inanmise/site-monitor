@@ -80,7 +80,8 @@ function Calendar({
           "font-medium select-none",
           captionLayout === "label"
             ? "text-sm"
-            : "flex h-8 items-center gap-1 rounded-md pr-1 pl-2 text-sm [&>svg]:size-3.5 [&>svg]:text-muted-foreground",
+            // Proje eki (2026-11-17): ay / yıl açılır listesi dokunmatikte 40 px (üstüne bindirilen saydam select bu kutuyu kaplar)
+            : "flex h-8 items-center gap-1 rounded-md pr-1 pl-2 text-sm pointer-coarse:h-10 [&>svg]:size-3.5 [&>svg]:text-muted-foreground",
           defaultClassNames.caption_label
         ),
         month_grid: cn("w-full border-collapse", defaultClassNames.month_grid),

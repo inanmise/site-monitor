@@ -4,22 +4,32 @@ import path from 'node:path'
 
 // Sayfa Hızı 2. sürüm (2026-11-15, madde 19): performans raporu. PDF'e basılan HER karakter gömülü Roboto'da var (eksik glif
 // boş kutu basar); Excel / PDF ham anahtar ("pspd.") ya da "undefined" / "NaN" içermez; indirme başlamazsa false döner.
-const calls = { text: [], tables: [] }
+// pos: her metin çağrısının sayfası + taban çizgisi y'si; lines: satıra bölme (uzun not testi); finalY: tablo sonu (kancalı)
+const calls = { text: [], tables: [], pos: [], page: 1, lines: null, finalY: null }
 vi.mock('jspdf', () => {
   class FakeDoc {
     constructor() { this.internal = { pageSize: { getWidth: () => 595, getHeight: () => 842 } }; this.lastAutoTable = null }
     setFont() { return this }
     setFontSize() { return this }
     setTextColor() { return this }
-    addPage() { return this }
-    splitTextToSize(txt) { return [String(txt)] }
-    text(t) { (Array.isArray(t) ? t : [t]).forEach((x) => calls.text.push(String(x))); return this }
+    addPage() { calls.page++; return this }
+    splitTextToSize(txt) { return calls.lines ? calls.lines(String(txt)) : [String(txt)] }
+    text(t, x, y) {
+      const arr = Array.isArray(t) ? t : [t]
+      arr.forEach((v) => calls.text.push(String(v)))
+      calls.pos.push({ text: arr.map(String), y, page: calls.page })
+      return this
+    }
     output() { return new Blob(['%PDF']) }
   }
   return { jsPDF: FakeDoc }
 })
 vi.mock('jspdf-autotable', () => ({
-  default: (doc, opts) => { calls.tables.push(opts); doc.lastAutoTable = { finalY: (opts.startY || 0) + 40 } },
+  default: (doc, opts) => {
+    const finalY = calls.finalY ? calls.finalY(opts, calls.tables.length) : (opts.startY || 0) + 40
+    calls.tables.push({ ...opts, page: calls.page, finalY })
+    doc.lastAutoTable = { finalY }
+  },
 }))
 vi.mock('../api/client', () => ({ formatDate: (s) => String(s ?? '') }))
 vi.mock('../utils/pdfBrand.js', () => ({ drawBrandHeader: vi.fn(async (_d, title) => { calls.text.push(String(title)); return 60 }) }))
@@ -62,7 +72,10 @@ function data(over = {}) {
   }
 }
 
-beforeEach(() => { calls.text = []; calls.tables = []; xl.sheets = null; dl.fail = false; dl.files = [] })
+beforeEach(() => {
+  calls.text = []; calls.tables = []; calls.pos = []; calls.page = 1; calls.lines = null; calls.finalY = null
+  xl.sheets = null; dl.fail = false; dl.files = []
+})
 
 const cells = (rows) => rows.flat().filter((c) => c !== null && c !== undefined).map(String)
 
@@ -112,6 +125,56 @@ for (const [lang, D] of [['tr', TR], ['en', EN]]) {
       const recsTable = calls.tables[2]   // özet, bileşenler, öneriler
       const compTable = calls.tables[1]
       expect(recsTable.startY).toBeGreaterThan(compTable.startY + 40 + 12 + 11)
+    })
+
+    it('inceleme 2026-11-17: yöntem notu son tablonun ALTINDAN başlar, sayfa alt kenar boşluğuna sığmıyorsa yeni sayfaya geçer', async () => {
+      const PAGE_H = 842
+      const MARGIN = 36
+      const methodText = D['pspd.grade.method']
+      // Yöntem notu üç satıra bölünür (gerçek genişlikte de 2–3 satır); diğer metinler tek satır
+      calls.lines = (txt) => (txt === methodText ? [txt.slice(0, 40), txt.slice(40, 80), txt.slice(80)] : [txt])
+      for (const lastFinalY of [700, 780, 800]) {
+        calls.text = []; calls.tables = []; calls.pos = []; calls.page = 1
+        // Son tablo (en ağır kaynaklar, 5.) sayfanın dibinde biter; diğerleri startY + 40
+        calls.finalY = (opts, i) => (i === 4 ? lastFinalY : (opts.startY || 0) + 40)
+        const d = data()
+        await exportPageSpeedPdf({ monitor, data: d, grade: gradeSnapshot(d), t })
+        const last = calls.tables[4]
+        const m = calls.pos.find((p) => p.text.join('') === methodText)
+        expect(m, `${lastFinalY}: yöntem notu basıldı`).toBeTruthy()
+        const lineH = 8 * 1.15
+        const lastBaseline = m.y + (m.text.length - 1) * lineH
+        // Not hiçbir zaman sayfanın alt kenar boşluğuna taşmaz
+        expect(lastBaseline, `${lastFinalY}: son satır alt kenar boşluğunda`).toBeLessThanOrEqual(PAGE_H - MARGIN)
+        if (m.page === last.page) {
+          // Aynı sayfada kaldıysa tablonun altından (en az 14 pt boşlukla) başlar — tabloya yapışmaz / binmez
+          expect(m.y, `${lastFinalY}: not tablonun altında`).toBeGreaterThanOrEqual(last.finalY + 14)
+        } else {
+          expect(m.page, `${lastFinalY}: yeni sayfa`).toBe(last.page + 1)
+          expect(m.y).toBeLessThan(100)
+        }
+      }
+      // Yeterli yer varken (700) not aynı sayfada; dipte biten tabloda (780, 800) yeni sayfaya geçer
+      calls.text = []; calls.tables = []; calls.pos = []; calls.page = 1
+      calls.finalY = (opts, i) => (i === 4 ? 700 : (opts.startY || 0) + 40)
+      const d = data()
+      await exportPageSpeedPdf({ monitor, data: d, grade: gradeSnapshot(d), t })
+      expect(calls.pos.find((p) => p.text.join('') === methodText).page).toBe(calls.tables[4].page)
+    })
+
+    it('inceleme 2026-11-17: ölçülemeyen bileşen (TTFB) → Excel / PDF notu "eksik ölçüm" der ve eksik bileşeni adlandırır', async () => {
+      const d = data({ ttfb_ms: null })
+      const grade = gradeSnapshot(d)
+      expect(grade.incomplete).toBe(true)
+      expect(grade.missing).toEqual(['ttfb'])
+      await exportPageSpeedXlsx({ monitor, data: d, grade, t })
+      const row = xl.sheets[0].rows.find((r) => r[0] === D['pspd.rep.grade'])
+      expect(row[1]).toContain(D['pspd.rep.incompleteMark'])
+      await exportPageSpeedPdf({ monitor, data: d, grade, t })
+      const joined = calls.text.join('\n')
+      expect(joined).toContain(D['pspd.grade.comp.ttfb'])
+      expect(joined).not.toMatch(/pspd\.|undefined|NaN/)
+      expect(missingGlyphs(joined, REGULAR)).toEqual([])
     })
 
     it('not hesaplanamadıysa "hesaplanamadı" yazar, sahte 0 değil', async () => {

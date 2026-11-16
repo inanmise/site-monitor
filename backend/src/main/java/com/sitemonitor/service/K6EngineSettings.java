@@ -33,6 +33,23 @@ public final class K6EngineSettings {
     /** Uyumluluk taraması geçmişinin saklama süresi (gün) — RetentionCatalog {@code k6-compat-scans}. */
     public static final String KEY_SCAN_RETENTION = "site.monitor.scripted.compat-scan.retention-days";
 
+    /**
+     * İmajın aday ikiliyi koyduğu yol (Dockerfile {@code COPY --from=k6-bin /k6-candidate /opt/k6-candidate/k6}) =
+     * {@code application.properties} aday varsayılanı (gate: {@code K6EngineSettingsTest.candidateDefaultMatchesImage}).
+     */
+    public static final String CANDIDATE_IMAGE_PATH = "/opt/k6-candidate/k6";
+
+    /**
+     * Aday satırının {@code default_path} işareti (2026-11-17, inceleme): ETKİN aday yolu imajın kendi aday yolu mu —
+     * nereden gelirse gelsin (properties varsayılanı, ortam değişkeni, kayıt). Yalnız o zaman "bulunamadı" nötrdür (yerel
+     * geliştirme / adayı taşımayan imaj). Ortam değişkeniyle ({@code SCRIPTED_K6_BIN_CANDIDATE}) ya da ekrandan verilmiş
+     * BAŞKA bir yol bulunamıyorsa bu bir yapılandırma hatasıdır (tehlike). Önceki kural yalnız "kayıtlı değer yok" diye
+     * bakıyordu: ortam değişkeniyle verilmiş yanlış bir yol da varsayılan sayılıp nötr görünüyordu.
+     */
+    public static boolean isImageCandidatePath(String bin) {
+        return bin != null && CANDIDATE_IMAGE_PATH.equals(bin.trim());
+    }
+
     /** Sayfanın yazdığı anahtarlar (yedek / aday ikili yolları dahil) — denetleyici yalnız bunları kabul eder. */
     public static final List<String> KEYS = List.of(
             ScriptedCheckerService.K6_BIN_ROLLBACK_KEY,

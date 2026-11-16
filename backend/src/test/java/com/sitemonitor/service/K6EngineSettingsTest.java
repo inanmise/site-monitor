@@ -140,6 +140,13 @@ class K6EngineSettingsTest {
         assertThat(dockerfile).containsPattern("(?m)^ARG K6_CANDIDATE_SHA256_AMD64=[0-9a-f]{64}$");
         assertThat(dockerfile).containsPattern("(?m)^ARG K6_CANDIDATE_SHA256_ARM64=[0-9a-f]{64}$");
         K6EngineSettings.validate(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY, "/opt/k6-candidate/k6");
+        // default_path kuralının tek kaynağı (2026-11-17): sabit = properties varsayılanı = Dockerfile'ın kopyaladığı yol
+        assertThat(props).contains("${SCRIPTED_K6_BIN_CANDIDATE:" + K6EngineSettings.CANDIDATE_IMAGE_PATH + "}");
+        assertThat(dockerfile).contains("COPY --from=k6-bin /k6-candidate " + K6EngineSettings.CANDIDATE_IMAGE_PATH);
+        assertThat(K6EngineSettings.isImageCandidatePath(" /opt/k6-candidate/k6 ")).isTrue();
+        assertThat(K6EngineSettings.isImageCandidatePath("/opt/k6-candidate/k6-2.4")).isFalse();
+        assertThat(K6EngineSettings.isImageCandidatePath("/srv/k6/k6")).isFalse();
+        assertThat(K6EngineSettings.isImageCandidatePath(null)).isFalse();
     }
 
     @Test

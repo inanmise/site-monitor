@@ -121,4 +121,49 @@ class PageSpeedScheduleTest {
         ScriptedSchedule.apply(ivA, m, NOW, Set.of());
         assertThat(ScriptedSchedule.samePlan(ScriptedSchedule.specOf(m), ivB)).isTrue();
     }
+
+    @Test
+    @DisplayName("İnceleme 2026-11-17: aynı CRON planında ETKİN aralık farkı (aylık cron 30 ↔ 31 gün) plan değişimi DEĞİL — "
+            + "sameSchedule plan sıfırlamaz, apply saklı etkin aralığı korur; aralık kipinde aralık farkı yine değişimdir")
+    void sameCronPlanKeepsEffectiveInterval() {
+        PageSpeedMonitor stored = new PageSpeedMonitor();
+        stored.setScheduleMode("CRON");
+        stored.setCronExpression("0 9 1 * *");
+        stored.setIntervalSeconds(2_592_000);   // önceki kayıt anının ortancası (30 gün)
+        PageSpeedMonitor now = new PageSpeedMonitor();
+        now.setScheduleMode("CRON");
+        now.setCronExpression("0 9 1 * *");
+        now.setIntervalSeconds(2_678_400);      // 31 gün (bu kayıt anının ortancası)
+        assertThat(ScriptedSchedule.sameSchedule(stored, now)).isTrue();
+        now.setCronExpression("0 10 1 * *");
+        assertThat(ScriptedSchedule.sameSchedule(stored, now)).isFalse();
+        // Aralık kipi: aralık farkı değişimdir (eski kural)
+        PageSpeedMonitor ivA = new PageSpeedMonitor();
+        ivA.setScheduleMode("INTERVAL");
+        ivA.setIntervalSeconds(1800);
+        ivA.setWindowsJson("[{\"days\":[1],\"from\":\"09:00\",\"to\":\"18:00\"}]");
+        PageSpeedMonitor ivB = new PageSpeedMonitor();
+        ivB.setScheduleMode("INTERVAL");
+        ivB.setIntervalSeconds(900);
+        ivB.setWindowsJson(ivA.getWindowsJson());
+        assertThat(ScriptedSchedule.sameSchedule(ivA, ivB)).isFalse();
+
+        // apply(…, stored): gövde aynı planı söylüyor → saklı etkin aralık korunur (yeniden hesaplanan ortanca yazılmaz)
+        DbQuerySchedule.Spec body = ScriptedSchedule.specOf(stored);
+        PageSpeedMonitor target = new PageSpeedMonitor();
+        ScriptedSchedule.apply(body, target, NOW, Set.of(), stored);
+        assertThat(target.getScheduleMode()).isEqualTo("CRON");
+        assertThat(target.getIntervalSeconds()).isEqualTo(2_592_000);
+        // Kanıtın kendisi: bu anda yeniden hesaplanan ortanca saklı değerden FARKLIDIR (aylık cron, 19 aralığın ortancası 31 gün)
+        // Saklı tanımsız apply ortancayı yazar (yeni kayıt) — saklı değerden farklı olduğu kanıtlanır
+        PageSpeedMonitor fresh = new PageSpeedMonitor();
+        ScriptedSchedule.apply(body, fresh, NOW, Set.of());
+        assertThat(fresh.getIntervalSeconds()).isEqualTo(2_678_400);
+        // Plan DEĞİŞTİYSE yeni etkin aralık yazılır
+        DbQuerySchedule.Spec weekly = DbQuerySchedule.fromApi(new java.util.LinkedHashMap<>(Map.of(
+                "schedule_mode", "CRON", "cron_expression", "0 9 * * 1", "interval_seconds", 2_592_000)));
+        PageSpeedMonitor changed = new PageSpeedMonitor();
+        ScriptedSchedule.apply(weekly, changed, NOW, Set.of(), stored);
+        assertThat(changed.getIntervalSeconds()).isEqualTo(604_800);
+    }
 }

@@ -441,6 +441,27 @@ describe('eksikler penceresi — zenginleştirme (2026-11-15)', () => {
     expect(slot('gaps-team-clean', team)).toBeNull()
   })
 
+  it('kaynak okunamadığında kategori "eksik yok" demez; toplam "kesin değil"; okunan kategori yine "eksik yok" der (2026-11-17)', async () => {
+    api.getMe.mockResolvedValue({ ...ME, email: 'ayse@kurum.com.tr' })
+    api.dataQuality.team.mockResolvedValue({ success: true, data: { team: { id: 4, name: 'X' }, rules: [] } })
+    api.notificationGroups.list.mockResolvedValue(err(500))
+    await openReady()
+    const total = slot('gaps-total')
+    expect(total.getAttribute('data-incomplete')).toBe('true')
+    expect(total.textContent).toMatch(/kesin değil/)
+    expect(slot('gaps-none')).toBeNull()
+    tab(/Takım/)
+    const team = document.querySelector('[data-slot="gaps-panel"][data-category="team"]')
+    expect(slot('gaps-category-unchecked', team)).not.toBeNull()
+    expect(slot('gaps-empty', team)).toBeNull()
+    tab(/İzlemeler/)
+    const mon = document.querySelector('[data-slot="gaps-panel"][data-category="monitors"]')
+    expect(slot('gaps-empty', mon)).not.toBeNull()            // bu kategorinin kaynağı okundu → "eksik yok" doğru
+    expect(slot('gaps-category-unchecked', mon)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Takıma göre' }))
+    expect(document.body.textContent).not.toMatch(/gaps\.|undefined|NaN/)
+  })
+
   it('ortak kaynak okunamadığı turda "bir daha gösterme" o kaynağın eski kayıtlarını SİLMEZ (sonraki girişte yeniden açılmaz)', async () => {
     api.notificationGroups.list.mockResolvedValue({ success: true, data: { groups: [
       { id: 31, team_id: 4, name: 'G', active: true, is_default: true, emails: ['a@x.com'], inactive_emails: ['a@x.com'] }] } })

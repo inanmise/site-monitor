@@ -126,6 +126,42 @@ class PageSpeedGrowthWindowRepositoryTest {
         assertThat(again.growth().medianBytes()).isEqualTo(290_000L);
     }
 
+    private static com.sitemonitor.service.PageSpeedCheckerService.Result partialMeasured(long bytes) {
+        return new com.sitemonitor.service.PageSpeedCheckerService.Result("OK", 200, 100, 200, 1000, bytes, 10, 0, true, false,
+                List.of(), null, List.of(), null, 0, null, false, null, List.of(), null);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("İnceleme 2026-11-17: HER ölçümü kısmi sayfa — tam 7 günlük pencerede tam ölçüm yok → büyüme karşılaştırılamaz "
+            + "(ne ihlal ne kararsız: açık alarm diğer eşiklerle kapanabilir); tanım yeni (growth_since) → kararsız kalır")
+    void alwaysPartialPageIsNotComparable() {
+        java.time.Instant now = java.time.Instant.now();
+        for (int i = 1; i <= 12; i++) {
+            PageSpeedCheck p = row(8, ISO.format(now.minus(java.time.Duration.ofHours(12L * i))), 900_000, 90);
+            p.setCapped(true);   // kaynak tavanı: kısmi → referansa girmez
+            checks.save(p);
+        }
+        com.sitemonitor.model.PageSpeedMonitor m = new com.sitemonitor.model.PageSpeedMonitor();
+        m.setId(8L);
+        m.setUrl("https://agir.example.com/");
+        m.setGrowthBytesPct(20);
+        m.setGrowthRequestsPct(20);
+        m.setGrowthBytesBand(true);
+
+        var r = com.sitemonitor.service.SchedulerServiceGrowthAccess.readAndApply(checks, m, partialMeasured(950_000));
+        assertThat(r.growth().samples()).isZero();
+        assertThat(r.growth().fullWindow()).isTrue();
+        assertThat(r.breached()).isEmpty();
+        assertThat(r.undecided()).as("tam pencerede dolamayacak referans kararsız sayılmaz").isEmpty();
+
+        // Tanım az önce değişti: pencere kısa, referans dolabilir → kararsız (açık alarm sahte kapanmaz)
+        m.setGrowthSince(ISO.format(now.minus(java.time.Duration.ofHours(1))));
+        var young = com.sitemonitor.service.SchedulerServiceGrowthAccess.readAndApply(checks, m, partialMeasured(950_000));
+        assertThat(young.growth().fullWindow()).isFalse();
+        assertThat(young.undecided()).containsExactly("GROWSIZE", "GROWREQ", "SIZEBAND");
+    }
+
     @Test
     @DisplayName("Pencerenin başı: max(şimdi − 7 gün, growth_since) — boş ya da daha eski growth_since 7 günü değiştirmez")
     void windowStart() {

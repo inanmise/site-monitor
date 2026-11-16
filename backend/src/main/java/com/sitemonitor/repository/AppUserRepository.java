@@ -346,6 +346,18 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     List<AppUser> findActiveByOrgRoleInTeam(@Param("teamId") Long teamId, @Param("role") String role);
 
     /**
+     * {@link #findActiveByOrgRoleInTeam} BİRDEN ÇOK takım için, dar okuma (2026-11-17, inceleme): {@code [takımId, kullanıcıId,
+     * kullanıcı adı]} — birincil takım üyeliği. Ek üyelikler {@link #findActiveIdsByOrgRoleInExtraTeams}. Takım başına sorgu yok.
+     */
+    @Query("SELECT u.teamId, u.id, u.username FROM AppUser u WHERE u.active = true AND u.orgRole = :role AND u.teamId IN :teamIds")
+    List<Object[]> findActiveIdsByOrgRoleInPrimaryTeams(@Param("teamIds") java.util.Collection<Long> teamIds, @Param("role") String role);
+
+    /** Ek takım üyelikleri — {@code [takımId, kullanıcıId, kullanıcı adı]}. */
+    @Query("SELECT tid, u.id, u.username FROM AppUser u JOIN u.teamIds tid WHERE u.active = true AND u.orgRole = :role "
+            + "AND tid IN :teamIds")
+    List<Object[]> findActiveIdsByOrgRoleInExtraTeams(@Param("teamIds") java.util.Collection<Long> teamIds, @Param("role") String role);
+
+    /**
      * Admin Users dizini — TEK esnek filtreli + sayfalı + SIRALANABİLİR arama (2026-11-12, dizin zenginleştirme).
      * Üç eski sorgunun ({@code findFiltered}/{@code findFilteredDormant}/{@code findFilteredInTeams}) yerine geçer:
      * serbest metin alan-bazlı, hesap durumu, kaynak (LOCAL/LDAP), iletişim (telefon/e-posta/OTP), 7/24 (NOC), çevrimiçi,

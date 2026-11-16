@@ -33,7 +33,8 @@ function summaryRows(monitor, data, grade, t) {
     [t('pspd.cmp.m.bytes'), bytes(c.total_bytes)],
     [t('pspd.cmp.m.requests'), c.request_count ?? ''],
     [t('pspd.cmp.m.unloaded'), c.failed_count ?? ''],
-    [t('pspd.rep.grade'), grade?.score == null ? t('pspd.grade.unknownShort') : `${grade.score} (${grade.letter})${grade.partial ? ` ${t('pspd.rep.partialMark')}` : ''}`],
+    [t('pspd.rep.grade'), grade?.score == null ? t('pspd.grade.unknownShort')
+      : `${grade.score} (${grade.letter})${grade.partial ? ` ${t('pspd.rep.partialMark')}` : ''}${grade.incomplete ? ` ${t('pspd.rep.incompleteMark')}` : ''}`],
     [t('pspd.rep.partial'), isLowerBound(data) ? t('pspd.rep.yes') : t('pspd.rep.no')],
   ]
 }
@@ -108,10 +109,14 @@ export async function exportPageSpeedPdf({ monitor, data, grade, t }) {
   const base = { margin: { left: MARGIN, right: MARGIN }, styles: { font: 'Roboto', fontSize: 8.5, cellPadding: 3, overflow: 'linebreak', textColor: 40 },
     headStyles: { font: 'Roboto', fontStyle: 'bold', fillColor: [229, 231, 235], textColor: 30 }, alternateRowStyles: { fillColor: [250, 250, 251] } }
   const cell = (v) => (v === null || v === undefined ? '' : String(v))
+  const pageH = doc.internal.pageSize.getHeight()
+  const textWidth = doc.internal.pageSize.getWidth() - 2 * MARGIN
+  // y = TEK imleç (inceleme 2026-11-17): her tablo, başlık ve not imleci kendinden sonraya ilerletir. Eskiden son not tablonun
+  // altına "y + 14" yerine sayfa sonuna kıstırılıyordu (Math.min) — tablo sayfa dibinde bitince not tablonun dibine yapışıyor,
+  // uzun not sayfanın dışına taşıyordu. Sığmayan not yeni sayfaya geçer.
   const section = (title) => {
-    // Tablodan SONRA yazılan bir not varsa (kısmi uyarısı) başlık notun altından başlar — üst üste binmez
-    y = Math.max(doc.lastAutoTable?.finalY ?? y, y) + 16
-    if (y > doc.internal.pageSize.getHeight() - 60) { doc.addPage(); y = MARGIN }
+    y += 16
+    if (y > pageH - 60) { doc.addPage(); y = MARGIN }
     doc.setFont('Roboto', 'bold').setFontSize(11).setTextColor(30)
     doc.text(title, MARGIN, y)
     doc.setFont('Roboto', 'normal').setTextColor(40)
@@ -120,17 +125,27 @@ export async function exportPageSpeedPdf({ monitor, data, grade, t }) {
   const table = (rows, opts = {}) => {
     const [head, ...body] = rows
     autoTable(doc, { ...base, startY: y, head: [head.map(cell)], body: body.map((r) => r.map(cell)), ...opts })
+    y = Math.max(doc.lastAutoTable?.finalY ?? y, MARGIN)
+  }
+  /** Not paragrafı: imlecin {gap} altından; tamamı sayfa alt kenar boşluğuna sığmıyorsa yeni sayfada başlar. */
+  const note = (text, { size, color, gap }) => {
+    doc.setFont('Roboto', 'normal').setFontSize(size).setTextColor(color)
+    const split = doc.splitTextToSize(text, textWidth)
+    const lines = Array.isArray(split) ? split : [split]
+    const lineH = size * (typeof doc.getLineHeightFactor === 'function' ? doc.getLineHeightFactor() : 1.15)
+    let top = y + gap
+    if (top + (lines.length - 1) * lineH > pageH - MARGIN) { doc.addPage(); top = MARGIN + size }
+    doc.text(lines, MARGIN, top)
+    y = top + (lines.length - 1) * lineH + Math.ceil(size * 0.35)   // son satırın alt payı
+    doc.setTextColor(40)
   }
   table(summaryRows(monitor, data, grade, t), { columnStyles: { 0: { cellWidth: 150, fontStyle: 'bold' } } })
   section(t('pspd.grade.title'))
   table(componentRows(grade, t))
-  if (grade?.partial) {
-    y = (doc.lastAutoTable?.finalY ?? y) + 12
-    doc.setFontSize(8.5).setTextColor(90)
-    const lines = doc.splitTextToSize(t('pspd.grade.partialNote'), doc.internal.pageSize.getWidth() - 2 * MARGIN)
-    doc.text(lines, MARGIN, y)
-    y += (Array.isArray(lines) ? lines.length : 1) * 11   // 8,5 pt satır yüksekliği ≈ 11 pt
-    doc.setTextColor(40)
+  if (grade?.partial) note(t('pspd.grade.partialNote'), { size: 8.5, color: 90, gap: 12 })
+  if (grade?.incomplete) {
+    note(t('pspd.grade.incompleteNote', (grade.missing || []).map((k) => t(`pspd.grade.comp.${k}`)).join(', ')),
+      { size: 8.5, color: 90, gap: 12 })
   }
   section(t('pspd.grade.recsTitle'))
   table(recRows(grade, t), { columnStyles: { 1: { cellWidth: 230, fontSize: 7.5 } } })
@@ -138,9 +153,7 @@ export async function exportPageSpeedPdf({ monitor, data, grade, t }) {
   table(typeRows(data, t))
   section(t('pspd.rep.heaviest'))
   table(resourceRows(data, t, 30), { styles: { ...base.styles, fontSize: 7.5 }, columnStyles: { 0: { cellWidth: 190 } } })
-  y = (doc.lastAutoTable?.finalY ?? y) + 14
-  doc.setFontSize(8).setTextColor(110)
-  doc.text(doc.splitTextToSize(t('pspd.grade.method'), doc.internal.pageSize.getWidth() - 2 * MARGIN), MARGIN, Math.min(y, doc.internal.pageSize.getHeight() - 30))
+  note(t('pspd.grade.method'), { size: 8, color: 110, gap: 14 })
   try {
     triggerDownload(doc.output('blob'), fileName(monitor, 'pdf', data?.check?.checked_at))
     return true

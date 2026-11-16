@@ -125,6 +125,8 @@ jobs:
       # HIGH/CRITICAL (düzeltmesi olan) bulguda iş KIRMIZI olur — release.yml'deki yayın kapısıyla aynı kural ve aynı
       # istisna dosyası (.trivyignore.yaml: yol kapsamlı, son tarihli). Bu dalların imajı zaten itilmiştir; amaç main'e
       # gelmeden önce görmek. Adım continue-on-error: özet yine yazılır, iş sonda "Trivy gate" ile kırmızıya döner.
+      # 2026-11-17: exit-code 0 + JSON — bulgu kararını "Trivy gate" (scripts/trivy-gate.mjs) verir; bu adım BAŞARISIZSA
+      # Trivy'nin KENDİSİ çalışamamıştır (veritabanı / zaman aşımı / imaj) ve kapı bunu bulgudan ayrı anlatır.
       - name: Trivy image scan
         id: trivy
         continue-on-error: true
@@ -133,8 +135,9 @@ jobs:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.primary }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          exit-code: '1'
-          format: table
+          exit-code: '0'
+          format: json
+          output: trivy-results.json
           trivyignores: .trivyignore.yaml
 
       - name: Image summary
@@ -159,17 +162,19 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Set up Node 24
+        if: ${{ !cancelled() && steps.trivy.outcome != 'skipped' }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      # Bulgu → "düzeltmesi olan HIGH/CRITICAL bulgu" + tablo; Trivy'nin kendi hatası → "tarama çalışamadı (bulgu değil)".
+      # İkisi de işi kırmızı yapar; temizse geçer.
       - name: Trivy gate
-        if: steps.trivy.outcome == 'failure'
-        run: |
-          {
-            echo ""
-            echo "### ⛔ Trivy: düzeltmesi olan HIGH/CRITICAL bulgu"
-            echo "Ayrıntı yukarıdaki \"Trivy image scan\" adımında. Main'e alınırsa Release bu imajı İTMEZ."
-            echo "Ne yapmalı: docs/RUNBOOK.md \"Yayın güvenlik kapısı (Trivy)\"."
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo "::error::Trivy HIGH/CRITICAL bulgu buldu (ayrıntı: Trivy image scan adımı; istisnalar .trivyignore.yaml)"
-          exit 1
+        if: ${{ !cancelled() && steps.trivy.outcome != 'skipped' }}
+        env:
+          OUTCOME: ${{ steps.trivy.outcome }}
+        run: node scripts/trivy-gate.mjs --report trivy-results.json --outcome "$OUTCOME" --context branch
 
   # İmaj açılış testi (2026-10-02, onaylı öneri 28) — adımlar ortak image-boot-test.yml'de (release.yml de çağırır).
   # Bu workflow sürüm kapısı DEĞİL; iş imaj itildikten sonra koşar ve hiçbir yayını bloklamaz. İmaj itildiyse Trivy

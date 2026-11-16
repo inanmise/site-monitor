@@ -116,6 +116,20 @@ public final class OnCallWeeklyNoticeSlots {
     }
 
     /**
+     * {@link #next}'in baktığı haftaların anahtarları (önceki hafta … iki hafta sonrası, 4 anahtar) — görünüm bu haftaların
+     * satırlarını TEK sorguda okur.
+     */
+    public static List<String> nextWeekKeys(Instant now) {
+        LocalDate thisMonday = monday(localDate(now));
+        List<String> out = new ArrayList<>(4);
+        for (int w = NEXT_FIRST_WEEK; w <= NEXT_LAST_WEEK; w++) out.add(thisMonday.plusWeeks(w).toString());
+        return out;
+    }
+
+    private static final int NEXT_FIRST_WEEK = -1;
+    private static final int NEXT_LAST_WEEK = 2;
+
+    /**
      * Sıradaki gönderim anı: haftası henüz BİTMEMİŞ ({@code weekDone} false) ilk dilim — henüz gelmemişse o an; geçmiş ama
      * telafi penceresi açıksa da o an (geçmişte: "az sonra gönderilecek"). Haftası bitmiş dilim (o hafta zaten gönderildi /
      * atlandı) GELECEKTE olsa da atlanır: Pazartesi 08:30 gönderildikten sonra saat 18:00'e alınırsa sıradaki gönderim
@@ -124,7 +138,7 @@ public final class OnCallWeeklyNoticeSlots {
     public static Instant next(Settings st, Instant now, Predicate<String> weekDone) {
         if (st == null || !st.enabled()) return null;
         LocalDate thisMonday = monday(localDate(now));
-        for (int w = -1; w <= 2; w++) {
+        for (int w = NEXT_FIRST_WEEK; w <= NEXT_LAST_WEEK; w++) {
             Instant slot = slotInWeek(thisMonday.plusWeeks(w), st.day(), st.time());
             if (!slot.isAfter(now) && !now.isBefore(catchUpEnd(slot))) continue;     // pencere geçti
             if (weekDone != null && weekDone.test(weekKey(slot))) continue;          // o hafta bitti

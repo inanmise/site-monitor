@@ -38,6 +38,16 @@ public final class SiteCrawl {
     private final Predicate<String> exclude;
     private final Set<String> known = new HashSet<>();
     private final ArrayDeque<Entry> queue = new ArrayDeque<>();
+    /**
+     * Kuyrukta CANLI bekleyen adreslerin tekilleştirme biçimleri. {@link #markDone} bir adresi taranmış sayarsa burada
+     * silinir; kuyruktaki eski kaydı {@link #poll} / {@link #remaining} atlar (ArrayDeque'den ortadan silme O(n) olurdu).
+     */
+    private final Set<String> queuedKeys = new HashSet<>();
+    /**
+     * Taranan sayfaların (istenen VE yönlendirme sonrası) tekilleştirme biçimleri — yönlendirmeyle aynı sayfaya varan bağlantı
+     * ikinci kez analiz edilmez (inceleme 2026-11-17). Sınırlı: taranan sayfalar + hedefleri + devralınan taranmışlar (≤ 15 000).
+     */
+    private final Set<String> done = new HashSet<>();
     private int dropped;
     /** Taşan adreslerin 64 bit özetleri — aynı adres birden çok sayfada geçse de bir kez sayılır. */
     private final Set<Long> droppedSeen = new HashSet<>();
@@ -54,8 +64,8 @@ public final class SiteCrawl {
     public SiteCrawl(String mainUrl, String finalUrl, Predicate<String> exclude, Collection<String> skip) {
         this.origin = SitePages.Origin.of(finalUrl != null && !finalUrl.isBlank() ? finalUrl : mainUrl);
         this.exclude = exclude;
-        markKnown(mainUrl);
-        markKnown(finalUrl);
+        markDone(mainUrl);
+        markDone(finalUrl);
         if (skip != null) for (String s : skip) markKnown(s);
     }
 
@@ -64,6 +74,26 @@ public final class SiteCrawl {
         if (url == null || url.isBlank()) return;
         String n = SitePages.normalized(PageResourceDiscovery.key(url));
         if (n != null) known.add(n);
+    }
+
+    /**
+     * Adres TARANDI (analiz edildi ya da açılamadı): bir daha aday olmaz ve kuyrukta bekleyen kaydı atlanır. Yönlendirmenin
+     * hedefi de böyle işaretlenir — başka bir bağlantı aynı sayfaya yönlenirse ikinci kez analiz edilmez.
+     */
+    public void markDone(String url) {
+        if (url == null || url.isBlank()) return;
+        String n = SitePages.normalized(PageResourceDiscovery.key(url));
+        if (n == null) return;
+        done.add(n);
+        known.add(n);
+        queuedKeys.remove(n);
+    }
+
+    /** Adres (ya da yönlendirme sonrası adresi) bu taramada zaten tarandı mı. */
+    public boolean isDone(String url) {
+        if (url == null || url.isBlank()) return false;
+        String n = SitePages.normalized(PageResourceDiscovery.key(url));
+        return n != null && done.contains(n);
     }
 
     /**
@@ -82,6 +112,7 @@ public final class SiteCrawl {
             if (n == null || known.contains(n)) continue;
             if (known.size() >= MAX_KNOWN) { noteDropped(n); continue; }
             known.add(n);
+            queuedKeys.add(n);
             queue.addLast(new Entry(k, source));
             added++;
             if (SOURCE_SITEMAP.equals(source)) fromSitemap++;
@@ -120,19 +151,27 @@ public final class SiteCrawl {
         return h;
     }
 
-    /** Kuyruğun önündeki adres (null = boş). */
+    /** Kuyruğun önündeki CANLI adres (taranmış sayılan eski kayıtlar atlanır; null = boş). Kuyruk boyuyla sınırlı. */
     public Entry poll() {
-        return queue.pollFirst();
+        Entry e;
+        while ((e = queue.pollFirst()) != null) {
+            String n = SitePages.normalized(e.url());
+            if (n != null && queuedKeys.remove(n)) return e;
+        }
+        return null;
     }
 
     /** Taranamayan adresi kuyruğun ÖNÜNE geri koyar (bütçe dolunca "taranmadı" listesinin başında kalsın). */
     public void pushFront(Entry e) {
-        if (e != null) queue.addFirst(e);
+        if (e == null) return;
+        String n = SitePages.normalized(e.url());
+        if (n == null || done.contains(n) || !queuedKeys.add(n)) return;
+        queue.addFirst(e);
     }
 
-    /** Kuyrukta bekleyen adres sayısı. */
+    /** Kuyrukta bekleyen (canlı) adres sayısı. */
     public int queued() {
-        return queue.size();
+        return queuedKeys.size();
     }
 
     /** Bilinen adres tavanı yüzünden kuyruğa giremeyen TEKİL adres sayısı (bkz. {@link #droppedAtLeast()}). */
@@ -148,12 +187,13 @@ public final class SiteCrawl {
         return fromLinks;
     }
 
-    /** Kuyruğun anlık kopyası (sırayla), en çok {@code max} kayıt. */
+    /** Kuyruğun anlık kopyası (sırayla, yalnız canlı kayıtlar), en çok {@code max} kayıt. */
     public List<Entry> remaining(int max) {
-        List<Entry> out = new ArrayList<>(Math.min(Math.max(0, max), queue.size()));
+        List<Entry> out = new ArrayList<>(Math.min(Math.max(0, max), queuedKeys.size()));
         for (Entry e : queue) {
             if (out.size() >= max) break;
-            out.add(e);
+            String n = SitePages.normalized(e.url());
+            if (n != null && queuedKeys.contains(n)) out.add(e);
         }
         return out;
     }
