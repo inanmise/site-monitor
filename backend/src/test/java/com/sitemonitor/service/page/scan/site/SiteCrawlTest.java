@@ -87,6 +87,35 @@ class SiteCrawlTest {
     }
 
     @Test
+    @DisplayName("markDone (inceleme 2026-11-17): kuyrukta bekleyen kayıt atlanır, sayaç düşer, yeniden eklenemez; ana sayfa taranmış")
+    void markDoneSkipsQueuedEntry() {
+        SiteCrawl c = new SiteCrawl(BASE, BASE + "home", null, null);
+        assertThat(c.isDone(BASE)).as("ana sayfa taranmış").isTrue();
+        assertThat(c.isDone(BASE + "home/")).as("ana sayfanın yönlendirme hedefi de (sondaki / farkı yok)").isTrue();
+        c.offer(List.of(BASE + "a", BASE + "b", BASE + "c"), SiteCrawl.SOURCE_LINK);
+        c.markDone(BASE + "b/");   // /a → /b yönlendirmesi: /b'nin kuyruktaki kaydı ölü
+        assertThat(c.isDone(BASE + "b")).isTrue();
+        assertThat(c.queued()).isEqualTo(2);
+        assertThat(c.remaining(10)).extracting(SiteCrawl.Entry::url).containsExactly(BASE + "a", BASE + "c");
+        assertThat(c.offer(List.of(BASE + "b"), SiteCrawl.SOURCE_LINK)).as("taranmış adres yeniden kuyruğa girmez").isZero();
+        SiteCrawl.Entry a = c.poll();
+        assertThat(a.url()).isEqualTo(BASE + "a");
+        assertThat(c.poll().url()).as("ölü /b kaydı atlanır").isEqualTo(BASE + "c");
+        assertThat(c.poll()).isNull();
+        assertThat(c.queued()).isZero();
+        c.pushFront(a);
+        assertThat(c.queued()).isEqualTo(1);
+        c.pushFront(a);
+        assertThat(c.queued()).as("aynı kayıt iki kez öne konmaz").isEqualTo(1);
+        c.markDone(BASE + "a");
+        c.pushFront(a);
+        assertThat(c.poll()).as("taranmış kayıt öne konamaz").isNull();
+        assertThat(c.isDone(null)).isFalse();
+        c.markDone(null);
+        c.markDone("not a url");
+    }
+
+    @Test
     @DisplayName("geçersiz köken / boş girdi: hiçbir şey eklenmez, istisna yok")
     void invalidInputs() {
         SiteCrawl c = new SiteCrawl("not a url", null, null, null);

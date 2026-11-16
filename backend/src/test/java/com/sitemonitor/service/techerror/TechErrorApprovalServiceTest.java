@@ -151,6 +151,33 @@ class TechErrorApprovalServiceTest {
     }
 
     @Test
+    @DisplayName("onaylayıcı kimlikleri TOPLU (inceleme 2026-11-17): her takımda approvers() ile AYNI kişiler (birincil + ek üyelik, aktif PO, ön ek kuralı), takım sayısından bağımsız iki sorgu")
+    void approverIdsByTeamMatchesApprovers() {
+        java.util.List<Long> teamIds = java.util.List.of(1L, 2L, 9L, 77L);
+        java.util.Map<Long, java.util.Set<Long>> byTeam = approvals.approverIdsByTeam(teamIds);
+        assertThat(byTeam.keySet()).containsExactlyInAnyOrderElementsOf(teamIds);
+        for (Long t : teamIds) {
+            assertThat(byTeam.get(t)).as("takım %s", t).containsExactlyInAnyOrderElementsOf(
+                    approvals.approvers(t).stream().map(TechErrorApprovalService.Approver::id).toList());
+        }
+        assertThat(byTeam.get(1L)).containsExactlyInAnyOrder(po1.getId(), po2.getId());   // pasif PO ve TECH yok
+        assertThat(byTeam.get(9L)).containsExactly(po2.getId());
+        assertThat(byTeam.get(77L)).isEmpty();
+        assertThat(approvals.approverIdsByTeam(java.util.List.of())).isEmpty();
+        // Kullanıcı adı ön eki kuralının girişe kapattığı hesap toplu okumada da sayılmaz
+        com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy prefix =
+                org.mockito.Mockito.mock(com.sitemonitor.service.loginpolicy.UsernamePrefixPolicy.class);
+        when(prefix.allows(any())).thenAnswer(i -> !"po2".equals(i.getArgument(0)));
+        approvals.setUsernamePrefix(prefix);
+        try {
+            assertThat(approvals.approverIdsByTeam(java.util.List.of(1L)).get(1L)).containsExactly(po1.getId());
+            assertThat(approvals.approvers(1L)).extracting(TechErrorApprovalService.Approver::id).containsExactly(po1.getId());
+        } finally {
+            approvals.setUsernamePrefix(null);
+        }
+    }
+
+    @Test
     @DisplayName("kanal yönetici alıcıları: geçersiz adres 400 (alan), ≤ 20, tekilleşir ve normalize edilir; boş = akış yok")
     void executiveEmailsValidation() {
         TechErrorChannel ch = service.createChannel(1L, "Mobil", null, TechErrorTemplate.defaults("tr"), tech.getId());

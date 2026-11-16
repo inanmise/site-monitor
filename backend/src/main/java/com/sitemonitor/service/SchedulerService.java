@@ -898,6 +898,7 @@ public class SchedulerService {
         patch("ALTER TABLE oncall_schedules ADD COLUMN weekly_notice_day INTEGER");
         patch("ALTER TABLE oncall_schedules ADD COLUMN weekly_notice_time VARCHAR(5)");
         patch("ALTER TABLE oncall_schedules ADD COLUMN weekly_notice_since VARCHAR(19)");
+        patch("ALTER TABLE oncall_weekly_notices ADD COLUMN mail_log_id BIGINT");   // kuyruktaki e-postanın günlük satırı (2026-11-17)
         patch("ALTER TABLE alert_events ADD COLUMN forward_emails TEXT");  // alarm iletimiyle bildirilenler (2026-11-05)
         patch("ALTER TABLE sql_query_history ADD COLUMN cancelled BOOLEAN"); // SQL Playground "Durdur" (2026-11-13)
         // Sertifika alarmında gerçek son geçerlilik anı (kapalı alarm kartı artık hesaplamaz, okur).
@@ -9121,8 +9122,16 @@ public class SchedulerService {
         return r == null ? null : r.samples();
     }
 
-    /** Büyüme referansı okuması: örnekler + okuma sınıra takılmadı mı ({@code complete} — bant kontrollü uyumu için). */
-    record GrowthRead(List<com.sitemonitor.service.page.PageSpeedRules.GrowthSample> samples, boolean complete) {}
+    /**
+     * Büyüme referansı okuması: örnekler + okuma sınıra takılmadı mı ({@code complete} — bant kontrollü uyumu için) + pencere
+     * TAM 7 günü mü kapsadı ({@code fullWindow}: tamamlandı ve başı {@code growth_since} ile kısalmadı — inceleme 2026-11-17;
+     * {@link com.sitemonitor.service.page.PageSpeedRules.Growth#notComparable}).
+     */
+    record GrowthRead(List<com.sitemonitor.service.page.PageSpeedRules.GrowthSample> samples, boolean complete, boolean fullWindow) {
+        GrowthRead(List<com.sitemonitor.service.page.PageSpeedRules.GrowthSample> samples, boolean complete) {
+            this(samples, complete, false);
+        }
+    }
 
     /**
      * Pencerenin başı (inceleme 2026-11-15): {@code max(şimdi − 7 gün, growthSince)} — ölçüm TANIMI değişince (URL, kip, hariç
@@ -9139,8 +9148,13 @@ public class SchedulerService {
         Instant now = Instant.now();
         try {
             int limit = com.sitemonitor.service.page.PageSpeedRules.GROWTH_READ_LIMIT;
-            List<Object[]> rows = pageSpeedCheckRepo.growthWindow(monitorId, growthWindowStart(now, growthSince), ISO.format(now), limit);
-            return new GrowthRead(pageSpeedGrowthSamplesOf(rows, extended), rows == null || rows.size() < limit);
+            String from = growthWindowStart(now, growthSince);
+            List<Object[]> rows = pageSpeedCheckRepo.growthWindow(monitorId, from, ISO.format(now), limit);
+            boolean complete = rows == null || rows.size() < limit;
+            // Tam pencere: okuma sınıra takılmadı VE baş tanım değişimiyle kısalmadı (önceki 7 günün tamamı okundu)
+            String weekAgo = ISO.format(now.minusMillis(com.sitemonitor.service.page.PageSpeedRules.GROWTH_WINDOW_MS));
+            boolean fullWindow = complete && (growthSince == null || growthSince.compareTo(weekAgo) <= 0);
+            return new GrowthRead(pageSpeedGrowthSamplesOf(rows, extended), complete, fullWindow);
         } catch (Exception e) {
             long t = System.currentTimeMillis();
             if (t - lastGrowthWarnMs > 3_600_000L) {
@@ -9204,7 +9218,8 @@ public class SchedulerService {
         // eşikleri BİLİNMİYOR kalır (ihlal de sağlık da değil).
         if (res != null && res.reachable() && PageSpeedCheckerService.growthConfigured(m)) {
             GrowthRead gr = pageSpeedGrowthRead(m.getId(), res.extended(), m.getGrowthSince());
-            res = PageSpeedCheckerService.withGrowth(res, m, gr == null ? null : gr.samples(), gr != null && gr.complete());
+            res = PageSpeedCheckerService.withGrowth(res, m, gr == null ? null : gr.samples(), gr != null && gr.complete(),
+                    gr != null && gr.fullWindow());
             // F4 kuralı (inceleme 2026-11-15): büyüme okuması (≤ 5 sn + havuz beklemesi) sırasında işçi işi bırakmış olabilir —
             // bırakılan iş geçmiş satırı yazmaz.
             if (workerJobAbandoned()) return abandonedCheckJob();

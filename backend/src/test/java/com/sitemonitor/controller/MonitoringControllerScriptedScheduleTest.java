@@ -436,6 +436,25 @@ class MonitoringControllerScriptedScheduleTest {
         verify(schedulerService, never()).scriptedScheduleChanged(46L);   // zamanlama değişmedi
     }
 
+    @Test
+    @DisplayName("İnceleme 2026-11-17: aynı aylık CRON planıyla kayıt → saklı ETKİN aralık korunur (yeniden hesaplanan 31 "
+            + "gün yazılmaz), plan sıfırlanmaz")
+    void update_sameMonthlyCron_keepsEffectiveInterval() throws Exception {
+        var m = live(47L);
+        m.setScheduleMode("CRON");
+        m.setCronExpression("0 9 1 * *");
+        m.setIntervalSeconds(2_592_000);
+        m.setNextRunAt("2030-01-01T06:00:00");
+        when(scriptedMonitorRepo.findById(47L)).thenReturn(Optional.of(m));
+        when(scriptedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(47L)).thenReturn(Optional.empty());
+        String body = update(47L, "{\"name\":\"yeni ad 47\",\"schedule_mode\":\"CRON\",\"cron_expression\":\"0 9 1 * *\","
+                + "\"intervalSeconds\":2592000,\"windows\":[],\"blackouts\":[],\"skip_holidays\":false,\"skip_dates\":[]}");
+        assertThat(m.getIntervalSeconds()).isEqualTo(2_592_000);
+        verify(schedulerService, never()).scriptedScheduleChanged(anyLong());
+        assertThat(body).contains("\"next_run_at\":\"2030-01-01T06:00:00\"");
+    }
+
     // ── Geri yükleme ─────────────────────────────────────────────────────────────────────────────────────────────
 
     private void stubRestoreRow(long id, String snapshot) {

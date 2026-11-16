@@ -235,7 +235,9 @@ public class OnCallWeeklyNoticeService {
             if (list.isEmpty()) return new TickResult(0, 0, 0, 0, c[4]);
             Map<String, OnCallWeeklyNotice> rows = new HashMap<>();
             for (OnCallWeeklyNotice n : notices.findByWeekKeyIn(OnCallWeeklyNoticeSlots.candidateWeekKeys(now))) {
-                rows.put(n.getTeamId() + "|" + n.getWeekKey(), n);
+                // Kuyruktaki (421) e-postanın sonucu geldiyse satır önce uzlaştırılır: iletilemediyse yeniden deneme kuralı
+                // (pencere içinde, deneme hakkı varsa) bu turda uygulanır
+                rows.put(n.getTeamId() + "|" + n.getWeekKey(), settleQueuedMail(notices, notificationLogs, n));
             }
             for (OnCallSchedule s : list) {
                 if (closing || stopping()) break;
@@ -360,6 +362,51 @@ public class OnCallWeeklyNoticeService {
         if (!willRetry(row)) return false;
         Instant last = OnCallWeeklyNoticeSlots.parseIso(row.getFinishedAt() != null ? row.getFinishedAt() : row.getClaimedAt());
         return last == null || !now.isBefore(last.plus(RETRY_AFTER));
+    }
+
+    /**
+     * Kuyruktaki (SMTP 421, {@code QUEUED_RETRY}) e-postanın GERÇEK sonucunu satıra yazar (2026-11-17, inceleme): posta
+     * servisi yeniden denemenin sonucunu gönderimin {@code notification_logs} satırına yazar ({@code mail_log_id}); satır o
+     * sonuç gelene dek "gönderildi (e-posta kuyrukta)" görünür, eskiden SONSUZA DEK öyle kalıyordu — e-posta sonunda
+     * iletilemese de hafta "bitti" sayılıyordu. Günlük satırı artık kuyrukta değilse: SENT → e-posta iletildi; SKIPPED →
+     * atlandı; diğeri (FAILED, yetim / sonuç alınamadı dahil) → iletilemedi ve satırın son durumu kanal sonuçlarından yeniden
+     * hesaplanır (push ulaştıysa PARTIAL — pencere içinde yalnız e-posta yeniden denenir; ulaşmadıysa FAILED). Yeniden deneme
+     * mevcut kurala tabidir (en çok {@value #MAX_ATTEMPTS} deneme, telafi penceresi içinde). Koşullu UPDATE (okunan durum +
+     * posta durumu); okunamazsa / kimlik yoksa satır olduğu gibi döner. Asla fırlatmaz.
+     */
+    public static OnCallWeeklyNotice settleQueuedMail(OnCallWeeklyNoticeRepository notices, NotificationLogRepository logs,
+                                                      OnCallWeeklyNotice row) {
+        if (row == null || notices == null || logs == null || row.getMailLogId() == null) return row;
+        if (!"queued".equals(OnCallService.mailOutcome(row.getMailStatus()))) return row;
+        if (OnCallWeeklyNotice.SENDING.equals(row.getStatus())) return row;
+        try {
+            String logged = logs.findEmailStatusById(row.getMailLogId()).orElse(null);
+            if (logged == null || logged.isBlank() || logged.startsWith("QUEUED")) return row;   // sonuç henüz yok
+            Outcome mail = logged.startsWith("SENT") ? Outcome.DELIVERED
+                    : logged.startsWith("SKIPPED") ? Outcome.SKIPPED : Outcome.FAILED;
+            String status = finalStatus(mail, pushOutcomeOf(row.getPushStatus()));
+            String reason = OnCallWeeklyNotice.SKIPPED.equals(status) ? R_NO_RECIPIENT : row.getReason();
+            String mailStatus = clip(mail == Outcome.DELIVERED ? "SENT" : logged, LOG_FIELD_MAX);
+            int n = notices.settleQueuedMail(row.getId(), row.getStatus(), row.getMailStatus(), status, reason, mailStatus);
+            if (n != 1) return row;
+            log.info("Haftalık nöbet bildirimi: takım {} hafta {} kuyruktaki e-postanın sonucu geldi ({}) — durum {} → {}",
+                    row.getTeamId(), row.getWeekKey(), mail, row.getStatus(), status);
+            row.setStatus(status);
+            row.setReason(reason);
+            row.setMailStatus(mailStatus);
+            return row;
+        } catch (RuntimeException e) {
+            log.debug("Haftalık nöbet bildirimi: kuyruktaki e-postanın sonucu okunamadı (satır {}): {}", row.getId(), e.toString());
+            return row;
+        }
+    }
+
+    /** Satırdaki push sınıfı → kanal sonucu (null / bilinmeyen = ulaşmadı, hata değil). */
+    static Outcome pushOutcomeOf(String pushStatus) {
+        if (PUSH_DELIVERED.equals(pushStatus)) return Outcome.DELIVERED;
+        if (PUSH_OFF.equals(pushStatus)) return Outcome.OFF;
+        if (PUSH_FAILED.equals(pushStatus)) return Outcome.FAILED;
+        return Outcome.SKIPPED;
     }
 
     private OnCallWeeklyNotice reclaim(OnCallWeeklyNotice row, Instant now) {
@@ -543,13 +590,13 @@ public class OnCallWeeklyNoticeService {
 
             String status = finalStatus(mail, pushOut);
             String reason = OnCallWeeklyNotice.SKIPPED.equals(status) ? R_NO_RECIPIENT : null;
-            saveLog(teamName, to, subject, mailStatus + pushNote, html);
-            finish(row, status, reason, mailStatus, pushClass(pushOut), queued, null);
+            Long logId = saveLog(teamName, to, subject, mailStatus + pushNote, html);
+            finish(row, status, reason, mailStatus, pushClass(pushOut), queued, null, logId);
             return status;
         } catch (RuntimeException e) {
             log.warn("Haftalık nöbet bildirimi hazırlanamadı (takım {}): {}", teamName, e.toString());
             saveLog(teamName, List.of(), subject, "FAILED: haftalık nöbet bildirimi hazırlanamadı (" + e.getClass().getSimpleName() + ")", null);
-            finish(row, OnCallWeeklyNotice.FAILED, R_ERROR, null, null, 0, e.getClass().getSimpleName());
+            finish(row, OnCallWeeklyNotice.FAILED, R_ERROR, null, null, 0, e.getClass().getSimpleName(), null);
             return OnCallWeeklyNotice.FAILED;
         }
     }
@@ -593,7 +640,7 @@ public class OnCallWeeklyNoticeService {
 
     private String finishSkip(OnCallWeeklyNotice row, String teamName, String subject, String status, String reason) {
         saveLog(teamName, List.of(), subject, status, null);
-        finish(row, OnCallWeeklyNotice.SKIPPED, reason, null, null, 0, null);
+        finish(row, OnCallWeeklyNotice.SKIPPED, reason, null, null, 0, null, null);
         return OnCallWeeklyNotice.SKIPPED;
     }
 
@@ -603,13 +650,13 @@ public class OnCallWeeklyNoticeService {
      * için ikinci iz de yazılmaz).
      */
     private void finish(OnCallWeeklyNotice row, String status, String reason, String mailStatus, String pushStatus, int pushCount,
-                        String errorClass) {
+                        String errorClass, Long mailLogId) {
         String at = OnCallWeeklyNoticeSlots.iso(Instant.now(clock));
         long[] backoff = finishBackoffMs == null ? new long[0] : finishBackoffMs;
         for (int attempt = 0; ; attempt++) {
             try {
                 int n = notices.finish(row.getId(), row.getClaimedAt(), status, reason, clip(mailStatus, LOG_FIELD_MAX), pushStatus,
-                        pushCount, clip(errorClass, 120), at);
+                        pushCount, clip(errorClass, 120), at, mailLogId);
                 if (n == 0) {
                     log.warn("Haftalık nöbet bildirimi: takım {} hafta {} sahiplenmesi bu arada değişti — son durum ({}) yazılmadı",
                             row.getTeamId(), row.getWeekKey(), status);
@@ -698,7 +745,8 @@ public class OnCallWeeklyNoticeService {
         }
     }
 
-    private void saveLog(String teamName, List<String> recipients, String subject, String status, String html) {
+    /** Günlük satırını yazar; kimliğini döner (yazılamazsa null — kuyruktaki e-posta o zaman uzlaştırılamaz). */
+    private Long saveLog(String teamName, List<String> recipients, String subject, String status, String html) {
         try {
             NotificationLog n = new NotificationLog();
             n.setAlertEventId(0L);
@@ -712,9 +760,11 @@ public class OnCallWeeklyNoticeService {
             n.setWebhookStatus("SKIPPED");
             n.setTrigger(TRIGGER);
             if (email != null) n.setEmailFrom(email.getEmailFrom());
-            notificationLogs.save(n);
+            NotificationLog saved = notificationLogs.save(n);
+            return saved == null ? null : saved.getId();
         } catch (RuntimeException e) {
             log.warn("Haftalık nöbet bildirimi günlük kaydı yazılamadı: {}", e.toString());
+            return null;
         }
     }
 

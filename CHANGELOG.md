@@ -15,13 +15,100 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
-## [20.212.2] — 2026-11-16
+## [20.213.0] — 2026-11-16
+
+### Fixed
+- **Oturumsuz uçlarda uzunluğu bildirilmemiş form gövdesi sınırı atlatıyordu.** Onay bağlantısı formları (`@RequestParam`)
+  ve multipart gövdeyi Tomcat kendi ham akışından okur; Content-Length'siz (chunked) bir form 64 KiB sınırını aşıp 2 MB'a
+  dek ayrıştırılıyordu. Artık sınırlı uçlarda uzunluğu bildirilmemiş form / multipart gövde OKUNMADAN 411
+  `LENGTH_REQUIRED` alır (onay bağlantısında kısa HTML sayfası); tarayıcılar bu formları her zaman Content-Length ile
+  gönderir. Chunked JSON eskisi gibi sayılır.
+- **Yayın imajı iki kez derleniyordu.** Release Trivy için bir, itmek için ikinci bir derleme yapıyordu; itilen imaj
+  taranandan sapabilirdi. Artık imaj bir kez derlenir, taranır ve TARANAN imajın kendisi itilir (üç adın imaj kimliği
+  denetlenir, itilen özet iş özetinde).
+- **Trivy kapısı tarama hatasını bulgu sanıyordu.** Trivy'nin kendisi çalışamadığında (veritabanı, zaman aşımı) kapı
+  "HIGH/CRITICAL bulgu" diyordu. Artık bulgu ve tarama hatası ayrı ek açıklama ve özetle anlatılır; ikisi de durdurur
+  (release.yml ve docker-build.yml).
+- **OWASP taraması bayat veriyle "temiz" geçebiliyordu.** NVD güncellemesi düşüp tarama önbellekteki eski veriyle bulgusuz
+  biterse sonuç `clean` sayılıyordu (iş yeşil). Artık ayrı sonuç `stale_clean` ve iş kırmızı.
+- **İmaj açılış denetiminde sınırsız `docker exec`.** Adım 9'un `docker inspect` / `docker exec` çağrıları zaman aşımıyla
+  sınırlı (30 sn); zaman aşımı ya da izin reddi dışındaki bir docker hatası artık "okunamıyor = sertleştirme çalışıyor"
+  diye geçmez.
+- **k6 motoru: ortam değişkeniyle verilmiş aday yolu "varsayılan" sayılıyordu.** `SCRIPTED_K6_BIN_CANDIDATE` ile verilmiş
+  başka bir yol bulunamadığında sayfa onu imajın varsayılanı gibi nötr gösteriyordu. Artık yalnız etkin yol imajın kendi
+  aday yolu (`/opt/k6-candidate/k6`) olduğunda nötr; başka bir yol bulunamıyorsa tehlike tonunda.
+- **Kaynak analizi — tüm site taraması (inceleme 2026-11-17).**
+  - Yönlendirmeyle bu taramada zaten taranmış (ya da kuyrukta bekleyen) bir sayfaya varan bağlantı ikinci kez analiz
+    edilmez; yönlendirmenin hedefi de "taranmış" sayılır (`crawl.redirect_aliases` sayılır).
+  - **⚠ Davranış:** tüm site taraması pod'un iki olağan analiz yuvasını tüketmez; kendi yuvası vardır (pod başına aynı
+    anda en çok 1 tüm site taraması). Saatler süren bir tarama başkalarının tek sayfa / seçili sayfa analizlerini artık
+    429 `RESOURCE_SCAN_BUSY`'ye düşürmez; ikinci bir tüm site taraması aynı kodla ama kendi iletisiyle reddedilir.
+  - robots.txt'nin okunamaması (bağlantı hatası, zaman aşımı, 5xx, 403, tavanı aşan gövde) "robots yok" sayılmaz: site
+    haritası hatalarına yazılır, keşif eksik işaretlenir ("bütün sayfalar tarandı" denmez). Yalnız 404 / 410 "yok"tur.
+  - Sürdürülen taramanın kaynağı, sürdüren tarama kendi denetim noktasını yazınca emekliye ayrılır: aynı kaynaktan ikinci
+    bir zincir açılmaz (409 `RESOURCE_SCAN_NOT_RESUMABLE`). Ekranda "Kaldığı yerden sürdür" sunucunun `resumable`
+    bayrağını da okur; sürdürme reddinden sonra analiz yeniden okunur, geçersiz düğme kalkar.
+  - Denetim noktası artımlı kurulur (her sayfa satırı bir kez serileştirilir); 2500 sayfada karesel iş kalktı.
+  - Sayfa sekmesi rozetinin site modeli bellekte tutulur (her çizimde 2500 satır yeniden kurulmaz).
+  - Bitiş bildirimi izleyicisi çıkışta (oturum sıfırlama) durur: çıkıştan sonra / sıradaki kullanıcı için sorgu ve tost yok.
+- **Görsel aracı:** toplu ZIP ve duyarlı set penceresinde bu tarayıcıda üretilemeyen biçim (AVIF / WebP) seçeneği
+  nedenini kendisi söyler ("bu tarayıcıda yok"), araç ayarındaki gibi.
+- **Sayfa Hızı: büyüme alarmı hiç kapanmayan alarmlara yol açabiliyordu.** Her ölçümü kısmi (alt sınır) olan ya da seyrek
+  ölçülen bir sayfada büyüme referansı hiç dolmuyordu; büyüme eşikleri hep "karar verilemedi" kalıyor ve bu yüzden o sayfanın
+  açık yavaşlık alarmı (başka bir eşikten açılmış olsa bile) kapanamıyordu. Artık tam 7 günlük pencerede 5 kullanılabilir ölçüm
+  yoksa büyüme "karşılaştırılamadı" sayılır (ne aşım ne kararsız); pencere henüz kısa ise eskisi gibi kararsız kalır.
+- **Sayfa Hızı alarm postası:** kısmi ölçümde eşiği aşmamış alt sınır değeri yeşil "Eşik içinde" yazıyordu; artık gri
+  "Karar verilemedi (kısmi ölçüm — değer alt sınır)" yazar.
+- **Sayfa Hızı zamanlaması:** aylık bir cron zamanlaması değişmeden yeniden kaydedilince etkin aralık 30 günden 31 güne
+  kayıyordu (sentetik izlemede de); aynı plan artık kayıtlı aralığı korur ve planı sıfırlamaz.
+- **Şelale ve hız notu sekmesi:** "Şimdi ölç" ya da canlı liste yenilemesi son ölçümü ilerletince sekme yeni ölçümü okumuyor ve
+  notu yanlışlıkla "daha eski ölçüm" diye gösteriyordu; artık son ölçümü izler, okunamazsa gösterilen veri kalır ve uyarı çıkar.
+  İhlal anları şelale yanıtından gelir (ağır kaynak listesi ucu artık çağrılmaz). İlk bayt (TTFB) ölçülemediyse hız notu yeşil
+  gösterilmez, "eksik" notuyla nötr kalır. Şelale satırlarından birini açmak artık bütün satırları yeniden çizmiyor. PDF
+  raporunda son not tablonun üstüne binip sayfa dışına taşabiliyordu; artık sığmazsa yeni sayfaya geçer.
+- **Haftalık nöbet bildirimi ayarı eşzamanlı çizelge değişikliğini geri almaz.** Yalnız bildirim ayarını kaydetmek
+  (gün, saat, kanal, açık / kapalı) aynı anda başka bir yöneticinin kaydettiği çizelge değişikliğini (üyeler, ilk devir,
+  rotasyon) okunan eski değerlerle ezebiliyordu; yanıt artık ayrık bir kopyadan döner, satıra yalnız hedefli UPDATE
+  dokunur.
+- **Kuyruğa düşen (421) haftalık nöbet e-postası sonuçlanır.** Gönderim satırı e-postanın günlük kaydını
+  (`mail_log_id`) tutar; posta sunucusu yeniden denemesinin sonucu gelince durum "gönderildi" / "kısmen" / "gönderilemedi"
+  olur (iletilemediyse aynı gün içinde yeniden denenir), "e-posta kuyrukta" sonsuza dek kalmaz.
+- **Nöbet çizelgesi ekranı aday haftaları tek sorguda okur** (görünüm başına en çok 4 sorgu yerine 1).
+- **Eksikler penceresi okunamayan kaynakta "tamamlanacak bir şey yok" demez.** Takımın veri kalitesi, bildirim grupları,
+  nöbet çizelgesi gibi bir kaynak okunamadığında ilgili sekme "eksik olmadığı kesin değil" der, toplam "en az" ya da
+  "kesin değil" okunur; kopyalanan metin ve Excel dosyası "Denetlenemeyenler" bölümünü taşır.
+- **Kişisel Panom "Yakında bitecek alan adları" kutusu hafif listeyi okur** (`/api/monitoring/domain?view=expiry`):
+  dakikada bir tam alan adı listesini ve bütün açık alarmları okumaz.
+- **Teknik hata raporu onaylayıcı sayıları takım başına tek tek sorgulanmaz** (kanallar özeti ve ayarlar sayfası iki
+  sorguyla okur).
+- **Alan adı Domain Kaydı sekmesinin canlı sorgu sınırı bandı test kancasını taşır** (`domain-reg-limited`): kanca
+  `AlertBanner`'a verildiği için DOM'a hiç yazılmıyordu; bant artık kancalı bir sarmalayıcı içinde.
+
+### Added
+- **Olay & Hata Geçmişi — yeni olay formunda tarih alanları yeniden tasarlandı.** Oluş, tespit ve çözülme zamanı
+  doğrudan yazılabilir ("16.11 14:30", "dün 09:15", "1430", "şimdi"); hızlı seçim çipleri ("15 dk önce", oluştan "+30 dk");
+  takvim düğmesi ay / yıl açılır listeli takvim ile saat ve dakika listelerini açar; alanın altında "2 sa önce · pazartesi"
+  ya da "25 dk sonra (esas: Oluş Zamanı)" yazar. Okunamayan metin alanın önceki değerini geri getirir, ne yazıldığı ve
+  örnekler gösterilir ve kayıt o düzeltilene dek yapılmaz; yarım yazılan saat ya da yıl kendiliğinden kaydedilmez;
+  Ctrl+Enter alanda yazılı değeri de kaydeder.
+- **Sayfa Hızı testleri:** genişletilmiş ölçümün dalgalarının tek süre sınırını paylaştığını, sorguların doğru indeksle
+  koştuğunu (PostgreSQL planı) ve şelale / görsel indirme hataları / kararsız durum / zamanlama hataları / ölçüm kipi
+  işaretlerini telefon, tablet ve dizüstünde doğrulayan yeni testler.
+- Uçtan uca testler: tatil takviminin 10 yıllık kapsamı ve "takvim bitti" uyarısı, okunamayan kaynakla eksikler penceresi,
+  haftalık nöbet bildiriminin son sonuç durumları, alan adı canlı sorgu sınırı (429) ve TV kipinde alan adı kutusu
+  (390 / 768 dokunmatik / 1280).
+
+## [20.212.3] — 2026-11-17
 
 ### Changed
 - **⚠ Davranış — teknik hata raporu çıktısında kimlik ve üretim satırı yok.** PDF kapağında ve e-posta bandında yalnız
   rapor başlığı ile takım · kanal · dönem kalır; "Oluşturan", "Son düzenleyen", "Onaylayan", "Onay", "Üretim" ve eski
   "Hazırlayan" satırları basılmaz. Yönetici alıcısının e-posta dipnotu onaylayan kişinin adını ve tarihini yazmaz, yalnız
   takımın PO'sunun onayladığını söyler. Bu bilgiler Site Monitor içinde (rapor ekranı, e-posta önizleme penceresi) aynen görünür.
+
+## [20.212.2] — 2026-11-16
+
+### Changed
 - **Bağımlılıklar aynı ana sürüm içinde güncellendi.**
   - Arka uç: BouncyCastle 1.87 (sertifika zinciri, OCSP / CRL), jsoup 1.24.1 (sayfa ve keyword ayrıştırma), dnsjava 3.7.1,
     commonmark 0.32.0 (alarm postasındaki "Ne yapılmalı" notu), JaCoCo 0.8.16.
@@ -3403,7 +3490,9 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.212.2...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.213.0...HEAD
+[20.213.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.0
+[20.212.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.3
 [20.212.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.2
 [20.212.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.1
 [20.212.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.0

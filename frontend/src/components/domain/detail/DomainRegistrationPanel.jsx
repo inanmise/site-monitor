@@ -502,10 +502,13 @@ export default function DomainRegistrationPanel({ reg: rawReg, rem, remError = f
   const at = d.checked_at
   return (
     <div data-slot="domain-registration" className="@container flex min-w-0 flex-col gap-3">
+      {/* Test kancası sarmalayıcıda: AlertBanner `data-slot` iletmez (2026-11-17, e2e — kanca DOM'da yoktu) */}
       {notice && (
-        <AlertBanner tone="warning" role="status" className="mb-0 min-w-0" data-slot="domain-reg-limited">
-          <span className="[overflow-wrap:anywhere]">{notice}</span>
-        </AlertBanner>
+        <div data-slot="domain-reg-limited" className="min-w-0">
+          <AlertBanner tone="warning" role="status" className="mb-0 min-w-0">
+            <span className="[overflow-wrap:anywhere]">{notice}</span>
+          </AlertBanner>
+        </div>
       )}
       <div className="flex min-w-0 flex-col gap-2 @md:flex-row @md:items-center @md:justify-between">
         {stale ? (

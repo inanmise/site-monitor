@@ -8,11 +8,15 @@ import { Empty, List, More, Row, Tile, linkTo, listLimit } from './widgetParts.j
 import { domainExpiring } from './domainExpiringModel.js'
 
 /**
- * Alan adı izlemelerinin listesi (mevcut uç; kapsam sunucuda). sharedFetch aynı getiriciyle tek uçuşta istek yapar.
- * 403 = okuma yetkisi yok → `visible:false` (kutu gri "yetki yok", asla yeşil).
+ * Alan adı izlemelerinin HAFİF listesi (`?view=expiry`, 2026-11-17 inceleme: kutu dakikada bir tam listeyi — her satırın
+ * kayıt ayrıntılarını ve sunucuda bütün açık alarm varlıklarını — okuyordu). Kapsam sunucuda; satır anahtarları tam listeyle
+ * aynı (eski pod parametreyi yok sayıp tam listeyi döner — kutu yine çalışır). sharedFetch aynı getiriciyle tek uçuşta istek
+ * yapar. 403 = okuma yetkisi yok → `visible:false` (kutu gri "yetki yok", asla yeşil).
  */
 export const fetchDomainMonitors = async () => {
-  const res = await api.monitoring.getDomainMonitors()
+  const res = typeof api.monitoring.getDomainExpiryList === 'function'
+    ? await api.monitoring.getDomainExpiryList()
+    : await api.monitoring.getDomainMonitors()
   if (res && res.success === false && (res.status === 403 || res.errorInfo?.status === 403)) return { success: true, data: { visible: false } }
   return res
 }

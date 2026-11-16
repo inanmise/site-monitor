@@ -80,6 +80,18 @@ public interface DomainCheckRepository extends JpaRepository<DomainCheck, Long> 
            nativeQuery = true)
     List<DomainCheck> findLatestPerMonitor();
 
+    /**
+     * {@link #findLatestPerMonitor}'un DAR hâli (2026-11-17, Kişisel Panom "yakında bitecek alan adları" kutusu dakikada bir
+     * okur): her monitörün en güncel kontrolünden yalnız {@code [monitor_id, expiry_date, days_remaining]} — tam satır
+     * (kayıt ayrıntıları, ad sunucuları, değişiklik metni) okunmaz. Aynı seçim kuralı (en yeni {@code checked_at}, eşitlikte
+     * büyük kimlik).
+     */
+    @Query(value = "SELECT c.monitor_id, c.expiry_date, c.days_remaining FROM domain_monitors m CROSS JOIN LATERAL "
+         + "(SELECT r.monitor_id, r.expiry_date, r.days_remaining FROM domain_checks r WHERE r.monitor_id = m.id AND r.checked_at = "
+         + "(SELECT MAX(x.checked_at) FROM domain_checks x WHERE x.monitor_id = m.id) ORDER BY r.id DESC LIMIT 1) c",
+           nativeQuery = true)
+    List<Object[]> findLatestExpiryPerMonitor();
+
     long countByMonitorIdAndCheckedAtGreaterThanEqual(Long monitorId, String since);
 
     /** Haftalık izleme özeti: [monitorId, toplam, BAŞARILI] — ids ∩ [from,to]; başarı = source<>'NONE' (sorgu başarılı). */

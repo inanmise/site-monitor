@@ -29,7 +29,9 @@ import java.util.Map;
  * oturumlu büyük gövdeler (envanter içe aktarımı) için geniştir; küçük bir anahtar-değer selinden oluşan 32 MiB'lik gövde
  * {@code Map} olarak yüzlerce MB tutabilir. Bu süzgeç oturumsuz uçlara kendi sınırını koyar:
  * {@code Content-Length} sınırı aşıyorsa gövde OKUNMADAN 413; uzunluk yoksa (chunked) akış SAYILIR ve sınır aşılınca okuma
- * {@link BodyLimitExceededException} ile kesilir (Jackson onu okunamayan gövde olarak sarar → 413).</p>
+ * {@link BodyLimitExceededException} ile kesilir (Jackson onu okunamayan gövde olarak sarar → 413). Form ve multipart
+ * gövdesini sunucu kendi ham akışından ayrıştırır (sayılan akışı kullanmaz): uzunluğu bildirilmemiş form / multipart
+ * gövdesi OKUNMADAN 411 {@code LENGTH_REQUIRED} alır (inceleme 2026-11-17).</p>
  *
  * <p>Yalnız gövde taşıyan yöntemler (POST / PUT / PATCH / DELETE); listede olmayan yol dokunulmadan geçer. E-posta onay
  * bağlantılarının form gönderimleri ({@code …/approve-link/confirm|reject}) tarayıcıda açık bir sayfadır: sınır aşımı
@@ -88,6 +90,21 @@ public class PublicBodyLimitFilter extends OncePerRequestFilter {
         return capFor(RequestPathFirewallFilter.lookupPath(request)) < 0;
     }
 
+    /**
+     * Gövdeyi sunucunun (Tomcat) KENDİSİ ayrıştırdığı içerik türü mü — form ({@code getParameter}) ve multipart
+     * ({@code getParts}). Bu iki tür {@link Capped} sarmalayıcısının sayan akışını KULLANMAZ: Tomcat gövdeyi kendi ham
+     * akışından okur (sarmalayıcının {@code getParameter} çağrısı alttaki isteğe iletilir). Uzunluğu bildirilmiş gövdede
+     * Tomcat tam o kadar okur (yukarıdaki Content-Length denetimi yeter); uzunluğu bildirilmemiş (chunked) gövdede ise
+     * yalnız Tomcat'in genel tavanı (form 2 MB, multipart 12 MB) kalırdı — inceleme 2026-11-17: 64 KiB'lik onay bağlantısı
+     * sınırı chunked form gönderimiyle aşılabiliyordu.
+     */
+    static boolean containerParsedBody(String contentType) {
+        if (contentType == null) return false;
+        int semi = contentType.indexOf(';');
+        String base = (semi < 0 ? contentType : contentType.substring(0, semi)).trim().toLowerCase(Locale.ROOT);
+        return "application/x-www-form-urlencoded".equals(base) || base.startsWith("multipart/");
+    }
+
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
@@ -99,7 +116,42 @@ public class PublicBodyLimitFilter extends OncePerRequestFilter {
             else tooLarge(request, response, cap);
             return;
         }
+        // Uzunluğu bildirilmemiş form / multipart gövdesi sayılamaz (Tomcat sarmalayıcıyı atlar) → OKUNMADAN 411.
+        // Tarayıcılar ve uygulamanın kendi istemcisi bu küçük gövdeleri her zaman Content-Length ile gönderir.
+        if (cap >= 0 && declared < 0 && containerParsedBody(request.getContentType())) {
+            if (htmlFormPath(path)) lengthRequiredHtml(request, response);
+            else lengthRequired(request, response);
+            return;
+        }
         chain.doFilter(cap < 0 ? request : new Capped(request, cap), response);
+    }
+
+    /** 411 — uzunluğu bildirilmemiş, sunucunun kendisinin ayrıştırdığı (form / multipart) oturumsuz gövde. */
+    static void lengthRequired(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        response.setStatus(411);
+        response.setContentType("application/json");
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        response.setHeader("Cache-Control", "no-store");
+        String msg = Msg.t(request,
+                "İstek gövdesinin uzunluğu bildirilmedi (Content-Length yok), bu yüzden okunmadı. Sayfayı yenileyip yeniden "
+                        + "gönderin; sorun sürerse istemcinin gövdeyi parça parça (chunked) göndermesini kapatın.",
+                "The request body length was not declared (no Content-Length), so it was not read. Reload the page and send it "
+                        + "again; if it keeps happening, stop the client from sending the body in chunks.");
+        String rid = CorrelationIdFilter.current();
+        String json = "{\"success\":false,\"code\":\"LENGTH_REQUIRED\",\"error\":\"" + escape(msg) + "\""
+                + (rid == null ? "" : ",\"request_id\":\"" + escape(rid) + "\"") + "}";
+        response.getOutputStream().write(json.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Onay bağlantısı formunun 411'i — tarayıcıda ham JSON yerine kısa bir HTML sayfası. */
+    static void lengthRequiredHtml(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        String title = Msg.t(request, "Form okunamadı", "The form could not be read");
+        String msg = Msg.t(request,
+                "Karar kaydedilmedi — form beklenmeyen biçimde (uzunluğu bildirilmeden) gönderildi. E-postadaki bağlantıyı"
+                        + " yeniden açıp formu tekrar gönderin.",
+                "The decision was not saved — the form was sent in an unexpected way (without its length). Open the link in"
+                        + " the e-mail again and send the form once more.");
+        htmlPage(request, response, 411, title, msg);
     }
 
     static void tooLarge(HttpServletRequest request, HttpServletResponse response, long cap) throws IOException {
@@ -121,16 +173,22 @@ public class PublicBodyLimitFilter extends OncePerRequestFilter {
      * taşır — buraya yalnız elle uzatılmış gönderim düşer). Kişisel / teknik bilgi yok; satır içi betik yok (CSP).
      */
     static void tooLargeHtml(HttpServletRequest request, HttpServletResponse response) throws IOException {
-        response.setStatus(413);
-        response.setContentType("text/html");
-        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
-        response.setHeader("Cache-Control", "no-store");
         String title = Msg.t(request, "Gönderilen form çok büyük", "The form sent is too large");
         String msg = Msg.t(request,
                 "Karar kaydedilmedi — formdaki not izin verilen uzunluğu aşıyor. Tarayıcıda geri dönüp notu kısaltın ve"
                         + " yeniden gönderin.",
                 "The decision was not saved — the note in the form is longer than allowed. Go back in the browser, shorten"
                         + " the note and send it again.");
+        htmlPage(request, response, 413, title, msg);
+    }
+
+    /** Onay bağlantısı formu için kısa hata sayfası (kişisel / teknik bilgi yok, satır içi betik yok — CSP). */
+    private static void htmlPage(HttpServletRequest request, HttpServletResponse response, int status, String title,
+                                 String msg) throws IOException {
+        response.setStatus(status);
+        response.setContentType("text/html");
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        response.setHeader("Cache-Control", "no-store");
         String lang = Msg.t(request, "tr", "en");
         String rid = CorrelationIdFilter.current();
         String html = "<!DOCTYPE html><html lang='" + lang + "'><head><meta charset='UTF-8'>"

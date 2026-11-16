@@ -362,6 +362,22 @@ class PolledQueriesPostgresTest {
     }
 
     @Test
+    @DisplayName("Alan adı hafif son kontrol (2026-11-17, Panom kutusu): [monitor_id, expiry_date, days_remaining] tam satırla AYNI seçimi yapar")
+    void domainLatestExpiryPerMonitor_matchesFullRow() {
+        DomainCheckRepository repo = bean(DomainCheckRepository.class);
+        java.util.Map<Long, DomainCheck> full = new java.util.HashMap<>();
+        for (DomainCheck c : repo.findLatestPerMonitor()) full.put(c.getMonitorId(), c);
+        java.util.List<Object[]> light = repo.findLatestExpiryPerMonitor();
+        org.assertj.core.api.Assertions.assertThat(light).hasSize(full.size());
+        for (Object[] r : light) {
+            DomainCheck c = full.get(((Number) r[0]).longValue());
+            org.assertj.core.api.Assertions.assertThat(c).isNotNull();
+            org.assertj.core.api.Assertions.assertThat(r[1] == null ? null : r[1].toString()).isEqualTo(c.getExpiryDate());
+            org.assertj.core.api.Assertions.assertThat(r[2] == null ? null : ((Number) r[2]).intValue()).isEqualTo(c.getDaysRemaining());
+        }
+    }
+
+    @Test
     @DisplayName("Kart 'son alarm' şeridi (2026-10-09): envanter-sınırlı LATERAL sorgu aktif alanın EN SON alarmını döner; pasif / envanter dışı alan yok")
     void latestAlertForActiveInventoryDomains_returnsLatestPerActiveDomain() {
         String act = "it-card-act-" + tag + ".example.test";

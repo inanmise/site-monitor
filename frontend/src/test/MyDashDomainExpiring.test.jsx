@@ -7,7 +7,7 @@ const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 vi.mock('../api/client', () => ({
   formatDate: (s) => s ?? '',
   formatDateSec: (s) => s ?? '',
-  api: withApiFallback({ monitoring: { getDomainMonitors: vi.fn() } }),
+  api: withApiFallback({ monitoring: { getDomainMonitors: vi.fn(), getDomainExpiryList: vi.fn() } }),
 }))
 
 const perm = vi.hoisted(() => ({ value: {} }))
@@ -76,7 +76,7 @@ describe('Panom — Yakında bitecek alan adları', () => {
   })
 
   it('en az gün önce; dolmuş kırmızı ve "N gün önce doldu"; satır izlemeyi açar; uzun ad tam görünür; duraklatılan sayılmaz', async () => {
-    api.monitoring.getDomainMonitors.mockResolvedValue({ success: true, data: [
+    api.monitoring.getDomainExpiryList.mockResolvedValue({ success: true, data: [
       { id: 1, domain: 'uzak.com', name: 'uzak.com', active: true, expiry_date: day(200), warning_days: 30, critical_days: 7 },
       { id: 2, domain: 'dolmus.com.tr', name: LONG, active: true, expiry_date: day(-3), days_remaining: 5 },
       { id: 3, domain: 'yakin.com', name: 'yakin.com', active: true, expiry_date: day(20) },
@@ -90,6 +90,9 @@ describe('Panom — Yakında bitecek alan adları', () => {
     expect([...rows].map((r) => r.textContent.match(/[a-z]+\.com(\.tr)?/)[0])).toEqual(['dolmus.com.tr', 'yakin.com', 'uzak.com'])
     expect(rows[0]).toHaveTextContent('expired 3 days ago')
     expect(rows[0]).toHaveTextContent(LONG)
+    // Hafif liste (2026-11-17, inceleme): kutu tam alan adı listesini (alarm / kayıt ayrıntıları) OKUMAZ
+    expect(api.monitoring.getDomainExpiryList).toHaveBeenCalled()
+    expect(api.monitoring.getDomainMonitors).not.toHaveBeenCalled()
     expect(w.querySelector('[data-slot="mydash-dexp-expired"]')).toHaveTextContent('1')
     expect(w.querySelector('[data-slot="mydash-dexp-warning"]')).toHaveTextContent('1')
     fireEvent.click(within(rows[0]).getByRole('button'))
@@ -103,7 +106,7 @@ describe('Panom — Yakında bitecek alan adları', () => {
   })
 
   it('bitişi bilinmeyen varken asla yeşil değil; hepsi biliniyor ve eşikte değilse yeşil; yetki yoksa gri', async () => {
-    api.monitoring.getDomainMonitors.mockResolvedValue({ success: true, data: [
+    api.monitoring.getDomainExpiryList.mockResolvedValue({ success: true, data: [
       { id: 1, domain: 'a.com', active: true, expiry_date: day(300) },
       { id: 2, domain: 'b.com', active: true, expiry_date: null, days_remaining: null },
     ] })
@@ -111,12 +114,12 @@ describe('Panom — Yakında bitecek alan adları', () => {
     await waitFor(() => expect(widget()).toHaveAttribute('data-tone', 'muted'))
     r1.unmount()
 
-    api.monitoring.getDomainMonitors.mockResolvedValue({ success: true, data: [{ id: 1, domain: 'a.com', active: true, expiry_date: day(300) }] })
+    api.monitoring.getDomainExpiryList.mockResolvedValue({ success: true, data: [{ id: 1, domain: 'a.com', active: true, expiry_date: day(300) }] })
     const r2 = render(<Shell initial={layout()}><MyDashPage /></Shell>)
     await waitFor(() => expect(widget()).toHaveAttribute('data-tone', 'success'))
     r2.unmount()
 
-    api.monitoring.getDomainMonitors.mockResolvedValue({ success: false, status: 403, error: 'forbidden' })
+    api.monitoring.getDomainExpiryList.mockResolvedValue({ success: false, status: 403, error: 'forbidden' })
     render(<Shell initial={layout('stat')}><MyDashPage /></Shell>)
     await waitFor(() => expect(widget()).toHaveAttribute('data-tone', 'muted'))
     expect(widget()).not.toHaveAttribute('data-stat', 'on')

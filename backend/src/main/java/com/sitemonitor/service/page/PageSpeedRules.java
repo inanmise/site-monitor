@@ -81,15 +81,36 @@ public final class PageSpeedRules {
      * @param band           öğrenilen bayt bandının kararı — bant kapalıysa / değer yokken null; kuruluyorsa {@code evaluated()} false
      */
     public record Growth(int samples, Long medianBytes, Integer medianRequests,
-                         com.sitemonitor.service.baseline.BaselineMath.Verdict band) {
+                         com.sitemonitor.service.baseline.BaselineMath.Verdict band, boolean fullWindow) {
         public static final Growth NONE = new Growth(0, null, null, null);
+
+        /** Pencerenin tam olup olmadığı bilinmeden (2026-11-17 öncesi imza) — {@code fullWindow} false (referans dolabilir sayılır). */
+        public Growth(int samples, Long medianBytes, Integer medianRequests,
+                      com.sitemonitor.service.baseline.BaselineMath.Verdict band) {
+            this(samples, medianBytes, medianRequests, band, false);
+        }
 
         /** Medyan karşılaştırmasına yetecek örnek var mı. */
         public boolean enough() { return samples >= GROWTH_MIN_SAMPLES; }
 
+        /**
+         * Büyüme bu turda KARŞILAŞTIRILAMAZ mı (inceleme 2026-11-17): referans penceresi TAM 7 günü kapsadı (yakın bir tanım
+         * değişimiyle kısalmadı, okuma sınıra takılmadı) ve yine de {@value #GROWTH_MIN_SAMPLES}'ten az kullanılabilir (tam,
+         * aynı kip, zamanlanmış) ölçüm tuttu. Bu durumda referans KENDİLİĞİNDEN DOLMAZ (seyrek zamanlama — günlerce bir ölçüm —
+         * ya da her ölçümü kısmi olan sayfa); büyüme eşikleri ne ihlal ne kararsız sayılır ({@link #undecided} onları
+         * listelemez). Eskiden "kararsız" sayılıyordu: kararsız eşik SLOW kalemini kestiği için açık bir PAGESPEED_SLOW alarmı
+         * (büyümeyle ya da başka eşikle açılmış) hiçbir zaman kapanamıyordu.
+         */
+        public boolean notComparable() { return fullWindow && !enough(); }
+
         /** Aynı referans, bant kararıyla (ölçüm değeri bilindiğinde hesaplanır). */
         public Growth withBand(com.sitemonitor.service.baseline.BaselineMath.Verdict v) {
-            return new Growth(samples, medianBytes, medianRequests, v);
+            return new Growth(samples, medianBytes, medianRequests, v, fullWindow);
+        }
+
+        /** Aynı referans, pencerenin tam olup olmadığıyla ({@code SchedulerService.pageSpeedGrowthRead} bilir). */
+        public Growth withFullWindow(boolean full) {
+            return new Growth(samples, medianBytes, medianRequests, band, full);
         }
     }
 
@@ -240,6 +261,9 @@ public final class PageSpeedRules {
         for (String k : BREACH_KEYS) {
             Integer th = thresholdOf(m, k);
             if (b.contains(k) || th == null) continue;
+            // Büyüme referansı kendiliğinden dolamıyorsa (tam pencere, yetersiz örnek) eşik bu turda karşılaştırılamaz: kararsız
+            // SAYILMAZ — açık alarm diğer eşiklerin kanıtıyla kapanabilsin (inceleme 2026-11-17; Growth#notComparable)
+            if (GROWTH_KEYS.contains(k) && x.growth() != null && x.growth().notComparable()) continue;
             if (measuredOf(x, k) == null) { out.add(k); continue; }
             if (!lowerBoundFor(x, k)) continue;
             // Asgari boyut: alt sınır eşiğin ÜSTÜNDEYSE gerçek değer de üstündedir (kanıtlı geçti); ALTINDAYSA bilinmiyor.

@@ -1906,26 +1906,26 @@ class TechErrorReportControllerTest {
     void overviewApproverFields() throws Exception {
         channels.get(0).setExecutiveEmails("yonetici@example.com");     // A takımının kanalı onay akışlı
         when(permissions.allows(any(HttpSession.class), eq("tech_error_reports.approve"), eq("execute"))).thenReturn(true);
-        when(approvals.approvers(A)).thenReturn(List.of(
-                new com.sitemonitor.service.techerror.TechErrorApprovalService.Approver(50L, "Ben", "ben@example.com"),
-                new com.sitemonitor.service.techerror.TechErrorApprovalService.Approver(51L, "Öteki", null)));
+        when(approvals.approverIdsByTeam(any())).thenReturn(Map.of(A, java.util.Set.of(50L, 51L)));
         // Kurum geneli genel bakış (AUDIT, takımsız): onaylayıcı okuması YAPILMAZ — yalnız kişinin kendi takımları (inceleme
         // 2026-11-15: global izleyicide takım başına bir sorgu olurdu)
         mvc.perform(get("/api/tech-error-reports/overview").session(audit()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.teams[?(@.id == 1)].approver_count").isEmpty());
-        verify(approvals, never()).approvers(any());
+        verify(approvals, never()).approverIdsByTeam(any());
         mvc.perform(get("/api/tech-error-reports/overview").session(user("USER", A, List.of())))
                 .andExpect(jsonPath("$.data.teams[0].approver_count").value(2))
                 .andExpect(jsonPath("$.data.teams[0].can_approve").value(true));
-        verify(approvals, never()).approvers(B);
+        // Onaylayıcılar TEK toplu okumada (inceleme 2026-11-17: takım başına sorgu yok); yalnız onay akışlı kendi takımı istenir
+        verify(approvals, org.mockito.Mockito.times(1)).approverIdsByTeam(org.mockito.ArgumentMatchers.argThat(c -> c.size() == 1 && c.contains(A)));
+        verify(approvals, never()).approvers(any());
 
         when(permissions.allows(any(HttpSession.class), eq("tech_error_reports.approve"), eq("execute"))).thenReturn(false);
         mvc.perform(get("/api/tech-error-reports/overview").session(user("USER", A, List.of())))
                 .andExpect(jsonPath("$.data.teams[0].can_approve").value(false));
 
         // Pasif kanal sayılmaz; okuma düşerse "bilinmiyor" (null) — istemci eksik saymaz
-        when(approvals.approvers(A)).thenThrow(new RuntimeException("db"));
+        when(approvals.approverIdsByTeam(any())).thenThrow(new RuntimeException("db"));
         mvc.perform(get("/api/tech-error-reports/overview").session(user("USER", A, List.of())))
                 .andExpect(jsonPath("$.data.teams[0].approver_count").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$.data.teams[0].can_approve").value(org.hamcrest.Matchers.nullValue()));

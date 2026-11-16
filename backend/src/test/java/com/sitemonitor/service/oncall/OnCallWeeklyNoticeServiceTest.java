@@ -75,6 +75,7 @@ class OnCallWeeklyNoticeServiceTest {
     @Autowired OnCallOverrideRepository overrides;
     @Autowired OnCallWeeklyNoticeRepository notices;
     @Autowired NotificationLogRepository logs;
+    @Autowired org.springframework.transaction.PlatformTransactionManager txm;
 
     private final AppUserRepository users = mock(AppUserRepository.class);
     private final TeamRepository teams = mock(TeamRepository.class);
@@ -420,6 +421,67 @@ class OnCallWeeklyNoticeServiceTest {
     }
 
     @Test
+    @DisplayName("kuyruktaki (421) e-posta: sonuç gelene dek 'kuyrukta' kalır, yeniden gönderilmez; günlüğe 'iletilemedi' yazılınca PARTIAL olur ve pencere içinde YALNIZ e-posta yeniden denenir")
+    void queuedMailFailureIsSettledAndRetriedMailOnly() {
+        schedule(true, "11", null, null);
+        mailResult = "QUEUED_RETRY (421 4.7.0 try later)";
+        OnCallWeeklyNoticeService p = pod();
+        p.tick(MON_0900);
+        OnCallWeeklyNotice first = row("2026-11-16");
+        assertThat(first.getStatus()).isEqualTo(OnCallWeeklyNotice.SENT);
+        assertThat(OnCallService.mailOutcome(first.getMailStatus())).isEqualTo("queued");
+        assertThat(first.getMailLogId()).isNotNull();
+        // sonuç henüz yok: tur satırı değiştirmez, yeniden göndermez
+        p.clock = Clock.fixed(MON_0900.plusSeconds(720), ZoneOffset.UTC);
+        p.tick(MON_0900.plusSeconds(720));
+        assertThat(mails.get()).isEqualTo(1);
+        assertThat(OnCallService.mailOutcome(row("2026-11-16").getMailStatus())).isEqualTo("queued");
+        // posta servisi 421 yeniden denemesinin sonucunu gönderimin günlük satırına yazdı: iletilemedi
+        NotificationLog l = logs.findById(first.getMailLogId()).orElseThrow();
+        l.setEmailStatus("FAILED: 550 5.1.1 mailbox unavailable");
+        logs.save(l);
+        mailResult = "SENT";
+        p.clock = Clock.fixed(MON_0900.plusSeconds(780), ZoneOffset.UTC);
+        p.tick(MON_0900.plusSeconds(780));
+        assertThat(mails.get()).isEqualTo(2);                                   // yalnız e-posta yeniden gitti
+        verify(push, times(1)).enqueueTeamNoticeLocalized(anyLong(), anyString(), anyString(), anyString(), anyString(), any(),
+                anyString(), any());
+        assertThat(row("2026-11-16")).satisfies(r -> {
+            assertThat(r.getStatus()).isEqualTo(OnCallWeeklyNotice.SENT);
+            assertThat(r.getAttempts()).isEqualTo(2);
+            assertThat(OnCallService.mailOutcome(r.getMailStatus())).isEqualTo("delivered");
+        });
+    }
+
+    @Test
+    @DisplayName("kuyruktaki (421) e-posta iletildi: görünüm 'iletildi' der (eskiden sonsuza dek 'kuyrukta'); okunamayan günlük satırı 'kuyrukta' bırakır")
+    @SuppressWarnings("unchecked")
+    void queuedMailDeliveredShowsInView() {
+        schedule(true, "11", null, null);
+        mailResult = "QUEUED_RETRY (421 4.7.0 try later)";
+        pod().tick(MON_0900);
+        OnCallWeeklyNotice first = row("2026-11-16");
+        OnCallService svc = new OnCallService(schedules, overrides, users);
+        svc.setWeeklyNotices(notices);
+        svc.setNotificationLogs(logs);
+        Instant later = MON_0900.plusSeconds(900);
+        assertThat((Map<String, Object>) svc.view(5L, later).get("weekly_notice_last")).containsEntry("mail", "queued");
+        NotificationLog l = logs.findById(first.getMailLogId()).orElseThrow();
+        l.setEmailStatus("SENT");
+        logs.save(l);
+        assertThat((Map<String, Object>) svc.view(5L, later).get("weekly_notice_last"))
+                .containsEntry("mail", "delivered").containsEntry("status", OnCallWeeklyNotice.SENT);
+        assertThat(row("2026-11-16").getMailStatus()).isEqualTo("SENT");
+        assertThat(svc.view(5L, later).get("weekly_notice_next")).isEqualTo("2026-11-23T05:30:00");
+        // günlük kimliği olmayan (eski) satır uzlaştırılamaz: dokunulmaz
+        OnCallWeeklyNotice legacy = new OnCallWeeklyNotice();
+        legacy.setId(-1L);
+        legacy.setStatus(OnCallWeeklyNotice.SENT);
+        legacy.setMailStatus("QUEUED_RETRY (421)");
+        assertThat(OnCallWeeklyNoticeService.settleQueuedMail(notices, logs, legacy).getMailStatus()).isEqualTo("QUEUED_RETRY (421)");
+    }
+
+    @Test
     @DisplayName("telafi: dilim geçti ama gün bitmedi → gönderilir; gün bitti → 'zamanı kaçırıldı' izi, gönderilmez")
     void catchUpAndMissed() {
         schedule(true, "11", null, null);
@@ -545,11 +607,11 @@ class OnCallWeeklyNoticeServiceTest {
         OnCallWeeklyNoticeRepository flaky = mock(OnCallWeeklyNoticeRepository.class, AdditionalAnswers.delegatesTo(notices));
         doThrow(new DataAccessResourceFailureException("db")).doThrow(new DataAccessResourceFailureException("db"))
                 .doAnswer(AdditionalAnswers.delegatesTo(notices))
-                .when(flaky).finish(any(), any(), any(), any(), any(), any(), any(), any(), any());
+                .when(flaky).finish(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
         pod(flaky).tick(MON_0900);
         assertThat(row("2026-11-16").getStatus()).isEqualTo(OnCallWeeklyNotice.SENT);
         assertThat(traces()).hasSize(1);
-        verify(flaky, times(3)).finish(any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(flaky, times(3)).finish(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -558,7 +620,7 @@ class OnCallWeeklyNoticeServiceTest {
         schedule(true, "11", null, null);
         OnCallWeeklyNoticeRepository broken = mock(OnCallWeeklyNoticeRepository.class, AdditionalAnswers.delegatesTo(notices));
         doThrow(new DataAccessResourceFailureException("db"))
-                .when(broken).finish(any(), any(), any(), any(), any(), any(), any(), any(), any());
+                .when(broken).finish(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
         pod(broken).tick(MON_0900);
         assertThat(row("2026-11-16").getStatus()).isEqualTo(OnCallWeeklyNotice.SENDING);
         assertThat(traces()).singleElement().satisfies(l -> assertThat(l.getEmailStatus()).isEqualTo("SENT · push 3"));
@@ -600,6 +662,39 @@ class OnCallWeeklyNoticeServiceTest {
         assertThat(last.getWeeklyNoticeMail()).isFalse();
         assertThat(last.getWeeklyNoticeDay()).isEqualTo(3);
         assertThat(last.getWeeklyNoticeTime()).isEqualTo("09:15");
+    }
+
+    @Test
+    @DisplayName("yalnız-bildirim kaydı İŞLEM İÇİNDE: okuma ile kesinleşme arasında kaydedilen çizelge değişikliği (üyeler / ilk devir / rotasyon / nöbetçiye bildirim) geri yazılmaz")
+    void noticeOnlySaveKeepsConcurrentScheduleEdit() throws Exception {
+        schedule(true, "11", null, null);
+        OnCallScheduleRepository racing = mock(OnCallScheduleRepository.class, AdditionalAnswers.delegatesTo(schedules));
+        doAnswer(i -> {
+            Optional<OnCallSchedule> read = schedules.findByTeamId(5L);   // işlemin kalıcılık bağlamında YÖNETİLEN satır
+            // okumadan sonra, bildirim kolonları yazılmadan önce başka bir yönetici çizelgeyi değiştirip kaydeder (kendi işlemi)
+            pool.submit(() -> {
+                OnCallSchedule other = schedules.findByTeamId(5L).orElseThrow();
+                other.setMemberIds("11,12");
+                other.setAnchor("2026-11-09T09:00");
+                other.setRotation(OnCallSchedule.DAILY);
+                other.setNotifyOncall(true);
+                other.setUpdatedBy("diger");
+                schedules.save(other);
+            }).get(30, TimeUnit.SECONDS);
+            return read;
+        }).when(racing).findByTeamId(5L);
+        OnCallService svc = new OnCallService(racing, overrides, users);
+        OnCallService.WeeklyNoticeSave r = new org.springframework.transaction.support.TransactionTemplate(txm).execute(st ->
+                svc.saveWeeklyNotice(5L, new OnCallService.WeeklyNoticePatch(null, null, null, 3, null), "a"));
+        assertThat(r.changed()).isTrue();
+        assertThat(r.schedule().getWeeklyNoticeDay()).isEqualTo(3);               // yanıt kopyası yeni ayarı taşır
+        OnCallSchedule after = schedules.findByTeamId(5L).orElseThrow();
+        assertThat(after.getMemberIds()).isEqualTo("11,12");
+        assertThat(after.getAnchor()).isEqualTo("2026-11-09T09:00");
+        assertThat(after.getRotation()).isEqualTo(OnCallSchedule.DAILY);
+        assertThat(after.getNotifyOncall()).isTrue();
+        assertThat(after.getWeeklyNoticeDay()).isEqualTo(3);                      // hedefli UPDATE yazıldı
+        assertThat(after.getUpdatedBy()).isEqualTo("a");                          // touchUpdated (hedefli) — tam satır değil
     }
 
     private static OnCallSchedule copy(OnCallSchedule s) {

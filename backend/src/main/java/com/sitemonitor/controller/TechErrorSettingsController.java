@@ -82,7 +82,10 @@ public class TechErrorSettingsController {
         YearMonth period = service.defaultPeriod();
         List<Long> ids = chs.stream().map(TechErrorChannel::getId).toList();
         Map<Long, TechErrorReportRepository.Row> periodRows = service.periodRows(ids, period);
-        Map<Long, Integer> approverCounts = new HashMap<>();
+        // Onaylayıcı sayıları TEK okumada (inceleme 2026-11-17: kanalı olan her takım için ayrı sorgu yapılıyordu)
+        Set<Long> channelTeams = new java.util.LinkedHashSet<>();
+        for (TechErrorChannel ch : chs) if (teamMap.containsKey(ch.getTeamId())) channelTeams.add(ch.getTeamId());
+        Map<Long, Set<Long>> approverIds = approvals.approverIdsByTeam(channelTeams);
         List<Map<String, Object>> rows = new ArrayList<>();
         for (TechErrorChannel ch : chs) {
             Team t = teamMap.get(ch.getTeamId());
@@ -95,7 +98,8 @@ public class TechErrorSettingsController {
             m.put("team_name", t.getName());
             m.put("team_visible", enabled == null || enabled.contains(ch.getTeamId()));
             m.put("executive_count", TechErrorReportSender.executiveRecipients(ch).size());
-            m.put("approver_count", approverCounts.computeIfAbsent(ch.getTeamId(), id -> approvals.approvers(id).size()));
+            Set<Long> apps = approverIds.get(ch.getTeamId());
+            m.put("approver_count", apps == null ? 0 : apps.size());
             m.put("team_email_set", !TechErrorReportSender.recipients(t).isEmpty());
             TechErrorReportRepository.Row pr = periodRows.get(ch.getId());
             m.put("period_report", pr == null ? null : TechErrorReportController.statusDto(pr, service.now()));

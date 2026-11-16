@@ -47,12 +47,13 @@ export function recText(r, t) {
 export default function PageSpeedGradeCard({ grade, checkedAt, isLatest, older = false }) {
   const t = useT()
   if (!grade) return null
-  // Kısmi ölçüm ya da son ölçümden ESKİ bir ölçüm (son ölçümde kaynak saklanmadı — örn. sayfa açılamadı): durum tonu yok
-  const tone = grade.partial || older || grade.letter == null ? 'text-muted-foreground' : LETTER_TONE[grade.letter]
+  // Kısmi ölçüm, ölçülemeyen bileşen (bilinmeyen ≠ iyi — inceleme 2026-11-17) ya da son ölçümden ESKİ bir ölçüm (son ölçümde
+  // kaynak saklanmadı — örn. sayfa açılamadı): durum tonu yok
+  const tone = grade.partial || grade.incomplete || older || grade.letter == null ? 'text-muted-foreground' : LETTER_TONE[grade.letter]
   const comps = grade.components.filter((c) => c.score !== null)
   return (
     <section data-slot="pspd-grade" data-letter={grade.letter || undefined} data-partial={grade.partial ? 'true' : undefined}
-      data-older={older ? 'true' : undefined}
+      data-older={older ? 'true' : undefined} data-incomplete={grade.incomplete ? 'true' : undefined}
       className="flex min-w-0 flex-col gap-3 rounded-xl border bg-card p-3 sm:p-4">
       <div className="flex min-w-0 flex-wrap items-center gap-3">
         <div className="flex size-16 shrink-0 flex-col items-center justify-center rounded-full border-4 border-border" aria-hidden="true">
@@ -75,6 +76,11 @@ export default function PageSpeedGradeCard({ grade, checkedAt, isLatest, older =
       </div>
       {grade.partial && (
         <p data-slot="pspd-grade-partial" className={cn('m-0 text-xs text-muted-foreground', WRAP)}>{t('pspd.grade.partialNote')}</p>
+      )}
+      {grade.incomplete && (
+        <p data-slot="pspd-grade-incomplete" className={cn('m-0 text-xs text-muted-foreground', WRAP)}>
+          {t('pspd.grade.incompleteNote', (grade.missing || []).map((k) => t(`pspd.grade.comp.${k}`)).join(', '))}
+        </p>
       )}
       {comps.length > 0 && (
         <ul data-slot="pspd-grade-components" className="m-0 grid list-none grid-cols-1 gap-1.5 p-0 @container sm:grid-cols-2">

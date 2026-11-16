@@ -243,9 +243,15 @@ function CrawlSummary({ crawl, unscannedTotal, t, locale, resume, busy, onResume
             {sm.fromRobots ? ` ${t('prs.crawl.sitemap.robots')}` : ''}
           </li>
         )}
-        {sm.found === false && <li className={WRAP} data-slot="prs-crawl-sitemap-none">{t('prs.crawl.sitemap.none')}</li>}
+        {sm.robotsFailed && <li className={WRAP} data-slot="prs-crawl-robots-failed">{t('prs.crawl.sitemap.robotsFailed')}</li>}
+        {sm.found === false && !sm.robotsFailed && <li className={WRAP} data-slot="prs-crawl-sitemap-none">{t('prs.crawl.sitemap.none')}</li>}
         {sm.truncated && <li className={WRAP}>{t('prs.crawl.sitemap.truncated')}</li>}
         {sm.otherHost > 0 && <li className={WRAP} data-slot="prs-crawl-sitemap-other-host">{plural(t, 'prs.crawl.sitemap.otherHost', sm.otherHost, formatNumber(sm.otherHost, locale))}</li>}
+        {crawl.redirectAliases > 0 && (
+          <li className={WRAP} data-slot="prs-crawl-redirect-aliases">
+            {plural(t, 'prs.crawl.redirectAliases', crawl.redirectAliases, formatNumber(crawl.redirectAliases, locale))}
+          </li>
+        )}
         {crawl.dropped > 0 && <li className={WRAP}>{plural(t, crawl.droppedAtLeast ? 'prs.crawl.droppedAtLeast' : 'prs.crawl.dropped', crawl.dropped, formatNumber(crawl.dropped, locale))}</li>}
         {crawl.resumedFrom != null && crawl.priorPages > 0 && (
           <li className={WRAP} data-slot="prs-crawl-resumed">
