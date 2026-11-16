@@ -1392,6 +1392,50 @@ imajda var; bütün pod'lar 20.211.0'a geçtikten sonra). Geçiş yapılmadıysa
    `/usr/bin/k6`, `/opt/k6-next/k6`, `/opt/k6-candidate/k6`} → yok; aday = `/opt/k6-candidate/k6` → yok. **`k6-bin`'e
    DOKUNULMAZ** — kayıtlı `/opt/k6-candidate/k6` bağ sayesinde 2.4'ü, bu sürüme `helm rollback`'te GERÇEK 2.4'ü gösterir.
 5. Geçiş yapılmamış ortam (`k6-bin` = `k6`) terfi sürümüyle 2.4'e TARAMASIZ geçer — taramayı 1. adım sürümünde koşun.
+6. `.trivyignore.yaml`'daki k6 2.3.0 bloğu (5 CVE, `usr/bin/k6`, son tarih 2027-01-31) silinir: 2.3.0 imajdan çıkınca
+   eşleşecek bulgu kalmaz. Terfi sürümü son tarihten önce gelmezse yayın o gün yeniden durur (bilerek — aşağıdaki
+   "Yayın güvenlik kapısı (Trivy)").
+
+## Yayın güvenlik kapısı (Trivy)
+
+2026-11-16'dan beri Trivy yayını DURDURUR (önceden yalnız rapordu).
+- **release.yml (main):** imaj önce yerel docker'a yüklenip taranır ("Trivy image scan (release gate)" adımı). Düzeltmesi
+  olan HIGH / CRITICAL bulguda iş orada biter ve HİÇBİR ŞEY itilmez: imaj etiketi ve `latest`, Helm grafiği, sürüm commit'i,
+  git etiketi oluşmaz. Temizse aynı derleme önbellekten itilir (taranan ve itilen imaj aynı katmanlar).
+- **docker-build.yml (develop, `release/**`):** aynı kural, aynı istisna dosyası; burada imaj zaten itilmiştir, iş kırmızı
+  olur ("Trivy gate" adımı) ve imaj açılış testi yine koşar. Amaç main'e gelmeden görmek.
+- Düzeltmesi OLMAYAN bulgular (`ignore-unfixed`) durdurmaz.
+
+**Yayın durduysa:**
+1. Release koşusunda "Trivy image scan (release gate)" adımında dosya (Target), paket, CVE ve düzeltilmiş sürüme bakın.
+2. Kapatın:
+   - Alpine paketi → derleme zaten `apk upgrade` koşar; düzeltme Alpine deposuna yeni girdiyse yeniden koşmak yeter.
+     Taban imaj sorunuysa Dockerfile'ın üstündeki digest yenileme yönergesi.
+   - Java bağımlılığı (`app/app.jar`) → aynı ana sürüm içinde yükseltin (ana sürüm geçişi yapılmaz).
+   - Bir ikili (k6 gibi) → yeni sürümü aday olarak getirin (k6 sürüm geçişi bölümü).
+3. Hemen kapatılamıyorsa: `.trivyignore.yaml`'a istisna ekleyin — **yol kapsamlı** (`paths`), **son tarihli**
+   (`expired_at`) ve **gerekçeli** (`statement`). `fix(ci): …` ile main'e alın; Release yeniden koşar. Önceki koşu hiçbir şey
+   itmediği için aynı sürüm numarası kullanılır.
+4. İstisnanın son tarihi geçince istisna kendiliğinden düşer ve yayın yeniden durur — bilerek: sorunu kapatın ya da
+   gerekçeyi gözden geçirip tarihi yenileyin.
+
+Şu anki istisnalar: yalnız k6 2.3.0'ın 5 CVE'si (6 bulgu; `usr/bin/k6`, 2027-01-31). k6 terfi sürümünde silinir.
+
+**OWASP bağımlılık taraması (`dependency-check.yml`):** Pazartesi ve Perşembe 06:00 UTC + elle. Temiz değilse iş KIRMIZI
+(önceden her durumda yeşildi):
+- CVSS ≥ 7 bulgu → özetteki liste;
+- NVD güncellenemedi → tarama yapılamadı.
+- NVD veritabanı önbellekte tutulur (yalnız başarılı güncellemeden sonra kaydedilir); sonraki koşular yalnız farkı indirir.
+  GitHub kullanılmayan önbelleği 7 günde sildiği için takvim haftada iki.
+- **`NVD_API_KEY` sırrı** (https://nvd.nist.gov/developers/request-an-api-key → GitHub: Settings → Secrets and variables →
+  Actions) yoksa ilk tam indirme 35–60 dk sürer ve NVD 524 zaman aşımına açıktır; özet bunu uyarır.
+- Yanlış pozitif (CPE eşleştirmesi; ör. `micrometer-registry-prometheus` Prometheus sunucusunun CVE'leriyle eşleşir) →
+  pom.xml `security` profiline gerekçeli bir bastırma dosyası (`suppressionFiles`).
+- Sonatype OSS Index analizcisi kapalı (kimlik doğrulaması istiyor).
+
+**İmaj açılış testi** 1,5 GiB bellekle koşar (önceden 1 GiB: yığın %75 = 768 MiB, yığın dışına ~256 MiB kalıyor, bir kez
+137 ile öldü). Açılış sonrası gerçek kullanım iş özetinde ("Bellek (açılış sonrası)"); kapsayıcı açılışta düşerse hata
+satırı `OOMKilled` değerini yazar.
 
 ## Sentetik İzleme (k6) güvenliği ve koşum verisi
 

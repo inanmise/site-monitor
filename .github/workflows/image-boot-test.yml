@@ -9,7 +9,10 @@ name: Image boot test
 #   • docker-build.yml   — develop / release/** dallarında itilen imaj.
 #
 # Verilen imajı BOŞ bir postgres:16'ya karşı prod profiliyle, Helm'deki gibi salt-okunur kök dosya sistemiyle
-# (yalnız /tmp ve /var/log yazılabilir) ve release ortamının bellek/CPU tavanıyla açar; /health/readiness UP olunca
+# (yalnız /tmp ve /var/log yazılabilir) ve Helm'deki JVM seçenekleriyle açar. Bellek tavanı 1,5 GiB (2026-11-16): prod 3 Gi,
+# release 3,5 Gi; 1 GiB'de yığın %75 = 768 MiB, yığın dışına (metaspace, kod önbelleği, iş parçacıkları) ~256 MiB kalıyordu
+# ve kapsayıcı bir kez 137 (çekirdek OOM) ile öldü. 1,5 GiB yine prod'dan sıkıdır; açılış sonrası gerçek kullanım özete
+# yazılır. /health/readiness UP olunca
 # scripts/image-boot-check.sh: /health UP, /api/branding 200, oturumsuz /api 401, sitemonitor_schema_patch_failed = 0
 # / _locked = 1, günlükte "Şema yamaları:" özeti var ve BAŞARISIZ yok, ERROR satırı / açılış istisnası yok. Hata
 # olursa son 200 günlük satırı basılır, tam günlük artefakt olur.
@@ -79,7 +82,7 @@ jobs:
           SECRET_KEY="$(openssl rand -hex 32)"
           docker run -d --name sm --network host \
             --read-only --tmpfs /tmp:rw,exec,mode=1777 --tmpfs /var/log:rw,mode=1777 \
-            --memory 1g --cpus 2 \
+            --memory 1536m --cpus 2 \
             -e SPRING_PROFILES_ACTIVE=prod \
             -e LOG_LEVEL=INFO \
             -e DB_HOST=localhost -e DB_PORT=5432 -e DB_NAME=sitemonitor \
@@ -100,7 +103,7 @@ jobs:
               exit 0
             fi
             if [ "$(docker inspect -f '{{.State.Running}}' sm 2>/dev/null)" != "true" ]; then
-              echo "::error::Container exited during startup (exit code $(docker inspect -f '{{.State.ExitCode}}' sm 2>/dev/null))"
+              echo "::error::Container exited during startup (exit code $(docker inspect -f '{{.State.ExitCode}}' sm 2>/dev/null), OOMKilled=$(docker inspect -f '{{.State.OOMKilled}}' sm 2>/dev/null))"
               exit 1
             fi
             sleep 2
@@ -119,11 +122,21 @@ jobs:
           docker cp sm:/app/frontend/carry-report.json asset-lists/ || echo "::warning::carry-report.json not in the image"
           bash scripts/image-boot-check.sh http://localhost:8080 boot.log asset-lists
 
+      # Bellek payı ölçümü (2026-11-16): tavan bilinçli seçildiği için gerçek kullanım her koşuda görünsün.
+      - name: Memory after boot
+        if: always()
+        run: |
+          usage="$(timeout 20 docker stats --no-stream --format '{{.MemUsage}} ({{.MemPerc}})' sm 2>/dev/null || echo 'okunamadı')"
+          oom="$(docker inspect -f '{{.State.OOMKilled}}' sm 2>/dev/null || echo '?')"
+          echo "Bellek (açılış sonrası): $usage · OOMKilled=$oom"
+          echo "- Bellek (açılış sonrası, tavan 1,5 GiB): \`$usage\` · OOMKilled=\`$oom\`" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Container log (last 200 lines)
         if: failure()
         run: |
           docker logs sm > boot.log 2>&1 || true
           tail -n 200 boot.log || true
+          echo "Kapsayıcı durumu: $(docker inspect -f 'çalışıyor={{.State.Running}} çıkış={{.State.ExitCode}} OOMKilled={{.State.OOMKilled}}' sm 2>/dev/null || echo yok)"
 
       - name: Upload boot log
         if: always()

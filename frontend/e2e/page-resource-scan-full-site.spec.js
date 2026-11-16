@@ -125,7 +125,7 @@ for (const vp of VIEWPORTS) {
       expect(fits, 'uzun adres satırdan taşmıyor').toBe(true)
       await root.locator('[data-slot="prs-crawl-resume"]').click()
       await expect.poll(() => state.posts.length).toBe(1)
-      expect(state.posts[0]).toEqual({ scope: 'site', crawl: 'full', max_pages: 1000, resume_from: 31 })
+      expect(state.posts[0]).toEqual({ scope: 'site', crawl: 'full', max_pages: 2500, resume_from: 31 })
     })
 
     test('başlatma: menüde "Tüm siteyi tara" → pencere → gövde; pencere sığar, hedefler ≥ 40 px', async ({ page }) => {
@@ -147,7 +147,7 @@ for (const vp of VIEWPORTS) {
       await checker(page, fdSel, fdSel)('tüm site penceresi')
       await page.locator('[data-slot="prs-full-confirm"]').click()
       await expect(page.locator(fdSel)).toHaveCount(0)
-      expect(state.posts).toEqual([{ scope: 'site', crawl: 'full', max_pages: 1000 }])
+      expect(state.posts).toEqual([{ scope: 'site', crawl: 'full', max_pages: 2500 }])
     })
   })
 }

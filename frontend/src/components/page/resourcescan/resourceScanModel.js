@@ -904,8 +904,8 @@ export function runProgressPct(scan, memo = null) {
 export function pollCapMs(limits, scan = null) {
   // Çok sayfalı (site) koşu kendi süre bütçesiyle koşar (`site_max_seconds`, sunucu ≤ 900; yoksa 900) — tek sayfa
   // sınırıyla (300 sn) izlemek 10. dakikada "takip durdu" der ve arka plan bildirimi hiç gelmezdi (prs3 inceleme O1).
-  // Tüm site taraması (2026-11-15) kendi bütçesiyle koşar (`full_site_max_seconds`, sunucu ≤ 3600; yoksa 3600) — site
-  // sınırıyla (900 sn) izlemek 15. dakikada "takip durdu" derdi.
+  // Tüm site taraması (2026-11-15) kendi bütçesiyle koşar (`full_site_max_seconds`, sunucu varsayılanı 9000, en çok
+  // 10 800; yoksa 9000) — site sınırıyla (900 sn) izlemek 15. dakikada "takip durdu" derdi.
   const max = scan?.crawl === 'full'
     ? (num(limits?.full_site_max_seconds) ?? FULL_SITE_POLL_DEFAULT_SECONDS)
     : scan?.scope === 'site'
@@ -916,7 +916,7 @@ export function pollCapMs(limits, scan = null) {
 /** Site koşusunun süre bütçesi sunucu `limits.site_max_seconds` göndermezse (sunucu varsayılanı). */
 export const SITE_POLL_DEFAULT_SECONDS = 900
 /** Tüm site taramasının süre bütçesi sunucu `limits.full_site_max_seconds` göndermezse (sunucu varsayılanı). */
-export const FULL_SITE_POLL_DEFAULT_SECONDS = 3600
+export const FULL_SITE_POLL_DEFAULT_SECONDS = 9000
 
 /**
  * İzleme tavanı aşıldı mı — süre BU istemcinin izlemeye başladığı andan ölçülür (`startedMs`, monoton saat), sunucunun

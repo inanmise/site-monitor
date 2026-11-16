@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-16T00:03:35Z",
+  "generatedAt": "2026-11-16T05:24:43Z",
   "repo": "inanmise/site-monitor",
-  "count": 849,
+  "count": 850,
   "releases": [
+    {
+      "version": "20.212.1",
+      "tag": "v20.212.1",
+      "releasedAt": "2026-11-16T05:24:31Z",
+      "commit": "f29d1ba17954f86958f88143bc88ed77881c9544",
+      "prevVersion": "20.212.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": "ci",
+          "breaking": false,
+          "sha": "f29d1ba1",
+          "subject": "Trivy yayın kapısı, OWASP taraması sonucu saklamaz, açılış testi bellek payı"
+        },
+        {
+          "type": "fix",
+          "scope": "resource-scan",
+          "breaking": false,
+          "sha": "86b7c989",
+          "subject": "tüm site taraması sunucunun 2 500 sayfa sınırını kullanır"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.212.0",
       "tag": "v20.212.0",

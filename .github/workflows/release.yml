@@ -360,6 +360,37 @@ jobs:
           PREV_REF: ghcr.io/${{ github.repository_owner }}/site-monitor:${{ steps.ver.outputs.prev_tag }}
         run: echo "image=$(bash scripts/resolve-previous-image.sh "$PREV_REF")" >> "$GITHUB_OUTPUT"
 
+      # ── Security gate: scan BEFORE pushing (2026-11-16) ──
+      # İmaj önce yerel docker'a yüklenip taranır; düzeltmesi olan HIGH/CRITICAL bulguda iş BURADA durur ve hiçbir şey
+      # itilmez: imaj etiketi / latest, Helm grafiği, sürüm commit'i ve git etiketi oluşmaz (sürüm commit'i "Create and
+      # push git tag" adımında itilir). Bilinçli istisnalar .trivyignore.yaml'da (yol kapsamlı, son tarihli, gerekçeli).
+      # Ne yapmalı: docs/RUNBOOK.md "Yayın güvenlik kapısı (Trivy)". Build-arg'lar aşağıdaki itme derlemesiyle BİREBİR
+      # aynı olmalı — itme derlemesi bu derlemenin önbelleğinden gelir, taranan ve itilen imaj aynı katmanlardır.
+      - name: Build Docker image for scanning (local, not pushed)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          push: false
+          load: true
+          tags: site-monitor:release-scan
+          build-args: |
+            VERSION=${{ steps.ver.outputs.next }}
+            BUILD_DATE=${{ steps.ver.outputs.build_time }}
+            APK_REFRESH=${{ steps.ver.outputs.build_time }}
+            GIT_COMMIT=${{ github.sha }}
+            PREVIOUS_IMAGE=${{ steps.prev.outputs.image }}
+          cache-from: type=gha
+
+      - name: Trivy image scan (release gate)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: site-monitor:release-scan
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+          trivyignores: .trivyignore.yaml
+
       - name: Build and push Docker image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
@@ -376,18 +407,6 @@ jobs:
             PREVIOUS_IMAGE=${{ steps.prev.outputs.image }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      # ── Security: container image vulnerability scan ──
-      # docker-build.yml main'den çıkarıldığı için Trivy taraması burada (release imajı üstünde).
-      # Non-blocking (exit-code 0) — baseline temizlenince '1'e çek.
-      - name: Trivy image scan
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ghcr.io/${{ github.repository_owner }}/site-monitor:${{ steps.ver.outputs.tag }}
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '0'
-          format: table
 
       # ── 5. Helm OCI push ─────────────────────────────────────────────────
       - name: Set up Helm
