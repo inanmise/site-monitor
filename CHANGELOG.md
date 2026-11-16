@@ -23,6 +23,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
   sınırladığı için ölçülen dosya kümesi açıkça sabitlendi (Vitest 3 ile aynı 1 380 dosya) — kapsam kapısı gevşemez.
   ESLint 10 alınmadı: `eslint-plugin-react` henüz desteklemiyor.
 
+## [20.213.0] — 2026-11-16
+
 ### Fixed
 - **Oturumsuz uçlarda uzunluğu bildirilmemiş form gövdesi sınırı atlatıyordu.** Onay bağlantısı formları (`@RequestParam`)
   ve multipart gövdeyi Tomcat kendi ham akışından okur; Content-Length'siz (chunked) bir form 64 KiB sınırını aşıp 2 MB'a
@@ -3496,7 +3498,9 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.212.2...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.213.0...HEAD
+[20.213.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.0
+[20.212.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.3
 [20.212.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.2
 [20.212.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.1
 [20.212.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.0
