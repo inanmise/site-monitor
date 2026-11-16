@@ -435,6 +435,8 @@ function crawlModel(c) {
     fromSitemap: num(c.from_sitemap),
     dropped: num(c.dropped) ?? 0,
     droppedAtLeast: c.dropped_at_least === true,
+    // Yönlendirmeyle zaten taranmış sayfaya varan, ayrıca analiz edilmeyen bağlantılar (inceleme 2026-11-17)
+    redirectAliases: num(c.redirect_aliases) ?? 0,
     // Kuyruk bitti ama keşif kesildi (site haritası evresi tavana / süreye takıldı ya da listelenen harita okunamadı)
     discoveryIncomplete: c.discovery_incomplete === true,
     priorPages: num(c.prior_pages) ?? 0,
@@ -450,16 +452,20 @@ function crawlModel(c) {
       truncated: sm.truncated === true,
       otherHost: num(sm.other_host) ?? 0,
       errors: arr(sm.errors).filter((e) => typeof e === 'string' && e).slice(0, 10),
+      // robots.txt okunamadı (404 / 410 dışı): oradaki haritalar bilinmiyor — "harita yok" denmez (inceleme 2026-11-17)
+      robotsFailed: sm.robots_failed === true,
     },
   }
 }
 
 /**
- * Tüm site taraması kaldığı yerden sürdürülebilir mi: bitmiş (DONE) tüm site taraması, kuyruk bitmedi (`complete` false)
- * ve taranmayan sayfa var. Eksik bilgi (eski yanıt) → false.
+ * Tüm site taraması kaldığı yerden sürdürülebilir mi: bitmiş (DONE) tüm site taraması, kuyruk bitmedi (`complete` false),
+ * taranmayan sayfa var ve sunucu denetim noktasını hâlâ tutuyor (`resumable` false DEĞİL — nokta budandı ya da tarama zaten
+ * sürdürüldü → sunucu 409 verirdi; inceleme 2026-11-17). Alan yoksa (eski sunucu) karar sunucuya kalır. Eksik bilgi → false.
  */
 export function canResumeCrawl(scan, model) {
   if (!model?.crawl || scan?.status !== 'DONE') return false
+  if (scan?.resumable === false) return false
   return model.crawl.complete === false && (model.unscannedTotal ?? 0) > 0
 }
 

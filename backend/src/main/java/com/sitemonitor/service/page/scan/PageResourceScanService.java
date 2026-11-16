@@ -109,6 +109,11 @@ import java.util.function.Predicate;
 public class PageResourceScanService {
 
     public static final int MAX_PER_POD = 2;
+    /**
+     * Pod başına aynı anda en çok tüm site taraması (saatlerce sürebilir). KENDİ yuvasıdır: {@link #MAX_PER_POD} tek sayfa / seçili
+     * sayfa yuvasını tüketmez — uzun bir tüm site taraması başkalarının olağan analizlerini 429'a düşürmez (inceleme 2026-11-17).
+     */
+    public static final int MAX_FULL_PER_POD = 1;
     public static final int STARTS_PER_MINUTE = 3;
     public static final int DETAIL_RUNS = 20;
     public static final long STALE_MS = 45_000L;
@@ -281,6 +286,8 @@ public class PageResourceScanService {
     private ProxyPolicyService proxyPolicy;
 
     private final Semaphore podSlots = new Semaphore(MAX_PER_POD);
+    /** Tüm site taramasının ayrı yuvası ({@link #MAX_FULL_PER_POD}). */
+    private final Semaphore fullSlots = new Semaphore(MAX_FULL_PER_POD);
     /** Site haritası açma + ayrıştırma: pod başına tek dosya (açılmış dosya ≤ 50 MB — iki tarama aynı anda bellek doldurmasın). */
     private final Semaphore sitemapParse = new Semaphore(1);
     private final Semaphore imageSlots = new Semaphore(OPT_CONCURRENT);
@@ -311,6 +318,11 @@ public class PageResourceScanService {
     /** Testler için: boştaki pod yuvası (uçuştaki işler bitince bırakılır). */
     int freeSlots() {
         return podSlots.availablePermits();
+    }
+
+    /** Testler için: boştaki tüm site yuvası. */
+    int freeFullSlots() {
+        return fullSlots.availablePermits();
     }
 
     // ── Ayarlar ─────────────────────────────────────────────────────────────────────────────
@@ -384,8 +396,11 @@ public class PageResourceScanService {
 
     // ── Başlatma ────────────────────────────────────────────────────────────────────────────
 
-    /** Başlatma sonucu: STARTED (yeni), RUNNING (izlemenin zaten çalışan taraması), BUSY (pod dolu), RATE (kişi sınırı). */
-    public enum Outcome { STARTED, RUNNING, BUSY, RATE }
+    /**
+     * Başlatma sonucu: STARTED (yeni), RUNNING (izlemenin zaten çalışan taraması), BUSY (pod'un olağan yuvaları dolu), RATE (kişi
+     * sınırı), FULL_BUSY (pod'un tüm site yuvası dolu — başka bir tüm site taraması sürüyor).
+     */
+    public enum Outcome { STARTED, RUNNING, BUSY, RATE, FULL_BUSY }
 
     public record Start(Outcome outcome, Map<String, Object> scan, long retryAfterSeconds) {}
 
@@ -412,7 +427,9 @@ public class PageResourceScanService {
             if (!running.isEmpty()) return new Start(Outcome.RUNNING, running.get(0), 0);
             long wait = rateWait(userKey, now);
             if (wait > 0) return new Start(Outcome.RATE, null, wait);
-            if (!podSlots.tryAcquire()) return new Start(Outcome.BUSY, null, 15);
+            boolean full = site != null && site.full();
+            Semaphore slots = full ? fullSlots : podSlots;
+            if (!slots.tryAcquire()) return full ? new Start(Outcome.FULL_BUSY, null, 60) : new Start(Outcome.BUSY, null, 15);
             boolean handedOff = false;
             try {
                 boolean viaProxy = decideVia(m.getUrl(), m.getUseProxy());
@@ -449,7 +466,7 @@ public class PageResourceScanService {
                         try {
                             run(snap, runConfig);
                         } finally {
-                            podSlots.release();
+                            slots.release();
                         }
                     });
                 } catch (java.util.concurrent.RejectedExecutionException rejected) {
@@ -461,7 +478,7 @@ public class PageResourceScanService {
                 Map<String, Object> row = one(id, m.getId());
                 return new Start(Outcome.STARTED, row == null ? null : castScan(row), 0);
             } finally {
-                if (!handedOff) podSlots.release();
+                if (!handedOff) slots.release();
             }
         }
     }
@@ -535,7 +552,7 @@ public class PageResourceScanService {
             synchronized (this) {
                 if (executor == null) {
                     AtomicInteger n = new AtomicInteger();
-                    executor = Executors.newFixedThreadPool(MAX_PER_POD, r -> {
+                    executor = Executors.newFixedThreadPool(MAX_PER_POD + MAX_FULL_PER_POD, r -> {
                         Thread t = new Thread(r, "page-resource-scan-" + n.incrementAndGet());
                         t.setDaemon(true);
                         return t;
@@ -877,6 +894,8 @@ public class PageResourceScanService {
         final SiteRun site;
         /** Son taranan iç sayfanın bağlantı adresleri (tüm site taraması kuyruğu besler; her sayfada yenilenir). */
         volatile List<String> pageLinks = List.of();
+        /** Son taranan iç sayfanın yönlendirme sonrası adresi (null = yanıt yok; tüm site taraması "taranmış" sayar). */
+        volatile String pageFinalUrl;
 
         Run(Snapshot s, Config c, long start, PageFetchCore.ScanClients clients) {
             this.s = s;
@@ -1104,7 +1123,7 @@ public class PageResourceScanService {
                 if (s.site().full()) {
                     FullCrawl fc = scanSiteFull(run, s, base, exclude, linkUrls, all, items, r);
                     if (fc == null || run.halted()) { end(s.id(), INTERRUPTED, "SHUTDOWN", html); return; }
-                    finishSite(s, run, items, r, html, fc.pages(), fc.prior(), fc.extra(), fc.checkpoint());
+                    finishSite(s, run, items, r, html, fc.pages(), fc.prior(), fc.extra(), fc.checkpoint(), fc.retireSource());
                 } else {
                     List<SitePages.Page> pages = scanSite(run, s, base, exclude, linkUrls, all, items, r);
                     if (pages == null || run.halted()) { end(s.id(), INTERRUPTED, "SHUTDOWN", html); return; }
@@ -2028,7 +2047,8 @@ public class PageResourceScanService {
     }
 
     /** Tüm site taramasının sonucu: bu taramanın sayfaları, devralınan satırlar, bölüme eklenecek alanlar, son denetim noktası. */
-    record FullCrawl(List<SitePages.Page> pages, List<Map<String, Object>> prior, Map<String, Object> extra, String checkpoint) {}
+    record FullCrawl(List<SitePages.Page> pages, List<Map<String, Object>> prior, Map<String, Object> extra, String checkpoint,
+                     Long retireSource) {}
 
     /** Sürdürülen taramanın denetim noktası: görüntü satırları (önceki taramaların), taranmış adresler, kuyruk (ham adresler). */
     public record Resume(List<Map<String, Object>> rows, List<String> doneUrls, List<String> queue) {}
@@ -2101,14 +2121,17 @@ public class PageResourceScanService {
             }
         }
         List<Map<String, Object>> prior = new ArrayList<>();
-        List<String> doneUrls = new ArrayList<>();
+        Checkpoint ck = new Checkpoint(s.id());
         if (resume != null) {
             prior.addAll(resume.rows());
-            doneUrls.addAll(resume.doneUrls());
+            for (Map<String, Object> row : resume.rows()) ck.addRow(row);
+            for (String u : resume.doneUrls()) ck.addDone(u);
             skip.addAll(resume.doneUrls());
         }
         SiteCrawl crawl = new SiteCrawl(s.url(), base, exclude, skip);
         if (resume != null) {
+            // Önceki taramada taranan sayfalar "taranmış": yönlendirmeyle onlara varan bağlantı ikinci kez analiz edilmez
+            for (String u : resume.doneUrls()) crawl.markDone(u);
             for (int i = 0; i < resume.queue().size(); i += SiteCrawl.MAX_LINKS_PER_PAGE) {
                 crawl.offer(resume.queue().subList(i, Math.min(resume.queue().size(), i + SiteCrawl.MAX_LINKS_PER_PAGE)),
                         SiteCrawl.SOURCE_RESUME);
@@ -2123,6 +2146,10 @@ public class PageResourceScanService {
         String stop = null;
         long lastCk = clock.getAsLong();
         int sinceCk = 0;
+        int aliases = 0;
+        // Sürdürülen kaynağın denetim noktası, bu taramanın kendi noktası yazılınca emekliye ayrılır (aynı kaynaktan ikinci
+        // zincir açılmasın — inceleme 2026-11-17); o ana dek kaynak sürdürülebilir kalır (bu tarama erken düşerse kayıp yok)
+        Long retire = resume == null ? null : s.site().resumeFrom();
         long retained = pages.get(0).resources().size();
         while (true) {
             if (run.halted()) return null;
@@ -2142,7 +2169,7 @@ public class PageResourceScanService {
                 stop = why.startsWith("NOT_SCANNED:") ? why.substring("NOT_SCANNED:".length()) : why;
                 break;
             }
-            SitePages.Page pg = scanExtraPage(run, e.url(), exclude);
+            SitePages.Page pg = scanExtraPage(run, e.url(), exclude, crawl::isDone);
             if (pg == null) return null;
             if (SitePages.SKIPPED.equals(pg.status())) {
                 // Süre sayfanın HTML'i inerken doldu: sayfa taranmadı — kuyruğun önüne döner (sürdürmede yeniden denenir)
@@ -2150,9 +2177,23 @@ public class PageResourceScanService {
                 stop = "TIME";
                 break;
             }
+            crawl.markDone(e.url());
+            ck.addDone(e.url());
+            if (SitePages.ALIAS.equals(pg.status())) {
+                // Yönlendirme bu taramada zaten taranmış sayfaya vardı: satır yok, sayfa sınırına sayılmaz
+                aliases++;
+                run.beat(false);
+                continue;
+            }
+            String fin = run.pageFinalUrl;
+            if (SitePages.DONE.equals(pg.status()) && fin != null && !SitePages.samePage(fin, e.url())) {
+                // Yönlendirmenin hedefi de taranmış: kuyrukta bekliyorsa atlanır, başka bağlantı ona varırsa analiz edilmez
+                crawl.markDone(fin);
+                ck.addDone(fin);
+            }
             pages.add(pg);
+            ck.addPage(pg);
             retained += pg.resources().size();
-            doneUrls.add(e.url());
             if (SitePages.DONE.equals(pg.status())) crawl.offer(run.pageLinks, SiteCrawl.SOURCE_LINK);
             run.pageLinks = List.of();
             int done = prior.size() + pages.size();
@@ -2160,7 +2201,10 @@ public class PageResourceScanService {
             run.beat(false);
             long now = clock.getAsLong();
             if (++sinceCk >= CHECKPOINT_EVERY_PAGES || now - lastCk >= CHECKPOINT_EVERY_MS) {
-                writeCheckpoint(s.id(), checkpointJson(s, pages, prior, crawl, doneUrls));
+                if (writeCheckpoint(s.id(), ck.build(crawl)) && retire != null) {
+                    retireCheckpoint(retire);
+                    retire = null;
+                }
                 sinceCk = 0;
                 lastCk = now;
             }
@@ -2189,6 +2233,7 @@ public class PageResourceScanService {
         info.put("from_sitemap", crawl.fromSitemap());
         info.put("dropped", crawl.dropped());
         if (crawl.droppedAtLeast()) info.put("dropped_at_least", true);
+        if (aliases > 0) info.put("redirect_aliases", aliases);   // yönlendirmeyle taranmış sayfaya varan, ayrıca analiz edilmeyen
         info.put("stop_reason", stop);   // null = kuyruk bitti: bulunan bütün sayfalar tarandı
         info.put("complete", stop == null && !discoveryCut);
         if (stop == null && discoveryCut) info.put("discovery_incomplete", true);
@@ -2200,51 +2245,112 @@ public class PageResourceScanService {
         extra.put("crawl", info);
         extra.put("unscanned", unscanned);
         extra.put("unscanned_total", crawl.queued());
-        return new FullCrawl(pages, prior, extra, crawl.queued() == 0 ? null : checkpointJson(s, pages, prior, crawl, doneUrls));
+        return new FullCrawl(pages, prior, extra, crawl.queued() == 0 ? null : ck.build(crawl), retire);
     }
+
+    /** Denetim noktasında saklanan en çok taranmış adres (sayfalar + yönlendirme hedefleri + takma adlar). */
+    static final int CHECKPOINT_DONE_MAX = 3 * RESUME_MAX_ROWS;
 
     /**
      * Denetim noktası (sürdürme için; API'ye hiç dönmez): önceki + bu taramanın sayfa satırları (ana sayfa hariç — sürdüren
      * tarama ana sayfayı yeniden ölçer), taranmış ham adresler, kuyruk (ham adres + kaynak, en çok {@value #CHECKPOINT_QUEUE_MAX}).
-     * Yazılamazsa null.
+     *
+     * <p>ARTIMLI (inceleme 2026-11-17): her satır / adres eklendiği anda BİR KEZ JSON'a yazılır; {@link #build} yalnız bu hazır
+     * parçaları ve o anki kuyruğu birleştirir. Eskiden her denetim noktası (25 sayfada bir) tüm sayfaların satırını yeniden
+     * hesaplayıp (SitePages.row) yeniden serileştiriyordu — 2500 sayfada karesel iş. Bir parça serileştirilemezse nokta
+     * yazılmaz (build null).
      */
-    private String checkpointJson(Snapshot s, List<SitePages.Page> pages, List<Map<String, Object>> prior, SiteCrawl crawl,
-                                  List<String> doneUrls) {
-        try {
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("v", 1);
-            m.put("crawl", CRAWL_FULL);
-            List<Map<String, Object>> rows = new ArrayList<>(prior.size() + pages.size());
-            rows.addAll(prior);
-            for (int i = 1; i < pages.size(); i++) {
-                Map<String, Object> row = new LinkedHashMap<>(SitePages.row(pages.get(i)));
-                row.put("from_scan", s.id());
-                rows.add(row);
+    static final class Checkpoint {
+        private final long scanId;
+        private final StringBuilder rows = new StringBuilder();
+        private final StringBuilder done = new StringBuilder();
+        private int rowCount;
+        private int doneCount;
+        private boolean broken;
+        /** Testler için: bugüne dek serileştirilen satır sayısı (her satır bir kez). */
+        int serializedRows;
+
+        Checkpoint(long scanId) {
+            this.scanId = scanId;
+        }
+
+        /** Önceki taramadan devralınan satır (zaten {@code from_scan} taşır). */
+        void addRow(Map<String, Object> row) {
+            if (broken || row == null) return;
+            try {
+                String json = JSON.writeValueAsString(row);
+                if (rowCount++ > 0) rows.append(',');
+                rows.append(json);
+                serializedRows++;
+            } catch (Exception e) {
+                broken = true;
             }
-            m.put("rows", rows);
-            m.put("done_urls", doneUrls.size() > RESUME_MAX_ROWS ? doneUrls.subList(0, RESUME_MAX_ROWS) : doneUrls);
-            List<Map<String, Object>> q = new ArrayList<>();
-            for (SiteCrawl.Entry e : crawl.remaining(CHECKPOINT_QUEUE_MAX)) {
-                Map<String, Object> qe = new LinkedHashMap<>();
-                qe.put("u", e.url());
-                qe.put("s", e.source());
-                q.add(qe);
+        }
+
+        /** Bu taramanın iç sayfası (ana sayfa eklenmez — sürdüren tarama onu yeniden ölçer). */
+        void addPage(SitePages.Page p) {
+            if (broken || p == null) return;
+            Map<String, Object> row = new LinkedHashMap<>(SitePages.row(p));
+            row.put("from_scan", scanId);
+            addRow(row);
+        }
+
+        /** Taranmış ham adres (en çok {@value #CHECKPOINT_DONE_MAX}). */
+        void addDone(String url) {
+            if (broken || url == null || doneCount >= CHECKPOINT_DONE_MAX) return;
+            try {
+                String json = JSON.writeValueAsString(url);
+                if (doneCount++ > 0) done.append(',');
+                done.append(json);
+            } catch (Exception e) {
+                broken = true;
             }
-            m.put("queue", q);
-            m.put("queue_total", crawl.queued());
-            return JSON.writeValueAsString(m);
-        } catch (Exception e) {
-            log.debug("Kaynak analizi sürdürme noktası kurulamadı: {}", e.getClass().getSimpleName());
-            return null;
+        }
+
+        /** Noktanın JSON'u (o anki kuyruk dahil); bir parça serileştirilemediyse null. */
+        String build(SiteCrawl crawl) {
+            if (broken) return null;
+            try {
+                StringBuilder sb = new StringBuilder(rows.length() + done.length() + 256);
+                sb.append("{\"v\":1,\"crawl\":\"").append(CRAWL_FULL).append("\",\"rows\":[").append(rows)
+                        .append("],\"done_urls\":[").append(done).append("],\"queue\":[");
+                boolean first = true;
+                for (SiteCrawl.Entry e : crawl.remaining(CHECKPOINT_QUEUE_MAX)) {
+                    if (!first) sb.append(',');
+                    first = false;
+                    sb.append("{\"u\":").append(JSON.writeValueAsString(e.url()))
+                            .append(",\"s\":").append(JSON.writeValueAsString(e.source())).append('}');
+                }
+                sb.append("],\"queue_total\":").append(crawl.queued()).append('}');
+                return sb.toString();
+            } catch (Exception e) {
+                log.debug("Kaynak analizi sürdürme noktası kurulamadı: {}", e.getClass().getSimpleName());
+                return null;
+            }
         }
     }
 
-    private void writeCheckpoint(long id, String json) {
-        if (json == null) return;
+    /** Ara denetim noktasını yazar (yalnız çalışan satıra). Döner: yazıldı mı. */
+    private boolean writeCheckpoint(long id, String json) {
+        if (json == null) return false;
         try {
-            jdbc.update(SQL_CHECKPOINT, json, id);
+            return jdbc.update(SQL_CHECKPOINT, json, id) > 0;
         } catch (RuntimeException e) {
             log.debug("Kaynak analizi sürdürme noktası yazılamadı: {}", e.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    /**
+     * Sürdürülen kaynağın denetim noktasını bırakır (inceleme 2026-11-17): sürdüren tarama kaynağın satırlarını + kalan
+     * kuyruğunu kendi noktasına taşıdığı an kaynak artık sürdürülemez — aynı kaynaktan ikinci bir zincir açılmaz (yeniden deneme
+     * 409 {@code RESOURCE_SCAN_NOT_RESUMABLE}). Yazılamazsa yalnız kaynak sürdürülebilir kalır.
+     */
+    private void retireCheckpoint(long sourceId) {
+        try {
+            jdbc.update(SQL_DROP_CHECKPOINT, sourceId);
+        } catch (RuntimeException e) {
+            log.debug("Sürdürülen kaynak taramanın noktası bırakılamadı: {}", e.getClass().getSimpleName());
         }
     }
 
@@ -2264,8 +2370,20 @@ public class PageResourceScanService {
         long until = Math.min(run.deadline, clock.getAsLong() + SITEMAP_PHASE_MS);
         List<String> errors = new ArrayList<>();
         List<String> seeds = new ArrayList<>();
-        byte[] robotsBody = fetchBytes(run, origin + "/robots.txt", ROBOTS_MAX_BYTES, until).body();
-        if (robotsBody != null) seeds.addAll(SitemapReader.robotsSitemaps(new String(robotsBody, StandardCharsets.UTF_8), origin + "/"));
+        Bytes robots = fetchBytes(run, origin + "/robots.txt", ROBOTS_MAX_BYTES, until);
+        if (run.halted()) return info;
+        byte[] robotsBody = robots.body();
+        boolean robotsFailed = false;
+        boolean robotsCut = false;
+        if (robotsBody != null) {
+            seeds.addAll(SitemapReader.robotsSitemaps(new String(robotsBody, StandardCharsets.UTF_8), origin + "/"));
+        } else if (robots.status() != 404 && robots.status() != 410) {
+            // YALNIZ 404 / 410 "robots.txt yok" demektir. Başka her başarısızlık (bağlantı hatası, zaman aşımı, 5xx, 403,
+            // tavanı aşan gövde) robots'taki site haritalarını bilinmez kılar → keşif eksik (inceleme 2026-11-17)
+            robotsFailed = true;
+            if (clock.getAsLong() >= until) robotsCut = true;
+            else addError(errors, origin + "/robots.txt");
+        }
         boolean fromRobots = !seeds.isEmpty();
         java.util.ArrayDeque<Object[]> todo = new java.util.ArrayDeque<>();
         Set<String> seenFiles = new HashSet<>();
@@ -2283,7 +2401,7 @@ public class PageResourceScanService {
             defaultSeed = true;
         }
         int files = 0, read = 0, urls = 0, added = 0;
-        boolean truncated = false;
+        boolean truncated = robotsCut;
         outer:
         while (!todo.isEmpty()) {
             if (files >= SITEMAP_MAX_FILES) { truncated = true; break; }
@@ -2350,6 +2468,7 @@ public class PageResourceScanService {
             }
         }
         info.put("found", read > 0);
+        if (robotsFailed) info.put("robots_failed", true);
         if (otherHost > 0) info.put("other_host", otherHost);
         info.put("default_seed", defaultSeed);
         info.put("from_robots", fromRobots);
@@ -2436,17 +2555,28 @@ public class PageResourceScanService {
 
     /** Tek iç sayfa: HTML + sayfa yükü nesneleri (ortaklar önbellekten) + analiz. Durduruldu → null. */
     private SitePages.Page scanExtraPage(Run run, String url, Predicate<String> exclude) throws InterruptedException {
+        return scanExtraPage(run, url, exclude, null);
+    }
+
+    /**
+     * {@link #scanExtraPage(Run, String, Predicate)} + {@code alreadyDone} (tüm site taraması): sayfa yönlendirmeyle bu taramada
+     * zaten taranmış bir adrese vardıysa analiz edilmez, {@link SitePages#ALIAS} döner (inceleme 2026-11-17).
+     */
+    private SitePages.Page scanExtraPage(Run run, String url, Predicate<String> exclude, Predicate<String> alreadyDone)
+            throws InterruptedException {
         boolean objectsWere = run.objectsCapped;
         run.objectsCapped = false;   // sayfanın kendi "nesne tavanı" bayrağı (ana sayfadan miras kalmasın)
         try {
-            return scanExtraPageInner(run, url, exclude);
+            return scanExtraPageInner(run, url, exclude, alreadyDone);
         } finally {
             run.objectsCapped = objectsWere || run.objectsCapped;
         }
     }
 
-    private SitePages.Page scanExtraPageInner(Run run, String url, Predicate<String> exclude) throws InterruptedException {
+    private SitePages.Page scanExtraPageInner(Run run, String url, Predicate<String> exclude, Predicate<String> alreadyDone)
+            throws InterruptedException {
         run.pageLinks = List.of();
+        run.pageFinalUrl = null;
         resetPageFacts(run);
         run.total.incrementAndGet();
         boolean via = run.via(url);
@@ -2461,12 +2591,18 @@ public class PageResourceScanService {
         run.done.incrementAndGet();
         PageFetchCore.Fetch fe = mf.fetch();
         run.spent.addAndGet(Math.max(0, fe.bytes()));
+        String fin = mf.meta() == null ? null : mf.meta().finalUrl();
         String err = pageError(fe, mf.meta(), run.rootHost);
-        if (err != null) return SitePages.Page.failed(url, err);
+        if (err != null) return SitePages.Page.failed(url, err);   // açılamayan sayfa kendi satırını alır (ör. SSO'ya yönlenen)
+        if (fin != null && !fin.isBlank()) {
+            run.pageFinalUrl = fin;
+            // Yönlendirme bu taramada ZATEN taranmış sayfaya vardı (ör. /eski → /yeni, ya da ana sayfaya): ikinci kez analiz yok
+            if (alreadyDone != null && !SitePages.samePage(fin, url) && alreadyDone.test(fin)) return SitePages.Page.alias(url, fin);
+        }
         ScanItem html = item(new PageResourceDiscovery.Candidate(url, PageResourceDiscovery.HTML, true, false, false), mf, null,
                 false, via ? "proxy" : "direct", null);
         html.seq = 0;
-        String base = mf.meta() != null && mf.meta().finalUrl() != null ? mf.meta().finalUrl() : url;
+        String base = fin != null ? fin : url;
         collectCookies(run, mf.meta());
         org.jsoup.nodes.Document doc = PageResourceDiscovery.parse(fe.body(), base);
         HtmlFacts facts = doc == null ? null : HtmlFacts.extract(doc, fe.body().length);
@@ -2656,12 +2792,12 @@ public class PageResourceScanService {
     /** Çok sayfalı bitiş: ana sayfanın satır değerleri + {@code analysis.site} + {@code scope='site'}, {@code pages_count}. */
     private void finishSite(Snapshot s, Run run, List<ScanItem> items, PageResourceAnalyzer.Result r, ScanItem html,
                             List<SitePages.Page> pages) throws Exception {
-        finishSite(s, run, items, r, html, pages, null, null, null);
+        finishSite(s, run, items, r, html, pages, null, null, null, null);
     }
 
     private void finishSite(Snapshot s, Run run, List<ScanItem> items, PageResourceAnalyzer.Result r, ScanItem html,
                             List<SitePages.Page> pages, List<Map<String, Object>> prior, Map<String, Object> extra,
-                            String checkpoint) throws Exception {
+                            String checkpoint, Long retireSource) throws Exception {
         Map<String, Object> analysisMap = new LinkedHashMap<>(r.analysis());
         analysisMap.put("site", prior == null && extra == null ? SitePages.section(pages) : SitePages.section(pages, prior, extra));
         int priorScanned = 0;
@@ -2683,13 +2819,17 @@ public class PageResourceScanService {
             return;
         }
         if (checkpoint != null || (s.site() != null && s.site().full())) {
+            boolean written = false;
             try {
                 // Tüm site: son nokta (kuyruk boşsa NULL — çalışırken yazılan ara nokta silinir)
                 jdbc.update(SQL_CHECKPOINT_FINAL, checkpoint, s.id());
+                written = true;
             } catch (RuntimeException e) {
                 log.warn("Kaynak analizi {} sürdürme noktası yazılamadı — bu analiz sürdürülemez: {}", s.id(),
                         e.getClass().getSimpleName());
             }
+            // Kaynağın satırları ve kuyruğu artık bu taramada (analiz + son nokta): kaynak emekliye ayrılır
+            if (retireSource != null && (written || checkpoint == null)) retireCheckpoint(retireSource);
         }
         pruneItems(s.monitorId());
     }

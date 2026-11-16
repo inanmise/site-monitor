@@ -93,7 +93,7 @@ export const ERROR_CODES = Object.freeze(['UNSUPPORTED_FORMAT', 'TOO_LARGE', 'TO
 export const NOTE_CODES = Object.freeze(['KEPT_ORIGINAL', 'NOT_UPSCALED', 'ORIENTATION_APPLIED'])
 export class EngineError extends Error { constructor(code, params = {}) { super(code); this.name = 'EngineError'; this.code = code; this.params = params } }
 const MODE = ${JSON.stringify(mode)}
-export function engineSupport() { return Promise.resolve({ worker: true, webp: MODE !== 'nowebp' }) }
+export function engineSupport() { return Promise.resolve({ worker: true, webp: MODE !== 'nowebp', avif: MODE === 'avifmissing' }) }
 export async function inspectImage(blob) {
   const b = await createImageBitmap(blob)
   const out = { type: 'png', width: b.width, height: b.height, bytes: blob.size, hasAlpha: false, animated: false }
@@ -102,6 +102,8 @@ export async function inspectImage(blob) {
 }
 export async function processImage(blob, options, extra = {}) {
   if (MODE === 'fail') throw new EngineError('ENCODE_FAILED')
+  // AVIF kodlayıcı dosyası sunucudan alınamadı (yayılım sırasında 404): yalnız AÇIK AVIF isteği düşer
+  if (MODE === 'avifmissing' && options.format === 'avif') throw new EngineError('BROWSER_UNSUPPORTED', { reason: 'avif', detail: 'asset_missing' })
   if (extra.onProgress) extra.onProgress('decode', 0.1)
   const b = await createImageBitmap(blob)
   const want = options.resize && options.resize.method === 'scale' && options.resize.width ? options.resize.width : b.width
@@ -601,6 +603,68 @@ for (const vp of VIEWPORTS) {
       await expect(proj.locator('[data-slot="prs-it-proj-failed"]')).toHaveCount(0)
       await expect(proj.locator('[data-slot="prs-it-proj-new-scan"]')).toBeVisible()
       await checker(page)('not kartı — yapılamıyor')
+    })
+
+    test('AVIF üretemeyen tarayıcı: toplu ZIP, duyarlı set ve araç ayarında AVIF kapalı + "bu tarayıcıda yok"; sığar', async ({ page }) => {
+      test.setTimeout(120_000)
+      await useFakeEngine(page, 'ok')                                    // taklit motor: avif desteği yok
+      await routes(page)
+      const root = await open(page)
+      await expect(root.locator('[data-slot="prs-hero"]')).toBeVisible({ timeout: 20_000 })
+
+      // 1) Toplu indirme (ZIP) penceresi: AVIF seçeneği kapalı ve nedenini kendisi söyler
+      const card = root.locator('[data-slot="prs-images"]')
+      await card.scrollIntoViewIfNeeded()
+      await card.locator('[data-slot="prs-it-bulk-open"]').click()
+      const bulk = page.locator(BULK)
+      const bulkAvif = bulk.locator('[data-slot="prs-it-bulk-format"] option[value="avif"]')
+      await expect.poll(() => bulkAvif.evaluate((o) => o.disabled), { timeout: 20_000 }).toBe(true)
+      await expect(bulkAvif).toHaveText(/bu tarayıcıda yok|not in this browser/)
+      await expect(bulk.locator('[data-slot="prs-it-bulk-format"] option[value="webp"]')).not.toHaveText(/bu tarayıcıda yok|not in this browser/)
+      await dialogChecker(page, BULK)('toplu indirme — AVIF yok')
+      await bulk.getByRole('button', { name: /^(Kapat|Dismiss)$/ }).last().click()
+      await expect(bulk).toHaveCount(0)
+
+      // 2) Araç: ayardaki biçim seçeneği ve duyarlı set penceresi aynı durumu söyler
+      const view = await openTool(page, root)
+      const box = await settings(view)
+      const toolAvif = box.locator('[data-slot="prs-it-format"] option[value="avif"]')
+      await expect.poll(() => toolAvif.evaluate((o) => o.disabled), { timeout: 20_000 }).toBe(true)
+      await expect(toolAvif).toHaveText(/bu tarayıcıda yok|not in this browser/)
+      await view.locator('[data-slot="prs-it-file-input"]').setInputFiles(files().slice(0, 1))
+      const entry = view.locator('[data-slot="prs-it-entry"]').first()
+      await expect(entry).toHaveAttribute('data-state', 'done', { timeout: 30_000 })
+      await entry.locator('[data-slot="prs-it-entry-responsive"]').click()
+      const rs = page.locator(RS)
+      const rsAvif = rs.locator('[data-slot="prs-it-rs-format"] option[value="avif"]')
+      await expect.poll(() => rsAvif.evaluate((o) => o.disabled), { timeout: 20_000 }).toBe(true)
+      await expect(rsAvif).toHaveText(/bu tarayıcıda yok|not in this browser/)
+      await expect(rs.locator('[data-slot="prs-it-rs-format"]')).toHaveValue('webp')
+      await dialogChecker(page, RS)('duyarlı set — AVIF yok')
+      await rs.getByRole('button', { name: /^(Kapat|Dismiss)$/ }).last().click()
+      await expect(rs).toHaveCount(0)
+    })
+
+    test('AVIF kodlayıcı dosyası alınamadı (asset_missing): açık AVIF isteği nedenini söyler, "sayfa güncellendi" demez; sığar', async ({ page }) => {
+      test.setTimeout(120_000)
+      await useFakeEngine(page, 'avifmissing')                           // AVIF destekli, ama kodlayıcı dosyası 404
+      await routes(page)
+      const root = await open(page, '&prs_v=tool')
+      const view = root.locator('[data-slot="prs-it-view"]')
+      await expect(view).toBeVisible({ timeout: 20_000 })
+      const box = await settings(view)
+      const avifOpt = box.locator('[data-slot="prs-it-format"] option[value="avif"]')
+      await expect.poll(() => avifOpt.evaluate((o) => o.disabled), { timeout: 20_000 }).toBe(false)
+      await box.locator('[data-slot="prs-it-format"]').selectOption('avif')
+      await view.locator('[data-slot="prs-it-file-input"]').setInputFiles(files().slice(0, 1))
+      const entry = view.locator('[data-slot="prs-it-entry"]').first()
+      await expect(entry).toHaveAttribute('data-state', 'failed', { timeout: 30_000 })
+      const problem = entry.locator('[data-slot="prs-it-entry-problem"]')
+      await expect(problem).toContainText(/AVIF kodlayıcı dosyası sunucudan alınamadı|AVIF encoder file could not be fetched/)
+      await expect(problem).not.toContainText(/sayfa güncellendi|page was updated|BROWSER_UNSUPPORTED|asset_missing/)
+      await expect(entry.locator('[data-slot="prs-it-entry-retry"]')).toBeVisible()
+      await expect(view.locator('[data-slot="prs-it-stale-banner"]')).toHaveCount(0)
+      await checker(page)('araç — AVIF kodlayıcı dosyası yok')
     })
 
     test('çalıştırma yetkisi olmayan görüntüleyici: menü nedenini söyler, araç yine açılır', async ({ page }) => {

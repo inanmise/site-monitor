@@ -40,6 +40,11 @@ public final class SitePages {
      * dolduğu için taranmadı.
      */
     public static final String DONE = "ok", FAILED = "failed", SKIPPED = "skipped";
+    /**
+     * Tüm site taramasının iç durumu (asla bölüme / API'ye yazılmaz): istenen adres yönlendirmeyle bu taramada ZATEN taranmış
+     * bir sayfaya vardı — ikinci kez analiz edilmez, satır eklenmez (inceleme 2026-11-17).
+     */
+    public static final String ALIAS = "alias";
     /** {@code shared} listesinin tavanı. */
     public static final int MAX_SHARED = 50;
     /** Sayfa başına öne çıkan öneri kodu sayısı. */
@@ -109,6 +114,13 @@ public final class SitePages {
     public static boolean brokenLink(String verdict, int status) {
         if (ScanItem.BROKEN.equals(verdict)) return true;
         return ScanItem.UNVERIFIED.equals(verdict) && status >= 400 && status < 600;
+    }
+
+    /** İki adres aynı sayfa mı (tekilleştirme biçimiyle — parça, sondaki {@code /}, şema / host büyük-küçük harf farkı yok). */
+    public static boolean samePage(String a, String b) {
+        if (a == null || b == null) return false;
+        String na = normalized(PageResourceDiscovery.key(a));
+        return na != null && na.equals(normalized(PageResourceDiscovery.key(b)));
     }
 
     private static void addSelf(Set<String> seen, String url) {
@@ -186,6 +198,11 @@ public final class SitePages {
 
         public static Page skipped(String url, String code) {
             return new Page(url, SKIPPED, code, null, null, null, null, null, null, null, null, List.of(), 0, Map.of(), true);
+        }
+
+        /** Yönlendirmenin hedefi bu taramada zaten taranmış: {@code error} = hedef adres (yalnız iç kullanım). */
+        public static Page alias(String url, String finalUrl) {
+            return new Page(url, ALIAS, finalUrl, null, null, null, null, null, null, null, null, List.of(), 0, Map.of(), false);
         }
 
         boolean done() {

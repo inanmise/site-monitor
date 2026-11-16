@@ -15,6 +15,24 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Fixed
+- **Kaynak analizi — tüm site taraması (inceleme 2026-11-17).**
+  - Yönlendirmeyle bu taramada zaten taranmış (ya da kuyrukta bekleyen) bir sayfaya varan bağlantı ikinci kez analiz
+    edilmez; yönlendirmenin hedefi de "taranmış" sayılır (`crawl.redirect_aliases` sayılır).
+  - **⚠ Davranış:** tüm site taraması pod'un iki olağan analiz yuvasını tüketmez; kendi yuvası vardır (pod başına aynı
+    anda en çok 1 tüm site taraması). Saatler süren bir tarama başkalarının tek sayfa / seçili sayfa analizlerini artık
+    429 `RESOURCE_SCAN_BUSY`'ye düşürmez; ikinci bir tüm site taraması aynı kodla ama kendi iletisiyle reddedilir.
+  - robots.txt'nin okunamaması (bağlantı hatası, zaman aşımı, 5xx, 403, tavanı aşan gövde) "robots yok" sayılmaz: site
+    haritası hatalarına yazılır, keşif eksik işaretlenir ("bütün sayfalar tarandı" denmez). Yalnız 404 / 410 "yok"tur.
+  - Sürdürülen taramanın kaynağı, sürdüren tarama kendi denetim noktasını yazınca emekliye ayrılır: aynı kaynaktan ikinci
+    bir zincir açılmaz (409 `RESOURCE_SCAN_NOT_RESUMABLE`). Ekranda "Kaldığı yerden sürdür" sunucunun `resumable`
+    bayrağını da okur; sürdürme reddinden sonra analiz yeniden okunur, geçersiz düğme kalkar.
+  - Denetim noktası artımlı kurulur (her sayfa satırı bir kez serileştirilir); 2500 sayfada karesel iş kalktı.
+  - Sayfa sekmesi rozetinin site modeli bellekte tutulur (her çizimde 2500 satır yeniden kurulmaz).
+  - Bitiş bildirimi izleyicisi çıkışta (oturum sıfırlama) durur: çıkıştan sonra / sıradaki kullanıcı için sorgu ve tost yok.
+- **Görsel aracı:** toplu ZIP ve duyarlı set penceresinde bu tarayıcıda üretilemeyen biçim (AVIF / WebP) seçeneği
+  nedenini kendisi söyler ("bu tarayıcıda yok"), araç ayarındaki gibi.
+
 ## [20.212.2] — 2026-11-16
 
 ### Changed

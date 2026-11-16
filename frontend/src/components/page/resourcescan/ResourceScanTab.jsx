@@ -68,6 +68,9 @@ const ImageToolView = lazy(() => import('./imagetool/ImageToolView.jsx'))
  * durum kaybolmasın, r177 H10); gizliyken URL'e yazmaz, bitişte "Aç" düğmeli tost gösterir (`onShow`).
  */
 /** Monoton saat (ms) — duvar saati ileri / geri atlasa da izleme süresi doğru ölçülür. */
+/** Sürdürme reddi: kaynağın denetim noktası artık kullanılamaz (yeniden okununca düğme kalkar). */
+const RESUME_GONE_CODES = new Set(['RESOURCE_SCAN_NOT_RESUMABLE', 'RESOURCE_SCAN_NOTHING_TO_RESUME', 'RESOURCE_SCAN_RESUME_LIMIT',
+  'RESOURCE_SCAN_NOT_FOUND'])
 const monoNow = () => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now())
 
 /** Kaydırılan en yakın ata (pencere gövdesi) — bölüm geçişinde kaydırma onun üzerinden yapılır. */
@@ -400,6 +403,13 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       return true
     }
     toast.error(res.error || t('prs.startFailed'), { details: res })
+    if (resumeFrom && RESUME_GONE_CODES.has(res.code)) {
+      // Sürdürme reddedildi (nokta budandı / zaten sürdürüldü / kuyruk boş — inceleme 2026-11-17): geçmiş ve seçili analiz
+      // yeniden okunur, sunucunun `resumable` bayrağı düşer → "Kaldığı yerden sürdür" düğmesi kaybolur (aynı 409'u tekrarlatmaz)
+      cacheRef.current.delete(resumeFrom)
+      loadHistory()
+      if (selectedRef.current === resumeFrom) loadDetail(resumeFrom, { quiet: true })
+    }
     return false
   }
   const startPage = () => start(null)
@@ -531,7 +541,9 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
   const sectionCount = 6 + (siteAvailable ? 1 : 0)
   const sectionCols = sectionTabCols(sectionCount)
   // Sekme rozeti: "analiz edilen / toplam" (geçmiş ve Sayfalar başlığıyla AYNI anlam; hepsi analiz edildiyse tek sayı)
-  const siteTotals = siteAvailable ? siteModel(sel?.analysis?.site)?.totals ?? null : null
+  // Bellekte tutulur (inceleme 2026-11-17): tüm site analizinde 2500+ sayfa satırı — her çizimde yeniden kurulmasın
+  const siteSection = siteAvailable ? sel?.analysis?.site ?? null : null
+  const siteTotals = useMemo(() => (siteSection ? siteModel(siteSection)?.totals ?? null : null), [siteSection])
   const siteBadge = siteTotals && siteTotals.pages > 0 ? {
     text: siteTotals.scanned === siteTotals.pages ? formatNumber(siteTotals.pages, locale)
       : `${formatNumber(siteTotals.scanned, locale)}/${formatNumber(siteTotals.pages, locale)}`,
