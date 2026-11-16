@@ -1,9 +1,107 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-16T21:27:27Z",
+  "generatedAt": "2026-11-16T23:50:13Z",
   "repo": "inanmise/site-monitor",
-  "count": 852,
+  "count": 853,
   "releases": [
+    {
+      "version": "20.213.0",
+      "tag": "v20.213.0",
+      "releasedAt": "2026-11-16T23:50:07Z",
+      "commit": "3dbe7241746281b19ed80b4750aa8c5217f73883",
+      "prevVersion": "20.212.3",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 6,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 2,
+        "other": 2
+      },
+      "changes": [
+        {
+          "type": "docs",
+          "scope": "changelog",
+          "breaking": false,
+          "sha": "3dbe7241",
+          "subject": "tarih seçici maddesi Yayınlanmamış bölümünde, 20.212.3 başlığı düzeltildi"
+        },
+        {
+          "type": "docs",
+          "scope": "changelog",
+          "breaking": false,
+          "sha": "0e799237",
+          "subject": "Yayınlanmamış bölümü düzenlendi; 20.212.3 maddesi kendi başlığında"
+        },
+        {
+          "type": "test",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "5e07cf0d",
+          "subject": "büyüme penceresi planı — zaman sıralı satırlarda alt sınırlı zaman dizini de kabul"
+        },
+        {
+          "type": "chore",
+          "scope": "incidents",
+          "breaking": false,
+          "sha": "dc619548",
+          "subject": "satır sonları LF'e döndü (düzenleme betiği CRLF yazmıştı)"
+        },
+        {
+          "type": "fix",
+          "scope": "oncall,gaps,domain",
+          "breaking": false,
+          "sha": "f6557028",
+          "subject": "nöbet bildirimi, eksikler penceresi ve alan adı kutusu inceleme düzeltmeleri"
+        },
+        {
+          "type": "fix",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "12afae57",
+          "subject": "şelale sekmesi son ölçümü izler, eksik not yeşil değil, PDF notu taşmaz"
+        },
+        {
+          "type": "fix",
+          "scope": "pagespeed",
+          "breaking": false,
+          "sha": "f14e3145",
+          "subject": "büyüme karşılaştırılamaz kuralı, posta alt sınır satırı, aynı CRON planında etkin aralık"
+        },
+        {
+          "type": "fix",
+          "scope": "kaynak-analizi",
+          "breaking": false,
+          "sha": "2dd4f9fe",
+          "subject": "tüm site taramasında yönlendirme tekrarı, ayrı yuva, robots hatası ve sürdürme zinciri"
+        },
+        {
+          "type": "fix",
+          "scope": "ci",
+          "breaking": false,
+          "sha": "81aabfa8",
+          "subject": "güvenlik kapıları, gövde sınırı ve k6 aday yolu inceleme düzeltmeleri"
+        },
+        {
+          "type": "fix",
+          "scope": "incidents",
+          "breaking": false,
+          "sha": "abd78fdb",
+          "subject": "tarih alanında yarım yazım kaydedilmez, odak halkası, Ctrl+Enter ve okunamayan metin kaydı durdurur"
+        },
+        {
+          "type": "feat",
+          "scope": "incidents",
+          "breaking": false,
+          "sha": "fe237038",
+          "subject": "olay formunda yazılabilir tarih + saat alanı, hızlı seçim ve saat listeleri"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.212.3",
       "tag": "v20.212.3",
