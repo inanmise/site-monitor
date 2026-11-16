@@ -15,6 +15,18 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Changed
+- **Bağımlılıklar aynı ana sürüm içinde güncellendi.**
+  - Arka uç: BouncyCastle 1.87 (sertifika zinciri, OCSP / CRL), jsoup 1.24.1 (sayfa ve keyword ayrıştırma), dnsjava 3.7.1,
+    commonmark 0.32.0 (alarm postasındaki "Ne yapılmalı" notu), JaCoCo 0.8.16.
+  - Ön yüz: lucide-react 1.73, @testing-library/user-event 14.6.12, Playwright 1.65.1.
+  - CI eylemleri: actions/setup-node 7.1.0, docker/login-action 4.8.0, azure/setup-helm 5.1.0.
+- **OWASP taraması dependency-check 13.0.0 ile koşar.** Veritabanı şeması değiştiği için ilk koşu NVD verisini
+  baştan indirir (önbellek anahtarı sürümü içerir).
+- **⚠ Davranış — develop ortamının bellek tavanı 768Mi → 1536Mi.** İmaj açılış testi uygulamanın açılıştan sonra
+  ~925–975 MiB kullandığını ölçtü; 768Mi tavanda pod açılışta bellek yetersizliğinden (137) ölüyordu. Bellek isteği
+  (request) 256Mi kaldı; ad alanı kotası buna göre kontrol edilmeli.
+
 ## [20.212.1] — 2026-11-16
 
 ### Fixed
