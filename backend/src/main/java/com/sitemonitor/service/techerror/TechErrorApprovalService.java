@@ -208,6 +208,31 @@ public class TechErrorApprovalService {
         return out;
     }
 
+    /**
+     * Birden çok takımın onaylayıcı KİMLİKLERİ (2026-11-17, inceleme: genel bakış ve Ayarlar sayfası takım başına
+     * {@link #approvers} çağırıyordu — N takım = N sorgu). Üyelik kuralı {@link #approvers} ile AYNI (aktif, kurum rolü PO,
+     * birincil ya da ek üyelik, kullanıcı adı ön eki kuralı); iki dar sorgu, takım sayısından bağımsız. Sayı ve "bu kişi
+     * onaylayıcı mı" sorusu içindir (e-posta / sıra yok). İstenen her takım haritada (onaylayıcısı yoksa boş küme).
+     */
+    public java.util.Map<Long, Set<Long>> approverIdsByTeam(java.util.Collection<Long> teamIds) {
+        java.util.Map<Long, Set<Long>> out = new LinkedHashMap<>();
+        if (teamIds == null) return out;
+        Set<Long> ids = new LinkedHashSet<>();
+        for (Long t : teamIds) if (t != null) ids.add(t);
+        if (ids.isEmpty()) return out;
+        for (Long t : ids) out.put(t, new LinkedHashSet<>());
+        List<Object[]> rows = new ArrayList<>(users.findActiveIdsByOrgRoleInPrimaryTeams(ids, APPROVER_ROLE));
+        rows.addAll(users.findActiveIdsByOrgRoleInExtraTeams(ids, APPROVER_ROLE));
+        for (Object[] r : rows) {
+            if (r == null || r.length < 3 || !(r[0] instanceof Number team) || !(r[1] instanceof Number user)) continue;
+            Set<Long> set = out.get(team.longValue());
+            if (set == null) continue;
+            if (!prefixAllows(r[2] == null ? null : r[2].toString())) continue;
+            set.add(user.longValue());
+        }
+        return out;
+    }
+
     public boolean isApprover(Long userId, Long teamId) {
         if (userId == null) return false;
         for (Approver a : approvers(teamId)) if (userId.equals(a.id())) return true;

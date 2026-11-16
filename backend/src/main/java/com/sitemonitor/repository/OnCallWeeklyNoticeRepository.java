@@ -22,6 +22,9 @@ public interface OnCallWeeklyNoticeRepository extends JpaRepository<OnCallWeekly
 
     Optional<OnCallWeeklyNotice> findByTeamIdAndWeekKey(Long teamId, String weekKey);
 
+    /** Görünümün "sıradaki gönderim" hesabı: takımın aday haftalarının satırları (en çok 4) — tek sorgu. */
+    List<OnCallWeeklyNotice> findByTeamIdAndWeekKeyIn(Long teamId, Collection<String> weekKeys);
+
     /** Pencerede "son sonuç" satırı. Hafta anahtarı boş olamaz (NULLS FIRST tuzağı yok). */
     Optional<OnCallWeeklyNotice> findTopByTeamIdOrderByWeekKeyDescIdDesc(Long teamId);
 
@@ -32,12 +35,24 @@ public interface OnCallWeeklyNoticeRepository extends JpaRepository<OnCallWeekly
     @Modifying
     @Transactional
     @Query("UPDATE OnCallWeeklyNotice n SET n.status = :status, n.reason = :reason, n.mailStatus = :mailStatus, "
-            + "n.pushStatus = :pushStatus, n.pushCount = :pushCount, n.errorClass = :errorClass, n.finishedAt = :finishedAt "
+            + "n.pushStatus = :pushStatus, n.pushCount = :pushCount, n.errorClass = :errorClass, n.finishedAt = :finishedAt, "
+            + "n.mailLogId = :mailLogId "
             + "WHERE n.id = :id AND n.status = 'SENDING' AND n.claimedAt = :claimedAt")
     int finish(@Param("id") Long id, @Param("claimedAt") String claimedAt, @Param("status") String status,
                @Param("reason") String reason, @Param("mailStatus") String mailStatus, @Param("pushStatus") String pushStatus,
                @Param("pushCount") Integer pushCount, @Param("errorClass") String errorClass,
-               @Param("finishedAt") String finishedAt);
+               @Param("finishedAt") String finishedAt, @Param("mailLogId") Long mailLogId);
+
+    /**
+     * Kuyruktaki (421) e-postanın sonucunu satıra yazar (2026-11-17) — YALNIZ okunan durum + posta durumu hâlâ yerindeyse
+     * (eşzamanlı uzlaştırma / yeniden deneme sahiplenmesi ezilmez). 0 satır = satır bu arada değişti.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE OnCallWeeklyNotice n SET n.status = :status, n.reason = :reason, n.mailStatus = :mailStatus "
+            + "WHERE n.id = :id AND n.status = :seenStatus AND n.mailStatus = :seenMail")
+    int settleQueuedMail(@Param("id") Long id, @Param("seenStatus") String seenStatus, @Param("seenMail") String seenMail,
+                         @Param("status") String status, @Param("reason") String reason, @Param("mailStatus") String mailStatus);
 
     /** Yarıda kalan sahiplenme → UNKNOWN (yeniden gönderilmez). Koşullu: bu arada sonuçlanan satır ezilmez. */
     @Modifying

@@ -11,7 +11,7 @@ import { onGapsRefreshRequest, onOpenGapsDialog, publishGapsSummary } from './ga
 import {
   AUTO_DEFER_MAX_MS, AUTO_DEFER_POLL_MS, AUTO_MAX_AGE_MS, AUTO_PROMPT_DELAY_MS, GAP_CATEGORIES, GAPS_SESSION_KEY, GAPS_STATE_KEY,
   MAX_LOADED_TEAMS, MAX_TEAMS,
-  collectGaps, dismissState, hideState, markSeen, readSession, readState, seenDiff, shouldAutoCheck, shouldPrompt, snoozeState,
+  collectGaps, dismissState, gapsIncomplete, hideState, markSeen, readSession, readState, seenDiff, shouldAutoCheck, shouldPrompt, snoozeState,
   unhideState, userInteracting,
 } from './gapsModel.js'
 import { askWho } from './gapsProfile.js'
@@ -178,9 +178,8 @@ export default function GapsPrompt({ username, myTeamIds, manageTeamIds, globalA
     if (state.status === 'idle') return
     if (!gaps) { publishGapsSummary({ status: 'loading', at: state.at }); return }
     const byCategory = Object.fromEntries(GAP_CATEGORIES.map((c) => [c, gaps.byCategory[c].length]))
-    const unknown = gaps.failedTeams.length > 0 || gaps.failedChecks.length > 0 || (gaps.unsupportedChecks?.length ?? 0) > 0
-      || gaps.profileFailed || !gaps.profileKnown
-      || dq !== 'yes' || (state.src?.moreTeams ?? 0) > 0
+    // Pencereyle AYNI kural (2026-11-17): bir kategori tam denetlenemediyse özet "tam" değildir (kutu yeşile dönmez)
+    const unknown = gapsIncomplete(gaps, { dq, moreTeams: state.src?.moreTeams ?? 0 })
     publishGapsSummary({
       status: state.status === 'loading' ? 'loading' : 'ready', at: state.at, total: gaps.total,
       high: GAP_CATEGORIES.reduce((n, c) => n + gaps.byCategory[c].filter((g) => g.severity === 'HIGH').length, 0),

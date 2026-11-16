@@ -265,6 +265,34 @@ export function collectGaps(input = {}) {
   }
 }
 
+/** Takım kategorisinin eksiklerini besleyen ortak / takım başına denetimler. */
+const TEAM_CATEGORY_CHECKS = Object.freeze(['oncall', 'groups', 'forwards', 'channels'])
+
+/**
+ * TAM denetlenemeyen kategoriler (2026-11-17, inceleme: bir kaynak okunamadığında kategori ve dışa aktarma "tamamlanacak bir
+ * şey yok" diyordu). Bir kategori, onu besleyen herhangi bir kaynak okunamadıysa / bu sürümde yapılamadıysa / yetkiler
+ * bilinmiyorsa ya da denetlenmeyen takım varsa "tam değil" sayılır — o kategoride "eksik yok" denmez (bilinmeyen ≠ eksik yok).
+ * `dq` = veri kalitesi yetkisi ('yes' | 'no' | 'unknown'), `moreTeams` = denetlenmeyen takım sayısı.
+ */
+export function uncheckedCategories(gaps, { dq = 'yes', moreTeams = 0 } = {}) {
+  if (!gaps) return new Set(GAP_CATEGORIES)
+  const out = new Set()
+  const failed = new Set((Array.isArray(gaps.failedChecks) ? gaps.failedChecks : []).map((f) => f?.check))
+  const unsupported = new Set(Array.isArray(gaps.unsupportedChecks) ? gaps.unsupportedChecks : [])
+  const notRead = (c) => failed.has(c) || unsupported.has(c)
+  const teamsMissing = (Array.isArray(gaps.failedTeams) && gaps.failedTeams.length > 0) || Number(moreTeams) > 0
+  if (gaps.profileFailed || !gaps.profileKnown || notRead('prefs')) out.add('profile')
+  if (teamsMissing || dq !== 'yes' || TEAM_CATEGORY_CHECKS.some(notRead)) out.add('team')
+  if (teamsMissing || dq !== 'yes') { out.add('monitors'); out.add('inventory') }
+  if (gaps.tasksUnchecked || notRead('channels') || notRead('actions')) out.add('tasks')
+  return out
+}
+
+/** Eksikler listesi TAM mı? Değilse sayılar "en az" okunur, "tamamlanacak bir şey yok" denmez. */
+export function gapsIncomplete(gaps, opts = {}) {
+  return uncheckedCategories(gaps, opts).size > 0
+}
+
 /**
  * Takıma göre görünüm: profil dışı eksikler takım başına (sıra: en çok yüksek önemli eksik, sonra takım adı); takımsız işler
  * (onay bekleyen raporlar, aksiyonlar) `teamId: null` grubunda en sonda. Her grup puan başlığını taşır.

@@ -89,6 +89,14 @@ public class OnCallWeeklyNotice {
     @Column(name = "finished_at", length = 19)
     private String finishedAt;
 
+    /**
+     * Bu gönderimin {@code notification_logs} satırı (2026-11-17, inceleme): e-posta kuyruğa girdiyse ({@code QUEUED_RETRY},
+     * SMTP 421) gerçek sonucu posta servisi o satıra yazar; satır buradan uzlaştırılır
+     * ({@code OnCallWeeklyNoticeService.settleQueuedMail}). Eski satırda boş — uzlaştırılamaz, "kuyrukta" kalır.
+     */
+    @Column(name = "mail_log_id")
+    private Long mailLogId;
+
     /** Satırın ilk yazıldığı an (UTC ISO) — saklama kuralının yaş kolonu. */
     @Column(name = "created_at", length = 19, nullable = false)
     private String createdAt;
