@@ -108,6 +108,42 @@ class PageSpeedGrowthRulesTest {
     }
 
     @Test
+    @DisplayName("İnceleme 2026-11-17: TAM 7 günlük pencere yine de 5'ten az tam ölçüm tutuyorsa (seyrek zamanlama / hep kısmi "
+            + "sayfa) büyüme KARŞILAŞTIRILAMAZ — ne ihlal ne kararsız; pencere kısa ya da okuma kesikse kararsız kalır")
+    void fullWindowWithFewSamplesIsNotComparable() {
+        PageSpeedMonitor m = growth(20, 20, true);
+        // Her ölçümü kısmi sayfa: referans BOŞ ve şimdiki ölçüm de alt sınır
+        Growth empty = PageSpeedRules.growthOf(List.of()).withFullWindow(true);
+        assertThat(empty.notComparable()).isTrue();
+        Measurement partial = measure(900_000, 90, true, empty);
+        List<String> b = PageSpeedRules.evaluate(m, partial);
+        assertThat(b).isEmpty();
+        assertThat(PageSpeedRules.undecided(m, partial, b)).isEmpty();
+        // Seyrek zamanlama (haftada 3 tam ölçüm), tam ölçüm
+        Growth sparse = PageSpeedRules.growthOf(samples(3, 100_000, 10)).withFullWindow(true);
+        Measurement full = measure(900_000, 90, false, sparse);
+        assertThat(PageSpeedRules.evaluate(m, full)).isEmpty();
+        assertThat(PageSpeedRules.undecided(m, full, List.of())).isEmpty();
+        // Pencere TAM değil (tanım yakın zamanda değişti / ilk hafta) → referans dolabilir: kararsız kalır (eski kural)
+        Growth young = PageSpeedRules.growthOf(samples(3, 100_000, 10));
+        assertThat(young.notComparable()).isFalse();
+        Measurement y = measure(900_000, 90, false, young);
+        assertThat(PageSpeedRules.undecided(m, y, List.of())).containsExactly("GROWSIZE", "GROWREQ", "SIZEBAND");
+        // Okunamayan geçmiş (NONE / null) her zaman bilinmiyor
+        assertThat(PageSpeedRules.undecided(m, measure(900_000, 90, false, Growth.NONE), List.of()))
+                .containsExactly("GROWSIZE", "GROWREQ", "SIZEBAND");
+        // Yeterli tam ölçümlü tam pencere: karşılaştırılabilir — kısmi ölçümün eşiği aşmayan değeri yine kararsız
+        Growth enough = PageSpeedRules.growthOf(samples(6, 100_000, 10)).withFullWindow(true);
+        assertThat(enough.notComparable()).isFalse();
+        Measurement within = measure(110_000, 10, true, enough);
+        assertThat(PageSpeedRules.undecided(m, within, PageSpeedRules.evaluate(m, within))).contains("GROWSIZE");
+        // Bant kararı da tam pencereyi taşır (withBand pencere bilgisini düşürmez)
+        assertThat(empty.withBand(null).fullWindow()).isTrue();
+        // Posta tablosu: karşılaştırılamayan büyüme satırında medyan boş ("Karşılaştırılamadı")
+        assertThat(PageSpeedRules.thresholdTable(m, full, List.of())).contains("GROWSIZE\t20|\t");
+    }
+
+    @Test
     @DisplayName("Büyüme eşiği yoksa referans hiç okunmaz — eşik yok, kararsız yok, bütçe tanımlı değil")
     void notConfigured() {
         PageSpeedMonitor m = growth(null, null, null);

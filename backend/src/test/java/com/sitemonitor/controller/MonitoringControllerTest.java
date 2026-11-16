@@ -4964,9 +4964,16 @@ class MonitoringControllerTest {
         c.setConnectMs(20); c.setTlsMs(40); c.setServerMs(150); c.setRequestCount(2);
         c.setCapped(true); c.setBytesTruncated(false); c.setTimeTruncated(false);
         when(pageSpeedCheckRepo.findById(77L)).thenReturn(Optional.of(c));
+        // İhlal anları şelale yanıtında (inceleme 2026-11-17): sekme ağır kaynak listesi ucunu ayrıca çağırmaz
+        java.util.List<Object[]> breachRows = new java.util.ArrayList<>();
+        breachRows.add(new Object[]{55L, "2026-11-14T08:00:00"});
+        when(pageSpeedResourceRepo.breachSnapshots(1L, 20)).thenReturn(breachRows);
 
         mvc.perform(get("/api/monitoring/pagespeed/1/waterfall").session(session("ADMIN")))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.breaches.length()").value(1))
+                .andExpect(jsonPath("$.data.breaches[0].check_id").value(55))
+                .andExpect(jsonPath("$.data.breaches[0].checked_at").value("2026-11-14T08:00:00"))
                 .andExpect(jsonPath("$.data.check_id").value(77))
                 .andExpect(jsonPath("$.data.check.html_ms").value(390))
                 .andExpect(jsonPath("$.data.check.tls_ms").value(40))
@@ -4981,6 +4988,7 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data.truncated").value(false))
                 .andExpect(jsonPath("$.data.total").value(2));
         verify(pageSpeedResourceRepo).waterfall(1L, 77L, MonitoringController.PAGESPEED_WATERFALL_MAX + 1);
+        verify(pageSpeedResourceRepo, never()).latestFacets(anyLong());   // kaynak listesinin ağır sorguları koşmaz
 
         // Başka izlemenin ölçüm satırı fazları sızdırmaz
         var c2 = new com.sitemonitor.model.PageSpeedCheck();
