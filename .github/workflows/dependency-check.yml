@@ -29,7 +29,7 @@ concurrency:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   # Eklenti sürümü değişince önbellek anahtarı da değişir (veritabanı şeması sürüme bağlı).
-  DC_VERSION: "12.2.2"
+  DC_VERSION: "12.1.0"
 
 jobs:
   dependency-check:

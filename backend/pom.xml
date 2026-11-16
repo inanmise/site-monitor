@@ -531,13 +531,14 @@
                     <plugin>
                         <groupId>org.owasp</groupId>
                         <artifactId>dependency-check-maven</artifactId>
-                        <version>12.2.2</version>
+                        <version>12.1.0</version>
                         <configuration>
                             <failBuildOnCVSS>7</failBuildOnCVSS>
                             <!-- Anahtar ortam değişkeninden okunur (2026-11-16): <nvdApiKey> ile verilen anahtar Maven hata
                                  ayıklama günlüğüne düşebiliyordu (GHSA-qqhq-8r2c-c3f5). Değişken yok ya da boşsa anahtarsız
-                                 çalışır (setStringIfNotEmpty). 13.0.0'a geçmeyin: varsayılan ayar dosyasına boş `nvd.api.key=`
-                                 ekledi ve anahtarsız taramayı "Invalid API Key, length of 0" ile düşürüyor. -->
+                                 çalışır (setStringIfNotEmpty). Sürümü NVD_API_KEY sırrı olmadan YÜKSELTMEYİN: önbellek anahtarı
+                                 sürümü içerir, yeni sürüm NVD verisini baştan indirir ve anahtarsız tam indirme NVD 429 / 524 ile
+                                 düşüyor (2026-11-16, 12.2.2 denemesi). 13.0.0 ise anahtarsız hiç koşmuyor (boş `nvd.api.key=`). -->
                             <nvdApiKeyEnvironmentVariable>NVD_API_KEY</nvdApiKeyEnvironmentVariable>
                             <formats>
                                 <format>HTML</format>

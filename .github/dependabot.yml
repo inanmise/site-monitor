@@ -14,7 +14,8 @@ updates:
     ignore:
       # 13.x ALINMAZ (2026-11-16): 13.0.0 varsayılan ayar dosyasına boş `nvd.api.key=` ekledi; NVD_API_KEY sırrı
       # tanımlı değilken tarama "Invalid API Key, length of 0" ile hiç koşmuyor (12.x anahtarsız çalışıyor).
-      # Sır eklenince ya da üst akış düzeltince bu kuralı kaldırın.
+      # Sır eklenince ya da üst akış düzeltince bu kuralı kaldırın. Sırsız ara sürüm yükseltmesi de NVD verisini baştan
+      # indirtir ve anahtarsız tam indirme NVD 429 / 524 ile düşer — o PR'ları sır eklenene dek birleştirmeyin.
       - dependency-name: "org.owasp:dependency-check-maven"
         versions: [">=13.0.0"]
 

@@ -21,9 +21,10 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
     commonmark 0.32.0 (alarm postasındaki "Ne yapılmalı" notu), JaCoCo 0.8.16.
   - Ön yüz: lucide-react 1.73, @testing-library/user-event 14.6.12, Playwright 1.65.1.
   - CI eylemleri: actions/setup-node 7.1.0, docker/login-action 4.8.0, azure/setup-helm 5.1.0.
-- **OWASP taraması dependency-check 12.2.2 ile koşar ve NVD anahtarını ortam değişkeninden okur.** Anahtar artık
-  Maven hata ayıklama günlüğüne düşemez (GHSA-qqhq-8r2c-c3f5). Veritabanı şeması değiştiği için ilk koşu NVD verisini
-  baştan indirir. 13.0.0 alınmadı: NVD anahtarı yokken taramayı hiç koşturmuyor.
+- **OWASP taraması NVD anahtarını ortam değişkeninden okur** (`nvdApiKeyEnvironmentVariable`); anahtar artık Maven
+  hata ayıklama günlüğüne düşemez (GHSA-qqhq-8r2c-c3f5). Eklenti 12.1.0'da kaldı: her sürüm değişikliği NVD verisini
+  baştan indirtiyor ve anahtarsız tam indirme NVD sınırına (429) takıldı; 13.0.0 ise anahtarsız hiç koşmuyor.
+  Yükseltme `NVD_API_KEY` sırrı eklendikten sonra yapılacak.
 - **⚠ Davranış — develop ortamının bellek tavanı 768Mi → 1536Mi.** İmaj açılış testi uygulamanın açılıştan sonra
   ~925–975 MiB kullandığını ölçtü; 768Mi tavanda pod açılışta bellek yetersizliğinden (137) ölüyordu. Bellek isteği
   (request) 256Mi kaldı; ad alanı kotası buna göre kontrol edilmeli.

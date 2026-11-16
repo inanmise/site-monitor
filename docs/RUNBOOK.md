@@ -1430,8 +1430,9 @@ imajda var; bütün pod'lar 20.211.0'a geçtikten sonra). Geçiş yapılmadıysa
 - **`NVD_API_KEY` sırrı** (https://nvd.nist.gov/developers/request-an-api-key → GitHub: Settings → Secrets and variables →
   Actions) yoksa ilk tam indirme 35–60 dk sürer ve NVD 524 zaman aşımına açıktır; özet bunu uyarır.
   Eklenti anahtarı `NVD_API_KEY` ortam değişkeninden okur (`nvdApiKeyEnvironmentVariable`; boşsa anahtarsız çalışır).
-  Eklenti 12.2.x'te kalır: 13.0.0 anahtarsız taramayı "Invalid API Key, length of 0" ile hiç koşturmuyor
-  (Dependabot kuralı 13'ü yok sayar); sır eklenince 13'e geçilebilir.
+  Eklenti sürümü sır olmadan yükseltilmez: önbellek anahtarı sürümü içerir, yeni sürüm NVD verisini baştan indirir ve
+  anahtarsız tam indirme NVD 429 / 524 ile düşer (2026-11-16, 12.2.2 denemesi). 13.0.0 ise anahtarsız hiç koşmuyor
+  ("Invalid API Key, length of 0"; Dependabot kuralı 13'ü yok sayar). Sır eklenince 13'e geçilebilir.
 - Kanıtlanmış yanlış pozitif (CPE eşleştirmesi; ör. `micrometer-registry-prometheus` Prometheus SUNUCUSUNUN CVE'leriyle
   eşleşir) → `backend/dependency-check-suppressions.xml`: CVE'ye değil yanlış CPE'ye ve yalnız o pakete bağlı, gerekçeli.
   Şu an üç madde: micrometer ↔ Prometheus sunucusu, opentelemetry-semconv ↔ OpenTelemetry-Go, angus-activation ↔ Angus
