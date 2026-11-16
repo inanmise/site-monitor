@@ -165,6 +165,8 @@ public class TechErrorReportController {
         List<Long> managed = SessionScope.manageTeamIds(session);
         if (managed != null) ownTeams.addAll(managed);
         approvalTeams.retainAll(ownTeams);
+        // Onaylayıcılar TEK okumada (inceleme 2026-11-17: takım başına bir sorgu yapılıyordu); okunamazsa null = bilinmiyor
+        Map<Long, Set<Long>> approverIds = approverIdsOrNull(approvalTeams);
         List<Map<String, Object>> teamRows = new ArrayList<>();
         java.text.Collator col = java.text.Collator.getInstance(Locale.forLanguageTag("tr"));
         List<Team> sortedTeams = new ArrayList<>(teamMap.values());
@@ -180,7 +182,7 @@ public class TechErrorReportController {
             tm.put("can_manage", writer && SessionScope.canManage(session, t.getId()));
             // Takım şablon kütüphanesi (D17) takımın kendi kapsamıyla okunur — paylaşımla görülen takımda yok
             tm.put("library_read", TechErrorTeamTemplateController.canReadLibrary(session, t.getId()));
-            if (approvalTeams.contains(t.getId())) putApprovers(tm, t.getId(), me, mayApprove);
+            if (approvalTeams.contains(t.getId())) putApprovers(tm, approverIds == null ? null : approverIds.get(t.getId()), me, mayApprove);
             teamRows.add(tm);
         }
         Map<String, Object> data = new LinkedHashMap<>();
@@ -2123,21 +2125,24 @@ public class TechErrorReportController {
      * üye sayısı (kişi adı / kimliği YOK, yalnız sayı) ve {@code can_approve} = bu kullanıcı onaylayıcı mı (rol izni + PO üye).
      * Onay servisi yoksa ya da okuma düşerse ikisi de {@code null} — "bilinmiyor"; istemci eksik saymaz.
      */
-    private void putApprovers(Map<String, Object> tm, Long teamId, Long me, boolean mayApprove) {
-        if (approvals == null) {
+    private static void putApprovers(Map<String, Object> tm, Set<Long> approverIds, Long me, boolean mayApprove) {
+        if (approverIds == null) {
             tm.put("approver_count", null);
             tm.put("can_approve", null);
             return;
         }
+        tm.put("approver_count", approverIds.size());
+        tm.put("can_approve", mayApprove && me != null && approverIds.contains(me));
+    }
+
+    /** Takımların onaylayıcı kimlikleri tek okumada; onay servisi yoksa / okuma düşerse null (bilinmiyor — eksik sayılmaz). */
+    private Map<Long, Set<Long>> approverIdsOrNull(Set<Long> teamIds) {
+        if (approvals == null) return null;
+        if (teamIds.isEmpty()) return Map.of();
         try {
-            List<TechErrorApprovalService.Approver> apps = approvals.approvers(teamId);
-            tm.put("approver_count", apps.size());
-            boolean mine = false;
-            if (me != null) for (TechErrorApprovalService.Approver a : apps) if (me.equals(a.id())) { mine = true; break; }
-            tm.put("can_approve", mayApprove && mine);
+            return approvals.approverIdsByTeam(teamIds);
         } catch (RuntimeException e) {
-            tm.put("approver_count", null);
-            tm.put("can_approve", null);
+            return null;
         }
     }
 

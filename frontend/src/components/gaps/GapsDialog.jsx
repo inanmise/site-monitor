@@ -16,7 +16,7 @@ import SegmentedControl from '../ui/SegmentedControl.jsx'
 import { LoadingBlock } from '../ui/Progress.jsx'
 import { PHONE_FULLSCREEN } from '../ui/modalClasses.js'
 import { bandOf, bandTone, linkFor } from '../dataquality/dataQualityModel.js'
-import { GAP_CATEGORIES, SNOOZE_MS, SNOOZE_WEEK_MS, groupByTeam } from './gapsModel.js'
+import { GAP_CATEGORIES, SNOOZE_MS, SNOOZE_WEEK_MS, groupByTeam, uncheckedCategories } from './gapsModel.js'
 import { CONTACT_CODES, SELF_FIX_CODES } from './gapsProfile.js'
 import { PUSH_PREFS_LINK, extraGapLink, extraItemLink, fixKindOf } from './gapsLinks.js'
 import { gapItemLine, gapTextKeys, tn } from './gapsText.js'
@@ -64,6 +64,10 @@ export default function GapsDialog({
   const newKeys = diff?.newKeys instanceof Set ? diff.newKeys : new Set()
   const high = ready ? GAP_CATEGORIES.reduce((n, c) => n + gaps.byCategory[c].filter((g) => g.severity === 'HIGH').length, 0) : 0
   const newCount = ready ? GAP_CATEGORIES.reduce((n, c) => n + gaps.byCategory[c].filter((g) => newKeys.has(g.key)).length, 0) : 0
+  // TAM denetlenemeyen kategoriler (2026-11-17): okunamayan kaynak / yetki bilinmiyor / denetlenmeyen takım — o kategoride
+  // "eksik yok" denmez, toplam "en az" okunur, dışa aktarma "Denetlenemeyenler" bölümü taşır
+  const unchecked = useMemo(() => (ready ? uncheckedCategories(gaps, { dq, moreTeams }) : new Set()), [ready, gaps, dq, moreTeams])
+  const incomplete = unchecked.size > 0
 
   const go = (link) => {
     if (!link) return
@@ -78,7 +82,7 @@ export default function GapsDialog({
     setExporting(true)
     try {
       const mod = await importWithDeadline(() => import('./gapsExport.js'))
-      const ok = kind === 'copy' ? await mod.copyGaps(gaps, t, { at, ask }) : mod.downloadGapsXlsx(gaps, t, { at })
+      const ok = kind === 'copy' ? await mod.copyGaps(gaps, t, { at, ask, dq, moreTeams }) : mod.downloadGapsXlsx(gaps, t, { at, dq, moreTeams })
       if (kind === 'copy') toast[ok ? 'success' : 'error'](t(ok ? 'gaps.export.copied' : 'gaps.export.copyFailed'))
       else if (!ok) toast.error(t('gaps.export.downloadFailed'))
     } catch (e) {
@@ -87,7 +91,7 @@ export default function GapsDialog({
       setExporting(false)
     }
   }
-  const none = ready && gaps.total === 0 && gaps.failedTeams.length === 0 && gaps.failedChecks.length === 0
+  const none = ready && gaps.total === 0 && !incomplete && gaps.failedTeams.length === 0 && gaps.failedChecks.length === 0
     && !(gaps.unsupportedChecks?.length > 0) && !gaps.profileFailed
     && gaps.profileKnown && moreTeams === 0 && dq === 'yes'
   const itemProps = { t, onGo: go, newKeys, globalAdmin, username, ask, canFix, onHide, onFix }
@@ -105,7 +109,7 @@ export default function GapsDialog({
             <LoadingBlock label={t('gaps.loading')} className="py-10" />
           ) : (
             <div className="flex min-w-0 flex-col gap-3">
-              <SummaryBar gaps={gaps} high={high} newCount={newCount} diff={diff} at={at} view={view} setView={setView}
+              <SummaryBar gaps={gaps} incomplete={incomplete} high={high} newCount={newCount} diff={diff} at={at} view={view} setView={setView}
                 exporting={exporting} onExport={doExport} onRefresh={onRefresh} t={t} />
               {/* "Tamamlanacak bir şey yok" YALNIZ her şey okunduysa: profil alanları vardı, hiçbir takım / denetim okunmadan
                   kalmadı, denetlenmeyen takım yok ve veri kalitesi yetkisi biliniyor (bilinmeyen ≠ eksik yok) */}
@@ -147,7 +151,7 @@ export default function GapsDialog({
                   onLoadMore={onLoadMore} t={t} />
               )}
               {view === 'team' ? (
-                <TeamView gaps={gaps} dq={dq} itemProps={itemProps} t={t} />
+                <TeamView gaps={gaps} dq={dq} incomplete={incomplete} itemProps={itemProps} t={t} />
               ) : (
                 <Tabs value={active} onValueChange={setTab} className="min-w-0">
                   <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5 group-data-[orientation=horizontal]/tabs:h-auto" data-slot="gaps-tabs">
@@ -166,7 +170,7 @@ export default function GapsDialog({
                   </TabsList>
                   {GAP_CATEGORIES.map((c) => (
                     <TabsContent key={c} value={c} className="mt-3 min-w-0" data-slot="gaps-panel" data-category={c}>
-                      <CategoryPanel category={c} list={gaps.byCategory[c]} dq={dq} gaps={gaps} itemProps={itemProps} t={t} />
+                      <CategoryPanel category={c} list={gaps.byCategory[c]} dq={dq} gaps={gaps} unchecked={unchecked.has(c)} itemProps={itemProps} t={t} />
                     </TabsContent>
                   ))}
                 </Tabs>
@@ -227,12 +231,16 @@ function checkList(list, t) {
   return out.join(', ')
 }
 
-function SummaryBar({ gaps, high, newCount, diff, at, view, setView, exporting, onExport, onRefresh, t }) {
+function SummaryBar({ gaps, incomplete = false, high, newCount, diff, at, view, setView, exporting, onExport, onRefresh, t }) {
+  // Liste tam değilse sayı "en az" (hiç eksik görünmüyorsa "kesin değil") — 0 asla "eksik yok" diye okunmasın
+  const totalText = !incomplete ? tn(t, 'gaps.summary.total', gaps.total)
+    : gaps.total > 0 ? tn(t, 'gaps.summary.totalAtLeast', gaps.total) : t('gaps.summary.totalUnknown')
   return (
     <div className="flex min-w-0 flex-col gap-2 rounded-lg border bg-muted/30 px-3 py-2.5" data-slot="gaps-summary">
       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
-        <span className={cn('text-sm font-semibold text-foreground', WRAP)} data-slot="gaps-total" data-total={gaps.total}>
-          {tn(t, 'gaps.summary.total', gaps.total)}
+        <span className={cn('text-sm font-semibold text-foreground', WRAP)} data-slot="gaps-total" data-total={gaps.total}
+          data-incomplete={incomplete ? 'true' : undefined}>
+          {totalText}
         </span>
         {high > 0 && <ToneBadge tone="danger" className="h-5 px-1.5 text-[11px]" data-slot="gaps-high">{t('gaps.summary.high', high)}</ToneBadge>}
         {newCount > 0 && (
@@ -298,7 +306,7 @@ function MoreTeams({ moreTeams, restTeams, loadingMore, maxTeams, onLoadMore, t 
   )
 }
 
-function CategoryPanel({ category, list, dq, gaps, itemProps, t }) {
+function CategoryPanel({ category, list, dq, gaps, unchecked = false, itemProps, t }) {
   if (category === 'profile' && gaps.profileFailed) {
     return <p data-slot="gaps-profile-failed" className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t('gaps.profileFailed')}</p>
   }
@@ -323,9 +331,15 @@ function CategoryPanel({ category, list, dq, gaps, itemProps, t }) {
       {category === 'profile' && gaps.prefsFailed && (
         <p data-slot="gaps-prefs-failed" className={cn('m-0 text-xs text-muted-foreground', WRAP)}>{t('gaps.prefsFailed')}</p>
       )}
+      {/* Kategori TAM denetlenemedi (2026-11-17): liste varsa "eksik olabilir" notu; yoksa "eksik yok" DEĞİL, "kesin değil" */}
+      {unchecked && list.length > 0 && category !== 'tasks' && (
+        <p data-slot="gaps-category-partial" className={cn('m-0 text-xs text-muted-foreground', WRAP)}>{t('gaps.categoryPartial')}</p>
+      )}
       {list.length === 0 ? (
         (category === 'tasks' && gaps.tasksUnchecked) ? null
-          : <p data-slot="gaps-empty" className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t('gaps.emptyCategory')}</p>
+          : unchecked
+            ? <p data-slot="gaps-category-unchecked" className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t('gaps.categoryNotChecked')}</p>
+            : <p data-slot="gaps-empty" className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t('gaps.emptyCategory')}</p>
       ) : (
         <ul className="m-0 flex list-none flex-col gap-2 p-0">
           {list.map((g) => <GapItem key={g.key} g={g} {...itemProps} />)}
@@ -335,7 +349,7 @@ function CategoryPanel({ category, list, dq, gaps, itemProps, t }) {
   )
 }
 
-function TeamView({ gaps, dq, itemProps, t }) {
+function TeamView({ gaps, dq, incomplete = false, itemProps, t }) {
   const groups = groupByTeam(gaps)
   const profile = gaps.byCategory.profile
   return (
@@ -374,9 +388,9 @@ function TeamView({ gaps, dq, itemProps, t }) {
           )}
         </section>
       ))}
-      {groups.length === 0 && profile.length === 0 && (
-        <p data-slot="gaps-empty" className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t('gaps.emptyCategory')}</p>
-      )}
+      {groups.length === 0 && profile.length === 0 && (incomplete
+        ? <p data-slot="gaps-category-unchecked" className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t('gaps.categoryNotChecked')}</p>
+        : <p data-slot="gaps-empty" className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t('gaps.emptyCategory')}</p>)}
     </div>
   )
 }

@@ -3204,6 +3204,9 @@ export const api = {
 
     // Domain (alan adı süre bitişi)
     getDomainMonitors:   () => request('/monitoring/domain'),
+    // Hafif liste (Kişisel Panom "yakında bitecek alan adları" kutusu, 2026-11-17): yalnız bitiş alanları; eski pod parametreyi
+    // yok sayıp tam listeyi döner — aynı anahtarlar, kutu yine çalışır
+    getDomainExpiryList: () => request('/monitoring/domain?view=expiry'),
     createDomainMonitor: (data) => request('/monitoring/domain', { method: 'POST', body: JSON.stringify(data) }),
     updateDomainMonitor: (id, data) => request(`/monitoring/domain/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteDomainMonitor: (id) => request(`/monitoring/domain/${id}`, { method: 'DELETE' }),

@@ -69,6 +69,28 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 - **Sayfa Hızı testleri:** genişletilmiş ölçümün dalgalarının tek süre sınırını paylaştığını, sorguların doğru indeksle
   koştuğunu (PostgreSQL planı) ve şelale / görsel indirme hataları / kararsız durum / zamanlama hataları / ölçüm kipi
   işaretlerini telefon, tablet ve dizüstünde doğrulayan yeni testler.
+- **Haftalık nöbet bildirimi ayarı eşzamanlı çizelge değişikliğini geri almaz.** Yalnız bildirim ayarını kaydetmek
+  (gün, saat, kanal, açık / kapalı) aynı anda başka bir yöneticinin kaydettiği çizelge değişikliğini (üyeler, ilk devir,
+  rotasyon) okunan eski değerlerle ezebiliyordu; yanıt artık ayrık bir kopyadan döner, satıra yalnız hedefli UPDATE
+  dokunur.
+- **Kuyruğa düşen (421) haftalık nöbet e-postası sonuçlanır.** Gönderim satırı e-postanın günlük kaydını
+  (`mail_log_id`) tutar; posta sunucusu yeniden denemesinin sonucu gelince durum "gönderildi" / "kısmen" / "gönderilemedi"
+  olur (iletilemediyse aynı gün içinde yeniden denenir), "e-posta kuyrukta" sonsuza dek kalmaz.
+- **Nöbet çizelgesi ekranı aday haftaları tek sorguda okur** (görünüm başına en çok 4 sorgu yerine 1).
+- **Eksikler penceresi okunamayan kaynakta "tamamlanacak bir şey yok" demez.** Takımın veri kalitesi, bildirim grupları,
+  nöbet çizelgesi gibi bir kaynak okunamadığında ilgili sekme "eksik olmadığı kesin değil" der, toplam "en az" ya da
+  "kesin değil" okunur; kopyalanan metin ve Excel dosyası "Denetlenemeyenler" bölümünü taşır.
+- **Kişisel Panom "Yakında bitecek alan adları" kutusu hafif listeyi okur** (`/api/monitoring/domain?view=expiry`):
+  dakikada bir tam alan adı listesini ve bütün açık alarmları okumaz.
+- **Teknik hata raporu onaylayıcı sayıları takım başına tek tek sorgulanmaz** (kanallar özeti ve ayarlar sayfası iki
+  sorguyla okur).
+- **Alan adı Domain Kaydı sekmesinin canlı sorgu sınırı bandı test kancasını taşır** (`domain-reg-limited`): kanca
+  `AlertBanner`'a verildiği için DOM'a hiç yazılmıyordu; bant artık kancalı bir sarmalayıcı içinde.
+
+### Added
+- Uçtan uca testler: tatil takviminin 10 yıllık kapsamı ve "takvim bitti" uyarısı, okunamayan kaynakla eksikler penceresi,
+  haftalık nöbet bildiriminin son sonuç durumları, alan adı canlı sorgu sınırı (429) ve TV kipinde alan adı kutusu
+  (390 / 768 dokunmatik / 1280).
 
 ## [20.212.2] — 2026-11-16
 

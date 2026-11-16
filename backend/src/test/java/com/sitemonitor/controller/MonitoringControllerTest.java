@@ -7639,6 +7639,41 @@ class MonitoringControllerTest {
         assertCanDiagnose("/api/monitoring/domain");
     }
 
+    @Test
+    @DisplayName("GET /domain?view=expiry (2026-11-17, Panom kutusu): yalnız bitiş alanları; açık alarmlar ve tam son kontrol satırları OKUNMAZ; kapsam aynı")
+    void listDomain_expiryView_isLight() throws Exception {
+        com.sitemonitor.model.DomainMonitor a = new com.sitemonitor.model.DomainMonitor();
+        a.setId(1L); a.setName("Ödeme alan adı"); a.setDomain("odeme.example.test"); a.setTeamId(2L); a.setActive(true);
+        a.setWarningDays(30); a.setCriticalDays(7);
+        com.sitemonitor.model.DomainMonitor b = new com.sitemonitor.model.DomainMonitor();
+        b.setId(2L); b.setName("b"); b.setDomain("b.example.test"); b.setTeamId(3L); b.setActive(true);
+        when(domainMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(a, b));
+        when(domainCheckRepo.findLatestExpiryPerMonitor()).thenReturn(java.util.Collections.singletonList(
+                new Object[] {1L, "2026-12-01T00:00:00Z", 14}));
+        when(certificateService.teamNamesById()).thenReturn(java.util.Map.of(2L, "Ödeme Ekibi"));
+        MockHttpSession scoped = mudurSession();
+        scoped.setAttribute("viewTeamIds", List.of(2L));
+        mvc.perform(get("/api/monitoring/domain").param("view", "expiry").session(scoped))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))                       // takım 3 kapsam dışı
+                .andExpect(jsonPath("$.data[0].id").value(1))
+                .andExpect(jsonPath("$.data[0].domain").value("odeme.example.test"))
+                .andExpect(jsonPath("$.data[0].team_name").value("Ödeme Ekibi"))
+                .andExpect(jsonPath("$.data[0].expiry_date").value("2026-12-01T00:00:00Z"))
+                .andExpect(jsonPath("$.data[0].days_remaining").value(14))
+                .andExpect(jsonPath("$.data[0].warning_days").value(30))
+                .andExpect(jsonPath("$.data[0].critical_days").value(7))
+                .andExpect(jsonPath("$.data[0].active").value(true))
+                .andExpect(jsonPath("$.data[0].registrar").doesNotExist())
+                .andExpect(jsonPath("$.data[0].can_check").doesNotExist());
+        verify(alertEventRepo, never()).findAllOpenOrderBySeverity();
+        verify(domainCheckRepo, never()).findLatestPerMonitor();
+        // son kontrolü olmayan izleme: bitiş bilinmiyor (null — asla 0 değil)
+        mvc.perform(get("/api/monitoring/domain").param("view", "expiry").session(session("ADMIN")))
+                .andExpect(jsonPath("$.data[1].expiry_date").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data[1].days_remaining").value(org.hamcrest.Matchers.nullValue()));
+    }
+
     // ── Sayfa Bütünlüğü / Sayfa Hızı liste satırı can_diagnose (2026-10-05) ─────────────────────
 
     @Test

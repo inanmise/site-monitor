@@ -196,7 +196,6 @@ class OnCallWeeklyNoticeSettingsTest {
         last.setClaimedAt("2026-11-09T05:30:05");
         last.setFinishedAt("2026-11-09T05:30:07");
         when(notices.findTopByTeamIdOrderByWeekKeyDescIdDesc(5L)).thenReturn(Optional.of(last));
-        when(notices.findByTeamIdAndWeekKey(eq(5L), anyString())).thenReturn(Optional.empty());
         last.setAttempts(1);
         last.setPushStatus("delivered");
         last.setSlotAt("2026-11-09T05:30:00");
@@ -227,8 +226,7 @@ class OnCallWeeklyNoticeSettingsTest {
         failed.setClaimedAt("2026-11-16T05:30:05");
         failed.setFinishedAt("2026-11-16T05:30:09");
         failed.setMailStatus("FAILED: bağlantı reddedildi");
-        when(notices.findByTeamIdAndWeekKey(eq(5L), anyString())).thenReturn(Optional.empty());
-        when(notices.findByTeamIdAndWeekKey(5L, "2026-11-16")).thenReturn(Optional.of(failed));
+        when(notices.findByTeamIdAndWeekKeyIn(eq(5L), any())).thenReturn(List.of(failed));
         when(notices.findTopByTeamIdOrderByWeekKeyDescIdDesc(5L)).thenReturn(Optional.of(failed));
         Instant mon1000 = Instant.parse("2026-11-16T07:00:00Z");
         Map<String, Object> v = svc.view(5L, mon1000);
@@ -248,6 +246,24 @@ class OnCallWeeklyNoticeSettingsTest {
         failed.setStatus("SENDING");
         failed.setFinishedAt(null);
         assertThat((Map<String, Object>) svc.view(5L, mon1000).get("weekly_notice_last")).containsEntry("stale", true);
+    }
+
+    @Test
+    @DisplayName("sıradaki gönderim: aday haftaların satırları TEK sorguda okunur (hafta başına sorgu yok); bildirim kapalıyken hiç okunmaz")
+    void nextReadsCandidateWeeksInOneQuery() {
+        Instant mon1000 = Instant.parse("2026-11-16T07:00:00Z");
+        row.setWeeklyNoticeEnabled(true);
+        svc.view(5L, mon1000);
+        verify(notices, org.mockito.Mockito.times(1)).findByTeamIdAndWeekKeyIn(5L,
+                List.of("2026-11-09", "2026-11-16", "2026-11-23", "2026-11-30"));
+        verify(notices, never()).findByTeamIdAndWeekKey(any(), any());
+        assertThat(OnCallWeeklyNoticeSlots.nextWeekKeys(mon1000)).containsExactly("2026-11-09", "2026-11-16", "2026-11-23", "2026-11-30");
+        // kapalı bildirim: sıradaki gönderim yok, aday hafta satırları okunmaz
+        org.mockito.Mockito.clearInvocations(notices);
+        row.setWeeklyNoticeEnabled(false);
+        assertThat(svc.view(5L, mon1000).get("weekly_notice_next")).isNull();
+        verify(notices, never()).findByTeamIdAndWeekKeyIn(any(), any());
+        verify(notices, never()).findByTeamIdAndWeekKey(any(), any());
     }
 
     @Test

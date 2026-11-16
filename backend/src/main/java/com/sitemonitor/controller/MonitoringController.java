@@ -10622,8 +10622,10 @@ public class MonitoringController {
     // ── Domain (Alan Adı) Monitors (serbest-form) ─────────────────────────────
 
     @GetMapping("/domain")
-    public ResponseEntity<Map<String, Object>> listDomain(HttpSession session) {
+    public ResponseEntity<Map<String, Object>> listDomain(@RequestParam(value = "view", required = false) String view,
+                                                          HttpSession session) {
         permissionService.require(session, "monitoring.read", "view");
+        if ("expiry".equals(view)) return ok(listDomainExpiry(session));
         Map<Long, DomainCheck> latest = domainCheckRepo.findLatestPerMonitor().stream()
                 .filter(c -> c.getMonitorId() != null)
                 .collect(Collectors.toMap(DomainCheck::getMonitorId, c -> c, (a, b) -> a));
@@ -10637,6 +10639,39 @@ public class MonitoringController {
                 .filter(m -> SessionScope.canViewMonitoring(session, m.getTeamId()))
                 .map(m -> enrichDomain(m, latest.get(m.getId()), teams, alarms.get(m.getDomain()))).toList();
         return ok(withDiagnoseFlag(session, result));
+    }
+
+    /**
+     * Hafif alan adı listesi ({@code ?view=expiry}, 2026-11-17 inceleme): Kişisel Panom "yakında bitecek alan adları" kutusu
+     * dakikada bir okur — tam liste her seferinde BÜTÜN açık alarm varlıklarını ({@code context_json} dahil) ve son kontrollerin
+     * tam satırlarını okuyordu. Bu görünüm yalnız monitör alanları + son kontrolün bitiş tarihi / kalan günü; aynı kapsam
+     * kuralı (görüntülenebilir takımlar). Satır anahtarları tam listedekilerle AYNI ad ve anlamda (eski pod parametreyi yok
+     * sayıp tam listeyi döner — kutu yine çalışır).
+     */
+    private List<Map<String, Object>> listDomainExpiry(HttpSession session) {
+        Map<Long, Object[]> latest = new HashMap<>();
+        for (Object[] r : domainCheckRepo.findLatestExpiryPerMonitor()) {
+            if (r != null && r.length >= 3 && r[0] instanceof Number id) latest.putIfAbsent(id.longValue(), r);
+        }
+        Map<Long, String> teams = teamNameMap();
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (DomainMonitor m : domainMonitorRepo.findAllByOrderByNameAsc()) {
+            if (!SessionScope.canViewMonitoring(session, m.getTeamId())) continue;
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id", m.getId());
+            item.put("name", m.getName());
+            item.put("domain", m.getDomain());
+            item.put("team_id", m.getTeamId());
+            item.put("team_name", m.getTeamId() != null ? teams.get(m.getTeamId()) : null);
+            item.put("active", m.getActive());
+            item.put("warning_days", m.getWarningDays());
+            item.put("critical_days", m.getCriticalDays());
+            Object[] c = latest.get(m.getId());
+            item.put("expiry_date", c == null || c[1] == null ? null : c[1].toString());
+            item.put("days_remaining", c == null || !(c[2] instanceof Number d) ? null : d.intValue());
+            out.add(item);
+        }
+        return out;
     }
 
     @PostMapping("/domain")

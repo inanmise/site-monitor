@@ -67,6 +67,13 @@ public interface NotificationLogRepository extends JpaRepository<NotificationLog
     boolean existsByTriggerAndSubjectAndSentAtGreaterThanEqual(String trigger, String subject, String sentAt);
 
     /**
+     * Tek satırın posta durumu (dar okuma — gövde / alıcı listesi okunmaz). Haftalık nöbet bildiriminin kuyruktaki (421)
+     * e-postası bu satırın yazılan sonucundan uzlaştırılır (2026-11-17).
+     */
+    @Query("SELECT n.emailStatus FROM NotificationLog n WHERE n.id = :id")
+    Optional<String> findEmailStatusById(@Param("id") Long id);
+
+    /**
      * Bulk count: returns [alertEventId, sentCount, failedCount, webhookSentCount] rows.
      * "SENT" is a single canonical string; "FAILED..." may carry a reason suffix.
      * TAKIM bildirimleri sayılır: 7/24 (NOC) satırları ({@code recipientRole = 'NOC'}) alarm listesindeki
