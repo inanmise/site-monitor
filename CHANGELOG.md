@@ -16,6 +16,16 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 ## [Unreleased]
 
 ### Changed
+- **Ön yüz derleme ve test araçları ana sürüm yükseltildi.** Vite 5 → 8 (Rolldown), @vitejs/plugin-react 4 → 6,
+  Vitest 3 → 5, @vitest/coverage-v8 3 → 5, jsdom 29 → 31, @testing-library/jest-dom 6 → 7. Uygulamanın davranışı
+  değişmez. İlk açılış yine tek parça (Rolldown'un bölmesi `$initial` grubuyla birleştirildi; yoksa 135 dosya, 88'i
+  1 KB altı simge önceden yüklenirdi): 3 dosya, 446 KB gzip (önce 461 KB). Vitest 4+ kapsam ölçümünü yalnız testte yüklenen dosyalarla
+  sınırladığı için ölçülen dosya kümesi açıkça sabitlendi (Vitest 3 ile aynı 1 380 dosya) — kapsam kapısı gevşemez.
+  ESLint 10 alınmadı: `eslint-plugin-react` henüz desteklemiyor.
+
+## [20.212.2] — 2026-11-16
+
+### Changed
 - **Bağımlılıklar aynı ana sürüm içinde güncellendi.**
   - Arka uç: BouncyCastle 1.87 (sertifika zinciri, OCSP / CRL), jsoup 1.24.1 (sayfa ve keyword ayrıştırma), dnsjava 3.7.1,
     commonmark 0.32.0 (alarm postasındaki "Ne yapılmalı" notu), JaCoCo 0.8.16.
