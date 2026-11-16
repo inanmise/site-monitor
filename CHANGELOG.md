@@ -18,6 +18,10 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 ## [20.212.2] — 2026-11-16
 
 ### Changed
+- **⚠ Davranış — teknik hata raporu çıktısında kimlik ve üretim satırı yok.** PDF kapağında ve e-posta bandında yalnız
+  rapor başlığı ile takım · kanal · dönem kalır; "Oluşturan", "Son düzenleyen", "Onaylayan", "Onay", "Üretim" ve eski
+  "Hazırlayan" satırları basılmaz. Yönetici alıcısının e-posta dipnotu onaylayan kişinin adını ve tarihini yazmaz, yalnız
+  takımın PO'sunun onayladığını söyler. Bu bilgiler Site Monitor içinde (rapor ekranı, e-posta önizleme penceresi) aynen görünür.
 - **Bağımlılıklar aynı ana sürüm içinde güncellendi.**
   - Arka uç: BouncyCastle 1.87 (sertifika zinciri, OCSP / CRL), jsoup 1.24.1 (sayfa ve keyword ayrıştırma), dnsjava 3.7.1,
     commonmark 0.32.0 (alarm postasındaki "Ne yapılmalı" notu), JaCoCo 0.8.16.
