@@ -15,9 +15,6 @@ import com.sitemonitor.service.techerror.TechErrorTemplate.TableRow;
 import com.sitemonitor.service.techerror.TechErrorValues.Issue;
 
 import java.io.IOException;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -66,7 +63,6 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
     static final float IMAGE_MAX_H = 640f;
     private static final int MAX_PARAGRAPH_LINES = 400;
     private static final float FAIL_BOX_H = 44f;
-    private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm").withZone(ZoneId.of("Europe/Istanbul"));
 
     private final PdfCanvas c = new PdfCanvas();
     private boolean en;
@@ -266,13 +262,10 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
         float textX = MARGIN + 46;
         float textW = CONTENT_W - 46;
         List<String> titleLines = c.wrapCell(in.title(), textW, c.bold, 15f, 2);
-        // Kimlik satırları (2026-10-17, 10. sürüm): oluşturan / son düzenleyen / onay + üretim — band onlara göre uzar
-        // Şablon önizlemesi (R19 inceleme): hazırlayanın yanında "(örnek önizleme)" — kapak tek başına okunsa da örnek olduğu belli
-        String sampleTag = in.sample() ? (en ? " (sample preview)" : " (örnek önizleme)") : "";
-        List<String> metaLines = in.provenance() == null
-                ? List.of((en ? "Prepared by: " : "Hazırlayan: ") + nz(in.preparedBy()) + sampleTag + "  ·  " + generatedLine(in))
-                : withGenerated(com.sitemonitor.service.mail.TechErrorReportMail.provenanceLines(in.provenance(), en), in);
-        float bandH = (titleLines.size() > 1 ? 112 : 94) + (metaLines.size() - 1) * 10f;
+        // Kapak yalnız başlık + takım · kanal · dönem (2026-11-16, kullanıcı isteği: oluşturan / son düzenleyen / onaylayan /
+        // üretim satırları "Site Monitor içinde kalabilir ama çıktıda olmaması lazım" — rapor ekranı ve e-posta önizlemesi
+        // gösterir). Örnek önizleme ilk sayfadaki şeritten, her sayfanın üst bilgisinden ve belge başlığından tanınır.
+        float bandH = titleLines.size() > 1 ? 102 : 84;
         c.rect(0, top - bandH, PAGE.getWidth(), bandH, DARK);
         if (!layoutOnly) c.image(BrandMailAssets.logoBytes("ok"), MARGIN, top - 66, 34, 34);
         float y = top - 40;
@@ -282,11 +275,6 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
         }
         String period = TechErrorTemplate.monthName(in.month(), in.template().lang()) + " " + in.year();
         c.text(c.regular, 9.5f, textX, y - 2, c.clip(join(in.teamName(), in.channelName(), period), textW, c.regular, 9.5f), SUB);
-        float my = y - 16;
-        for (String meta : metaLines) {
-            c.text(c.regular, 7.5f, textX, my, c.clip(meta, textW, c.regular, 7.5f), MUTED);
-            my -= 10;
-        }
         c.y = top - bandH - 22;
     }
 
@@ -314,17 +302,6 @@ public final class TechErrorReportPdfWriter implements AutoCloseable {
             ly -= 9.5f;
         }
         c.y = top - h - 22;
-    }
-
-    private String generatedLine(TechErrorPdfInput in) {
-        return (en ? "Generated: " : "Üretim: ") + STAMP.format(in.generatedAt() == null ? Instant.now() : in.generatedAt())
-                + (en ? " (Turkey time)" : " (Türkiye saati)");
-    }
-
-    private List<String> withGenerated(List<String> lines, TechErrorPdfInput in) {
-        List<String> out = new ArrayList<>(lines);
-        out.add(generatedLine(in));
-        return out;
     }
 
     // ── Bölümler ─────────────────────────────────────────────────────────────────────────────────────

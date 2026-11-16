@@ -1414,7 +1414,8 @@ public class TechErrorReportController {
         m.put("max_mail_mb", p.maxMailMb());
         m.put("html", p.html());
         m.put("text", p.text());
-        // Kimlik (2026-10-17): oluşturan / son düzenleyen / onay — belgenin kendi bilgisi, gövdede de yazar; her okuyan görür
+        // Kimlik (2026-10-17): oluşturan / son düzenleyen / onay — yalnız uygulamada (önizleme penceresi); 2026-11-16'dan beri
+        // e-posta gövdesine ve PDF kapağına yazılmaz (kullanıcı isteği: "Site Monitor içinde kalabilir ama çıktıda olmaması lazım")
         TechErrorPdfInput.Provenance pv = p.provenance();
         if (pv != null) {
             Map<String, Object> who = new LinkedHashMap<>();
