@@ -19,7 +19,7 @@ public final class SchedulerServiceGrowthAccess {
 
     /**
      * Zamanlayıcının GERÇEK büyüme okumasını ({@code pageSpeedGrowthRead}) verilen depoyla koşturur ve sonucu ölçüme uygular
-     * ({@code withGrowth(…, complete)}) — {@code recheckPageSpeed}'in büyüme adımı. Yapıcısız örnek: yalnız depo alanı kurulur.
+     * ({@code withGrowth(…, complete, fullWindow)}) — {@code recheckPageSpeed}'in büyüme adımı. Yapıcısız örnek: yalnız depo alanı kurulur.
      */
     public static PageSpeedCheckerService.Result readAndApply(com.sitemonitor.repository.PageSpeedCheckRepository repo,
                                                              com.sitemonitor.model.PageSpeedMonitor m,
@@ -28,6 +28,7 @@ public final class SchedulerServiceGrowthAccess {
                 org.mockito.Mockito.withSettings().defaultAnswer(org.mockito.Mockito.CALLS_REAL_METHODS));
         org.springframework.test.util.ReflectionTestUtils.setField(s, "pageSpeedCheckRepo", repo);
         SchedulerService.GrowthRead gr = s.pageSpeedGrowthRead(m.getId(), res.extended(), m.getGrowthSince());
-        return PageSpeedCheckerService.withGrowth(res, m, gr == null ? null : gr.samples(), gr != null && gr.complete());
+        return PageSpeedCheckerService.withGrowth(res, m, gr == null ? null : gr.samples(), gr != null && gr.complete(),
+                gr != null && gr.fullWindow());
     }
 }

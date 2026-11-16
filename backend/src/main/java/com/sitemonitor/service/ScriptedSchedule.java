@@ -184,6 +184,22 @@ public final class ScriptedSchedule {
         m.setSkipDatesJson(c.skipDatesJson());
     }
 
+    /**
+     * {@link #apply(DbQuerySchedule.Spec, PlannedSchedule, Instant, Set)} + saklı tanım (inceleme 2026-11-17): gövde saklı
+     * CRON planının AYNISINI söylüyorsa ({@link #samePlan}) saklı ETKİN aralık korunur — kayıt anına göre yeniden hesaplanan
+     * ortanca (aylık cron'da 30 ↔ 31 gün) değişiklik geçmişine sahte bir "aralık değişti" satırı yazmasın, plan da
+     * sıfırlanmasın. Başka her durumda tek parametreli {@code apply} ile aynı.
+     */
+    public static void apply(DbQuerySchedule.Spec spec, PlannedSchedule m, Instant now, Set<LocalDate> holidays,
+                             PlannedSchedule stored) {
+        Integer keep = stored != null && hasPlan(stored)
+                && DbQuerySchedule.MODE_CRON.equalsIgnoreCase(String.valueOf(stored.getScheduleMode()))
+                && DbQuerySchedule.MODE_CRON.equalsIgnoreCase(String.valueOf(spec == null ? null : spec.mode()))
+                && samePlan(spec, specOf(stored)) ? stored.getIntervalSeconds() : null;
+        apply(spec, m, now, holidays);
+        if (keep != null && m != null) m.setIntervalSeconds(keep);
+    }
+
     // ── Doğrulama ────────────────────────────────────────────────────────────
 
     /** Alan hatası: {@code field} (schedule_mode | interval_seconds | cron_expression | windows | blackouts | skip_dates | schedule), dbquery kodu, sentetik metni. */
@@ -391,11 +407,18 @@ public final class ScriptedSchedule {
 
     private static <T> List<T> listOrEmpty(List<T> l) { return l == null ? List.of() : l; }
 
-    /** İki izlemenin zamanlama alanları aynı mı (aralık dahil; plan sıfırlama kararı). */
+    /**
+     * İki izlemenin zamanlama alanları aynı mı (plan sıfırlama kararı). Aralık kipinde aralık da karşılaştırılır; iki taraf da
+     * CRON ise aralık KARŞILAŞTIRILMAZ (inceleme 2026-11-17): CRON'da saklı aralık ETKİN aralıktır (sonraki tetiklerin
+     * ortancası, kayıt anına göre yeniden hesaplanır) — aylık bir cron'da 30 ↔ 31 gün oynar ve aynı plan "değişti" sayılıp
+     * gereksiz yere sıfırlanıyordu ({@link #samePlan} ile aynı kural).
+     */
     public static boolean sameSchedule(PlannedSchedule a, PlannedSchedule b) {
         if (a == null || b == null) return a == b;
+        boolean bothCron = DbQuerySchedule.MODE_CRON.equalsIgnoreCase(String.valueOf(a.getScheduleMode()))
+                && DbQuerySchedule.MODE_CRON.equalsIgnoreCase(String.valueOf(b.getScheduleMode()));
         return Objects.equals(a.getScheduleMode(), b.getScheduleMode())
-                && Objects.equals(a.getIntervalSeconds(), b.getIntervalSeconds())
+                && (bothCron || Objects.equals(a.getIntervalSeconds(), b.getIntervalSeconds()))
                 && Objects.equals(a.getCronExpression(), b.getCronExpression())
                 && Objects.equals(a.getWindowsJson(), b.getWindowsJson())
                 && Objects.equals(a.getBlackoutJson(), b.getBlackoutJson())

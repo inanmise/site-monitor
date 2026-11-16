@@ -332,6 +332,28 @@ class MonitoringControllerPageSpeedScheduleTest {
         assertThat(bad).contains("DBQUERY_SCHEDULE_NEVER_RUNS");
     }
 
+    @Test
+    @DisplayName("İnceleme 2026-11-17: aynı aylık CRON planıyla kayıt (ad değişimi) → saklı ETKİN aralık korunur (30 ↔ 31 gün "
+            + "oynamaz), plan sıfırlanmaz, kanca çağrılmaz")
+    void update_sameCronPlan_keepsEffectiveIntervalAndPlan() throws Exception {
+        var m = live(45L);
+        m.setScheduleMode("CRON");
+        m.setCronExpression("0 9 1 * *");
+        m.setIntervalSeconds(2_592_000);   // önceki kayıt anının ortancası (30 gün); bugün yeniden hesaplanırsa 31 gün çıkar
+        m.setNextRunAt("2026-12-01T06:00:00");
+        when(pageSpeedMonitorRepo.findById(45L)).thenReturn(Optional.of(m));
+        stubCreateSave(new java.util.ArrayList<>());
+        String body = update(45L, "{\"name\":\"yeni ad\",\"intervalSeconds\":2592000,\"schedule_mode\":\"CRON\","
+                + "\"cron_expression\":\"0 9 1 * *\",\"windows\":[],\"blackouts\":[],\"skip_holidays\":false,\"skip_dates\":[]}", 200);
+        assertThat(m.getName()).isEqualTo("yeni ad");
+        assertThat(m.getIntervalSeconds()).isEqualTo(2_592_000);
+        verify(schedulerService, never()).pageSpeedScheduleChanged(anyLong());
+        assertThat(body).doesNotContain("\"next_run_at\":null");
+        // Plan GERÇEKTEN değişince (ifade) sıfırlanır
+        update(45L, "{\"schedule_mode\":\"CRON\",\"cron_expression\":\"0 9 2 * *\"}", 200);
+        verify(schedulerService).pageSpeedScheduleChanged(45L);
+    }
+
     private void stubRestoreRow(long id, String snapshot) {
         com.sitemonitor.model.MonitorChangeLog r = new com.sitemonitor.model.MonitorChangeLog();
         r.setTeamId(5L);

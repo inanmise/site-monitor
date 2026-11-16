@@ -261,19 +261,24 @@ export const LARGE_IMAGE_BYTES = 200 * 1024
 export const SLOW_RESOURCE_MS = 1000
 
 /**
- * Hız notu: `{ score, letter, partial, components: [{key, value, score, weight, lost}], recs: [{code, params, urls}] }`.
- * Yük süresi bilinmiyorsa not yok (score null). Ölçüm süre / bayt tavanında kesildiyse (`partial`) not bir ÜST SINIRDIR
- * (gerçek sayfa daha ağır / yavaş olabilir) — ekran "kısmi" der, yeşil göstermez.
+ * Hız notu: `{ score, letter, partial, incomplete, missing, components: [{key, value, score, weight, lost}], recs: [{code, params,
+ * urls}] }`. Yük süresi bilinmiyorsa not yok (score null). Ölçüm süre / bayt tavanında kesildiyse (`partial`) not bir ÜST
+ * SINIRDIR (gerçek sayfa daha ağır / yavaş olabilir) — ekran "kısmi" der, yeşil göstermez. Bir bileşen ölçülemediyse
+ * (`incomplete`, `missing` = anahtarlar; örn. TTFB faz probu ölçemedi) not yalnız ölçülenlerden hesaplanır — ekran yeşil
+ * göstermez, "her şey yolunda" demez.
  */
 export function gradeSnapshot(data) {
   const d = isObj(data) ? data : {}
   const c = isObj(d.check) ? d.check : {}
   const res = (Array.isArray(d.resources) ? d.resources : []).filter(isObj)
   const hasRes = res.length > 0
+  // Alt kaynağı olmayan sayfa (istek sayısı = 1, yalnız HTML): görsel / JS baytı GERÇEKTEN 0 — bilinmiyor değil
+  const htmlOnly = !hasRes && num(c.request_count) === 1
   const tt = typeTotals(d)
   const values = {
     load: num(c.response_ms), ttfb: num(c.ttfb_ms), weight: num(c.total_bytes), requests: num(c.request_count),
-    images: hasRes ? tt.img.bytes : null, js: hasRes ? tt.js.bytes : null, unloaded: num(c.failed_count),
+    images: hasRes ? tt.img.bytes : htmlOnly ? 0 : null, js: hasRes ? tt.js.bytes : htmlOnly ? 0 : null,
+    unloaded: num(c.failed_count),
   }
   const comps = GRADE_COMPONENTS.map((g) => {
     const v = values[g.key]
@@ -284,6 +289,10 @@ export function gradeSnapshot(data) {
   const wsum = known.reduce((n, x) => n + x.weight, 0)
   const score = values.load === null || wsum === 0 ? null : Math.round(known.reduce((n, x) => n + x.score * x.weight, 0) / wsum)
   const partial = isLowerBound(d)
+  // Ölçülemeyen bileşen (inceleme 2026-11-17 — örn. faz probu TTFB'yi ölçemedi): not yalnız ölçülenlerden hesaplanır; eksik
+  // bileşen kötü olabilir, bu yüzden not EKSİKTİR — ekran yeşil göstermez, "her şey yolunda" demez (bilinmeyen ≠ iyi)
+  const missing = score === null ? [] : comps.filter((x) => x.score === null).map((x) => x.key)
+  const incomplete = missing.length > 0
   const recs = []
   const failed = values.unloaded ?? res.filter((r) => r.failed === true).length
   if (failed > 0) recs.push({ code: 'FAILED_RESOURCES', params: [failed], urls: res.filter((r) => r.failed === true).slice(0, 5).map((r) => r.url) })
@@ -304,9 +313,9 @@ export function gradeSnapshot(data) {
   if (values.requests !== null && values.requests > 80) recs.push({ code: 'TOO_MANY_REQUESTS', params: [values.requests], urls: [] })
   const slow = res.filter((r) => (num(r.duration_ms) ?? 0) >= SLOW_RESOURCE_MS).sort((x, y) => (num(y.duration_ms) ?? 0) - (num(x.duration_ms) ?? 0))
   if (slow.length) recs.push({ code: 'SLOW_RESOURCES', params: [slow.length], urls: slow.slice(0, 5).map((r) => r.url) })
-  // "Her şey yolunda" yalnız ölçüm tamken ve kaynaklar okunduysa (bilinmeyen ≠ temiz)
-  if (!recs.length && score !== null && !partial && hasRes) recs.push({ code: 'ALL_GOOD', params: [], urls: [] })
-  return { score, letter: gradeLetterOf(score), partial, components: comps, recs }
+  // "Her şey yolunda" yalnız ölçüm tamken ve HER bileşen ölçüldüyse (kaynaklar okundu ya da sayfa yalnız HTML; bilinmeyen ≠ temiz)
+  if (!recs.length && score !== null && !partial && !incomplete && (hasRes || htmlOnly)) recs.push({ code: 'ALL_GOOD', params: [], urls: [] })
+  return { score, letter: gradeLetterOf(score), partial, incomplete, missing, components: comps, recs }
 }
 
 // ── Görsel aracı köprüsü (madde 22) ─────────────────────────────────────────────────────────────────────────────────

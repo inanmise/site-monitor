@@ -198,19 +198,24 @@ describe('PageSpeedDeepTab', () => {
   })
 
   it('geç gelen eski yanıt atılır (seçici hızlı değişince)', async () => {
-    api.monitoring.getPageSpeedResources.mockResolvedValue({ success: true, data: { items: [], breaches: [{ check_id: 33, checked_at: 'b' }] } })
+    // İhlal anları şelale yanıtında (inceleme 2026-11-17). Seçilen ihlal anı YAVAŞ; kullanıcı hemen "son ölçüm"e döner —
+    // geç gelen ihlal yanıtı son ölçümün notunu ezmemeli.
+    const breaches = [{ check_id: 33, checked_at: 'b' }]
     let resolveSlow
     api.monitoring.getPageSpeedWaterfall.mockImplementation((id, { checkId } = {}) => (checkId == null
-      ? new Promise((r) => { resolveSlow = () => r(snapshot(41)) })
-      : Promise.resolve(snapshot(33, { response_ms: 4200 }))))
+      ? Promise.resolve({ ...snapshot(41), data: { ...snapshot(41).data, breaches } })
+      : new Promise((r) => { resolveSlow = () => r({ ...snapshot(33, { response_ms: 4200 }), data: { ...snapshot(33, { response_ms: 4200 }).data, breaches } }) })))
     render(<PageSpeedDeepTab monitor={monitor} />)
     const sel = await el('[data-slot="pspd-deep-snapshot"]')
+    await waitFor(() => expect(document.querySelector('[data-slot="pspd-grade"]')?.getAttribute('data-letter')).toBe('A'))
     fireEvent.change(sel, { target: { value: '33' } })
-    await waitFor(() => expect(document.querySelector('[data-slot="pspd-grade"]')).toBeTruthy())
-    const letter = document.querySelector('[data-slot="pspd-grade"]').getAttribute('data-letter')
+    await waitFor(() => expect(resolveSlow).toBeTypeOf('function'))
+    fireEvent.change(sel, { target: { value: '' } })
+    await waitFor(() => expect(document.querySelector('[data-slot="pspd-grade"]')?.getAttribute('data-letter')).toBe('A'))
     resolveSlow()
     await new Promise((r) => setTimeout(r, 20))
-    expect(document.querySelector('[data-slot="pspd-grade"]').getAttribute('data-letter')).toBe(letter)
+    expect(document.querySelector('[data-slot="pspd-grade"]').getAttribute('data-letter')).toBe('A')
+    expect(document.querySelector('[data-slot="pspd-wf-row"][data-type="html"]')).toBeTruthy()
   })
 
   it('"Şimdi kontrol et" yetkisi yoksa görsel aracı indirme yapmaz (menü "yetki yok" der)', async () => {

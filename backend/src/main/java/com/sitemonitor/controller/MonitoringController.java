@@ -5859,7 +5859,7 @@ public class MonitoringController {
             closeAlertsOnPause(m.getActive(), body.get("active"), m.getUrl(), Set.of(EscalationService.TYPE_PAGESPEED_DOWN, EscalationService.TYPE_PAGESPEED_SLOW), ownerCtx(m.getId(), m.getTeamId(), null));
             if (body.get("active") instanceof Boolean b) m.setActive(b);
             applyPageSpeedFields(m, body, session);
-            if (psSched != null) applyPageSpeedSchedule(psSched, m);   // madde 14
+            if (psSched != null) applyPageSpeedSchedule(psSched, m, psBefore);   // madde 14 (aynı CRON planı: etkin aralık korunur)
             m.setUpdatedAt(ISO.format(Instant.now()));
             // Referans sıfırlama KAYITTAN ÖNCE (ayrı, hedefli yazım): yazım düşerse kayıt da yapılmaz (500, tutarlı); kayıt düşerse
             // gereksiz bir sıfırlama kalır (temkinli taraf) — tersi "kaydedildi ama eski referansla sahte büyüme alarmı" olurdu
@@ -6121,8 +6121,7 @@ public class MonitoringController {
         out.put("size", pageSize);
         out.put("facets", resourceFacets(checkId != null ? pageSpeedResourceRepo.checkFacets(id, checkId)
                 : pageSpeedResourceRepo.latestFacets(id)));
-        out.put("breaches", pageSpeedResourceRepo.breachSnapshots(id, 20).stream()
-                .map(a -> Map.of("check_id", a[0], "checked_at", a[1])).toList());
+        out.put("breaches", pageSpeedBreachList(id));
         return ok(out);
     }
 
@@ -6150,6 +6149,7 @@ public class MonitoringController {
             out.put("total", 0);
             out.put("truncated", false);
             out.put("has_start", false);
+            out.put("breaches", pageSpeedBreachList(id));
             return ok(out);
         }
         List<com.sitemonitor.model.PageSpeedResource> rows =
@@ -6187,7 +6187,16 @@ public class MonitoringController {
         out.put("total", pageSpeedResourceRepo.countByMonitorIdAndCheckId(id, target));
         out.put("truncated", truncated);
         out.put("has_start", rows.stream().anyMatch(r -> r.getStartMs() != null));
+        // İhlal anları (seçici) — şelale sekmesi bunun için ağır kaynak listesi ucunu (sayfa + iki sayım + süzgeç sayaçları)
+        // ayrıca çağırmasın: tek sınırlı sorgu (inceleme 2026-11-17). Eski pod alanı göndermez → istemci eski uca düşer.
+        out.put("breaches", pageSpeedBreachList(id));
         return ok(out);
+    }
+
+    /** İzlemenin donmuş ihlal anları (en yeniden eskiye, en çok 20): {@code [{check_id, checked_at}]}. */
+    private List<Map<String, Object>> pageSpeedBreachList(Long id) {
+        return pageSpeedResourceRepo.breachSnapshots(id, 20).stream()
+                .map(a -> Map.<String, Object>of("check_id", a[0], "checked_at", a[1])).toList();
     }
 
     /** Şelalede dönen en çok kaynak (ölçümün kaynak tavanı ayarı 2000 varsayılan; tarayıcı çizimi bu sayıda akıcı kalır). */
@@ -9214,7 +9223,7 @@ public class MonitoringController {
             String oldScript = m.getScript();
             String oldEnv = m.getEnvJson();
             applyScriptedFields(m, body, m.getEnvJson());
-            if (k6Sched != null) com.sitemonitor.service.ScriptedSchedule.apply(k6Sched, m, Instant.now(), scriptedHolidays());   // k6r D2
+            if (k6Sched != null) com.sitemonitor.service.ScriptedSchedule.apply(k6Sched, m, Instant.now(), scriptedHolidays(), schedBefore);   // k6r D2 (aynı CRON planı: etkin aralık korunur)
             m.setUpdatedAt(ISO.format(Instant.now()));
             monitorHistory.stampUpdated(m, session);
             com.sitemonitor.model.ScriptedMonitor saved = scriptedMonitorRepo.save(m);
@@ -10125,6 +10134,12 @@ public class MonitoringController {
      * ETKİN aralık (CRON'da sonraki tetiklerin ortancası).
      */
     private void applyPageSpeedSchedule(com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec, com.sitemonitor.model.PageSpeedMonitor m) {
+        applyPageSpeedSchedule(spec, m, null);
+    }
+
+    /** {@code stored}: güncellemede saklı tanım — aynı CRON planında saklı etkin aralık korunur (inceleme 2026-11-17). */
+    private void applyPageSpeedSchedule(com.sitemonitor.service.dbquery.DbQuerySchedule.Spec spec, com.sitemonitor.model.PageSpeedMonitor m,
+                                        com.sitemonitor.model.PageSpeedMonitor stored) {
         if (spec == null || m == null) return;
         if (!com.sitemonitor.service.dbquery.DbQuerySchedule.hasPlan(spec)) {
             m.setScheduleMode(null);
@@ -10135,7 +10150,7 @@ public class MonitoringController {
             m.setSkipDatesJson(null);
             return;
         }
-        com.sitemonitor.service.ScriptedSchedule.apply(spec, m, Instant.now(), scriptedHolidays());
+        com.sitemonitor.service.ScriptedSchedule.apply(spec, m, Instant.now(), scriptedHolidays(), stored);
         // Etkin aralık türün tabanının altına inemez (CRON doğrulaması zaten en az 5 dk ister — savunma)
         if (m.getIntervalSeconds() != null)
             m.setIntervalSeconds(com.sitemonitor.service.page.PageSpeedRules.clampInterval(m.getIntervalSeconds()));

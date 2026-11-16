@@ -194,8 +194,20 @@ public class PageSpeedCheckerService {
      * takılmadı → örnekler referans penceresinin tamamı; bant kontrollü uyumu buna bakar — {@link PageSpeedRules#bandVerdict}).
      */
     public static Result withGrowth(Result res, PageSpeedMonitor m, List<PageSpeedRules.GrowthSample> samples, boolean complete) {
+        return withGrowth(res, m, samples, complete, false);
+    }
+
+    /**
+     * {@link #withGrowth(Result, PageSpeedMonitor, List, boolean)} + pencerenin TAM 7 günü kapsayıp kapsamadığı
+     * ({@code fullWindow}, inceleme 2026-11-17): tam pencerede yine de yetersiz örnek varsa büyüme eşikleri bu turda
+     * KARŞILAŞTIRILAMAZ ({@link PageSpeedRules.Growth#notComparable}) — kararsız sayılmaz, açık alarmı sonsuza dek tutmaz.
+     * Okunamayan geçmiş ({@code samples} null) her zaman BİLİNMİYOR'dur (geçici).
+     */
+    public static Result withGrowth(Result res, PageSpeedMonitor m, List<PageSpeedRules.GrowthSample> samples, boolean complete,
+                                    boolean fullWindow) {
         if (res == null || m == null || !res.reachable() || !growthConfigured(m)) return res;
-        PageSpeedRules.Growth g = samples == null ? PageSpeedRules.Growth.NONE : PageSpeedRules.growthOf(samples);
+        PageSpeedRules.Growth g = samples == null ? PageSpeedRules.Growth.NONE
+                : PageSpeedRules.growthOf(samples).withFullWindow(fullWindow);
         if (Boolean.TRUE.equals(m.getGrowthBytesBand()) && samples != null)
             g = g.withBand(PageSpeedRules.bandVerdict(res.totalBytes(), samples, complete));
         Result withRef = res.decided(res.status(), res.breached(), res.undecided(), g);

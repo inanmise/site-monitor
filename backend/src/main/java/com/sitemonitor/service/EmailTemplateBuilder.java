@@ -1744,7 +1744,25 @@ public class EmailTemplateBuilder {
         }
         if (("GROWSIZE".equals(r.key()) || "GROWREQ".equals(r.key())) && !r.breached() && psParts(r.threshold())[1].isEmpty())
             return "Karşılaştırılamadı (önceki haftada yeterli tam ölçüm yok)";
+        if (psUndecided(r)) return "Karar verilemedi (kısmi ölçüm — değer alt sınır)";
         return r.breached() ? ("MINSIZE".equals(r.key()) ? "Beklenenden küçük" : "Aşıldı") : "Eşik içinde";
+    }
+
+    /**
+     * Satır KARARSIZ mı (inceleme 2026-11-17): değer ALT SINIR (kısmi ölçüm) ve eşik aşılmadı — gerçek değer daha büyük olabilir,
+     * "eşik içinde" KANITLANMADI. İstisna: asgari boyutta alt sınır eşiğin ÜSTÜNDEYSE gerçek değer de üstündedir (kanıtlı geçti).
+     * Kural {@code PageSpeedRules.undecided} ile aynı (posta kararı yeniden hesaplamaz, satır bayraklarını okur).
+     */
+    static boolean psUndecided(PsRow r) {
+        if (r == null || !r.lowerBound() || r.breached()) return false;
+        if ("MINSIZE".equals(r.key())) {
+            try {
+                return Long.parseLong(r.measured().trim()) < Long.parseLong(r.threshold().trim());
+            } catch (RuntimeException e) {
+                return true;   // okunamayan sayı kanıt değildir
+            }
+        }
+        return true;
     }
 
     private static String psLine(PsRow r) {
@@ -1832,7 +1850,8 @@ public class EmailTemplateBuilder {
             List<List<MailKit.Cell>> rows = new ArrayList<>();
             for (PsRow r : th) {
                 boolean unmeasured = r.measured() == null || r.measured().isBlank();
-                String color = r.breached() ? Tone.WARNING.text : unmeasured ? MailTokens.MUTED : MailTokens.SUCCESS;
+                // Kararsız (alt sınır, eşik aşılmadı) satır YEŞİL değildir — "eşik içinde" kanıtlanmadı (inceleme 2026-11-17)
+                String color = r.breached() ? Tone.WARNING.text : unmeasured || psUndecided(r) ? MailTokens.MUTED : MailTokens.SUCCESS;
                 rows.add(List.of(MailKit.Cell.of(psLabel(r.key())), MailKit.Cell.of(psThresholdText(r)),
                         MailKit.Cell.of(psMeasuredText(r), r.breached() ? color : null, r.breached()),
                         MailKit.Cell.of(psStateText(r), color, r.breached())));

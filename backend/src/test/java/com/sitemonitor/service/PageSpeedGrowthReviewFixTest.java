@@ -65,7 +65,7 @@ class PageSpeedGrowthReviewFixTest {
             froms.add(i.getArgument(1));
             int limit = i.getArgument(3);
             List<Object[]> rows = new ArrayList<>();
-            for (int k = 0; k < (froms.size() == 1 ? 4 : limit); k++)
+            for (int k = 0; k < (froms.size() == 2 ? limit : 4); k++)
                 rows.add(new Object[]{100_000L, 10, null, true, false, false, null, null, null, null});
             return rows;
         });
@@ -79,6 +79,12 @@ class PageSpeedGrowthReviewFixTest {
         assertThat(froms.get(1)).isNotEqualTo(since);
         assertThat(full.samples()).hasSize(com.sitemonitor.service.page.PageSpeedRules.GROWTH_READ_LIMIT);
         assertThat(full.complete()).isFalse();   // sınıra takıldı: daha eski örnekler okunmadı
+        // Tam pencere (inceleme 2026-11-17): yalnız okuma TAMAMLANDI ve baş growth_since ile KISALMADI ise
+        assertThat(few.fullWindow()).as("growth_since penceryi kısalttı").isFalse();
+        assertThat(full.fullWindow()).as("okuma kesik").isFalse();
+        SchedulerService.GrowthRead old = h.scheduler.pageSpeedGrowthRead(1L, false, "2020-01-01T00:00:00");
+        assertThat(old.complete()).isTrue();
+        assertThat(old.fullWindow()).as("eski growth_since 7 günü kısaltmaz").isTrue();
 
         when(h.pageSpeedCheckRepo.growthWindow(eq(1L), anyString(), anyString(), anyInt()))
                 .thenThrow(new org.springframework.dao.QueryTimeoutException("yavaş"));
