@@ -113,8 +113,8 @@ class TechErrorReportSenderTest {
         assertThat(p.html()).doesNotContain("cid:");                 // marka logosu da data: URI (duman testi: iframe'de kırık görsel)
         assertThat(TechErrorReportSender.inlineBrandLogo("<img src=\"cid:brand-logo\" alt=\"x\">")).startsWith("<img src=\"data:image/png;base64,").endsWith("\" alt=\"x\">");
         assertThat(TechErrorReportSender.inlineBrandLogo("no logo")).isEqualTo("no logo");
-        assertThat(p.provenance()).isNull();                         // pdfInput sahte: kimlik yok → eski "Hazırlayan" satırı
-        assertThat(p.html()).contains("Hazırlayan: Ayşe");
+        assertThat(p.provenance()).isNull();                         // pdfInput sahte: kimlik yok
+        assertThat(p.html()).doesNotContain("Hazırlayan:").doesNotContain("Ayşe");   // gövdede kimlik / hazırlayan yok (2026-11-16)
         assertThat(p.pdfBytes()).isEqualTo(1000);
         assertThat(p.maxMailMb()).isEqualTo(sender.maxMailMb);
         assertThat(p.html()).contains("takımının adresi olduğu");  // TEAM dipnotu
