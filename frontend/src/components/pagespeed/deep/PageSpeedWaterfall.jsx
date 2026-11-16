@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo, useCallback, useMemo, useState } from 'react'
 import { ChartGantt, ChevronDown } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import { formatBytes } from '../../../utils/formatBytes.js'
@@ -31,6 +31,13 @@ const ms = (v) => `${Math.round(v)} ms`
 function PageSpeedWaterfall({ wf, data }) {
   const t = useT()
   const [openKey, setOpenKey] = useState(null)
+  // Satır aç / kapa: TEK kararlı geri çağırma + not edilmiş satırlar (inceleme 2026-11-17) — 500 satırlık şelalede bir satıra
+  // basmak yalnız o satırı (ve kapanan önceki satırı) yeniden çizer, hepsini değil
+  const toggle = useCallback((key) => setOpenKey((k) => (k === key ? null : key)), [])
+  const byUrl = useMemo(() => {
+    const resources = Array.isArray(data?.resources) ? data.resources : []
+    return new Map(resources.filter((r) => r && typeof r.url === 'string').map((r) => [r.url, r]))
+  }, [data])
   if (!wf) return null
   if (wf.reason === 'no_start') {
     return (
@@ -40,8 +47,6 @@ function PageSpeedWaterfall({ wf, data }) {
     )
   }
   const total = wf.totalMs
-  const resources = Array.isArray(data?.resources) ? data.resources : []
-  const byUrl = new Map(resources.filter((r) => r && typeof r.url === 'string').map((r) => [r.url, r]))
   return (
     <section data-slot="pspd-wf" className="@container flex min-w-0 flex-col gap-2">
       <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-2">
@@ -82,8 +87,7 @@ function PageSpeedWaterfall({ wf, data }) {
         <ul className="m-0 flex list-none flex-col p-0" data-slot="pspd-wf-rows">
           {wf.html && <HtmlRow html={wf.html} total={total} t={t} />}
           {wf.rows.map((r) => (
-            <ResourceRow key={r.key} row={r} total={total} t={t} open={openKey === r.key}
-              onToggle={() => setOpenKey((k) => (k === r.key ? null : r.key))} raw={byUrl.get(r.url)} />
+            <ResourceRow key={r.key} row={r} total={total} t={t} open={openKey === r.key} onToggle={toggle} raw={byUrl.get(r.url)} />
           ))}
         </ul>
       </div>
@@ -96,7 +100,7 @@ function PageSpeedWaterfall({ wf, data }) {
   )
 }
 
-function HtmlRow({ html, total, t }) {
+const HtmlRow = memo(function HtmlRow({ html, total, t }) {
   const box = barBox(0, html.end, total)
   return (
     <li data-slot="pspd-wf-row" data-type="html" className="grid min-w-0 grid-cols-1 gap-1 border-b px-2 py-1.5 @xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] @xl:items-center @xl:gap-2">
@@ -108,15 +112,15 @@ function HtmlRow({ html, total, t }) {
       </div>
     </li>
   )
-}
+})
 
-function ResourceRow({ row, total, t, open, onToggle, raw }) {
+const ResourceRow = memo(function ResourceRow({ row, total, t, open, onToggle, raw }) {
   const box = barBox(row.start, row.end, total)
   const img = imageItemOf(raw)
   const label = t('pspd.wf.rowLabel', shortName(row.url), t(`pspd.wf.type.${row.type}`), ms(row.start), ms(row.duration))
   return (
     <li data-slot="pspd-wf-row" data-type={row.type} data-failed={row.failed ? 'true' : undefined} className="border-b last:border-b-0">
-      <Button type="button" variant="ghost" aria-expanded={open} aria-label={label} onClick={onToggle} data-slot="pspd-wf-toggle"
+      <Button type="button" variant="ghost" aria-expanded={open} aria-label={label} onClick={() => onToggle(row.key)} data-slot="pspd-wf-toggle"
         className="grid h-auto w-full min-w-0 grid-cols-1 items-stretch justify-stretch gap-1 rounded-none px-2 py-1.5 text-left font-normal whitespace-normal hover:bg-muted/40 @xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] @xl:items-center @xl:gap-2 pointer-coarse:min-h-10">
         <span className="flex min-w-0 items-center gap-1.5 text-xs">
           <ChevronDown aria-hidden="true" className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} />
@@ -149,6 +153,6 @@ function ResourceRow({ row, total, t, open, onToggle, raw }) {
       )}
     </li>
   )
-}
+})
 
 export default memo(PageSpeedWaterfall)

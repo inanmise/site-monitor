@@ -15,6 +15,26 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Fixed
+- **Sayfa Hızı: büyüme alarmı hiç kapanmayan alarmlara yol açabiliyordu.** Her ölçümü kısmi (alt sınır) olan ya da seyrek
+  ölçülen bir sayfada büyüme referansı hiç dolmuyordu; büyüme eşikleri hep "karar verilemedi" kalıyor ve bu yüzden o sayfanın
+  açık yavaşlık alarmı (başka bir eşikten açılmış olsa bile) kapanamıyordu. Artık tam 7 günlük pencerede 5 kullanılabilir ölçüm
+  yoksa büyüme "karşılaştırılamadı" sayılır (ne aşım ne kararsız); pencere henüz kısa ise eskisi gibi kararsız kalır.
+- **Sayfa Hızı alarm postası:** kısmi ölçümde eşiği aşmamış alt sınır değeri yeşil "Eşik içinde" yazıyordu; artık gri
+  "Karar verilemedi (kısmi ölçüm — değer alt sınır)" yazar.
+- **Sayfa Hızı zamanlaması:** aylık bir cron zamanlaması değişmeden yeniden kaydedilince etkin aralık 30 günden 31 güne
+  kayıyordu (sentetik izlemede de); aynı plan artık kayıtlı aralığı korur ve planı sıfırlamaz.
+- **Şelale ve hız notu sekmesi:** "Şimdi ölç" ya da canlı liste yenilemesi son ölçümü ilerletince sekme yeni ölçümü okumuyor ve
+  notu yanlışlıkla "daha eski ölçüm" diye gösteriyordu; artık son ölçümü izler, okunamazsa gösterilen veri kalır ve uyarı çıkar.
+  İhlal anları şelale yanıtından gelir (ağır kaynak listesi ucu artık çağrılmaz). İlk bayt (TTFB) ölçülemediyse hız notu yeşil
+  gösterilmez, "eksik" notuyla nötr kalır. Şelale satırlarından birini açmak artık bütün satırları yeniden çizmiyor. PDF
+  raporunda son not tablonun üstüne binip sayfa dışına taşabiliyordu; artık sığmazsa yeni sayfaya geçer.
+
+### Added
+- **Sayfa Hızı testleri:** genişletilmiş ölçümün dalgalarının tek süre sınırını paylaştığını, sorguların doğru indeksle
+  koştuğunu (PostgreSQL planı) ve şelale / görsel indirme hataları / kararsız durum / zamanlama hataları / ölçüm kipi
+  işaretlerini telefon, tablet ve dizüstünde doğrulayan yeni testler.
+
 ## [20.212.2] — 2026-11-16
 
 ### Changed
