@@ -64,11 +64,6 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
   İhlal anları şelale yanıtından gelir (ağır kaynak listesi ucu artık çağrılmaz). İlk bayt (TTFB) ölçülemediyse hız notu yeşil
   gösterilmez, "eksik" notuyla nötr kalır. Şelale satırlarından birini açmak artık bütün satırları yeniden çizmiyor. PDF
   raporunda son not tablonun üstüne binip sayfa dışına taşabiliyordu; artık sığmazsa yeni sayfaya geçer.
-
-### Added
-- **Sayfa Hızı testleri:** genişletilmiş ölçümün dalgalarının tek süre sınırını paylaştığını, sorguların doğru indeksle
-  koştuğunu (PostgreSQL planı) ve şelale / görsel indirme hataları / kararsız durum / zamanlama hataları / ölçüm kipi
-  işaretlerini telefon, tablet ve dizüstünde doğrulayan yeni testler.
 - **Haftalık nöbet bildirimi ayarı eşzamanlı çizelge değişikliğini geri almaz.** Yalnız bildirim ayarını kaydetmek
   (gün, saat, kanal, açık / kapalı) aynı anda başka bir yöneticinin kaydettiği çizelge değişikliğini (üyeler, ilk devir,
   rotasyon) okunan eski değerlerle ezebiliyordu; yanıt artık ayrık bir kopyadan döner, satıra yalnız hedefli UPDATE
@@ -88,17 +83,24 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
   `AlertBanner`'a verildiği için DOM'a hiç yazılmıyordu; bant artık kancalı bir sarmalayıcı içinde.
 
 ### Added
+- **Sayfa Hızı testleri:** genişletilmiş ölçümün dalgalarının tek süre sınırını paylaştığını, sorguların doğru indeksle
+  koştuğunu (PostgreSQL planı) ve şelale / görsel indirme hataları / kararsız durum / zamanlama hataları / ölçüm kipi
+  işaretlerini telefon, tablet ve dizüstünde doğrulayan yeni testler.
 - Uçtan uca testler: tatil takviminin 10 yıllık kapsamı ve "takvim bitti" uyarısı, okunamayan kaynakla eksikler penceresi,
   haftalık nöbet bildiriminin son sonuç durumları, alan adı canlı sorgu sınırı (429) ve TV kipinde alan adı kutusu
   (390 / 768 dokunmatik / 1280).
 
-## [20.212.2] — 2026-11-16
+## [20.212.3] — 2026-11-17
 
 ### Changed
 - **⚠ Davranış — teknik hata raporu çıktısında kimlik ve üretim satırı yok.** PDF kapağında ve e-posta bandında yalnız
   rapor başlığı ile takım · kanal · dönem kalır; "Oluşturan", "Son düzenleyen", "Onaylayan", "Onay", "Üretim" ve eski
   "Hazırlayan" satırları basılmaz. Yönetici alıcısının e-posta dipnotu onaylayan kişinin adını ve tarihini yazmaz, yalnız
   takımın PO'sunun onayladığını söyler. Bu bilgiler Site Monitor içinde (rapor ekranı, e-posta önizleme penceresi) aynen görünür.
+
+## [20.212.2] — 2026-11-16
+
+### Changed
 - **Bağımlılıklar aynı ana sürüm içinde güncellendi.**
   - Arka uç: BouncyCastle 1.87 (sertifika zinciri, OCSP / CRL), jsoup 1.24.1 (sayfa ve keyword ayrıştırma), dnsjava 3.7.1,
     commonmark 0.32.0 (alarm postasındaki "Ne yapılmalı" notu), JaCoCo 0.8.16.
