@@ -73,6 +73,9 @@ for (const [abs, entry] of Object.entries(summary)) {
   const idx = norm.lastIndexOf('/frontend/')
   const rel = idx === -1 ? norm : norm.slice(idx + '/frontend/'.length)
   if (!rel.startsWith('src/') || !/\.jsx?$/.test(rel)) continue
+  // Test yardımcıları / fikstürler (src/test/**) uygulama kodu değil — yalnız testlerin kullandığı kadarı çalışır; taban
+  // onlar için anlamsız (2026-11-16, Vitest 5: AST tabanlı ölçüm fikstür dosyasını %33 saydı).
+  if (rel.startsWith('src/test/')) continue
   if (EXCLUDED.has(rel)) continue
   if (!existsSync(abs)) continue
 
