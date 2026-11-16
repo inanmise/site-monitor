@@ -127,12 +127,11 @@ public class K6EngineController {
         engines.put("active", profileDto(p.active(), godebug));
         engines.put("rollback", profileDto(p.rollback(), godebug));
         Map<String, Object> cand = profileDto(p.candidate(), godebug);
-        // default_path (2026-11-16, inceleme): aday yolu KAYITLI bir değer değil, imajın varsayılanı mı — yalnız o zaman
-        // "bulunamadı" nötrdür (yerel geliştirme / adayı taşımayan imaj); elle yazılmış bulunamayan yol tehlike kalır.
-        if (cand != null) {
-            String stored = settings.getOverride(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY);
-            cand.put("default_path", stored == null || stored.isBlank());
-        }
+        // default_path (2026-11-16; 2026-11-17 inceleme): ETKİN aday yolu imajın kendi aday yolu mu (kaynağı ne olursa olsun:
+        // properties varsayılanı, SCRIPTED_K6_BIN_CANDIDATE ortam değişkeni, kayıt) — yalnız o zaman "bulunamadı" nötrdür
+        // (yerel geliştirme / adayı taşımayan imaj). Ortam değişkeniyle ya da elle verilmiş BAŞKA bir yol bulunamıyorsa
+        // tehlike kalır (önceden yalnız "kayıt yok" bakılıyordu: ortamdan gelen yanlış yol nötr görünüyordu).
+        if (cand != null) cand.put("default_path", K6EngineSettings.isImageCandidatePath(p.candidate().bin()));
         engines.put("candidate", cand);
         out.put("engines", engines);
         // En eski desteklenen k6 (2026-10-30): daha eski bir ikili "desteklenmeyen sürüm" olarak görünür, koşmaz.
