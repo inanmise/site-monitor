@@ -200,11 +200,19 @@ class PageSpeedQueryPlanPostgresTest {
         // Yer tutucu sırası: in (?,?) … >= ? … (<= ? or cast(? …) is null …) … LIMIT ?
         List<Object> values = new ArrayList<>(List.of(MONITOR, MONITOR, FROM, TO, TO));
         if (marks(sql) == 6) values.add(3000);
+        // Pencere en çok 7 gün ve "şimdi"de biter: satırlar zaman sırasıyla yazıldığı için (üretimde de böyle) PostgreSQL dar
+        // bir pencerede zaman dizinini seçebilir — alt sınırdan ileri doğru, en çok pencere kadar satır okur, tabloyu taramaz.
+        // Asıl kural (CLAUDE.md "Performance rules"): tablo taranmaz ve sınırsız GERİYE tarama olmaz (duraklatılmış izlemenin
+        // son satırını aramak) — ya bileşik dizin (süzgeçsiz, sıralamasız) ya da checked_at'in ALT sınırını taşıyan dizin koşulu.
         for (String plan : List.of(customPlan(sql, values.toArray()), genericPlan(sql))) {
             assertNoSeqScan("growthWindow", plan, "pagespeed_checks");
-            assertThat(plan).as("bileşik dizin:%n%s", plan).contains("idx_ps_monitor_checked");
-            assertThat(plan).as("monitor_id süzgeçle elenmemeli:%n%s", plan).doesNotContainPattern(MONITOR_FILTER);
-            assertThat(plan).as("sıra dizinden gelir (sıralama yok):%n%s", plan).doesNotContain("Sort Key");
+            if (plan.contains("idx_ps_monitor_checked")) {
+                assertThat(plan).as("monitor_id süzgeçle elenmemeli:%n%s", plan).doesNotContainPattern(MONITOR_FILTER);
+                assertThat(plan).as("sıra dizinden gelir (sıralama yok):%n%s", plan).doesNotContain("Sort Key");
+            } else {
+                assertThat(plan).as("zaman dizini alt sınırla başlamalı (sınırsız geriye tarama yok):%n%s", plan)
+                        .containsPattern("Index Cond:[^\\n]*checked_at[^\\n]*>=");
+            }
         }
         assertThat(repo.growthWindow(MONITOR, FROM, TO, 5)).as("canlı şemada bu izlemenin satırı yok").isEmpty();
     }
