@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { refreezeOrgNoon } from './helpers/orgNoonClock.js'
 import { render, screen, waitFor, fireEvent, within, act } from './test-utils.jsx'
 import ActivityLog, { activityTarget } from '../components/ActivityLog.jsx'
 // Ayrıntı sayfası tembel parça (recharts + alarm bileşenleri) — ilk dönüşümü testin 1 sn'lik waitFor'ına kalmasın
@@ -122,6 +123,10 @@ describe('ActivityLog — özet yarışı (2026-10-09)', () => {
 
 describe('ActivityLog — zaman grupları + katlama (2026-09-12, #22)', () => {
   it('Bugün / Dün başlıkları; aynı hedefin 3 ardışık kontrolü tek satıra katlanır, tıklayınca açılır', async () => {
+    // Saat öğlene sabit (2026-11-16): gruplar İSTANBUL gününe göre; CI (UTC) 21:00–21:04 arasında "şimdi − 1…4 dk" bir önceki
+    // güne düşüyor, üç ardışık kontrol iki gruba bölünüp katlanmıyordu. Yalnız Date sahtelenir, zamanlayıcılar gerçek.
+    refreezeOrgNoon()
+    try {
     const now = Date.now()
     const iso = (ms) => new Date(ms).toISOString().slice(0, 19)
     api.getActivity.mockResolvedValue({
@@ -146,6 +151,7 @@ describe('ActivityLog — zaman grupları + katlama (2026-09-12, #22)', () => {
     fireEvent.click(fold)
     expect(document.querySelector('[data-slot="act-fold"]')).toBeNull()
     expect(document.querySelectorAll('[data-slot="act-item"]').length).toBe(5)
+    } finally { vi.useRealTimers() }
   })
 
   it('2026-09-20 / 2026-11-05: activityTarget haritası — sertifika → dashboard ?domain=alan (envanter kimliği varsa kart penceresi), uptime → uptime, ping → ping ?monitor=id, scripted kimliği taşır, bilinmeyen null', () => {
