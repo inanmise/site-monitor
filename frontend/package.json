@@ -61,7 +61,7 @@
     "globals": "^17.14.0",
     "jsdom": "^29.1.1",
     "vite": "^5.4.21",
-    "vitest": "^3.2.0"
+    "vitest": "^5.1.0"
   },
   "overrides": {
     "wasm-feature-detect": "1.9.0"
