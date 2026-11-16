@@ -1225,7 +1225,8 @@ satırı yalnız bilgidir. Sistem metrikleri örneklemesi kapalıysa (`site.moni
 
 ## k6 sürüm geçişi (0.49 → 2.3)
 
-**Durum (2026-10-30, Yayın B + C tek sürümde):** geçiş tamamlandı. İmajda TEK k6 ikilisi var: `/usr/bin/k6` = **v2.3.0**
+**Durum (2026-10-30, Yayın B + C tek sürümde):** geçiş tamamlandı (2026-11-16'dan beri imajda ayrıca ADAY v2.4.0 var —
+aşağıdaki "k6 sürüm geçişi (2.3 → 2.4, aday ikili)"). Etkin ikili: `/usr/bin/k6` = **v2.3.0**
 (GitHub sürüm tarball'ı, sabit SHA-256). 0.49 imajdan çıktı; uygulama yalnız **v2.0.0 ve üstünü** koşar — daha eski bir
 ikili tanımlanırsa bulunur ama koşmaz ("desteklenmiyor"). Sürüm yalnız `k6 v2.3.0 (…)` biçimindeki satırdan okunur;
 okunamayan bir sürüm (ör. geliştirme derlemesi `k6 (devel) …`) "desteklenmiyor" sayılmaz, ikili koşar. `/opt/k6-next/k6` yalnız
@@ -1318,9 +1319,10 @@ WAF için User-Agent ayarı aynen geçerlidir.
   da bu içe aktarımları reddeder.
 - `exec.test.fail()` çıkış kodu 110 = FAIL (betik bilerek başarısız işaretledi).
 - 2.x REST API'yi açmaz; hiçbir k6 komutuna `--address` verilmez.
-- İkili sürümü ve sağlama toplamları Dockerfile'da (`K6_VERSION`, `K6_SHA256_AMD64|ARM64`); imaj derlemesi iki yolun da
-  (`/usr/bin/k6`, `/opt/k6-next/k6`) `k6 version` çıktısını denetler, imaj açılış testi yoklamanın günlükte göründüğünü ve
-  "desteklenmiyor / bulunamadı" demediğini denetler. CI `backend-k6-contract` işi gerçek ikiliyle sözleşme testlerini koşar.
+- İkili sürümü ve sağlama toplamları Dockerfile'da (`K6_VERSION`, `K6_SHA256_AMD64|ARM64`; aday için `K6_CANDIDATE_*`, aşağıdaki
+  bölüm); imaj derlemesi bütün yolların (`/usr/bin/k6`, `/opt/k6-next/k6`, `/opt/k6-candidate/k6`) `k6 version` çıktısını
+  denetler, imaj açılış testi yoklamaların günlükte göründüğünü ve "desteklenmiyor / bulunamadı" demediğini denetler. CI
+  `backend-k6-contract` işi gerçek ikililerle (etkin + aday) sözleşme testlerini koşar.
 - Etkin ikili 2.0'dan eskiyse senaryo sayfası "k6 sürümü (…) desteklenmiyor" afişi gösterir, kontroller koşmaz (koşum yolu
   da o ikiliyi başlatmaz); k6 motoru satırı "Desteklenmiyor", günlük `[K6] Sentetik izleme YÜRÜTÜLMÜYOR — k6 sürümü …
   desteklenmiyor` der. Çözüm: etkin ikiliyi `k6`'ya (imajdaki 2.3) çekin.
@@ -1329,7 +1331,67 @@ WAF için User-Agent ayarı aynen geçerlidir.
   varsayılanını geri getirirdi).
 - Tarama sayıları: gerileme dışında "koşulamadı", "yeni hata" (gerçek kontrolü yok, adayla düşüyor) ve "değişti" de onay
   penceresinde uyarıdır — "temiz" denmez. Tarama 2 sa 50 dk'yı aşarsa kendisi durur (kilit tavanı 3 sa); kalanları seçerek
-  yeniden tarayın. Aday tanımlı değilse (bu sürümün varsayılanı) tarama başlamaz (`K6_CANDIDATE_NOT_SET`).
+  yeniden tarayın. Aday tanımlı değilse tarama başlamaz (`K6_CANDIDATE_NOT_SET`; 20.211.x'e dek varsayılan buydu —
+  2026-11-16'dan beri varsayılan aday imajdaki `/opt/k6-candidate/k6`, aşağıdaki bölüm).
+
+## k6 sürüm geçişi (2.3 → 2.4, aday ikili)
+
+**Neden:** Trivy, imajdaki `/usr/bin/k6`'da (k6 v2.3.0 — go1.26.8, golang.org/x/net v0.58.0) 6 HIGH bulgu gösteriyor; k6
+v2.4.0 (2026-11-12 yayını; go1.26.11, golang.org/x/net v0.62.0) bunları kapatır. Kullanıcı kararı: motor sayfasındaki aday
+ikili ve gölge taramayla İKİ ADIMDA geçilir. Go hâlâ 1.26.x — GODEBUG `tlsrsakex` / `tls3des` 2.4.0'da da çalışır (Go 1.27
+bunları kaldırdı; Go 1.27 ile derlenmiş bir k6 aday olursa k6 motoru o satırda "kaçışları yok sayar" uyarısı gösterir).
+
+**1. adım — bu sürüm (2026-11-16):** imajda iki ikili:
+- etkin `/usr/bin/k6` = **v2.3.0** (değişmedi; senaryo kontrolleri dağıtımdan sonra da bununla koşar);
+- aday `/opt/k6-candidate/k6` = **v2.4.0** (Dockerfile `K6_CANDIDATE_VERSION` + `K6_CANDIDATE_SHA256_AMD64|ARM64`, aynı
+  `k6-bin` aşamasında aynı kabuk işleviyle indirilir, toplam ve sürüm denetlenir); etkin ikili gibi root sahipli, `0111`.
+- `site.monitor.scripted.k6-bin-candidate` varsayılanı `/opt/k6-candidate/k6` (env `SCRIPTED_K6_BIN_CANDIDATE`). Ekranda bir
+  kez boşaltılıp kaydedilmiş bir ortamda `none` kayıtlıdır ve korunur — orada alana yolu bir kez yazın.
+- Açılış günlüğü: `[K6] ✅ k6 bulundu — sürüm v2.3.0 (k6)` ve `[K6] aday k6 — sürüm v2.4.0 (/opt/k6-candidate/k6)`.
+- Yerel geliştirmede `/opt/k6-candidate/k6` yoktur: aday "Bulunamadı" (nötr ton) görünür, `[K6] aday k6 bulunamadı (…)` INFO
+  satırı yazılır; hiçbir izleme etkilenmez.
+
+**Geçiş (dağıtım bitince, mesai içinde) — Ayarlar → Platform → k6 motoru:**
+1. Motorlar: Etkin v2.3.0 (go1.26.8) "Çalışıyor", Aday v2.4.0 (go1.26.11) "Çalışıyor".
+2. Yan etkili betikleri "Tarama dışı" listesine ekleyin → **Taramayı başlat** → bitmesini bekleyin.
+3. **REGRESSION** ve **NEW_FAIL** satırlarını inceleyin (yukarıdaki "Sonraki k6 yükseltmesi" → 4. madde: TLS, 403 / WAF,
+   modül, geçici). Gerçek ikililerle ölçülen 2.3 → 2.4 farkları (Windows ikilileri, `K6RealContractTest` + doğrudan koşum):
+   - `default()` hiç bitmeyen bir Promise döndürürse 2.4 `level=error msg="did not finish: it is still awaiting an
+     operation that never completed"` basar → kontrol **ERROR** (2.3'te PASS). Tarama bunu REGRESSION gösterir; betiği
+     düzeltin (Promise'i `await` edin ya da döndürmeyin).
+   - Yakalanmamış Promise reddi (`Uncaught (in promise)`) iki sürümde de `level=error` satırıdır → ERROR (2.4 satıra yalnız
+     `hint="unhandled script exception" source=stacktrace` ekler; karar aynı).
+   - Değişmeyenler: `--summary-export` dosyasının alanları ve metrikleri, `--out json` satır türleri, çıkış kodları
+     (0 / 99 eşik / 107 betik hatası — ör. sözdizimi / 110 `exec.test.fail()`), k6 hata kodları (1110 kara liste, 1212 bağlantı reddi,
+     1401 digest), `--blacklist-ip`, User-Agent, sözdizimi hatasının satır:sütunu, tek iterasyon kuralı.
+   - Digest kimlik doğrulamasında sunucu 401'e challenge koymazsa 2.4 tek istek yapar (2.3 ikinci bir istek daha atıyordu);
+     sonuç yine 401 / hata kodu 1401.
+   - 2.4'te `http.query` vardır (2.3'te tanımsız); `browser_data_received` değişikliği tarayıcı modülünü kullanmayan
+     SiteMonitor'ü etkilemez. WeakMap bellek sızıntısı düzeltmesi davranış değiştirmez.
+4. **Adayı etkin yap** (onay penceresi hazırlık özeti "temiz" olmalı) → `k6-bin` = `/opt/k6-candidate/k6`, yedek = eski etkin
+   yol (`k6`); diğer pod'lar 10 sn içinde geçer. Bir senaryoda **Şimdi kontrol et** → yeni satır `k6 v2.4.0`. Geçişten sonra
+   Aday satırı etkinle aynı yolu gösterir ve "Adayı etkin yap" kapalıdır — beklenen (terfi sürümü aday varsayılanını boşaltır).
+5. Sorun → **Yedeğe geri dön** (yeniden dağıtım yok).
+
+**Geri alma (helm):** 20.211.x imajında `/opt/k6-candidate/k6` YOKTUR. Geçiş yapıldıysa (`k6-bin` = `/opt/k6-candidate/k6`)
+**ÖNCE "Yedeğe geri dön", SONRA `helm rollback`.** Doğrulandı (20.211.0 kodu): kayıtlı yol bulunamazsa etkin yoklama
+`[K6] ⚠ k6 bulunamadı (/opt/k6-candidate/k6)` der, senaryo taraması hiç koşmaz (her turda `[K6] Sentetik izleme YÜRÜTÜLMÜYOR —
+k6 bulunamadı …`), kontrol satırı yazılmaz, alarm ne açılır ne kapanır; "Şimdi kontrol et" "k6 bulunamadı" diye atlanır, form
+"Test" / teşhis 400 döner. Unutulduysa 20.211.0'da k6 motoru → "Yedeğe geri dön" yine çalışır (yedek = eski etkin yol, o
+imajda var; bütün pod'lar 20.211.0'a geçtikten sonra). Geçiş yapılmadıysa (`k6-bin` = `k6`) geri alma k6 için güvenlidir.
+
+**2. adım — terfi sürümü (henüz YAPILMADI; yapılacaklar):** Trivy'deki 6 HIGH ancak burada kapanır.
+1. Dockerfile: `K6_VERSION` = 2.4.0 ve `K6_SHA256_AMD64|ARM64` = bugünkü aday değerleri; `K6_CANDIDATE_*` ARG'ları ve ikinci
+   `fetch_k6` çağrısı kalkar (2.3.0 imajdan çıkar). `scripts/fetch-k6-binaries.sh`, CI aday koşusu ve imaj açılış denetimi
+   aday ARG'ı yokken adayı kendiliğinden atlar.
+2. `/opt/k6-candidate/k6` yolu `/usr/bin/k6`'ya **SEMBOLİK BAĞ** olarak KALIR (`/opt/k6-next/k6` ile aynı desen): geçiş yapılan
+   ortamlarda kayıtlı etkin değer bu yoldur. Bağı kaldırma kararı normalleştirme nişanına değil, ayarın KAYITLI DEĞERİNE bakmalı
+   (önce kayıtlı `/opt/k6-candidate/k6` değerini taşıyan bir sürüm).
+3. `site.monitor.scripted.k6-bin-candidate` varsayılanı yeniden boş olur (aday etkinle aynı ikili olurdu).
+4. Yeni, tek seferlik bir ayar normalleştirmesi (`K6SettingsNormalizer` deseni, YENİ nişan anahtarı): yedek ∈ {`k6`,
+   `/usr/bin/k6`, `/opt/k6-next/k6`, `/opt/k6-candidate/k6`} → yok; aday = `/opt/k6-candidate/k6` → yok. **`k6-bin`'e
+   DOKUNULMAZ** — kayıtlı `/opt/k6-candidate/k6` bağ sayesinde 2.4'ü, bu sürüme `helm rollback`'te GERÇEK 2.4'ü gösterir.
+5. Geçiş yapılmamış ortam (`k6-bin` = `k6`) terfi sürümüyle 2.4'e TARAMASIZ geçer — taramayı 1. adım sürümünde koşun.
 
 ## Sentetik İzleme (k6) güvenliği ve koşum verisi
 

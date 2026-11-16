@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { readJavaMain } from './helpers/javaTable.js'
 import {
   DIFFS, ERROR_CLASSES, GODEBUG_KEYS, buildGodebug, changedFields, csvFileName, csvTable, diffCounts, durationParts, engineState,
+  engineTone, godebugIgnored, goVersionOf,
   filterResults, fmtUtc, godebugOn, idsDirty, isDirty, normalizeIds, pickableMonitors, resultClasses, resultTeams, scanProgress,
   scanTargetCount, sortResults, switchReadiness, toForm, utcMs, validateChanges,
 } from '../components/admin/k6engine/k6EngineModel.js'
@@ -119,6 +120,45 @@ describe('motor durumu ve geçiş hazırlığı', () => {
     // 2026-10-30: bulundu ama sürümü desteklenmiyor (en az v2.0.0) — yeşil değil, "bulunamadı" da değil
     expect(engineState({ available: false, unsupported: true, version: 'v0.49.0' })).toBe('unsupported')
     expect(engineState({ available: true, unsupported: true })).toBe('running')
+  })
+
+  it('engineTone (2026-11-16): bulunamayan ADAY yalnız varsayılan yoldaysa (default_path) nötr; elle yazılmış yol, eski sunucu '
+    + 've etkin / yedek bulunamazsa tehlike', () => {
+    expect(engineTone('candidate', 'missing', { default_path: true })).toBe('muted')
+    expect(engineTone('candidate', 'missing', { default_path: false })).toBe('danger')
+    expect(engineTone('candidate', 'missing', {})).toBe('danger')
+    expect(engineTone('candidate', 'missing')).toBe('danger')
+    expect(engineTone('active', 'missing', { default_path: true })).toBe('danger')
+    expect(engineTone('active', 'missing')).toBe('danger')
+    expect(engineTone('rollback', 'missing')).toBe('danger')
+    for (const role of ['active', 'rollback', 'candidate']) {
+      expect(engineTone(role, 'running')).toBe('success')
+      expect(engineTone(role, 'unset')).toBe('muted')
+      expect(engineTone(role, 'unsupported')).toBe('danger')
+    }
+  })
+
+  it('goVersionOf / godebugIgnored: eski sunucu (alan yok) → null / boş; yalnız dolu metinler', () => {
+    expect(goVersionOf({ go_version: ' go1.26.11 ' })).toBe('go1.26.11')
+    expect(goVersionOf({ go_version: '' })).toBeNull()
+    expect(goVersionOf({ go_version: 7 })).toBeNull()
+    expect(goVersionOf({})).toBeNull()
+    expect(goVersionOf(null)).toBeNull()
+    expect(godebugIgnored({ godebug_ignored: ['tlsrsakex', ' tls3des ', '', null, 3] })).toEqual(['tlsrsakex', 'tls3des'])
+    expect(godebugIgnored({ godebug_ignored: 'tlsrsakex' })).toEqual([])
+    expect(godebugIgnored({})).toEqual([])
+    expect(godebugIgnored(null)).toEqual([])
+  })
+
+  it('kaldırılan GODEBUG tablosu (K6EngineSettings.GODEBUG_REMOVED) izinli anahtarların alt kümesi', () => {
+    const src = readJavaMain('service/K6EngineSettings.java')
+    const start = src.indexOf('private static Map<String, GodebugRemoval> removedMap()')
+    expect(start, 'removedMap okunamadı').toBeGreaterThan(0)
+    const body = src.slice(start, src.indexOf('return ', start))
+    const removed = [...body.matchAll(/m\.put\("([a-z0-9]+)"/g)].map((m) => m[1])
+    expect(removed).toEqual(['tlsrsakex', 'tls3des'])
+    const allowed = GODEBUG_KEYS.map((g) => g.key)
+    for (const k of removed) expect(allowed).toContain(k)
   })
 
   const done = (extra = {}) => ({ id: 5, state: 'DONE', scope: 'ALL', total: 40, regressions: 0, candidate_version: 'v2.3.0', ...extra })

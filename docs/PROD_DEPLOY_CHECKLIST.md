@@ -79,6 +79,7 @@ Arayüzden: menüdeki sürüm çipi ya da Sistem Sağlığı → Sürüm & Dağ�
 | < 20.176.0 | Veritabanı sorgu izlemesi kullanılacaksa: pod'lardan hedef veritabanlarına çıkış (egress) kuralı ve hedefte salt okur hesap (ayrıntı RUNBOOK "Veritabanı sorgu izleme") | |
 | < 20.186.3 | [20.185 → 20.208](#20185--20208--bir-kerelik): 15 gereksiz indeksin düşürülmesi + gece `REINDEX CONCURRENTLY` (DBA bildirimi, tablo sahipliği, disk payı) | **ENGEL** |
 | < 20.208.0 | [20.185 → 20.208](#20185--20208--bir-kerelik): kullanıcı duyuruları (anahtar kelime eşleşmesi, POST yönlendirmesi, sayfa hızı SLA'sı, alan adı çözüm postaları) | |
+| ≤ 20.211.x | [k6 sürüm geçişi (2.3 → 2.4, aday ikili)](#k6-sürüm-geçişi-23--24-aday-ikili) — dağıtım çalışan izlemeleri DEĞİŞTİRMEZ (etkin k6 2.3.0 kalır); 2.4.0'a geçiş dağıtımdan sonra elle (tarama + "Adayı etkin yap"). Geçişten sonra 20.211.x'e `helm rollback` gerekirse ÖNCE "Yedeğe geri dön" | |
 
 ### Her dağıtımda — engelleyici ön kontroller
 - [ ] **[ENGEL] Çok pod anahtarları KAPALI** (sürüm değişikliğiyle birlikte açılmaz; açmak ayrı bir karardır):
@@ -1101,6 +1102,49 @@ k6 "desteklenmiyor" olarak koşmaz. Senaryo kontrolleri dağıtımla birlikte 2.
 - [ ] Not: `/opt/k6-next/k6` sembolik bağı, kayıtlı bir `/opt/k6-next/k6` değerini ÖNCE taşıyan bir sürüme dek imajda kalır;
       bağı kaldıran bir sürüm bu kayıtlı değere bakmalıdır (normalleştirme nişanına değil).
 
+## k6 sürüm geçişi (2.3 → 2.4, aday ikili)
+
+Bu sürümden (2026-11-16) beri imajda İKİ k6 var: **etkin** `/usr/bin/k6` = v2.3.0 (değişmedi) ve **aday**
+`/opt/k6-candidate/k6` = v2.4.0. `site.monitor.scripted.k6-bin-candidate` varsayılanı bu yol. Dağıtım senaryo
+kontrollerini DEĞİŞTİRMEZ; 2.4.0'a geçiş aşağıdaki adımlarla, dağıtımdan sonra elle yapılır. Trivy'nin 2.3.0 ikilisinde
+gösterdiği 6 HIGH bulgu (go1.26.8, golang.org/x/net v0.58.0) bu sürümde HÂLÂ listelenir — 2.3.0 imajda kaldıkça kapanmaz;
+2. adımda (terfi sürümü) kapanır. Ayrıntı: RUNBOOK → "k6 sürüm geçişi (2.3 → 2.4, aday ikili)".
+
+### Öncesi
+- [ ] Prod'da k6 motoru → Ayarlar kartında "Aday ikili yolu" BOŞ görünüyorsa veritabanında `none` kayıtlı olabilir
+      (biri boşaltıp kaydetmiş): `SELECT setting_value FROM app_settings WHERE setting_key = 'site.monitor.scripted.k6-bin-candidate';`
+      → `none` ise dağıtımdan sonra alana `/opt/k6-candidate/k6` yazıp kaydedin (varsayılan, kayıtlı değeri ezmez).
+- [ ] `site.monitor.scripted.k6-bin` değerini not edin (`k6` beklenir; `/opt/k6-next/k6` de olur — ikisi de bu imajda 2.3.0).
+
+### Dağıtımdan hemen sonra
+- [ ] Bütün pod'larda `[K6] ✅ k6 bulundu — sürüm v2.3.0 (…)` VE `[K6] aday k6 — sürüm v2.4.0 (/opt/k6-candidate/k6)`;
+      `desteklenmiyor` / `bulunamadı` satırı YOK:
+      `kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep '\[K6\]'`
+- [ ] Ayarlar → Platform → k6 motoru: Etkin = v2.3.0 "Çalışıyor" (Go sürümü: go1.26.8), Aday = v2.4.0 "Çalışıyor"
+      (Go sürümü: go1.26.11); hiçbir motor satırında "kaçışları yok sayar" uyarısı yok; "Adayı etkin yap" AÇIK (dağıtım
+      bitmişse — başka sürüm koşan pod varken kapalıdır).
+
+### Geçiş (dağıtım bittikten sonra, mesai içinde)
+- [ ] k6 motoru → yan etkili betikleri (gerçek işlem yapan, e-posta / SMS tetikleyen) **Tarama dışı** listesine ekleyin → kaydet.
+- [ ] **Uyumluluk taramasını başlat** → bitmesini bekleyin (her etkin senaryo aday ile bir kez koşar; geçmişe satır, alarm,
+      bildirim yazılmaz).
+- [ ] Sonuçlarda **Gerileme (REGRESSION)** ve **Yeni hata (NEW_FAIL)** satırlarını tek tek inceleyin; "Dalgalı" satırları
+      "Yeniden tara" ile doğrulayın. Bilinen 2.4 farkı: `default()` hiç bitmeyen bir Promise döndüren betik 2.4'te
+      `did not finish …` ile ERROR olur (2.3'te PASS) — betiği düzeltin (Promise'i bekleyin ya da döndürmeyin).
+- [ ] Gerileme yoksa (ya da hepsi kabul edildiyse) **Adayı etkin yap** → onay penceresindeki hazırlık özeti "temiz" olmalı.
+      Sonuç: `k6-bin` = `/opt/k6-candidate/k6`, yedek = eski etkin yol (`k6`); diğer pod'lar 10 sn içinde geçer.
+- [ ] Hemen ardından bir senaryo izlemesinde **Şimdi kontrol et** → kontrol geçmişindeki yeni satır `k6 v2.4.0`; ilk saat
+      senaryo alarm sayısı ve "Senaryo yavaş" alarmları önceki günle aynı.
+- [ ] Sorun görürseniz k6 motoru → **Yedeğe geri dön** (yeniden dağıtım yok; etkin yeniden 2.3.0).
+
+### Geri alma
+- [ ] **Geçiş YAPILDIYSA ve 20.211.x'e `helm rollback` gerekiyorsa: ÖNCE k6 motoru → "Yedeğe geri dön", SONRA `helm rollback`.**
+      Doğrulandı: 20.211.0 imajında `/opt/k6-candidate/k6` YOK. Kayıtlı `k6-bin` = `/opt/k6-candidate/k6` ile geri dönülürse
+      etkin ikili "k6 bulunamadı" olur → senaryo taraması hiç koşmaz (her turda `[K6] Sentetik izleme YÜRÜTÜLMÜYOR — k6
+      bulunamadı …` uyarısı), kontrol satırı yazılmaz, alarm açılmaz / kapanmaz; "Şimdi kontrol et" ve form "Test" "k6
+      bulunamadı" der. Unutulduysa 20.211.0'da k6 motoru → "Yedeğe geri dön" yine çalışır (yedek = eski etkin yol, o imajda var).
+- [ ] Geçiş YAPILMADIYSA (`k6-bin` = `k6`) geri alma k6 için güvenlidir; 20.211.0 aday varsayılanını bilmez: aday yolu kayıtlı DEĞİLSE aday "tanımlı değil" görünür; kayıtlıysa (ör. "Öncesi" adımında `none` yerine yol yazıldıysa) "Bulunamadı" görünür — zararsızdır, hiçbir izleme o ikiliyi koşmaz.
+
 ## Geri alma
 
 **Karar ölçütü:** 15 dk içinde readiness yeşil değil **ya da** e-posta / LDAP / `decrypt failed` kanaryası
@@ -1122,9 +1166,12 @@ kırmızı → geri al. Tartışma sonra. Yalnız `helm rollback` (`kubectl roll
       kullanmamalarını duyurun; yeniden ileri gidilene dek yalnız okuma / PDF indirme.
 - [ ] **Alarm akışı açıksa:** hedef < 20.185 → akış yeniden RESOLVED satırı gönderir; < 20.179 → 7/24'e bildirilmeyen açık
       alarmlar yeniden OPEN gelir; < 20.173 → uç yok (404). Merkezi izleme ekibine haber verin.
-- [ ] **k6:** hedef 20.172.x → sorun yok (etkin ayar `/opt/k6-next/k6` ise 2.3 koşar; `k6` ise 20.172.x'te k6 motoru →
-      "Adayı etkin yap"); hedef < 20.172 → ÖNCE `site.monitor.scripted.k6-bin` = `k6`; hedef < 20.178 → dosya okuyan senaryolar
-      yeniden koşar (dosya okuma politikası eski sürümde REPORT) — "k6 sürüm geçişi (0.49 → 2.3)" → "Geri alma".
+- [ ] **k6:** k6 motorunda "Adayı etkin yap" yapıldıysa (`site.monitor.scripted.k6-bin` = `/opt/k6-candidate/k6`) ve
+      hedef ≤ 20.211.x → ÖNCE k6 motoru → **Yedeğe geri dön** (o imajlarda `/opt/k6-candidate/k6` yok; yapılmazsa bütün
+      senaryo kontrolleri "k6 bulunamadı" ile durur — "k6 sürüm geçişi (2.3 → 2.4, aday ikili)" → "Geri alma"). Hedef
+      20.172.x → sorun yok (etkin ayar `/opt/k6-next/k6` ise 2.3 koşar; `k6` ise 20.172.x'te k6 motoru → "Adayı etkin yap");
+      hedef < 20.172 → ÖNCE `site.monitor.scripted.k6-bin` = `k6`; hedef < 20.178 → dosya okuyan senaryolar yeniden koşar
+      (dosya okuma politikası eski sürümde REPORT) — "k6 sürüm geçişi (0.49 → 2.3)" → "Geri alma".
 - [ ] Çok pod anahtarları açıksa (3-3, 3-4, 3-2 okuma) geri almadan ÖNCE kapatın.
 - [ ] Hedef chart'ın Ingress ek açıklamaları geri gelir (2026-11-15 öncesi: 1m / 60 sn, `haproxy.router.openshift.io/timeout`
       yok); elle `oc annotate` ile verilmiş Route zaman aşımı kalır.

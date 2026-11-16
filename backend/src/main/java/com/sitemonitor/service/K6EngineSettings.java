@@ -41,8 +41,9 @@ public final class K6EngineSettings {
 
     /**
      * İzinli GODEBUG anahtarları — yalnız İSTEMCİ tarafında eski TLS / sertifika davranışını geri getirenler. Değer 0 ya da
-     * 1. Kaynak: go.dev/doc/godebug (Go 1.26 — k6 v2.3.0 sürüm tarball'ı go1.26.8 ile derlenmiş, 2026-10-29 ölçüldü).
-     * {@code tlsrsakex} ve {@code tls3des} Go 1.27'de KALDIRILDI: Go 1.27 ile derlenmiş bir k6'da etkisizdir.
+     * 1. Kaynak: go.dev/doc/godebug (Go 1.26 — k6 v2.3.0 sürüm tarball'ı go1.26.8, v2.4.0 go1.26.11 ile derlenmiş).
+     * {@code tlsrsakex} ve {@code tls3des} Go 1.27'de KALDIRILDI: Go 1.27 ile derlenmiş bir k6'da etkisizdir
+     * ({@link #GODEBUG_REMOVED}, {@link #ignoredGodebugKeys}).
      */
     static final Map<String, String> GODEBUG_KEYS = orderedMap(
             "tlsrsakex", "RSA anahtar değişimli şifre takımları (1 = aç)",
@@ -52,6 +53,56 @@ public final class K6EngineSettings {
             "rsa1024min", "1024 bitten kısa RSA anahtarları (0 = kabul et)",
             "tlsmlkem", "ML-KEM anahtar paylaşımı (0 = kapat — büyük ClientHello'yu bozan cihazlar için)",
             "tlssecpmlkem", "SecP256r1/SecP384r1 ML-KEM anahtar paylaşımı (0 = kapat)");
+
+    /**
+     * Bir Go sürümünde KALDIRILAN GODEBUG ayarı (2026-11-16, k6 2.3 → 2.4 geçişi). {@code goMajor.goMinor} ve sonrası ile
+     * derlenmiş bir k6 bu ayarı YOK SAYAR. {@code lostValue}: yalnız bu değer artık uygulanamaz — kaldırılan ayarın diğer
+     * değeri zaten yeni (zorunlu) varsayılandır, onu yazmak bir şey kaybettirmez (ör. {@code tlsrsakex=0}).
+     */
+    public record GodebugRemoval(int goMajor, int goMinor, String lostValue) {}
+
+    /**
+     * Kaldırılan GODEBUG ayarları — TEK YER. Kaynak: go.dev/doc/godebug geçmişi ("Go 1.27 removed the tlsrsakex setting",
+     * "Go 1.27 removed the tls3des setting"). Bugünkü ikililer go1.26.x (k6 v2.3.0 go1.26.8, v2.4.0 go1.26.11): ikisi de
+     * hâlâ geçerli. Go 1.27 ile derlenmiş bir k6 aday olursa motor sayfası o motorda "yok sayılan kaçışlar" uyarısı gösterir.
+     */
+    static final Map<String, GodebugRemoval> GODEBUG_REMOVED = removedMap();
+
+    private static Map<String, GodebugRemoval> removedMap() {
+        Map<String, GodebugRemoval> m = new LinkedHashMap<>();
+        m.put("tlsrsakex", new GodebugRemoval(1, 27, "1"));
+        m.put("tls3des", new GodebugRemoval(1, 27, "1"));
+        return java.util.Collections.unmodifiableMap(m);
+    }
+
+    /** Kaldırılan GODEBUG ayarları (salt okuma; testler ve ekran). */
+    public static Map<String, GodebugRemoval> godebugRemovals() {
+        return GODEBUG_REMOVED;
+    }
+
+    /**
+     * Kayıtlı GODEBUG değerinden (çalışma anı gevşek okuması — {@link #effectiveGodebug}) bu Go sürümüyle derlenmiş bir
+     * k6'nın YOK SAYACAĞI anahtarlar (kayıt sırasıyla). Go sürümü bilinmiyorsa / okunamıyorsa BOŞ liste — hiçbir zaman
+     * tahminle "yok sayılır" denmez. Hiçbir koşulda fırlatmaz.
+     */
+    public static List<String> ignoredGodebugKeys(String rawGodebug, String goVersion) {
+        int[] go = K6Profile.goMajorMinor(goVersion);
+        if (go == null) return List.of();
+        String eff = effectiveGodebug(rawGodebug);
+        if (eff.isEmpty()) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String part : eff.split(",")) {
+            int eq = part.indexOf('=');
+            if (eq <= 0) continue;
+            String k = part.substring(0, eq);
+            String v = part.substring(eq + 1);
+            GodebugRemoval r = GODEBUG_REMOVED.get(k);
+            if (r == null || !r.lostValue().equals(v)) continue;
+            boolean removed = go[0] > r.goMajor() || (go[0] == r.goMajor() && go[1] >= r.goMinor());
+            if (removed) out.add(k);
+        }
+        return out;
+    }
 
     /**
      * "Kapalı" işareti (2026-10-30, inceleme L1): ayar ekranında boşaltılan yedek / aday yolu, GODEBUG ve User-Agent bu

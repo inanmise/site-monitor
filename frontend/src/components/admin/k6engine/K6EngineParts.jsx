@@ -6,7 +6,9 @@ import AlertBanner from '../../ui/AlertBanner.jsx'
 import { Spinner } from '../../ui/Progress.jsx'
 import ToneBadge from '../ToneBadge.jsx'
 import { SettingsSaveBar } from '../SettingsControls.jsx'
-import { GODEBUG_KEYS, engineState, fmtUtc, godebugOn, buildGodebug, podList } from './k6EngineModel.js'
+import {
+  GODEBUG_KEYS, engineState, engineTone, fmtUtc, godebugOn, godebugIgnored, goVersionOf, buildGodebug, podList,
+} from './k6EngineModel.js'
 import {
   AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/shadcn/alert-dialog'
@@ -23,6 +25,13 @@ export const TOUCH = 'pointer-coarse:min-h-10'
 export const CHIP = 'h-auto rounded-md overflow-visible whitespace-normal [overflow-wrap:anywhere]'
 
 /** Kart başlığı + isteğe bağlı eylemler — telefonda alt alta, geniş ekranda yan yana. */
+/** GODEBUG kaçış uyarısı rol başına ayrı metin (2026-11-16 inceleme): literal anahtarlar — kullanılan-anahtar kapısı görür. */
+function ignoredText(t, role, keys, go) {
+  if (role === 'active') return t('k6e.godebugIgnored.active', keys, go)
+  if (role === 'rollback') return t('k6e.godebugIgnored.rollback', keys, go)
+  return t('k6e.godebugIgnored.candidate', keys, go)
+}
+
 export function SectionCard({ slot, icon: Icon, title, description, actions, children, className = '', contentClassName = '' }) {
   const id = useId()
   return (
@@ -47,23 +56,30 @@ export function SectionCard({ slot, icon: Icon, title, description, actions, chi
 // ── Motorlar ────────────────────────────────────────────────────────────────────────────────────
 
 const ROLES = ['active', 'rollback', 'candidate']
-const STATE_TONE = { running: 'success', unsupported: 'danger', missing: 'danger', unset: 'muted' }
 
 /** Tek ikili satırı: rol, yol (tek aralıklı, sarar), sürüm, durum, yoklama zamanı; desteklenmeyen sürümde neden. */
 function EngineRow({ role, profile, lang, minVersion }) {
   const t = useT()
   const state = engineState(profile)
+  const go = goVersionOf(profile)
+  const ignored = godebugIgnored(profile)
   return (
     <li data-slot="k6e-engine" data-role={role} data-state={state}
       className="flex min-w-0 flex-col gap-2 rounded-lg border bg-card px-3 py-3 sm:px-4">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <span className="font-semibold">{t(`k6e.role.${role}`)}</span>
-        <ToneBadge tone={STATE_TONE[state]} className={CHIP} data-slot="k6e-engine-state" data-state={state}>
+        <ToneBadge tone={engineTone(role, state, profile)} className={CHIP} data-slot="k6e-engine-state" data-state={state}>
           {t(`k6e.engineState.${state}`)}
         </ToneBadge>
         {profile && (profile.version
           ? <Badge variant="outline" className={cn(CHIP, 'font-mono')} data-slot="k6e-engine-version">{profile.version}</Badge>
           : <ToneBadge tone="muted" className={CHIP} data-slot="k6e-engine-version" data-state="unknown">{t('k6e.versionUnknown')}</ToneBadge>)}
+        {/* Derlendiği Go sürümü (2026-11-16) — sönük metin; eski sunucu göndermez, okunamadıysa yok. */}
+        {profile && go && (
+          <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="k6e-engine-go">
+            {t('k6e.goVersion', go)}
+          </span>
+        )}
       </div>
       <p className="m-0 text-xs text-muted-foreground">{t(`k6e.roleHint.${role}`)}</p>
       {profile ? (
@@ -82,6 +98,12 @@ function EngineRow({ role, profile, lang, minVersion }) {
         <p className="m-0 text-xs text-destructive" data-slot="k6e-engine-unsupported">
           {t('k6e.unsupportedHint', minVersion || 'v2.0.0')}
         </p>
+      )}
+      {/* Kayıtlı TLS kaçışlarından bu motorun Go sürümünün YOK SAYDIKLARI (Go 1.27 tlsrsakex / tls3des'i kaldırdı). */}
+      {profile && ignored.length > 0 && (
+        <div data-slot="k6e-engine-godebug-ignored" data-keys={ignored.join(',')}>
+          <AlertBanner tone="warning" className="mb-0">{ignoredText(t, role, ignored.join(', '), go || '—')}</AlertBanner>
+        </div>
       )}
     </li>
   )

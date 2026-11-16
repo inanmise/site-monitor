@@ -169,13 +169,14 @@ jobs:
           path: backend/target/surefire-reports/
           retention-days: 7
 
-  # k6 sözleşme testleri (2026-10-29, k6 0.49 → 2.3 geçişi; 2026-10-30'dan beri imajda tek ikili): diğer bütün senaryo
-  # testleri k6'yı TAKLİT eder; bu iş imajdaki GERÇEK ikiliyi (Dockerfile'ın k6-bin aşaması — PR'da bu aşama yalnız burada
-  # derlenir) yerel bir HTTP sunucusuna karşı koşar. Kaynak: Dockerfile (scripts/fetch-k6-binaries.sh).
+  # k6 sözleşme testleri (2026-10-29, k6 0.49 → 2.3 geçişi): diğer bütün senaryo testleri k6'yı TAKLİT eder; bu iş imajdaki
+  # GERÇEK ikilileri (Dockerfile'ın k6-bin aşaması — PR'da bu aşama yalnız burada derlenir) yerel bir HTTP sunucusuna karşı
+  # koşar: önce ETKİN ikili (/usr/bin/k6), sonra (2026-11-16, k6 2.3 → 2.4 geçişi) ADAY ikili (/opt/k6-candidate/k6) — aynı
+  # sözleşme, ayrı rapor. Kaynak: Dockerfile (scripts/fetch-k6-binaries.sh); Dockerfile'da aday yoksa ikinci koşu atlanır.
   backend-k6-contract:
     name: Backend k6 contract (real k6 binaries)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: backend
@@ -205,11 +206,12 @@ jobs:
           </settings>
           SETTINGS
 
-      - name: Fetch the real k6 binary (the Dockerfile k6-bin stage)
+      - name: Fetch the real k6 binaries (the Dockerfile k6-bin stage — active + candidate)
+        id: fetch
         working-directory: .
         run: bash scripts/fetch-k6-binaries.sh "$RUNNER_TEMP/k6"
 
-      - name: k6 contract tests
+      - name: k6 contract tests (active binary)
         env:
           MAVEN_OPTS: >-
             -Dmaven.wagon.http.retryHandler.count=3
@@ -219,13 +221,41 @@ jobs:
           K6_REAL_REQUIRED: "true"
         run: mvn -B -Pk6-real test
 
-      - name: Upload test report
+      - name: Upload test report (active binary)
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: backend-k6-contract-report
           path: backend/target/surefire-reports/
           retention-days: 7
+
+      # Aday ikili (Dockerfile K6_CANDIDATE_VERSION) aynı sözleşmeyi geçmeli. Etkin koşu düşse de koşar (iki sonuç birlikte
+      # görünsün); getirme adımı düştüyse koşmaz. Rapor klasörü önce temizlenir — etkin koşunun raporu yukarıda yüklendi.
+      - name: k6 contract tests (candidate binary — /opt/k6-candidate/k6 in the image)
+        if: ${{ !cancelled() && steps.fetch.outcome == 'success' }}
+        env:
+          MAVEN_OPTS: >-
+            -Dmaven.wagon.http.retryHandler.count=3
+            -Dmaven.wagon.http.connectionTimeout=60000
+            -Dmaven.wagon.http.readTimeout=180000
+          K6_BIN: ${{ runner.temp }}/k6/k6-candidate
+          K6_REAL_REQUIRED: "true"
+        run: |
+          rm -rf target/surefire-reports
+          if [ ! -x "$K6_BIN" ]; then
+            echo "::notice::Dockerfile'da aday k6 yok (K6_CANDIDATE_VERSION) — aday sözleşme koşusu atlandı"
+            exit 0
+          fi
+          mvn -B -Pk6-real test
+
+      - name: Upload test report (candidate binary)
+        if: ${{ !cancelled() && steps.fetch.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: backend-k6-contract-candidate-report
+          path: backend/target/surefire-reports/
+          retention-days: 7
+          if-no-files-found: ignore
 
   # ──────────────────────────────────────────────
   # 2. Frontend — Node build + lint

@@ -15,6 +15,42 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.212.0] — 2026-11-16
+
+### Added
+- **k6 2.4.0 aday ikili olarak imajda** (k6 2.3 → 2.4 geçişinin 1. adımı; kullanıcı kararı: motor sayfasındaki aday ikili
+  ve gölge taramayla güvenli geçiş). İmajda artık İKİ k6 var: etkin **v2.3.0** (`/usr/bin/k6`, değişmedi) ve aday
+  **v2.4.0** (`/opt/k6-candidate/k6`; go1.26.11, golang.org/x/net v0.62.0). Aday da etkin ikili gibi root sahipli ve
+  yalnız çalıştırılır (`0111`).
+  - **⚠ Davranış:** çalışan izlemeler için YOK — senaryo kontrolleri dağıtımdan sonra da 2.3.0 ile koşar. Geçiş elle
+    yapılır: Ayarlar → Platform → k6 motoru → uyumluluk taraması → "Adayı etkin yap" (adımlar: `docs/PROD_DEPLOY_CHECKLIST.md`
+    "k6 sürüm geçişi" → "2.3 → 2.4 (aday ikili)").
+  - **Yeni yapılandırma:** `site.monitor.scripted.k6-bin-candidate` varsayılanı artık `/opt/k6-candidate/k6` (env
+    `SCRIPTED_K6_BIN_CANDIDATE`; önce boştu). Ekranda boşaltılmış (`none` kayıtlı) aday korunur — o ortamda yolu bir kez
+    elle yazın. Etkin ikili ayarının (`k6-bin`) varsayılanı değişmedi (`k6`).
+  - **k6 motoru sayfası:** her motorun yanında derlendiği **Go sürümü**; kayıtlı GODEBUG kaçışlarından o motorun Go
+    sürümünün kaldırdıkları (Go 1.27: `tlsrsakex`, `tls3des`) için motor satırında uyarı. API'de motor başına ek alanlar
+    `go_version`, `godebug_ignored` (eski istemci yok sayar). Bugünkü iki ikili de go1.26.x — uyarı çıkmaz.
+  - Bulunamayan **aday** ikili, yol imajın varsayılanıysa nötr görünür (yerel geliştirmede o dosya yoktur; hiçbir izleme
+    etkilenmez). Elle yazılmış bir aday yolu ya da etkin / yedek ikili bulunamazsa tehlike tonu sürer. API'de aday
+    satırına `default_path` alanı eklendi. GODEBUG uyarısının metni artık role göre (etkin / yedek / aday) değişir.
+
+### Fixed
+- **k6 ayar normalleştirmesi geçişten sonra yedeği silmez:** etkin ikili eski 2.3 yollarından biri değilse (ör. adaya
+  geçildiyse), bir kerelik iş yedek yolunu (`k6` = gerçek 2.3) artık korur; "Yedeğe geri dön" açık kalır.
+  - **Bilinen 2.3 → 2.4 farkı (gerçek ikililerle ölçüldü):** `default()` hiç bitmeyen bir Promise döndürürse 2.4
+    `did not finish …` hata satırı basar → kontrol **ERROR** (2.3'te PASS). Uyumluluk taraması böyle bir betiği REGRESSION
+    olarak gösterir. Yakalanmamış Promise reddi iki sürümde de ERROR; özet dosyası, çıkış kodları (0 / 99 / 107 / 110),
+    k6 hata kodları (1110, 1212, 1401) ve kara liste davranışı aynı. 2.4'te `http.query` var; `browser_data_received`
+    değişikliği tarayıcı modülünü kullanmayan SiteMonitor'ü etkilemez.
+  - **CI:** gerçek k6 sözleşme testleri (`backend-k6-contract`) artık aday ikiliyle de koşar (ayrı rapor
+    `backend-k6-contract-candidate-report`). İmaj açılış denetimi aday yoklamasını ve `0111` korumasını da doğrular.
+
+### Security
+- **6 HIGH Trivy bulgusu (k6 v2.3.0 — go1.26.8, golang.org/x/net v0.58.0) bu sürümde HÂLÂ listelenir:** 2.3.0 etkin ikili
+  olarak imajda kalıyor. Bulgular, 2.4.0'ı `/usr/bin/k6`'ya taşıyıp 2.3.0'ı çıkaran **terfi sürümünde** kapanır
+  (`docs/RUNBOOK.md` "k6 sürüm geçişi" → "2.3 → 2.4 (aday ikili)" → "2. adım").
+
 ## [20.211.0] — 2026-11-15
 
 ### Added
@@ -3326,7 +3362,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.211.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.212.0...HEAD
+[20.212.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.0
 [20.211.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.211.0
 [20.210.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.210.0
 [20.208.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.208.0

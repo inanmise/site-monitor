@@ -149,12 +149,31 @@ public class K6SettingsNormalizer {
         }
     }
 
+    /**
+     * Etkin ikili ayarı eski 2.3 takma adlarının DIŞINDA bir yola mı çevrildi. Kayıtlı değer yoksa ya da boşsa varsayılan
+     * ({@code k6}) geçerlidir → hayır. Eski takma adlar = yedekte sıfırlanan değerler ({@code k6}, {@code /usr/bin/k6},
+     * {@code /opt/k6-next/k6}); bunlar bu imajda aynı 2.3 ikilisidir.
+     */
+    boolean activeSwitchedAway() {
+        String active = settings.getOverride(ScriptedCheckerService.K6_BIN_KEY);
+        if (active == null || active.isBlank()) return false;
+        return !RESET.get(ScriptedCheckerService.K6_BIN_ROLLBACK_KEY).contains(active.strip());
+    }
+
     /** Kilit altında: eski değerleri varsayılana döndürür, sonra nişanı yazar. Dönüş: değişen anahtar sayısı. */
     Integer normalizeLocked() {
         if (done()) return 0;
         List<String> changed = new ArrayList<>();
         Map<String, String> before = new LinkedHashMap<>();
+        boolean switched = activeSwitchedAway();
         for (Map.Entry<String, Set<String>> e : RESET.entrySet()) {
+            if (switched && ScriptedCheckerService.K6_BIN_ROLLBACK_KEY.equals(e.getKey())) {
+                // 2026-11-16 (k6 2.4 aday ikili, inceleme ORTA): etkin ikili artık 2.3 takma adlarından biri DEĞİL (ör.
+                // "Adayı etkin yap" ile /opt/k6-candidate/k6 = 2.4). O zaman yedekteki k6 / /usr/bin/k6 gerçek 2.3'tür —
+                // sıfırlanırsa "Yedeğe geri dön" ve belgelenen geri alma yolu kapanır. Yedeğe dokunulmaz.
+                log.info("[K6] Ayar normalleştirmesi: etkin ikili eski 2.3 yollarından biri değil — yedek ikili yolu korunuyor");
+                continue;
+            }
             String old = settings.getOverride(e.getKey());
             if (settings.systemClearOverrideIf(e.getKey(), e.getValue(), ACTOR)) {
                 changed.add(e.getKey());

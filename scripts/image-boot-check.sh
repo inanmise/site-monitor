@@ -16,13 +16,15 @@
 #      bu derlemenin bir varlığı ve önceki sürümden TAŞINAN bir varlık 200 + "immutable"; taşınan liste bu derlemeyle
 #      çakışmıyor ve sınırlı (≤ 5000); olmayan bir varlık düz metin 404 + no-store (SpaNotFoundAdvice); /boot-guard.js
 #      200 + no-store (sürüm bağımsız açılış koruması hiç önbelleğe alınmaz).
-#   8. (2026-10-29, k6 sürüm geçişi; 2026-10-30'dan beri tek ikili) günlük: k6 (/usr/bin/k6) yoklaması Dockerfile'daki
-#      K6_VERSION sürümünü söylüyor, "desteklenmiyor" ya da "bulunamadı" demiyor — yanlış ikili ya da eksik katman görünsün.
-#      Bu adım aynı zamanda okunamaz (0111) k6 ikilisinin ÇALIŞTIRILABİLDİĞİNİN kanıtıdır.
+#   8. (2026-10-29, k6 sürüm geçişi) günlük: etkin k6 (/usr/bin/k6) yoklaması "[K6] ✅ k6 bulundu — sürüm v<K6_VERSION> ("
+#      diyor; Dockerfile'da K6_CANDIDATE_VERSION varsa (2026-11-16, k6 2.3 → 2.4 geçişi) ADAY yoklaması da
+#      "[K6] aday k6 — sürüm v<K6_CANDIDATE_VERSION> (" diyor (aday yolu varsayılanı /opt/k6-candidate/k6, boş veritabanı);
+#      hiçbir [K6] satırı "desteklenmiyor" ya da "k6 bulunamadı" demiyor — yanlış ikili ya da eksik katman görünsün. Bu adım
+#      aynı zamanda okunamaz (0111) k6 ikililerinin ÇALIŞTIRILABİLDİĞİNİN kanıtıdır.
 #   9. (2026-10-31, k6 inceleme A2 — işlem sertleştirmesi) günlük: "İşlem sertleştirmesi uygulandı" satırı VAR, "restricted
 #      method" uyarısı YOK; konteyner içinde (SM_CONTAINER, varsayılan "sm"; docker yoksa ya da konteyner bulunamazsa bu
-#      kısım uyarıyla atlanır) uygulama kullanıcısıyla `cat /proc/1/environ` (JVM dump-edilemez) ve `cat /usr/bin/k6`
-#      (ikili 0111) BAŞARISIZ olmalı, `/usr/bin/k6 version` çalışmalı.
+#      kısım uyarıyla atlanır) uygulama kullanıcısıyla `cat /proc/1/environ` (JVM dump-edilemez), `cat /usr/bin/k6` ve
+#      (aday varsa) `cat /opt/k6-candidate/k6` (ikililer 0111) BAŞARISIZ olmalı, `<ikili> version` çalışmalı.
 set -uo pipefail
 
 BASE="${1:?kullanım: image-boot-check.sh <base-url> <log-dosyası> [varlık-listeleri-dizini]}"
@@ -135,17 +137,28 @@ if [ -n "$LISTS" ]; then
   case "$h" in 200\|*javascript*\|*no-store*) ;; *) err "/boot-guard.js 200 + javascript + no-store değil (açılış koruması): $h" ;; esac
 fi
 
-# ── 8: k6 ikilisi (2026-10-29; 2026-10-30'dan beri tek ikili) ──────────────────────────────────
-# Beklenen sürüm depodaki Dockerfile'dan okunur (iş akışı depoyu çeker, betik kök dizinden koşar).
+# ── 8: k6 ikilileri (2026-10-29; aday 2026-11-16) ─────────────────────────────────────────────
+# Beklenen sürümler depodaki Dockerfile'dan okunur (iş akışı depoyu çeker, betik kök dizinden koşar).
 k6_main="$(sed -n 's/^ARG K6_VERSION=//p' Dockerfile 2>/dev/null | head -1 | tr -d '[:space:]')"
+k6_cand="$(sed -n 's/^ARG K6_CANDIDATE_VERSION=//p' Dockerfile 2>/dev/null | head -1 | tr -d '[:space:]')"
 if [ -s "$LOG" ]; then
   k6log="$(sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' "$LOG" | grep -a '\[K6\]' || true)"
   if [ -n "$k6_main" ]; then
     re_main="$(printf '%s' "$k6_main" | sed 's/\./\\./g')"
-    if grep -aEq "\[K6\] .*v${re_main} \(" <<<"$k6log"; then
-      echo "k6: v${k6_main} bulundu"
+    # Etkin ikilinin KENDİ satırı: aday satırı da "v… (" içerir — yalnız sürüm araması adayı etkin sanabilirdi.
+    if grep -aEq "\[K6\] .*k6 bulundu .*v${re_main} \(" <<<"$k6log"; then
+      echo "k6: etkin v${k6_main} bulundu"
     else
-      err "günlükte k6 v${k6_main} yoklaması yok (beklenen: '[K6] ✅ k6 bulundu — sürüm v${k6_main}')"
+      err "günlükte etkin k6 v${k6_main} yoklaması yok (beklenen: '[K6] ✅ k6 bulundu — sürüm v${k6_main} (…)')"
+      printf '%s\n' "$k6log" | head -5
+    fi
+  fi
+  if [ -n "$k6_cand" ]; then
+    re_cand="$(printf '%s' "$k6_cand" | sed 's/\./\\./g')"
+    if grep -aEq "\[K6\] aday k6 .*v${re_cand} \(" <<<"$k6log"; then
+      echo "k6: aday v${k6_cand} bulundu"
+    else
+      err "günlükte aday k6 v${k6_cand} yoklaması yok (beklenen: '[K6] aday k6 — sürüm v${k6_cand} (/opt/k6-candidate/k6)')"
       printf '%s\n' "$k6log" | head -5
     fi
   fi
@@ -186,6 +199,17 @@ if command -v docker >/dev/null 2>&1 && docker inspect "$CTR" >/dev/null 2>&1; t
   fi
   if ! docker exec "$CTR" /usr/bin/k6 version >/dev/null 2>&1; then
     err "konteynerde /usr/bin/k6 version çalışmıyor (0111 ikili çalıştırılamadı)"
+  fi
+  # Aday ikili (2026-11-16): uyumluluk taraması aynı betikleri aynı gizli değerlerle koşar — AYNI koruma.
+  if [ -n "${k6_cand:-}" ]; then
+    if timeout 30 docker exec "$CTR" cat /opt/k6-candidate/k6 >/dev/null 2>&1; then
+      err "konteynerde /opt/k6-candidate/k6 OKUNABİLİYOR — 0111 izni yok (aday k6 süreçlerinin ortamı birbirine açık)"
+    else
+      echo "sertleştirme: /opt/k6-candidate/k6 okunamıyor (yalnız çalıştırılır)"
+    fi
+    if ! timeout 30 docker exec "$CTR" /opt/k6-candidate/k6 version >/dev/null 2>&1; then
+      err "konteynerde /opt/k6-candidate/k6 version çalışmıyor (0111 aday ikili çalıştırılamadı)"
+    fi
   fi
 else
   echo "::warning::konteyner '$CTR' bulunamadı ya da docker yok — /proc ve ikili izin denetimleri atlandı"

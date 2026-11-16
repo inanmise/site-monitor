@@ -25,6 +25,72 @@ class K6ProfileTest {
     }
 
     @Test
+    @DisplayName("Go sürümü (2026-11-16): gerçek 2.3.0 / 2.4.0 / 0.49 çıktılarından okunur; desteklenmeyen sürümde korunur")
+    void parsesGoVersion() {
+        assertThat(K6Profile.fromVersionOutput("k6", "k6 v2.3.0 (commit/e088784614, go1.26.8, linux/amd64)\n", 1L).goVersion())
+                .isEqualTo("go1.26.8");
+        K6Profile v240 = K6Profile.fromVersionOutput("/opt/k6-candidate/k6",
+                "k6 v2.4.0 (commit/dd9395906d, go1.26.11, linux/amd64)\n", 1L);
+        assertThat(v240.version()).isEqualTo("v2.4.0");
+        assertThat(v240.goVersion()).isEqualTo("go1.26.11");
+        assertThat(K6Profile.fromVersionOutput("k6.exe", "k6.exe v2.4.0 (commit/dd9395906d, go1.26.11, windows/amd64)", 1L)
+                .goVersion()).isEqualTo("go1.26.11");
+        K6Profile old = K6Profile.fromVersionOutput("k6", "k6 v0.49.0 (commit/b5328aa782, go1.21.6, linux/amd64)\n", 1L);
+        assertThat(old.unsupported()).isTrue();
+        assertThat(old.goVersion()).isEqualTo("go1.21.6");
+        // Ön sürüm eki ve iki parçalı sürüm
+        assertThat(K6Profile.fromVersionOutput("k6", "k6 v2.5.0 (commit/x, go1.27rc1, linux/amd64)", 1L).goVersion())
+                .isEqualTo("go1.27rc1");
+        assertThat(K6Profile.fromVersionOutput("k6", "k6 v2.5.0 (commit/x, go1.27, linux/amd64)", 1L).goVersion())
+                .isEqualTo("go1.27");
+    }
+
+    @Test
+    @DisplayName("Go sürümü: geliştirme derlemesinden okunur; Go'suz çıktı / sözcük içi 'go' / başka satırdaki go → null")
+    void goVersionEdgeCases() {
+        K6Profile dev = K6Profile.fromVersionOutput("k6", "k6 (devel) (go1.26.8, linux/amd64)\n", 1L);
+        assertThat(dev.versionKnown()).isFalse();
+        assertThat(dev.goVersion()).isEqualTo("go1.26.8");
+        assertThat(K6Profile.fromVersionOutput("k6", "k6 v2.3.0", 1L).goVersion()).isNull();
+        assertThat(K6Profile.fromVersionOutput("k6", "k6 v2.3.0 (commit/x, cargo1.2.3, linux/amd64)", 1L).goVersion()).isNull();
+        assertThat(K6Profile.fromVersionOutput("k6", "k6 v2.3.0 (commit/x, golang, go, go., go1., linux/amd64)", 1L).goVersion())
+                .isNull();
+        // Sürüm satırı bulunduysa YALNIZ o satır: önceki günlük satırındaki "go9.9" ya da sonraki satır Go sürümü sayılmaz
+        assertThat(K6Profile.fromVersionOutput("k6",
+                "time=\"x\" level=warning msg=\"go9.9.9\"\nk6 v2.4.0 (commit/x, linux/amd64)\nbuilt with go1.26.11", 1L).goVersion())
+                .isNull();
+        assertThat(K6Profile.fromVersionOutput("k6",
+                "time=\"x\" level=warning msg=\"go9.9.9\"\nk6 v2.4.0 (commit/x, go1.26.11, linux/amd64)", 1L).goVersion())
+                .isEqualTo("go1.26.11");
+        // Sınır: çok uzun sayı dizisi belirteç tavanında kesilir, tarama sınırlı (büyük girdi takılmaz)
+        String huge = "k6 v2.4.0 (go1." + "9".repeat(5000) + ")";
+        assertThat(K6Profile.fromVersionOutput("k6", huge, 1L).goVersion()).hasSizeLessThanOrEqualTo(K6Profile.GO_VERSION_MAX_CHARS + 2);
+        String manyG = "k6 v2.4.0 (" + "g".repeat(200_000) + ")";
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(2),
+                () -> assertThat(K6Profile.fromVersionOutput("k6", manyG, 1L).goVersion()).isNull());
+        assertThat(K6Profile.unavailable("k6", 1L).goVersion()).isNull();
+    }
+
+    @Test
+    @DisplayName("Go büyük/küçük sürüm ayrıştırma: go1.26.11 → 1.26; ek yok sayılır; bozuk → null")
+    void goMajorMinor() {
+        assertThat(K6Profile.goMajorMinor("go1.26.11")).containsExactly(1, 26);
+        assertThat(K6Profile.goMajorMinor("go1.27rc1")).containsExactly(1, 27);
+        assertThat(K6Profile.goMajorMinor("go2.0")).containsExactly(2, 0);
+        for (String bad : new String[] { null, "", "go", "go1", "go1.", "1.26.8", "gox.1", "go1.x" }) {
+            assertThat(K6Profile.goMajorMinor(bad)).as(String.valueOf(bad)).isNull();
+        }
+    }
+
+    @Test
+    @DisplayName("Go sürümsüz eski kurucu (kaynak uyumluluğu): goVersion null")
+    void legacyConstructor() {
+        K6Profile p = new K6Profile("k6", true, "v2.3.0", 2, 3, 0, 1L);
+        assertThat(p.goVersion()).isNull();
+        assertThat(p.available()).isTrue();
+    }
+
+    @Test
     @DisplayName("2.0'dan eski ikili: bulundu ama desteklenmiyor — available=false, sürüm metni korunur")
     void olderThanTwoIsUnsupported() {
         K6Profile old = K6Profile.fromVersionOutput("k6", "k6 v0.49.0 (commit/b5328aa782, go1.21.6, linux/amd64)\n", 1L);
