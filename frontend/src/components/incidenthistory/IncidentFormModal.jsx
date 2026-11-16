@@ -245,7 +245,8 @@ export default function IncidentFormModal({
             <div className={GRID}>
               <TextInput label={t('inc.fTitle')} req full value={form.title} autoFocus={creating} error={err('title')}
                 placeholder={t('inc.titlePlaceholder')} onChange={(v) => set('title', v)} />
-              <DateInput label={t('inc.fOccurredAt')} req value={form.occurred_at} error={err('occurred_at')} onChange={(v) => set('occurred_at', v)} />
+              <DateInput label={t('inc.fOccurredAt')} req value={form.occurred_at} error={err('occurred_at')} hint={t('sdt.hint')}
+                onChange={(v) => set('occurred_at', v)} />
               <SelectInput label={t('inc.fTeam')} req value={form.team_id != null ? String(form.team_id) : ''} options={teamOptions} error={err('team_id')}
                 onChange={(v) => setForm((f) => ({ ...f, team_id: v, team_name: teams.find((tm) => String(tm.id) === String(v))?.name || '' }))} />
               <SelectInput label={t('inc.fSeverity')} value={form.severity} onChange={(v) => set('severity', v)} options={opts(SEVERITIES, 'inc.sev')} />
@@ -258,8 +259,9 @@ export default function IncidentFormModal({
               <FieldLegend className="mb-2 text-sm font-semibold">{t('inc.timelineLegend')}</FieldLegend>
               <div className={GRID}>
                 <DateInput label={t('inc.fDetectedAt')} value={form.detected_at} min={form.occurred_at || undefined} error={err('detected_at')}
-                  onChange={(v) => set('detected_at', v)} />
+                  anchor={form.occurred_at || undefined} anchorLabel={t('inc.fOccurredAt')} onChange={(v) => set('detected_at', v)} />
                 <DateInput label={t('inc.fResolvedAt')} value={form.resolved_at} min={form.detected_at || form.occurred_at || undefined}
+                  anchor={form.occurred_at || undefined} anchorLabel={t('inc.fOccurredAt')}
                   error={err('resolved_at')} onChange={(v) => set('resolved_at', v)} />
                 <TextInput label={t('inc.fDuration')} type="number" value={form.duration_minutes} disabled={autoDuration}
                   hint={autoDuration ? t('inc.durationAuto') : t('inc.durationManual')} error={err('duration_minutes')}
