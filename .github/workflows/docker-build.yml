@@ -30,6 +30,8 @@ jobs:
     outputs:
       primary: ${{ steps.tags.outputs.primary }}
       image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.primary }}
+      # true = imaj itildi; Trivy kapısı işi kırmızı yapsa da açılış testi yine bu imajı açar (aşağıda `if`).
+      pushed: ${{ steps.build.outputs.digest != '' }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -104,6 +106,7 @@ jobs:
         run: echo "image=$(bash scripts/resolve-previous-image.sh "$PREV_REF")" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
@@ -118,17 +121,21 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # ── Security: container image vulnerability scan ──
-      # Non-blocking until baseline is clean; switch exit-code to '1' once
-      # current HIGH/CRITICAL CVEs are triaged.
+      # ── Security: container image vulnerability scan (2026-11-16: KAPI) ──
+      # HIGH/CRITICAL (düzeltmesi olan) bulguda iş KIRMIZI olur — release.yml'deki yayın kapısıyla aynı kural ve aynı
+      # istisna dosyası (.trivyignore.yaml: yol kapsamlı, son tarihli). Bu dalların imajı zaten itilmiştir; amaç main'e
+      # gelmeden önce görmek. Adım continue-on-error: özet yine yazılır, iş sonda "Trivy gate" ile kırmızıya döner.
       - name: Trivy image scan
+        id: trivy
+        continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.primary }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          exit-code: '0'
+          exit-code: '1'
           format: table
+          trivyignores: .trivyignore.yaml
 
       - name: Image summary
         run: |
@@ -152,10 +159,24 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Trivy gate
+        if: steps.trivy.outcome == 'failure'
+        run: |
+          {
+            echo ""
+            echo "### ⛔ Trivy: düzeltmesi olan HIGH/CRITICAL bulgu"
+            echo "Ayrıntı yukarıdaki \"Trivy image scan\" adımında. Main'e alınırsa Release bu imajı İTMEZ."
+            echo "Ne yapmalı: docs/RUNBOOK.md \"Yayın güvenlik kapısı (Trivy)\"."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::Trivy HIGH/CRITICAL bulgu buldu (ayrıntı: Trivy image scan adımı; istisnalar .trivyignore.yaml)"
+          exit 1
+
   # İmaj açılış testi (2026-10-02, onaylı öneri 28) — adımlar ortak image-boot-test.yml'de (release.yml de çağırır).
-  # Bu workflow sürüm kapısı DEĞİL; iş imaj itildikten sonra koşar ve hiçbir yayını bloklamaz.
+  # Bu workflow sürüm kapısı DEĞİL; iş imaj itildikten sonra koşar ve hiçbir yayını bloklamaz. İmaj itildiyse Trivy
+  # kapısı docker işini kırmızı yapsa bile açılış testi koşar (iki bilgi ayrı ayrı görünsün).
   image-boot-test:
     needs: docker
+    if: ${{ !cancelled() && needs.docker.outputs.pushed == 'true' }}
     permissions:
       contents: read
       packages: read   # ghcr.io pull

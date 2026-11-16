@@ -1,10 +1,22 @@
 name: Security — OWASP Dependency-Check (SCA)
 
-# Ağır (NVD indirmesi) → release yoluna KOYMAZ; haftalık + elle tetik. Rapor artifact olarak yüklenir.
-# HIGH+ CVE bulunca adım kırmızı olur (failBuildOnCVSS=7) ama workflow devam eder (continue-on-error) → rapor kalır.
+# Ağır (NVD indirmesi) → release yoluna KOYMAZ; haftada iki + elle tetik. Rapor artifact olarak yüklenir.
+#
+# 2026-11-16 (yol haritası): tarama önceden "yeşil" görünüyordu ama aylardır işe yaramıyordu —
+#   • NVD API anahtarı yoktu; her koşu 425 bin kaydı SIFIRDAN indirdi (35–60 dk), biri NVD 524 ile düşüp rapor üretmedi;
+#   • adım continue-on-error'du: güncelleme hatası da, CVSS ≥ 7 bulgu da iş akışını yeşil bıraktı, kimse görmedi.
+# Şimdi:
+#   • NVD veritabanı ayrı bir dizinde tutulur ve önbelleğe kaydedilir (yalnız güncelleme BAŞARILIYSA): sonraki koşular
+#     yalnız farkı indirir. GitHub kullanılmayan önbelleği 7 günde siler → takvim haftada İKİ (Pzt, Per).
+#   • Sonuç sınıflandırılır: clean / findings (CVSS ≥ 7) / update_failed / error. clean dışındaki her sonuç işi KIRMIZI
+#     yapar (rapor yine yüklenir). Yanlış pozitif (CPE eşleştirmesi, ör. micrometer-registry-prometheus ↔ Prometheus
+#     sunucusu) → pom.xml security profilinde gerekçeli bir bastırma dosyası (`suppressionFiles`).
+#   • NVD_API_KEY sırrı (Settings → Secrets and variables → Actions) tanımlıysa kullanılır; yoksa özet uyarır.
+#     Anahtar: https://nvd.nist.gov/developers/request-an-api-key (ücretsiz).
+#   • Sonatype OSS Index analizcisi kapalı: 2025'ten beri kimlik doğrulaması istiyor, her jar'da hata verip süre yiyordu.
 on:
   schedule:
-    - cron: "0 6 * * 1"   # her Pazartesi 06:00 UTC
+    - cron: "0 6 * * 1,4"   # Pazartesi ve Perşembe 06:00 UTC (önbellek 7 günden önce yeniden kullanılsın)
   workflow_dispatch:
 
 permissions:
@@ -14,12 +26,19 @@ concurrency:
   group: depcheck-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # Eklenti sürümü değişince önbellek anahtarı da değişir (veritabanı şeması sürüme bağlı).
+  DC_VERSION: "12.1.0"
+
 jobs:
   dependency-check:
     name: Backend SCA (OWASP)
     runs-on: ubuntu-latest
     # Sonsuz bekleme savunması (2026-10-09): takılan bir adım işi GitHub'ın 6 saatlik sınırına dek tutmasın.
     timeout-minutes: 120
+    env:
+      DC_DATA: ${{ github.workspace }}/.dependency-check-data
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -30,13 +49,63 @@ jobs:
           distribution: temurin
           cache: maven
 
+      # Anahtar her koşuda yeni (run_id): önbellek değişmez, en yenisi restore-keys önekiyle bulunur.
+      - name: Restore NVD database
+        id: nvd-restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.DC_DATA }}
+          key: owasp-nvd-${{ env.DC_VERSION }}-${{ github.run_id }}
+          restore-keys: |
+            owasp-nvd-${{ env.DC_VERSION }}-
+
       - name: OWASP Dependency-Check (fail on CVSS>=7)
         id: depcheck
-        continue-on-error: true
         working-directory: backend
         env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}   # opsiyonel; NVD hız limiti için (yoksa yavaş ama çalışır)
-        run: mvn -B -Psecurity dependency-check:check
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}   # opsiyonel; pom.xml ${env.NVD_API_KEY} okur
+        run: |
+          set +e
+          mkdir -p "$DC_DATA"
+          mvn -B -Psecurity dependency-check:check \
+            -DdataDirectory="$DC_DATA" \
+            -DossindexAnalyzerEnabled=false \
+            2>&1 | tee "$RUNNER_TEMP/depcheck.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          log="$RUNNER_TEMP/depcheck.log"
+          # Sıra önemli: güncelleme hatası bulgudan ÖNCE denetlenir (boş veritabanıyla "bulgu yok" temiz sayılmasın).
+          if grep -qE "Error updating the NVD Data|NoDataException|Unable to continue dependency-check analysis" "$log"; then
+            if [ "$rc" -eq 0 ] || grep -q "identified with vulnerabilities that have a CVSS" "$log"; then
+              # Güncelleme düştü ama önbellekteki veriyle tarama tamamlandı → sonuç geçerli, veri bayat.
+              stale=true
+            else
+              echo "result=update_failed" >> "$GITHUB_OUTPUT"
+              echo "db_ok=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            stale=false
+          fi
+          echo "stale=$stale" >> "$GITHUB_OUTPUT"
+          if [ "$rc" -eq 0 ]; then
+            echo "result=clean" >> "$GITHUB_OUTPUT"
+            echo "db_ok=$([ "$stale" = true ] && echo false || echo true)" >> "$GITHUB_OUTPUT"
+          elif grep -q "identified with vulnerabilities that have a CVSS" "$log"; then
+            echo "result=findings" >> "$GITHUB_OUTPUT"
+            echo "db_ok=$([ "$stale" = true ] && echo false || echo true)" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=error" >> "$GITHUB_OUTPUT"
+            echo "db_ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Yalnız güncelleme BAŞARILIYSA kaydedilir: yarım / bayat veritabanı önbelleğe yazılmaz.
+      - name: Save NVD database
+        if: always() && steps.depcheck.outputs.db_ok == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.DC_DATA }}
+          key: owasp-nvd-${{ env.DC_VERSION }}-${{ github.run_id }}
 
       - name: Upload report
         if: always()
@@ -45,9 +114,51 @@ jobs:
           name: dependency-check-report
           path: backend/target/dependency-check-report.*
           retention-days: 30
+          if-no-files-found: warn
 
       - name: Summary
         if: always()
+        env:
+          RESULT: ${{ steps.depcheck.outputs.result }}
+          STALE: ${{ steps.depcheck.outputs.stale }}
+          CACHE_HIT: ${{ steps.nvd-restore.outputs.cache-matched-key }}
+          HAS_KEY: ${{ secrets.NVD_API_KEY != '' }}
         run: |
-          echo "OWASP Dependency-Check bitti (adım sonucu: ${{ steps.depcheck.outcome }})." >> "$GITHUB_STEP_SUMMARY"
-          echo "HIGH+ CVE varsa 'depcheck' adımı kırmızıdır; ayrıntı için report artifact'ına bakın." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## OWASP Dependency-Check"
+            echo ""
+            case "$RESULT" in
+              clean)         echo "**Sonuç: temiz** — CVSS ≥ 7 bulgu yok." ;;
+              findings)      echo "**Sonuç: ⛔ CVSS ≥ 7 bulgu var** — ayrıntı dependency-check-report artifact'ında." ;;
+              update_failed) echo "**Sonuç: ⚠ NVD verisi güncellenemedi** — tarama yapılamadı (rapor yok ya da eksik)." ;;
+              *)             echo "**Sonuç: ⚠ beklenmeyen hata** — adım günlüğüne bakın." ;;
+            esac
+            echo ""
+            if [ -n "$CACHE_HIT" ]; then echo "- NVD veritabanı önbellekten geldi (yalnız fark indirildi): \`$CACHE_HIT\`"
+            else echo "- NVD veritabanı önbellekte yoktu → tamamı indirildi."; fi
+            [ "$STALE" = true ] && echo "- ⚠ Güncelleme düştü; tarama önbellekteki ESKİ veriyle yapıldı (yeni CVE'ler eksik olabilir)."
+            if [ "$HAS_KEY" != true ]; then
+              echo "- ⚠ \`NVD_API_KEY\` sırrı tanımlı değil: indirme çok yavaş ve NVD zaman aşımına (524) açık."
+              echo "  Anahtar: https://nvd.nist.gov/developers/request-an-api-key → Settings → Secrets and variables → Actions → \`NVD_API_KEY\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$RESULT" = findings ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            awk '/identified with vulnerabilities that have a CVSS/{f=1;next} f&&/See the dependency-check report/{exit} f' \
+              "$RUNNER_TEMP/depcheck.log" | sed -e 's/^\[ERROR\] *//' -e '/^$/d' | cut -c1-400 | head -60 >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Temiz değilse iş KIRMIZI (rapor ve önbellek yukarıda zaten işlendi).
+      - name: Gate
+        if: always()
+        env:
+          RESULT: ${{ steps.depcheck.outputs.result }}
+        run: |
+          case "$RESULT" in
+            clean) echo "OWASP Dependency-Check temiz." ;;
+            findings) echo "::error::CVSS ≥ 7 bağımlılık bulgusu (ayrıntı: özet ve dependency-check-report)"; exit 1 ;;
+            update_failed) echo "::error::NVD verisi güncellenemedi; tarama yapılamadı (NVD_API_KEY tanımlayın / yeniden deneyin)"; exit 1 ;;
+            *) echo "::error::OWASP Dependency-Check beklenmeyen hatayla bitti (sonuç: ${RESULT:-yok})"; exit 1 ;;
+          esac

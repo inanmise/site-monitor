@@ -15,6 +15,25 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Fixed
+- **Kaynak analizi "Tüm siteyi tara" 1000 sayfada kalıyordu.** Sunucu sınırı 20.209.0'da 2 500 sayfaya çıkarılmıştı, ama
+  arayüzdeki tavan 1000'de unutulmuştu. Pencere "En çok 1.000 sayfa" diyordu ve tarama isteği `max_pages: 1000` ile
+  gidiyordu; tam site taramaları bu yüzden en çok 1000 sayfa taradı. Artık arayüz sunucunun gönderdiği sınırı kırpmadan
+  kullanıyor (varsayılan 2 500 sayfa / 150 dk). Arayüz sabitleri sunucu kaynağına bir testle bağlandı, bir daha ayrışamaz.
+
+### Changed
+- **Yayın güvenlik kapısı (Trivy):** release.yml imajı itmeden önce tarar. Düzeltmesi olan HIGH / CRITICAL bulguda yayın
+  durur; hiçbir şey itilmez. Bilinçli istisnalar yalnız `.trivyignore.yaml`'da tutulur: yol kapsamlı, son tarihli,
+  gerekçeli. Şu an tek istisna k6 2.3.0'ın 5 CVE'si (son tarih 2027-01-31; k6 terfi sürümünde silinir). develop /
+  `release/**` imaj derlemesi de aynı kuralla kırmızı olur. Ayrıntı: RUNBOOK "Yayın güvenlik kapısı (Trivy)".
+- **OWASP bağımlılık taraması** artık sonucu saklamıyor. Önceden bulgu ya da NVD güncelleme hatası olsa da iş yeşil
+  bitiyordu; şimdi temiz değilse kırmızı.
+  - NVD veritabanı önbellekte tutuluyor, sonraki koşular yalnız farkı indiriyor.
+  - Takvim haftada iki koşu.
+  - `NVD_API_KEY` sırrı tanımlı değilse iş özeti bunu uyarıyor.
+- **İmaj açılış testi** 1,5 GiB bellekle koşuyor (1 GiB'de bir kez OOM ile öldü). Açılış sonrası bellek kullanımı iş
+  özetine yazılıyor.
+
 ## [20.212.0] — 2026-11-16
 
 ### Added
