@@ -140,7 +140,7 @@ class TechErrorReportPdfWriterTest {
         assertThat(s.indexOf("Mobil Kanalı — Eylül 2026 Verileri")).isLessThan(s.indexOf("Map yapılmamış hatalar hakkında açıklama"));
         assertThat(s).contains("Bu bölüme görsel yüklenmedi.");
         assertThat(s).contains("Sayfa 1 /");
-        assertThat(s).contains("Hazırlayan: Ayşe Yılmaz");
+        assertThat(s).doesNotContain("Hazırlayan:").doesNotContain("Üretim:");   // kapakta kimlik / üretim yok (2026-11-16)
     }
 
     @Test
@@ -1183,25 +1183,36 @@ class TechErrorReportPdfWriterTest {
         return html.substring(tone + 11, html.indexOf('"', tone + 11));
     }
 
-    // ── Kimlik satırları (2026-10-17, 10. sürüm) ─────────────────────────────────────────────────────
+    // ── Kapakta kimlik yok (2026-11-16) ──────────────────────────────────────────────────────────────
+
+    /** Çıktıda hiçbir zaman geçmemesi gereken kimlik / üretim sözcükleri (TR + EN). */
+    static final List<String> PROVENANCE_WORDS = List.of("Hazırlayan:", "Oluşturan:", "Son düzenleyen:", "Onaylayan:", "Onay:", "Üretim:",
+            "Türkiye saati", "Prepared by:", "Created by:", "Last edited by:", "Approved by:", "Approval:", "Generated:", "Turkey time");
 
     @Test
-    @DisplayName("kapak kimlik satırları: Oluşturan / Son düzenleyen / Onaylayan / Üretim ayrı satırlar, band uzar, ilk bölüm bandın altında kalır; kimlik yoksa eski tek satır")
-    void coverProvenanceLines() throws Exception {
+    @DisplayName("kapak yalnız başlık + takım · kanal · dönem: oluşturan / son düzenleyen / onaylayan / onay durumu / üretim satırı ve kişi adı yok (kullanıcı isteği 2026-11-16); ilk bölüm bandın altında başlar; TR + EN")
+    void coverHasNoProvenance() throws Exception {
         TechErrorPdfInput base = input("tr", Map.of());
         TechErrorPdfInput.Provenance p = new TechErrorPdfInput.Provenance("Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"),
                 "Ali Veli", Instant.parse("2026-09-05T06:12:00Z"), "approved", "Mehmet PO", Instant.parse("2026-09-06T07:00:00Z"));
-        String s = text(new TechErrorReportPdfWriter().write(base.withProvenance(p)));
-        assertThat(s).contains("Oluşturan: Ayşe Yılmaz · 03.09.2026 14:05").contains("Son düzenleyen: Ali Veli · 05.09.2026 09:12")
-                .contains("Onaylayan: Mehmet PO · 06.09.2026 10:00").contains("Üretim: ").doesNotContain("Hazırlayan:");
-        assertThat(s.indexOf("Oluşturan:")).isLessThan(s.indexOf("Son düzenleyen:"));
-        assertThat(s.indexOf("Onaylayan:")).isLessThan(s.indexOf("Üretim:"));
-        // Onay bekleyen: durum satırı
         TechErrorPdfInput.Provenance pending = new TechErrorPdfInput.Provenance("Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"),
                 null, null, "pending", null, null);
-        assertThat(text(new TechErrorReportPdfWriter().write(base.withProvenance(pending)))).contains("Onay: PO onayı bekleniyor").doesNotContain("Onaylayan:");
-        // Eski imza: tek satır
-        assertThat(text(new TechErrorReportPdfWriter().write(base))).contains("Hazırlayan: Ayşe Yılmaz").doesNotContain("Oluşturan:");
+        for (TechErrorPdfInput in : List.of(base, base.withProvenance(p), base.withProvenance(pending), input("en", Map.of()),
+                input("en", Map.of()).withProvenance(p))) {
+            byte[] pdf = new TechErrorReportPdfWriter().write(in);
+            String s = text(pdf);
+            for (String w : PROVENANCE_WORDS) assertThat(s).as(w).doesNotContain(w);
+            assertThat(s).doesNotContain("Ali Veli").doesNotContain("Mehmet PO").doesNotContain("03.09.2026 14:05");
+            try (PDDocument doc = Loader.loadPDF(pdf)) {
+                String first = flat(pageText(doc, 1));
+                assertThat(first).as("başlık ve takım · kanal · dönem kapakta").contains(flat(in.title()));
+            }
+        }
+        // Kapak bandı kısaldı ama ilk bölüm başlığı yine bandın ALTINDA (en alçak kapak sözcüğünün altında) başlar
+        List<Word> ws = words(new TechErrorReportPdfWriter().write(base.withProvenance(p)));
+        float teamLine = ws.stream().filter(w -> w.page() == 1 && w.text().contains("Kanallar")).map(Word::baseline).findFirst().orElseThrow();
+        float firstSection = ws.stream().filter(w -> w.page() == 1 && w.text().startsWith("Yönetici")).map(Word::baseline).findFirst().orElseThrow();
+        assertThat(firstSection).as("ilk bölüm takım satırının altında").isGreaterThan(teamLine + 20);
     }
 
     // ── R19 (2026-10-17): üst bilgi, içindekiler, yer imleri, örnek önizleme ────────────────────────────────
@@ -1455,7 +1466,7 @@ class TechErrorReportPdfWriterTest {
     }
 
     @Test
-    @DisplayName("R19 şablon önizlemesi: ilk sayfada \"ÖRNEK ÖNİZLEME\" şeridi + örnek rakamlar + \"Hazırlayan: … (örnek önizleme)\"; SONRAKİ HER sayfanın üst bilgisi \"ÖRNEK ÖNİZLEME · \" ile başlar (şerit yalnız 1. sayfada); gerçek raporda (sample=false) hiç yok")
+    @DisplayName("R19 şablon önizlemesi: ilk sayfada \"ÖRNEK ÖNİZLEME\" şeridi + örnek rakamlar (kapakta hazırlayan satırı yok — 2026-11-16); SONRAKİ HER sayfanın üst bilgisi \"ÖRNEK ÖNİZLEME · \" ile başlar (şerit yalnız 1. sayfada); gerçek raporda (sample=false) hiç yok")
     void sampleBannerOnFirstPage() throws IOException {
         Template t = TechErrorTemplate.defaults("tr");
         TechErrorPdfInput in = com.sitemonitor.service.techerror.TechErrorSampleValues.previewInput(t, "Mobil", "Dijital Kanallar",
@@ -1468,7 +1479,7 @@ class TechErrorReportPdfWriterTest {
         try (PDDocument doc = Loader.loadPDF(pdf)) {
             String first = flat(pageText(doc, 1));
             assertThat(first).contains("ÖRNEK ÖNİZLEME — örnek değerlerle üretildi, gönderilmez")
-                    .contains("Hazırlayan: Ayşe Yılmaz (örnek önizleme)");
+                    .doesNotContain("Hazırlayan:").doesNotContain("Ayşe Yılmaz");
             assertThat(first.indexOf("ÖRNEK ÖNİZLEME")).as("şerit kapak bandının altında, ilk bölümden önce").isLessThan(first.indexOf("Yönetici Özeti"));
             int pages = doc.getNumberOfPages();
             assertThat(pages).isGreaterThanOrEqualTo(2);
@@ -1493,7 +1504,7 @@ class TechErrorReportPdfWriterTest {
         byte[] enPdf = TechErrorReportPdfWriter.render(com.sitemonitor.service.techerror.TechErrorSampleValues.previewInput(e, "Mobile",
                 "Digital", "Jane Doe", 2026, 9, Instant.parse("2026-10-17T09:00:00Z")));
         String en = flat(text(enPdf));
-        assertThat(en).contains("SAMPLE PREVIEW — generated with sample values, never sent").contains("Prepared by: Jane Doe (sample preview)");
+        assertThat(en).contains("SAMPLE PREVIEW — generated with sample values, never sent").doesNotContain("Prepared by:").doesNotContain("Jane Doe");
         String enHead = flat(words(enPdf).stream().filter(w -> w.page() == 2 && w.baseline() < 32).map(Word::text)
                 .collect(java.util.stream.Collectors.joining(" ")));
         assertThat(enHead).startsWith("SAMPLE PREVIEW · Mobile · September 2026");
