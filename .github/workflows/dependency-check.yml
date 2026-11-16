@@ -8,8 +8,11 @@ name: Security — OWASP Dependency-Check (SCA)
 # Şimdi:
 #   • NVD veritabanı ayrı bir dizinde tutulur ve önbelleğe kaydedilir (yalnız güncelleme BAŞARILIYSA): sonraki koşular
 #     yalnız farkı indirir. GitHub kullanılmayan önbelleği 7 günde siler → takvim haftada İKİ (Pzt, Per).
-#   • Sonuç sınıflandırılır: clean / findings (CVSS ≥ 7) / update_failed / error. clean dışındaki her sonuç işi KIRMIZI
-#     yapar (rapor yine yüklenir). Kanıtlanmış yanlış pozitif (CPE eşleştirmesi, ör. micrometer-registry-prometheus ↔
+#   • Sonuç sınıflandırılır: clean / findings (CVSS ≥ 7) / stale_clean / update_failed / error. clean dışındaki her sonuç
+#     işi KIRMIZI yapar (rapor yine yüklenir). Sınıflandırma ve kapı scripts/depcheck-classify.mjs'te (sınanır:
+#     scripts/__tests__/ci-gates.test.mjs). 2026-11-17: NVD güncellemesi düşüp tarama önbellekteki ESKİ veriyle bulgusuz
+#     biterse sonuç artık `clean` değil `stale_clean` — kırmızı (önceden yeşil kalıyordu; yeni CVE'ler görülmemiş olabilir).
+#     Kanıtlanmış yanlış pozitif (CPE eşleştirmesi, ör. micrometer-registry-prometheus ↔
 #     Prometheus sunucusu) → backend/dependency-check-suppressions.xml (paket + CPE kapsamlı, gerekçeli).
 #   • NVD_API_KEY sırrı (Settings → Secrets and variables → Actions) tanımlıysa kullanılır; yoksa özet uyarır.
 #     Anahtar: https://nvd.nist.gov/developers/request-an-api-key (ücretsiz).
@@ -49,6 +52,12 @@ jobs:
           distribution: temurin
           cache: maven
 
+      # Sınıflandırma / kapı betiği (scripts/depcheck-classify.mjs) için.
+      - name: Set up Node 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
       # Anahtar her koşuda yeni (run_id): önbellek değişmez, en yenisi restore-keys önekiyle bulunur.
       - name: Restore NVD database
         id: nvd-restore
@@ -73,31 +82,9 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/depcheck.log"
           rc=${PIPESTATUS[0]}
           set -e
-          log="$RUNNER_TEMP/depcheck.log"
-          # Sıra önemli: güncelleme hatası bulgudan ÖNCE denetlenir (boş veritabanıyla "bulgu yok" temiz sayılmasın).
-          if grep -qE "Error updating the NVD Data|NoDataException|Unable to continue dependency-check analysis" "$log"; then
-            if [ "$rc" -eq 0 ] || grep -q "identified with vulnerabilities that have a CVSS" "$log"; then
-              # Güncelleme düştü ama önbellekteki veriyle tarama tamamlandı → sonuç geçerli, veri bayat.
-              stale=true
-            else
-              echo "result=update_failed" >> "$GITHUB_OUTPUT"
-              echo "db_ok=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          else
-            stale=false
-          fi
-          echo "stale=$stale" >> "$GITHUB_OUTPUT"
-          if [ "$rc" -eq 0 ]; then
-            echo "result=clean" >> "$GITHUB_OUTPUT"
-            echo "db_ok=$([ "$stale" = true ] && echo false || echo true)" >> "$GITHUB_OUTPUT"
-          elif grep -q "identified with vulnerabilities that have a CVSS" "$log"; then
-            echo "result=findings" >> "$GITHUB_OUTPUT"
-            echo "db_ok=$([ "$stale" = true ] && echo false || echo true)" >> "$GITHUB_OUTPUT"
-          else
-            echo "result=error" >> "$GITHUB_OUTPUT"
-            echo "db_ok=false" >> "$GITHUB_OUTPUT"
-          fi
+          # Sınıflandırma (sıra önemli — güncelleme hatası bulgudan ÖNCE): clean / findings / stale_clean (güncelleme
+          # düştü, ESKİ veriyle bulgusuz — temiz SAYILMAZ) / update_failed / error. Çıktı: result= / stale= / db_ok=.
+          node ../scripts/depcheck-classify.mjs --log "$RUNNER_TEMP/depcheck.log" --rc "$rc" | tee -a "$GITHUB_OUTPUT"
 
       # Yalnız güncelleme BAŞARILIYSA kaydedilir: yarım / bayat veritabanı önbelleğe yazılmaz.
       - name: Save NVD database
@@ -127,12 +114,7 @@ jobs:
           {
             echo "## OWASP Dependency-Check"
             echo ""
-            case "$RESULT" in
-              clean)         echo "**Sonuç: temiz** — CVSS ≥ 7 bulgu yok." ;;
-              findings)      echo "**Sonuç: ⛔ CVSS ≥ 7 bulgu var** — ayrıntı dependency-check-report artifact'ında." ;;
-              update_failed) echo "**Sonuç: ⚠ NVD verisi güncellenemedi** — tarama yapılamadı (rapor yok ya da eksik)." ;;
-              *)             echo "**Sonuç: ⚠ beklenmeyen hata** — adım günlüğüne bakın." ;;
-            esac
+            node scripts/depcheck-classify.mjs --summary "$RESULT"
             echo ""
             if [ -n "$CACHE_HIT" ]; then echo "- NVD veritabanı önbellekten geldi (yalnız fark indirildi): \`$CACHE_HIT\`"
             else echo "- NVD veritabanı önbellekte yoktu → tamamı indirildi."; fi
@@ -150,15 +132,10 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # Temiz değilse iş KIRMIZI (rapor ve önbellek yukarıda zaten işlendi).
+      # Temiz değilse iş KIRMIZI (rapor ve önbellek yukarıda zaten işlendi). Yalnız `clean` geçer; bayat veriyle temiz
+      # (`stale_clean`), boş / tanınmayan sonuç da kırmızı (scripts/depcheck-classify.mjs --gate).
       - name: Gate
         if: always()
         env:
           RESULT: ${{ steps.depcheck.outputs.result }}
-        run: |
-          case "$RESULT" in
-            clean) echo "OWASP Dependency-Check temiz." ;;
-            findings) echo "::error::CVSS ≥ 7 bağımlılık bulgusu (ayrıntı: özet ve dependency-check-report)"; exit 1 ;;
-            update_failed) echo "::error::NVD verisi güncellenemedi; tarama yapılamadı (NVD_API_KEY tanımlayın / yeniden deneyin)"; exit 1 ;;
-            *) echo "::error::OWASP Dependency-Check beklenmeyen hatayla bitti (sonuç: ${RESULT:-yok})"; exit 1 ;;
-          esac
+        run: node scripts/depcheck-classify.mjs --gate "$RESULT"

@@ -1399,15 +1399,22 @@ imajda var; bütün pod'lar 20.211.0'a geçtikten sonra). Geçiş yapılmadıysa
 ## Yayın güvenlik kapısı (Trivy)
 
 2026-11-16'dan beri Trivy yayını DURDURUR (önceden yalnız rapordu).
-- **release.yml (main):** imaj önce yerel docker'a yüklenip taranır ("Trivy image scan (release gate)" adımı). Düzeltmesi
-  olan HIGH / CRITICAL bulguda iş orada biter ve HİÇBİR ŞEY itilmez: imaj etiketi ve `latest`, Helm grafiği, sürüm commit'i,
-  git etiketi oluşmaz. Temizse aynı derleme önbellekten itilir (taranan ve itilen imaj aynı katmanlar).
+- **release.yml (main):** imaj BİR KEZ derlenir ve yalnız yerel docker'a yüklenir, sonra taranır ("Trivy image scan
+  (release gate)" + "Trivy gate (release)" adımları). Düzeltmesi olan HIGH / CRITICAL bulguda iş orada biter ve HİÇBİR ŞEY
+  itilmez: imaj etiketi ve `latest`, Helm grafiği, sürüm commit'i, git etiketi oluşmaz. Temizse "Push the scanned image"
+  TARANAN imajın kendisini iter (2026-11-17'den beri ikinci derleme yok; üç adın aynı imaj kimliğine baktığı denetlenir,
+  itilen özet iş özetinde "Pushed (= scanned)" satırında).
 - **docker-build.yml (develop, `release/**`):** aynı kural, aynı istisna dosyası; burada imaj zaten itilmiştir, iş kırmızı
   olur ("Trivy gate" adımı) ve imaj açılış testi yine koşar. Amaç main'e gelmeden görmek.
 - Düzeltmesi OLMAYAN bulgular (`ignore-unfixed`) durdurmaz.
+- **Bulgu mu, tarama hatası mı (2026-11-17):** kapı ikisini ayrı anlatır, ikisi de durdurur. "Trivy: N düzeltmesi olan
+  HIGH/CRITICAL bulgu" → aşağıdaki adımlar. "Trivy TARAMASI ÇALIŞAMADI (bulgu değil, tarama hatası)" → Trivy'nin kendisi
+  çalışamadı (veritabanı indirilemedi, zaman aşımı, imaj bulunamadı) ya da raporu okunamadı: "Trivy image scan" adımının
+  günlüğüne bakın ve iş akışını yeniden koşun; bu durumda istisna EKLENMEZ.
 
 **Yayın durduysa:**
-1. Release koşusunda "Trivy image scan (release gate)" adımında dosya (Target), paket, CVE ve düzeltilmiş sürüme bakın.
+1. Release koşusunda "Trivy gate (release)" adımında / iş özetinde (bulgu tablosu) dosya (Target), paket, CVE ve
+   düzeltilmiş sürüme bakın.
 2. Kapatın:
    - Alpine paketi → derleme zaten `apk upgrade` koşar; düzeltme Alpine deposuna yeni girdiyse yeniden koşmak yeter.
      Taban imaj sorunuysa Dockerfile'ın üstündeki digest yenileme yönergesi.
@@ -1424,7 +1431,9 @@ imajda var; bütün pod'lar 20.211.0'a geçtikten sonra). Geçiş yapılmadıysa
 **OWASP bağımlılık taraması (`dependency-check.yml`):** Pazartesi ve Perşembe 06:00 UTC + elle. Temiz değilse iş KIRMIZI
 (önceden her durumda yeşildi):
 - CVSS ≥ 7 bulgu → özetteki liste;
-- NVD güncellenemedi → tarama yapılamadı.
+- NVD güncellenemedi → tarama yapılamadı;
+- NVD güncellenemedi ama tarama önbellekteki ESKİ veriyle bulgusuz bitti (`stale_clean`, 2026-11-17'den beri) → temiz
+  SAYILMAZ (yeni CVE'ler görülmemiş olabilir); yeniden koşun ya da `NVD_API_KEY` tanımlayın. Önceden bu durum yeşil kalıyordu.
 - NVD veritabanı önbellekte tutulur (yalnız başarılı güncellemeden sonra kaydedilir); sonraki koşular yalnız farkı indirir.
   GitHub kullanılmayan önbelleği 7 günde sildiği için takvim haftada iki.
 - **`NVD_API_KEY` sırrı** (https://nvd.nist.gov/developers/request-an-api-key → GitHub: Settings → Secrets and variables →

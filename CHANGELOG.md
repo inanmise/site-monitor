@@ -15,6 +15,27 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Fixed
+- **Oturumsuz uçlarda uzunluğu bildirilmemiş form gövdesi sınırı atlatıyordu.** Onay bağlantısı formları (`@RequestParam`)
+  ve multipart gövdeyi Tomcat kendi ham akışından okur; Content-Length'siz (chunked) bir form 64 KiB sınırını aşıp 2 MB'a
+  dek ayrıştırılıyordu. Artık sınırlı uçlarda uzunluğu bildirilmemiş form / multipart gövde OKUNMADAN 411
+  `LENGTH_REQUIRED` alır (onay bağlantısında kısa HTML sayfası); tarayıcılar bu formları her zaman Content-Length ile
+  gönderir. Chunked JSON eskisi gibi sayılır.
+- **Yayın imajı iki kez derleniyordu.** Release Trivy için bir, itmek için ikinci bir derleme yapıyordu; itilen imaj
+  taranandan sapabilirdi. Artık imaj bir kez derlenir, taranır ve TARANAN imajın kendisi itilir (üç adın imaj kimliği
+  denetlenir, itilen özet iş özetinde).
+- **Trivy kapısı tarama hatasını bulgu sanıyordu.** Trivy'nin kendisi çalışamadığında (veritabanı, zaman aşımı) kapı
+  "HIGH/CRITICAL bulgu" diyordu. Artık bulgu ve tarama hatası ayrı ek açıklama ve özetle anlatılır; ikisi de durdurur
+  (release.yml ve docker-build.yml).
+- **OWASP taraması bayat veriyle "temiz" geçebiliyordu.** NVD güncellemesi düşüp tarama önbellekteki eski veriyle bulgusuz
+  biterse sonuç `clean` sayılıyordu (iş yeşil). Artık ayrı sonuç `stale_clean` ve iş kırmızı.
+- **İmaj açılış denetiminde sınırsız `docker exec`.** Adım 9'un `docker inspect` / `docker exec` çağrıları zaman aşımıyla
+  sınırlı (30 sn); zaman aşımı ya da izin reddi dışındaki bir docker hatası artık "okunamıyor = sertleştirme çalışıyor"
+  diye geçmez.
+- **k6 motoru: ortam değişkeniyle verilmiş aday yolu "varsayılan" sayılıyordu.** `SCRIPTED_K6_BIN_CANDIDATE` ile verilmiş
+  başka bir yol bulunamadığında sayfa onu imajın varsayılanı gibi nötr gösteriyordu. Artık yalnız etkin yol imajın kendi
+  aday yolu (`/opt/k6-candidate/k6`) olduğunda nötr; başka bir yol bulunamıyorsa tehlike tonunda.
+
 ## [20.212.2] — 2026-11-16
 
 ### Changed

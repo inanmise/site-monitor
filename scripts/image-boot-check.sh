@@ -24,7 +24,9 @@
 #   9. (2026-10-31, k6 inceleme A2 — işlem sertleştirmesi) günlük: "İşlem sertleştirmesi uygulandı" satırı VAR, "restricted
 #      method" uyarısı YOK; konteyner içinde (SM_CONTAINER, varsayılan "sm"; docker yoksa ya da konteyner bulunamazsa bu
 #      kısım uyarıyla atlanır) uygulama kullanıcısıyla `cat /proc/1/environ` (JVM dump-edilemez), `cat /usr/bin/k6` ve
-#      (aday varsa) `cat /opt/k6-candidate/k6` (ikililer 0111) BAŞARISIZ olmalı, `<ikili> version` çalışmalı.
+#      (aday varsa) `cat /opt/k6-candidate/k6` (ikililer 0111) İZİN REDDİYLE başarısız olmalı, `<ikili> version` çalışmalı.
+#      Her docker çağrısı SM_EXEC_TIMEOUT (varsayılan 30) sn ile sınırlı; zaman aşımı ve izin reddi dışındaki hata
+#      (konteyner durmuş, daemon yok) "okunamıyor" sayılmaz — denetim yapılamadı hatasıdır (2026-11-17).
 set -uo pipefail
 
 BASE="${1:?kullanım: image-boot-check.sh <base-url> <log-dosyası> [varlık-listeleri-dizini]}"
@@ -186,30 +188,61 @@ if [ -s "$LOG" ]; then
   fi
 fi
 CTR="${SM_CONTAINER:-sm}"
-if command -v docker >/dev/null 2>&1 && docker inspect "$CTR" >/dev/null 2>&1; then
-  if docker exec "$CTR" cat /proc/1/environ >/dev/null 2>&1; then
-    err "konteynerde uygulama kullanıcısı /proc/1/environ'u OKUYABİLİYOR — JVM dump-edilebilir (sertleştirme etkisiz)"
+# Her docker çağrısı zaman aşımıyla sınırlı (2026-11-17, inceleme): takılan bir `docker exec` işi saatlerce tutmasın, ve
+# zaman aşımı ya da docker'ın kendi hatası (konteyner durmuş, daemon yok) "okunamıyor = sertleştirme çalışıyor" diye
+# GEÇMESİN — okunamazlık yalnız gerçek bir izin reddiyle (Permission denied / Operation not permitted) kanıtlanır.
+EXEC_TIMEOUT="${SM_EXEC_TIMEOUT:-30}"
+DEXEC_RC=0
+DEXEC_ERR=""
+# dexec <komut…>: konteynerde sınırlı süreli çalıştırır; DEXEC_RC = çıkış kodu, DEXEC_ERR = stderr (ilk 300 karakter).
+dexec() {
+  DEXEC_ERR="$(timeout -k 5 "$EXEC_TIMEOUT" docker exec "$CTR" "$@" 2>&1 >/dev/null)"
+  DEXEC_RC=$?
+  DEXEC_ERR="$(printf '%s' "$DEXEC_ERR" | tr '\r\n' '  ' | cut -c1-300)"
+}
+# timeout(1): 124 = süre doldu (TERM), 137 = -k sonrası KILL.
+dexec_timed_out() { [ "$DEXEC_RC" -eq 124 ] || [ "$DEXEC_RC" -eq 137 ]; }
+# expect_unreadable <yol> <okunabiliyorsa hata metni>
+expect_unreadable() {
+  dexec cat "$1"
+  if dexec_timed_out; then
+    err "konteynerde 'cat $1' ${EXEC_TIMEOUT} sn'de bitmedi (docker exec zaman aşımı) — izin denetimi YAPILAMADI"
+  elif [ "$DEXEC_RC" -eq 0 ]; then
+    err "$2"
+  elif grep -qiE 'permission denied|operation not permitted' <<<"$DEXEC_ERR"; then
+    echo "sertleştirme: $1 okunamıyor (izin reddi)"
   else
-    echo "sertleştirme: /proc/1/environ okunamıyor"
+    err "konteynerde 'cat $1' izin reddi dışında bir hatayla bitti (çıkış $DEXEC_RC: ${DEXEC_ERR:-<stderr boş>}) — denetim YAPILAMADI"
   fi
-  if docker exec "$CTR" cat /usr/bin/k6 >/dev/null 2>&1; then
-    err "konteynerde /usr/bin/k6 OKUNABİLİYOR — 0111 izni yok (kardeş k6 süreçlerinin ortamı birbirine açık)"
-  else
-    echo "sertleştirme: /usr/bin/k6 okunamıyor (yalnız çalıştırılır)"
+}
+# expect_runs <ikili>
+expect_runs() {
+  dexec "$1" version
+  if dexec_timed_out; then
+    err "konteynerde '$1 version' ${EXEC_TIMEOUT} sn'de bitmedi (docker exec zaman aşımı)"
+  elif [ "$DEXEC_RC" -ne 0 ]; then
+    err "konteynerde $1 version çalışmıyor (çıkış $DEXEC_RC: ${DEXEC_ERR:-<stderr boş>}) — 0111 ikili çalıştırılamadı"
   fi
-  if ! docker exec "$CTR" /usr/bin/k6 version >/dev/null 2>&1; then
-    err "konteynerde /usr/bin/k6 version çalışmıyor (0111 ikili çalıştırılamadı)"
-  fi
+}
+if command -v docker >/dev/null 2>&1; then
+  timeout -k 5 "$EXEC_TIMEOUT" docker inspect "$CTR" >/dev/null 2>&1
+  inspect_rc=$?
+else
+  inspect_rc=127
+fi
+if [ "$inspect_rc" -eq 124 ] || [ "$inspect_rc" -eq 137 ]; then
+  err "docker inspect $CTR ${EXEC_TIMEOUT} sn'de bitmedi (zaman aşımı) — /proc ve ikili izin denetimleri YAPILAMADI"
+elif [ "$inspect_rc" -eq 0 ]; then
+  expect_unreadable /proc/1/environ \
+    "konteynerde uygulama kullanıcısı /proc/1/environ'u OKUYABİLİYOR — JVM dump-edilebilir (sertleştirme etkisiz)"
+  expect_unreadable /usr/bin/k6 \
+    "konteynerde /usr/bin/k6 OKUNABİLİYOR — 0111 izni yok (kardeş k6 süreçlerinin ortamı birbirine açık)"
+  expect_runs /usr/bin/k6
   # Aday ikili (2026-11-16): uyumluluk taraması aynı betikleri aynı gizli değerlerle koşar — AYNI koruma.
   if [ -n "${k6_cand:-}" ]; then
-    if timeout 30 docker exec "$CTR" cat /opt/k6-candidate/k6 >/dev/null 2>&1; then
-      err "konteynerde /opt/k6-candidate/k6 OKUNABİLİYOR — 0111 izni yok (aday k6 süreçlerinin ortamı birbirine açık)"
-    else
-      echo "sertleştirme: /opt/k6-candidate/k6 okunamıyor (yalnız çalıştırılır)"
-    fi
-    if ! timeout 30 docker exec "$CTR" /opt/k6-candidate/k6 version >/dev/null 2>&1; then
-      err "konteynerde /opt/k6-candidate/k6 version çalışmıyor (0111 aday ikili çalıştırılamadı)"
-    fi
+    expect_unreadable /opt/k6-candidate/k6 \
+      "konteynerde /opt/k6-candidate/k6 OKUNABİLİYOR — 0111 izni yok (aday k6 süreçlerinin ortamı birbirine açık)"
+    expect_runs /opt/k6-candidate/k6
   fi
 else
   echo "::warning::konteyner '$CTR' bulunamadı ya da docker yok — /proc ve ikili izin denetimleri atlandı"

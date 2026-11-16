@@ -360,43 +360,25 @@ jobs:
           PREV_REF: ghcr.io/${{ github.repository_owner }}/site-monitor:${{ steps.ver.outputs.prev_tag }}
         run: echo "image=$(bash scripts/resolve-previous-image.sh "$PREV_REF")" >> "$GITHUB_OUTPUT"
 
-      # ── Security gate: scan BEFORE pushing (2026-11-16) ──
-      # İmaj önce yerel docker'a yüklenip taranır; düzeltmesi olan HIGH/CRITICAL bulguda iş BURADA durur ve hiçbir şey
-      # itilmez: imaj etiketi / latest, Helm grafiği, sürüm commit'i ve git etiketi oluşmaz (sürüm commit'i "Create and
-      # push git tag" adımında itilir). Bilinçli istisnalar .trivyignore.yaml'da (yol kapsamlı, son tarihli, gerekçeli).
-      # Ne yapmalı: docs/RUNBOOK.md "Yayın güvenlik kapısı (Trivy)". Build-arg'lar aşağıdaki itme derlemesiyle BİREBİR
-      # aynı olmalı — itme derlemesi bu derlemenin önbelleğinden gelir, taranan ve itilen imaj aynı katmanlardır.
-      - name: Build Docker image for scanning (local, not pushed)
+      # ── Security gate: scan BEFORE pushing (2026-11-16; tek derleme 2026-11-17) ──
+      # İmaj BİR KEZ derlenir ve yalnız yerel docker'a yüklenir (itilmez); taranan imaj TAM OLARAK itilen imajdır:
+      # aynı derleme yerel "site-monitor:release-scan" adını ve iki ghcr etiketini birlikte taşır, Trivy yerel adı tarar,
+      # kapı geçerse "Push the scanned image" aynı imaj kimliğini (üç adın kimliği denetlenir) docker push ile iter.
+      # (2026-11-16 düzeni tarama için ayrı, itme için ayrı derleme yapıyordu — itilen imaj taranandan sapabilirdi.)
+      # Düzeltmesi olan HIGH/CRITICAL bulguda ya da Trivy'nin KENDİSİ çalışamadığında (ayrı ek açıklama — bulgu değil
+      # tarama hatası; scripts/trivy-gate.mjs) iş BURADA durur ve hiçbir şey itilmez: imaj etiketi / latest, Helm grafiği,
+      # sürüm commit'i ve git etiketi oluşmaz (sürüm commit'i "Create and push git tag" adımında itilir). Bilinçli
+      # istisnalar .trivyignore.yaml'da (yol kapsamlı, son tarihli, gerekçeli). Ne yapmalı: docs/RUNBOOK.md "Yayın güvenlik
+      # kapısı (Trivy)".
+      - name: Build Docker image (local, scanned before push)
+        id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           push: false
           load: true
-          tags: site-monitor:release-scan
-          build-args: |
-            VERSION=${{ steps.ver.outputs.next }}
-            BUILD_DATE=${{ steps.ver.outputs.build_time }}
-            APK_REFRESH=${{ steps.ver.outputs.build_time }}
-            GIT_COMMIT=${{ github.sha }}
-            PREVIOUS_IMAGE=${{ steps.prev.outputs.image }}
-          cache-from: type=gha
-
-      - name: Trivy image scan (release gate)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: site-monitor:release-scan
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
-          format: table
-          trivyignores: .trivyignore.yaml
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
-        with:
-          context: .
-          push: true
           tags: |
+            site-monitor:release-scan
             ghcr.io/${{ github.repository_owner }}/site-monitor:${{ steps.ver.outputs.tag }}
             ghcr.io/${{ github.repository_owner }}/site-monitor:latest
           build-args: |
@@ -407,6 +389,54 @@ jobs:
             PREVIOUS_IMAGE=${{ steps.prev.outputs.image }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # exit-code 0 + JSON: bulgu kararını "Trivy gate (release)" verir. Bu adım BAŞARISIZSA Trivy'nin kendisi çalışamadı
+      # demektir (veritabanı indirilemedi, zaman aşımı, imaj bulunamadı) — kapı bunu bulgudan AYRI anlatır, ikisi de durdurur.
+      - name: Trivy image scan (release gate)
+        id: trivy
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: site-monitor:release-scan
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
+          format: json
+          output: trivy-results.json
+          trivyignores: .trivyignore.yaml
+
+      - name: Trivy gate (release)
+        env:
+          OUTCOME: ${{ steps.trivy.outcome }}
+        run: node scripts/trivy-gate.mjs --report trivy-results.json --outcome "$OUTCOME" --context release
+
+      # Taranan imajın kendisi itilir (yeniden derleme YOK). Üç adın aynı imaj kimliğine baktığı denetlenir; her itme
+      # zaman aşımıyla sınırlı (takılan kayıt defteri işi 45 dk'lık iş sınırına dek tutmasın).
+      - name: Push the scanned image
+        id: push
+        env:
+          IMG: ghcr.io/${{ github.repository_owner }}/site-monitor
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          scanned="$(docker image inspect --format '{{.Id}}' site-monitor:release-scan)"
+          for t in "$TAG" latest; do
+            id="$(docker image inspect --format '{{.Id}}' "$IMG:$t")"
+            if [ "$id" != "$scanned" ]; then
+              echo "::error::$IMG:$t taranan imaj değil ($id ≠ $scanned) — hiçbir şey itilmedi"
+              exit 1
+            fi
+          done
+          for t in "$TAG" latest; do
+            if ! timeout 900 docker push "$IMG:$t"; then
+              echo "::error::$IMG:$t itilemedi (hata ya da 15 dk zaman aşımı)"
+              exit 1
+            fi
+          done
+          # Özet yalnız bilgi içindir: okunamazsa itme yine başarılıdır (iş burada düşmez — imaj zaten itildi).
+          digest="$(docker image inspect --format '{{join .RepoDigests " "}}' "$IMG:$TAG" 2>/dev/null | tr ' ' '\n' | grep -m1 "^$IMG@" || true)"
+          echo "digest=${digest:-bilinmiyor}" >> "$GITHUB_OUTPUT"
+          echo "İtilen (taranan) imaj: $digest (imaj kimliği $scanned)"
 
       # ── 5. Helm OCI push ─────────────────────────────────────────────────
       - name: Set up Helm
@@ -495,6 +525,7 @@ jobs:
           echo "| | |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
           echo "| Docker | \`ghcr.io/${{ github.repository_owner }}/site-monitor:${{ steps.ver.outputs.tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Pushed (= scanned) | \`${{ steps.push.outputs.digest }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Helm | \`oci://ghcr.io/${{ github.repository_owner }}/sitemonitor-chart:${{ steps.ver.outputs.next }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Bump type | \`${{ needs.detect.outputs.bump }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| Changes | ${{ steps.ver.outputs.next }}: ${{ steps.changelog.outputs.total }} commit — feat ${{ steps.changelog.outputs.feat }} · fix ${{ steps.changelog.outputs.fix }} · diğer ${{ steps.changelog.outputs.other }} |" >> "$GITHUB_STEP_SUMMARY"

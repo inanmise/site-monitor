@@ -255,6 +255,86 @@ class PublicJsonBodyLimitTest {
         assertThat(PublicBodyLimitFilter.htmlFormPath(null)).isFalse();
     }
 
+    /** Content-Length'i bildirilmemiş (chunked) istek. */
+    private static MockHttpServletRequest chunked(String path, String contentType, byte[] body) {
+        MockHttpServletRequest req = new MockHttpServletRequest("POST", path) {
+            @Override public long getContentLengthLong() { return -1; }
+            @Override public int getContentLength() { return -1; }
+        };
+        req.setContentType(contentType);
+        req.setContent(body);
+        return req;
+    }
+
+    @Test
+    @DisplayName("2026-11-17 inceleme: uzunluğu bildirilmemiş (chunked) FORM / MULTIPART gövde sayılamaz (Tomcat sarmalayıcıyı "
+            + "atlar) → OKUNMADAN 411; onay bağlantısında HTML, diğer uçlarda JSON LENGTH_REQUIRED; zincir çağrılmaz")
+    void chunkedFormOrMultipart_isRefusedUnread() throws Exception {
+        byte[] oversized = ("token=t&reason=" + "a".repeat((int) PublicBodyLimitFilter.SMALL_BYTES + 10))
+                .getBytes(StandardCharsets.UTF_8);
+        for (String path : List.of("/api/weekly-reports/approve-link/reject", "/api/tech-error-reports/approve-link/confirm")) {
+            for (byte[] body : List.of(oversized, "token=t&reason=kisa".getBytes(StandardCharsets.UTF_8))) {
+                MockHttpServletRequest req = chunked(path, "application/x-www-form-urlencoded; charset=UTF-8", body);
+                MockHttpServletResponse res = new MockHttpServletResponse();
+                AtomicBoolean called = new AtomicBoolean();
+                new PublicBodyLimitFilter().doFilter(req, res, (r, s) -> called.set(true));
+                assertThat(res.getStatus()).as(path).isEqualTo(411);
+                assertThat(res.getContentType()).startsWith("text/html");
+                assertThat(res.getHeader("Cache-Control")).isEqualTo("no-store");
+                assertThat(res.getContentAsString(StandardCharsets.UTF_8)).contains("Form okunamadı").contains("Karar kaydedilmedi")
+                        .doesNotContain("<script");
+                assertThat(called).as(path).isFalse();
+            }
+        }
+        for (String ct : List.of("multipart/form-data; boundary=x", "Multipart/Mixed", " application/X-WWW-Form-Urlencoded ")) {
+            MockHttpServletRequest req = chunked("/api/login", ct, new byte[10]);
+            MockHttpServletResponse res = new MockHttpServletResponse();
+            AtomicBoolean called = new AtomicBoolean();
+            new PublicBodyLimitFilter().doFilter(req, res, (r, s) -> called.set(true));
+            assertThat(res.getStatus()).as(ct).isEqualTo(411);
+            assertThat(res.getContentAsString(StandardCharsets.UTF_8)).contains("\"code\":\"LENGTH_REQUIRED\"");
+            assertThat(called).as(ct).isFalse();
+        }
+        // İngilizce
+        MockHttpServletRequest en = chunked("/api/login", "multipart/form-data; boundary=x", new byte[10]);
+        en.addHeader("X-Lang", "en");
+        MockHttpServletResponse enRes = new MockHttpServletResponse();
+        new PublicBodyLimitFilter().doFilter(en, enRes, (r, s) -> { });
+        assertThat(enRes.getContentAsString(StandardCharsets.UTF_8)).contains("length was not declared");
+    }
+
+    @Test
+    @DisplayName("2026-11-17 inceleme: chunked JSON hâlâ SAYILARAK geçer (411 değil); Content-Length'li form sınır içinde "
+            + "dokunulmadan geçer; liste dışı yolda chunked form dokunulmaz")
+    void chunkedJsonStillCounted_declaredFormPasses() throws Exception {
+        List<HttpServletRequest> seen = new ArrayList<>();
+        FilterChain chain = (r, s) -> seen.add((HttpServletRequest) r);
+        MockHttpServletRequest json = chunked("/api/login", "application/json", "{\"username\":\"a\"}".getBytes(StandardCharsets.UTF_8));
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        new PublicBodyLimitFilter().doFilter(json, res, chain);
+        assertThat(res.getStatus()).isEqualTo(200);
+        assertThat(seen).hasSize(1);
+        assertThat(seen.get(0)).isInstanceOf(PublicBodyLimitFilter.Capped.class);
+
+        seen.clear();
+        MockHttpServletRequest form = new MockHttpServletRequest("POST", "/api/weekly-reports/approve-link/reject");
+        form.setContentType("application/x-www-form-urlencoded");
+        form.setContent("token=t&reason=Eksik".getBytes(StandardCharsets.UTF_8));
+        new PublicBodyLimitFilter().doFilter(form, new MockHttpServletResponse(), chain);
+        assertThat(seen).hasSize(1);
+
+        seen.clear();
+        MockHttpServletRequest other = chunked("/api/admin/inventory/import", "multipart/form-data; boundary=x", new byte[10]);
+        new PublicBodyLimitFilter().doFilter(other, new MockHttpServletResponse(), chain);
+        assertThat(seen).containsExactly(other);
+
+        assertThat(PublicBodyLimitFilter.containerParsedBody(null)).isFalse();
+        assertThat(PublicBodyLimitFilter.containerParsedBody("application/json")).isFalse();
+        assertThat(PublicBodyLimitFilter.containerParsedBody("text/plain")).isFalse();
+        assertThat(PublicBodyLimitFilter.containerParsedBody("application/x-www-form-urlencoded;charset=UTF-8")).isTrue();
+        assertThat(PublicBodyLimitFilter.containerParsedBody("multipart/form-data")).isTrue();
+    }
+
     @Test
     @DisplayName("üretim ve test application.properties aynı Jackson okuma sınırlarını taşır; sınırlar meşru gövdelerin üstünde")
     void productionAndTestPropertiesAgree() throws IOException {
