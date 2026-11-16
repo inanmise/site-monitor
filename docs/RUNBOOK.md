@@ -1429,8 +1429,14 @@ imajda var; bütün pod'lar 20.211.0'a geçtikten sonra). Geçiş yapılmadıysa
   GitHub kullanılmayan önbelleği 7 günde sildiği için takvim haftada iki.
 - **`NVD_API_KEY` sırrı** (https://nvd.nist.gov/developers/request-an-api-key → GitHub: Settings → Secrets and variables →
   Actions) yoksa ilk tam indirme 35–60 dk sürer ve NVD 524 zaman aşımına açıktır; özet bunu uyarır.
-- Yanlış pozitif (CPE eşleştirmesi; ör. `micrometer-registry-prometheus` Prometheus sunucusunun CVE'leriyle eşleşir) →
-  pom.xml `security` profiline gerekçeli bir bastırma dosyası (`suppressionFiles`).
+  Eklenti anahtarı `NVD_API_KEY` ortam değişkeninden okur (`nvdApiKeyEnvironmentVariable`; boşsa anahtarsız çalışır).
+  Eklenti sürümü sır olmadan yükseltilmez: önbellek anahtarı sürümü içerir, yeni sürüm NVD verisini baştan indirir ve
+  anahtarsız tam indirme NVD 429 / 524 ile düşer (2026-11-16, 12.2.2 denemesi). 13.0.0 ise anahtarsız hiç koşmuyor
+  ("Invalid API Key, length of 0"; Dependabot kuralı 13'ü yok sayar). Sır eklenince 13'e geçilebilir.
+- Kanıtlanmış yanlış pozitif (CPE eşleştirmesi; ör. `micrometer-registry-prometheus` Prometheus SUNUCUSUNUN CVE'leriyle
+  eşleşir) → `backend/dependency-check-suppressions.xml`: CVE'ye değil yanlış CPE'ye ve yalnız o pakete bağlı, gerekçeli.
+  Şu an üç madde: micrometer ↔ Prometheus sunucusu, opentelemetry-semconv ↔ OpenTelemetry-Go, angus-activation ↔ Angus
+  Mail. Gerçek bulgu buraya yazılmaz; bağımlılık yükseltilir.
 - Sonatype OSS Index analizcisi kapalı (kimlik doğrulaması istiyor).
 
 **İmaj açılış testi** 1,5 GiB bellekle koşar (önceden 1 GiB: yığın %75 = 768 MiB, yığın dışına ~256 MiB kalıyor, bir kez

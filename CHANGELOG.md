@@ -15,6 +15,22 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.212.2] — 2026-11-16
+
+### Changed
+- **Bağımlılıklar aynı ana sürüm içinde güncellendi.**
+  - Arka uç: BouncyCastle 1.87 (sertifika zinciri, OCSP / CRL), jsoup 1.24.1 (sayfa ve keyword ayrıştırma), dnsjava 3.7.1,
+    commonmark 0.32.0 (alarm postasındaki "Ne yapılmalı" notu), JaCoCo 0.8.16.
+  - Ön yüz: lucide-react 1.73, @testing-library/user-event 14.6.12, Playwright 1.65.1.
+  - CI eylemleri: actions/setup-node 7.1.0, docker/login-action 4.8.0, azure/setup-helm 5.1.0.
+- **OWASP taraması NVD anahtarını ortam değişkeninden okur** (`nvdApiKeyEnvironmentVariable`); anahtar artık Maven
+  hata ayıklama günlüğüne düşemez (GHSA-qqhq-8r2c-c3f5). Eklenti 12.1.0'da kaldı: her sürüm değişikliği NVD verisini
+  baştan indirtiyor ve anahtarsız tam indirme NVD sınırına (429) takıldı; 13.0.0 ise anahtarsız hiç koşmuyor.
+  Yükseltme `NVD_API_KEY` sırrı eklendikten sonra yapılacak.
+- **⚠ Davranış — develop ortamının bellek tavanı 768Mi → 1536Mi.** İmaj açılış testi uygulamanın açılıştan sonra
+  ~925–975 MiB kullandığını ölçtü; 768Mi tavanda pod açılışta bellek yetersizliğinden (137) ölüyordu. Bellek isteği
+  (request) 256Mi kaldı; ad alanı kotası buna göre kontrol edilmeli.
+
 ## [20.212.1] — 2026-11-16
 
 ### Fixed
@@ -3383,7 +3399,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.212.1...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.212.2...HEAD
+[20.212.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.2
 [20.212.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.1
 [20.212.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.0
 [20.211.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.211.0
