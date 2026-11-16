@@ -29,7 +29,7 @@ concurrency:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   # Eklenti sürümü değişince önbellek anahtarı da değişir (veritabanı şeması sürüme bağlı).
-  DC_VERSION: "13.0.0"
+  DC_VERSION: "12.2.2"
 
 jobs:
   dependency-check:
@@ -63,7 +63,7 @@ jobs:
         id: depcheck
         working-directory: backend
         env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}   # opsiyonel; pom.xml ${env.NVD_API_KEY} okur
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}   # opsiyonel; pom.xml nvdApiKeyEnvironmentVariable ile okur (boş = anahtarsız)
         run: |
           set +e
           mkdir -p "$DC_DATA"
