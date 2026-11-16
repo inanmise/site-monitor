@@ -41,12 +41,13 @@ export function TextInput({ label, value, onChange, disabled, type = 'text', req
  * ("16.11 14:30", "dün 09:00", "şimdi"), hızlı seçim çipleri, ay / yıl açılır takvim + saat / dakika listeleri. `anchor`
  * (tespit / çözüm zamanı için oluş zamanı) verilirse çipler "+N dk" olur ve altında "<anchorLabel> zamanından N sonra" yazar.
  */
-export function DateInput({ label, value, onChange, disabled, req, min, error, hint, anchor, anchorLabel }) {
+export function DateInput({ label, value, onChange, disabled, req, min, minLabel, error, hint, anchor, anchorLabel, onProblem }) {
   return (
     <Field label={label} required={req} error={error} hint={hint}>
       {({ id, describedBy, invalid }) => (
         <SmartDateTimeField id={id} value={value} onChange={onChange} disabled={disabled} clearable={!req} min={min}
-          anchor={anchor} anchorLabel={anchorLabel} invalid={invalid} describedBy={describedBy} />
+          minLabel={minLabel} label={label} anchor={anchor} anchorLabel={anchorLabel} invalid={invalid}
+          describedBy={describedBy} onProblem={onProblem} />
       )}
     </Field>
   )

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within, act } from './test-utils.jsx'
+import { formatLocal, parseIso } from '../utils/smartDateTime.js'
 
 /**
  * Alarmdan olay kaydı açma (2026-10-01) — alarm detayındaki "Olay kaydı aç" düğmesi ve "Olay kaydı #N" bağlantısı.
@@ -126,7 +127,8 @@ describe('form (ön dolgu + kayıt)', () => {
     const dlg = await openForm()
     expect(dlg.querySelector('[data-slot="incident-form"]')).not.toBeNull()
     expect(within(dlg).getByRole('textbox', { name: /^(Başlık|Title)/ }).value).toMatch(/^db\.example\.com · (Erişilebilirlik|Reachability) \(Ping\)$/)
-    expect(within(dlg).getByRole('textbox', { name: /^(Oluş Zamanı|Occurred)/ })).toHaveValue('2026-10-01T06:00:00')
+    // Olay formunun tarih alanı (ui/SmartDateTimeField) değeri YEREL saatle gösterir; saklanan değer UTC ISO (kayıt testinde)
+    expect(within(dlg).getByRole('textbox', { name: /^(Oluş Zamanı|Occurred)/ })).toHaveValue(formatLocal(parseIso('2026-10-01T06:00:00')))
     expect(within(dlg).getByRole('combobox', { name: /^(Takım|Team)/ })).toHaveValue('1')
     expect(within(dlg).getByRole('combobox', { name: /^(Önem|Severity)/ })).toHaveValue('CRITICAL')
     expect(within(dlg).getByRole('combobox', { name: /^(Durum|Status)/ })).toHaveValue('OPEN')

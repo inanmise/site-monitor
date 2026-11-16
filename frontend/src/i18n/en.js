@@ -15189,6 +15189,12 @@ export const EN = {
   'sdt.hours':            'Hour',
   'sdt.minutes':          'Minute',
   'sdt.noValue':          'Not chosen yet',
+  'sdt.openPickerFor':    'Pick from the calendar and time lists: {0}',
+  'sdt.clearFor':         'Clear the date: {0}',
+  'sdt.presetsFor':       'Quick pick: {0}',
+  'sdt.p.noteFuture':     'Dimmed options have not come yet; an incident record needs a moment in the past.',
+  'sdt.p.noteBeforeMin':  'Dimmed options fall before {0}, so they cannot be chosen (the order would break).',
+  'sdt.p.noteBoth':       'Dimmed options cannot be chosen: they have not come yet or fall before {0}.',
   'wdp.pickWeek': 'Choose week {0} of {1}',
 
   'nav.keyword': 'Keyword',

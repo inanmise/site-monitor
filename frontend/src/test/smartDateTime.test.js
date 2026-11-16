@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  MAX_TYPED, floorMinute, formatLocal, minuteOptions, hourOptions, parseIso, parseTime, parseTyped, presetsFor, stepValue, toIso,
+  MAX_TYPED, floorMinute, formatLocal, liveReady, minuteOptions, hourOptions, parseIso, parseTime, parseTyped, presetsFor, stepValue, toIso,
 } from '../utils/smartDateTime.js'
 
 // Yerel saatle kurulan Date'ler — testler çalışma ortamının saat diliminden bağımsız (CI UTC, yerel İstanbul).
@@ -133,5 +133,25 @@ describe('saat / dakika listeleri ve klavye adımı', () => {
     expect(stepValue(null, 'ArrowUp', false)).toBeNull()
     expect(stepValue(d, 'Enter', false)).toBeNull()
     expect(floorMinute(new Date(2026, 0, 1, 1, 1, 59, 999)).getSeconds()).toBe(0)
+  })
+})
+
+describe('inceleme düzeltmeleri (2026-11-17)', () => {
+  it('yıl yazılmadıysa şimdiye en yakın yıl: ocakta "31.12" geçen yıl; kasımda "20.11" bu yıl', () => {
+    expect(formatLocal(parseTyped('31.12 10:00', { now: L(2027, 1, 5, 9, 0) }).date)).toBe('31.12.2026 10:00')
+    expect(formatLocal(parseTyped('20.11 10:00', { now: NOW }).date)).toBe('20.11.2026 10:00')
+    expect(formatLocal(parseTyped('1.6', { now: NOW }).date)).toBe('01.06.2026 00:00')
+    expect(formatLocal(parseTyped('29.02 08:00', { now: L(2029, 1, 10) }).date)).toBe('29.02.2028 08:00')   // yalnız biri takvimde
+  })
+
+  it('liveReady: dakikası tam saat + gün; yarım saat / yarım yıl / yalnız gün / yalnız saat anında kaydedilmez', () => {
+    const TABLE = [
+      ['16.11.2026 14:30', true], ['16.11 14:30', true], ['16.11.2026 1430', true], ['dün 09:15', true],
+      ['2026-11-16 14:30', true], ['2026-11-16T14:30:00', true], ['şimdi', true], ['Now', true],
+      ['16.11.2026 9', false], ['16.11.2026 143', false], ['16.11.2026 14:3', false], ['16.11.20 14:30', false],
+      ['16-11-26 1430', false], ['16.11.2026', false], ['14:30', false], ['dün', false], ['', false], ['abc', false],
+      ['1'.repeat(MAX_TYPED + 1), false],
+    ]
+    for (const [text, ok] of TABLE) expect([text, liveReady(text)]).toEqual([text, ok])
   })
 })

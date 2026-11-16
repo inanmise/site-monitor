@@ -19,7 +19,9 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 - **Olay & Hata Geçmişi — yeni olay formunda tarih alanları yeniden tasarlandı.** Oluş, tespit ve çözülme zamanı
   doğrudan yazılabilir ("16.11 14:30", "dün 09:15", "1430", "şimdi"); hızlı seçim çipleri ("15 dk önce", oluştan "+30 dk");
   takvim düğmesi ay / yıl açılır listeli takvim ile saat ve dakika listelerini açar; alanın altında "2 sa önce · pazartesi"
-  ya da "Oluş zamanından 25 dk sonra" yazar. Okunamayan metin kayıtlı değeri değiştirmez, ne yazıldığı ve örnekler gösterilir.
+  ya da "25 dk sonra (esas: Oluş Zamanı)" yazar. Okunamayan metin alanın önceki değerini geri getirir, ne yazıldığı ve
+  örnekler gösterilir ve kayıt o düzeltilene dek yapılmaz; yarım yazılan saat ya da yıl kendiliğinden kaydedilmez;
+  Ctrl+Enter alanda yazılı değeri de kaydeder.
 
 ## [20.212.2] — 2026-11-16
 

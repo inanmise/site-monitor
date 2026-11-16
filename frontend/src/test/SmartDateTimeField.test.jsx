@@ -133,12 +133,15 @@ describe('SmartDateTimeField — hızlı seçim ve bağlam satırı', () => {
   it('çapa (oluş zamanı) varken: +5 dk … +2 sa; gelecekteki an pasif; satır "oluştan N sonra"', () => {
     render(<Harness anchor={toIso(L(2026, 11, 16, 15, 0))} anchorLabel="Oluş Zamanı" />)
     const group = screen.getByRole('group', { name: /Hızlı seçim|Quick pick/ })
-    const plus30 = within(group).getByRole('button', { name: /Oluş Zamanı zamanından 30 dk sonra|30 min after Oluş Zamanı/ })
+    const plus30 = within(group).getByRole('button', { name: /30 dk sonra \(esas: Oluş Zamanı\)|30 min after Oluş Zamanı/ })
     expect(within(group).getByRole('button', { name: /60 dk sonra|1 sa sonra|1 h after/ })).toBeDisabled()
     fireEvent.click(plus30)
     expect(value()).toBe(toIso(L(2026, 11, 16, 15, 30)))
     expect(document.querySelector('[data-slot="smart-datetime-context"]').textContent)
-      .toMatch(/Oluş Zamanı zamanından 30 dk sonra|30 min after Oluş Zamanı/)
+      .toMatch(/30 dk sonra \(esas: Oluş Zamanı\)|30 min after Oluş Zamanı/)
+    // Soluk (gelecekteki) çiplerin nedeni görünür ve erişilebilir adda
+    expect(document.querySelector('[data-slot="smart-datetime-presets-note"]').textContent).toMatch(/henüz gelmedi|have not come yet/)
+    expect(within(group).getByRole('button', { name: /2 sa sonra|2 h after/ }).getAttribute('aria-label')).toMatch(/henüz gelmedi|has not come yet/)
   })
 
   it('çapadan önceki an uyarı tonunda; gelecekteki an "doğru mu?" uyarısı', () => {
@@ -195,5 +198,114 @@ describe('SmartDateTimeField — takvim ve saat paneli', () => {
       return m
     })
     expect(within(minutes).getByRole('radio', { name: /^(Dakika|Minute) 42$/ })).toHaveAttribute('data-state', 'on')
+  })
+})
+
+describe('SmartDateTimeField — inceleme düzeltmeleri (2026-11-17)', () => {
+  it('odak halkası: giriş InputGroup denetim kancasını (data-slot="input-group-control") korur', () => {
+    render(<Harness />)
+    expect(input()).toHaveAttribute('data-slot', 'input-group-control')
+    expect(input()).toHaveAttribute('data-sdt', 'input')
+  })
+
+  it('düzenlemeden odak çıkışı onChange çağırmaz — saniyeli değer (uyarıdan) korunur, form kirlenmez', () => {
+    const onChange = vi.fn()
+    const withSeconds = toIso(L(2026, 11, 10, 8, 20)).replace(/:00$/, ':45')
+    render(<Harness initial={withSeconds} onChange={onChange} />)
+    fireEvent.focus(input())
+    fireEvent.blur(input())
+    fireEvent.focus(input())
+    fireEvent.keyDown(input(), { key: 'Enter' })
+    // Aynı dakikayı yeniden yazmak da değeri değiştirmez
+    fireEvent.change(input(), { target: { value: '10.11.2026 08:20' } })
+    fireEvent.blur(input())
+    expect(onChange).not.toHaveBeenCalled()
+    expect(value()).toBe(withSeconds)
+  })
+
+  it('yarım yazılan saat / yıl anında kaydedilmez; okunamayan metin odaklanmadan ÖNCEKİ değeri geri getirir', () => {
+    const before = toIso(L(2026, 11, 16, 14, 30))
+    const onChange = vi.fn()
+    render(<Harness initial={before} onChange={onChange} />)
+    fireEvent.focus(input())
+    fireEvent.change(input(), { target: { value: '16.11.2026 9' } })     // saat yarım
+    fireEvent.change(input(), { target: { value: '16.11.2026 143' } })   // "1:43" olarak okunabilirdi
+    fireEvent.change(input(), { target: { value: '16.11.20 14:30' } })   // yıl yeniden yazılıyor (2020 değil)
+    expect(onChange).not.toHaveBeenCalled()
+    fireEvent.change(input(), { target: { value: '16.11.2026 09:05' } })  // tam yazım → anında
+    expect(value()).toBe(toIso(L(2026, 11, 16, 9, 5)))
+    fireEvent.change(input(), { target: { value: '16.11.2026 09:05x' } })
+    fireEvent.blur(input())
+    expect(value()).toBe(before)                                         // ara değer kalmadı
+    expect(input()).toHaveValue('16.11.2026 14:30')
+    expect(document.querySelector('[data-slot="smart-datetime-problem"]').textContent).toContain('09:05x')
+  })
+
+  it('saati silip çıkmak: saat, yazarken kaydedilen ara değerden değil odaklanmadan önceki değerden alınır', () => {
+    render(<Harness initial={toIso(L(2026, 11, 16, 14, 30))} />)
+    fireEvent.focus(input())
+    fireEvent.change(input(), { target: { value: '16.11.2026 09:05' } })
+    fireEvent.change(input(), { target: { value: '15.11.2026' } })
+    fireEvent.blur(input())
+    expect(value()).toBe(toIso(L(2026, 11, 15, 14, 30)))
+  })
+
+  it('Ctrl/⌘+Enter yazılanı çözer ve olayı forma bırakır (preventDefault yok)', () => {
+    render(<Harness initial={toIso(L(2026, 11, 10, 8, 20))} />)
+    fireEvent.focus(input())
+    fireEvent.change(input(), { target: { value: '14:30' } })            // yalnız saat: anında kaydedilmez
+    expect(fireEvent.keyDown(input(), { key: 'Enter', ctrlKey: true })).toBe(true)
+    expect(value()).toBe(toIso(L(2026, 11, 10, 14, 30)))
+  })
+
+  it('okunamayan metin onProblem(true) bildirir; düzelince false', () => {
+    const onProblem = vi.fn()
+    render(<Harness initial={toIso(L(2026, 11, 10, 8, 20))} onProblem={onProblem} />)
+    fireEvent.focus(input())
+    fireEvent.change(input(), { target: { value: 'abc' } })
+    fireEvent.blur(input())
+    expect(onProblem).toHaveBeenLastCalledWith(true)
+    fireEvent.focus(input())
+    fireEvent.change(input(), { target: { value: '10.11.2026 09:00' } })
+    expect(onProblem).toHaveBeenLastCalledWith(false)
+  })
+
+  it('değer yokken takvimden gün: saat çapadan (oluş) gelir, en erken andan önceye düşmez', async () => {
+    render(<Harness anchor={toIso(L(2026, 11, 12, 10, 40))} anchorLabel="Oluş Zamanı" min={toIso(L(2026, 11, 12, 10, 40))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Takvimden|Pick from the calendar/ }))
+    const panel = await waitFor(() => {
+      const el = document.querySelector('[data-slot="smart-datetime-panel"]')
+      expect(el).toBeTruthy()
+      return el
+    })
+    fireEvent.click(within(panel.querySelector('[role="grid"]')).getByText('12', { selector: 'button' }))
+    await waitFor(() => expect(value()).toBe(toIso(L(2026, 11, 12, 10, 40))))
+  })
+
+  it('en erken andan (tespit) önce ama çapadan (oluş) sonra: uyarı tonunda, en erken anın adıyla', () => {
+    render(<Harness initial={toIso(L(2026, 11, 16, 10, 0))} anchor={toIso(L(2026, 11, 16, 9, 0))} anchorLabel="Oluş Zamanı"
+      min={toIso(L(2026, 11, 16, 11, 0))} minLabel="Tespit Zamanı" />)
+    const ctx = document.querySelector('[data-slot="smart-datetime-context"]')
+    expect(ctx).toHaveAttribute('data-warn', 'true')
+    expect(ctx.textContent).toMatch(/1 sa önce \(esas: Tespit Zamanı\)|1 h before Tespit Zamanı/)
+  })
+
+  it('label verilince düğme ve çip grubu adları alana özgü', () => {
+    render(<Harness label="Çözülme Zamanı" clearable initial={toIso(L(2026, 11, 10, 8, 20))} />)
+    expect(screen.getByRole('button', { name: /Takvimden ve saat listesinden seç: Çözülme Zamanı|Pick from the calendar and time lists: Çözülme Zamanı/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Tarihi temizle: Çözülme Zamanı|Clear the date: Çözülme Zamanı/ })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: /Hızlı seçim: Çözülme Zamanı|Quick pick: Çözülme Zamanı/ })).toBeInTheDocument()
+  })
+
+  it('takvimin yıl listesi yazımın aralığıyla uyumlu: 2000 seçilebilir', async () => {
+    render(<Harness initial={toIso(L(2026, 11, 10, 8, 20))} />)
+    fireEvent.click(screen.getByRole('button', { name: /Takvimden|Pick from the calendar/ }))
+    const panel = await waitFor(() => {
+      const el = document.querySelector('[data-slot="smart-datetime-panel"]')
+      expect(el).toBeTruthy()
+      return el
+    })
+    const years = [...panel.querySelectorAll('select')].map((sel) => [...sel.options].map((o) => o.textContent))
+    expect(years.some((list) => list.includes('2000') && list.includes('2027'))).toBe(true)
   })
 })

@@ -117,10 +117,11 @@ export function parseTyped(text, { now = new Date(), base = null } = {}) {
   // Gün önce: 16.11.2026 14:30 · 16/11/26 1430 · 16-11 14.30 · 16.11.2026
   const dmy = /^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2}|\d{4}))?(?: (.+))?$/.exec(s)
   if (dmy) {
-    const y = dmy[3] == null ? now.getFullYear() : (dmy[3].length === 2 ? 2000 + Number(dmy[3]) : Number(dmy[3]))
     const hm = dmy[4] == null ? (baseHm || [0, 0]) : parseTime(dmy[4])
     if (!hm) return { error: true }
-    const d = realDate(y, Number(dmy[2]), Number(dmy[1]), hm[0], hm[1])
+    const d = dmy[3] == null
+      ? nearestYear(Number(dmy[1]), Number(dmy[2]), hm, now)
+      : realDate(dmy[3].length === 2 ? 2000 + Number(dmy[3]) : Number(dmy[3]), Number(dmy[2]), Number(dmy[1]), hm[0], hm[1])
     if (d) return { date: d, complete: dmy[4] != null }
     // "14.30" tek başına geçerli bir gün değil (30. ay yok) → saat olarak okunur; "16.11" gibi geçerli gün ise GÜN kalır
     if (dmy[3] == null && dmy[4] == null && s.includes('.')) return timeOnly(s, base, now)
@@ -128,6 +129,35 @@ export function parseTyped(text, { now = new Date(), base = null } = {}) {
   }
 
   return timeOnly(s, base, now)
+}
+
+/**
+ * Yıl yazılmadıysa bu yıl ya da geçen yıl — "şimdi"ye en YAKIN olanı (olay geçmişte olur: ocakta yazılan "31.12" geçen yılın
+ * 31 Aralık'ıdır, neredeyse bir yıl sonrası değil). İkisi de takvimde yoksa (29.02) null.
+ */
+function nearestYear(day, month, hm, now) {
+  const y = now.getFullYear()
+  const cur = realDate(y, month, day, hm[0], hm[1])
+  const prev = realDate(y - 1, month, day, hm[0], hm[1])
+  if (!cur || !prev) return cur || prev
+  return Math.abs(cur.getTime() - now.getTime()) <= Math.abs(now.getTime() - prev.getTime()) ? cur : prev
+}
+
+/**
+ * Yazarken ANINDA kaydedilebilir mi: gün (ya da gün sözcüğü) ile birlikte dakikası iki haneyle yazılmış bir saat ("14:30",
+ * "9.05", "1430"), yıl yazıldıysa dört hane; ya da "şimdi". Yarım yazılmış saat ("…2026 9", "…2026 143") ve yarım yıl
+ * ("16.11.20 14:30" — yıl yeniden yazılırken) anında kaydedilmez; odak çıkınca ya da Enter ile çözülür (gözden kaçan yarım
+ * değer kaydedilip kalmasın — 2026-11-17 inceleme).
+ */
+export function liveReady(text) {
+  const raw = String(text ?? '')
+  if (raw.length > MAX_TYPED) return false
+  const s = normalize(raw)
+  if (NOW_WORDS.has(s)) return true
+  if (!/(?:^|[ t])(?:\d{1,2}[:.]\d{2}|\d{4})(?::\d{2})?$/.test(s)) return false
+  if (/^\d{1,2}[./-]\d{1,2}[./-]\d{1,3}(?: |$)/.test(s)) return false
+  const r = parseTyped(raw)
+  return !!(r.date && r.complete)
 }
 
 /** Yalnız saat: mevcut değerin günü, yoksa bugün. */

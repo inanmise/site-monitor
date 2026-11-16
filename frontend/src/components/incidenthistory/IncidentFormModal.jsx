@@ -108,8 +108,21 @@ export default function IncidentFormModal({
     if (el && typeof el.focus === 'function') { el.focus(); el.scrollIntoView?.({ block: 'center' }) }
   }, [section, showErrors])
 
+  // Tarih alanlarında okunamayan metin (alan önceki değeri geri getirdi ve nedenini altında yazıyor): kayıt durur, odak oraya
+  // gider — fareyle "Kaydet"te de (odak çıkışı tıklamadan önce bu bilgiyi eşzamanlı yazar)
+  const dateProblemsRef = useRef({})
+  const dateProblem = (key) => (p) => { dateProblemsRef.current[key] = p }
+
   async function submit() {
     if (saving) return
+    const pending = Object.keys(dateProblemsRef.current).find((k) => dateProblemsRef.current[k])
+    if (pending) {
+      const el = bodyRef.current?.querySelector(`[data-date-field="${pending}"] input`)
+      if (el && typeof el.focus === 'function') { el.focus(); el.scrollIntoView?.({ block: 'center' }) }
+      return
+    }
+    // Ctrl/⌘+Enter tarih alanının yazılan değerini çözdükten SONRA (bir sonraki görev) çağırır: güncel form ref'ten okunur
+    const form = formRef.current
     const errs = validateIncident(form)
     if (Object.keys(errs).length) {
       setShowErrors(true)
@@ -130,6 +143,11 @@ export default function IncidentFormModal({
       setSaving(false)
     }
   }
+
+  const submitRef = useRef(submit)
+  submitRef.current = submit
+  const aliveRef = useRef(true)
+  useEffect(() => () => { aliveRef.current = false }, [])
 
   async function requestClose() {
     if (saving) return
@@ -208,7 +226,12 @@ export default function IncidentFormModal({
       size="xl" scrollBody dismissOnBackdrop={false} busy={saving} bodyRef={bodyRef}
       className={cn(FIXED, PHONE_FULLSCREEN)} footer={footer}>
       <div data-slot="incident-form" data-mode={mode} className={cn('min-w-0', PHONE_TOUCH)}
-        onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); submit() } }}>
+        onKeyDown={(e) => {
+          if (!((e.ctrlKey || e.metaKey) && e.key === 'Enter')) return
+          e.preventDefault()
+          // Tarih alanı bu tuşta yazılanı çözer (onChange → yeni çizim); kayıt ondan sonra, güncel formla
+          setTimeout(() => { if (aliveRef.current) submitRef.current() }, 0)
+        }}>
         <Tabs value={section} onValueChange={setSection} className="gap-0">
           {/* Bölüm çubuğu + hata özetleri gövdenin üstünde yapışık kalır (uzun bölümde kaydırınca da görünür). */}
           <div className="sticky top-0 z-10 -mx-1 flex flex-col gap-2 bg-background px-1 pb-3">
@@ -245,8 +268,10 @@ export default function IncidentFormModal({
             <div className={GRID}>
               <TextInput label={t('inc.fTitle')} req full value={form.title} autoFocus={creating} error={err('title')}
                 placeholder={t('inc.titlePlaceholder')} onChange={(v) => set('title', v)} />
-              <DateInput label={t('inc.fOccurredAt')} req value={form.occurred_at} error={err('occurred_at')} hint={t('sdt.hint')}
-                onChange={(v) => set('occurred_at', v)} />
+              <div data-date-field="occurred_at" className="min-w-0">
+                <DateInput label={t('inc.fOccurredAt')} req value={form.occurred_at} error={err('occurred_at')} hint={t('sdt.hint')}
+                  onProblem={dateProblem('occurred_at')} onChange={(v) => set('occurred_at', v)} />
+              </div>
               <SelectInput label={t('inc.fTeam')} req value={form.team_id != null ? String(form.team_id) : ''} options={teamOptions} error={err('team_id')}
                 onChange={(v) => setForm((f) => ({ ...f, team_id: v, team_name: teams.find((tm) => String(tm.id) === String(v))?.name || '' }))} />
               <SelectInput label={t('inc.fSeverity')} value={form.severity} onChange={(v) => set('severity', v)} options={opts(SEVERITIES, 'inc.sev')} />
@@ -258,11 +283,17 @@ export default function IncidentFormModal({
             <FieldSet className="mt-2 min-w-0 gap-0">
               <FieldLegend className="mb-2 text-sm font-semibold">{t('inc.timelineLegend')}</FieldLegend>
               <div className={GRID}>
-                <DateInput label={t('inc.fDetectedAt')} value={form.detected_at} min={form.occurred_at || undefined} error={err('detected_at')}
-                  anchor={form.occurred_at || undefined} anchorLabel={t('inc.fOccurredAt')} onChange={(v) => set('detected_at', v)} />
-                <DateInput label={t('inc.fResolvedAt')} value={form.resolved_at} min={form.detected_at || form.occurred_at || undefined}
-                  anchor={form.occurred_at || undefined} anchorLabel={t('inc.fOccurredAt')}
-                  error={err('resolved_at')} onChange={(v) => set('resolved_at', v)} />
+                <div data-date-field="detected_at" className="min-w-0">
+                  <DateInput label={t('inc.fDetectedAt')} value={form.detected_at} min={form.occurred_at || undefined}
+                    minLabel={t('inc.fOccurredAt')} error={err('detected_at')} onProblem={dateProblem('detected_at')}
+                    anchor={form.occurred_at || undefined} anchorLabel={t('inc.fOccurredAt')} onChange={(v) => set('detected_at', v)} />
+                </div>
+                <div data-date-field="resolved_at" className="min-w-0">
+                  <DateInput label={t('inc.fResolvedAt')} value={form.resolved_at} min={form.detected_at || form.occurred_at || undefined}
+                    minLabel={form.detected_at ? t('inc.fDetectedAt') : t('inc.fOccurredAt')} onProblem={dateProblem('resolved_at')}
+                    anchor={form.occurred_at || undefined} anchorLabel={t('inc.fOccurredAt')}
+                    error={err('resolved_at')} onChange={(v) => set('resolved_at', v)} />
+                </div>
                 <TextInput label={t('inc.fDuration')} type="number" value={form.duration_minutes} disabled={autoDuration}
                   hint={autoDuration ? t('inc.durationAuto') : t('inc.durationManual')} error={err('duration_minutes')}
                   onChange={(v) => set('duration_minutes', v)} />

@@ -93,9 +93,9 @@ for (const vp of VIEWPORTS) {
 
       // 3) Tespit zamanı: oluşa göre "+15 dk" çipi
       const detected = dlg.getByRole('textbox', { name: /^Tespit Zamanı/ })
-      await fields.nth(1).getByRole('button', { name: /Oluş Zamanı zamanından 15 dk sonra/ }).click()
+      await fields.nth(1).getByRole('button', { name: /15 dk sonra \(esas: Oluş Zamanı\)/ }).click()
       await expect(detected).toHaveValue('15.11.2026 09:30')
-      await expect(fields.nth(1).locator('[data-slot="smart-datetime-context"]')).toContainText('Oluş Zamanı zamanından 15 dk sonra')
+      await expect(fields.nth(1).locator('[data-slot="smart-datetime-context"]')).toContainText('15 dk sonra (esas: Oluş Zamanı)')
 
       // 4) Çözülme zamanı: takvim + saat / dakika listeleri
       const resolved = dlg.getByRole('textbox', { name: /^Çözülme Zamanı/ })
