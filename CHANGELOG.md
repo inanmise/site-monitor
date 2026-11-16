@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.212.0] — 2026-11-16
+
 ### Added
 - **k6 2.4.0 aday ikili olarak imajda** (k6 2.3 → 2.4 geçişinin 1. adımı; kullanıcı kararı: motor sayfasındaki aday ikili
   ve gölge taramayla güvenli geçiş). İmajda artık İKİ k6 var: etkin **v2.3.0** (`/usr/bin/k6`, değişmedi) ve aday
@@ -3360,7 +3362,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.211.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.212.0...HEAD
+[20.212.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.0
 [20.211.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.211.0
 [20.210.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.210.0
 [20.208.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.208.0

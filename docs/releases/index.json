@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-15T22:20:15Z",
+  "generatedAt": "2026-11-16T00:03:35Z",
   "repo": "inanmise/site-monitor",
-  "count": 848,
+  "count": 849,
   "releases": [
+    {
+      "version": "20.212.0",
+      "tag": "v20.212.0",
+      "releasedAt": "2026-11-16T00:03:28Z",
+      "commit": "1b8d224542a4b0a6685e6eba13a497aec0a8419c",
+      "prevVersion": "20.211.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": "push",
+          "breaking": false,
+          "sha": "1b8d2245",
+          "subject": "iletim testinde gönderim kümelenmesine bağlı titreklik giderildi"
+        },
+        {
+          "type": "fix",
+          "scope": "k6",
+          "breaking": false,
+          "sha": "8b4f5a5f",
+          "subject": "inceleme bulguları — geçişten sonra yedek korunur, aday tonu yalnız varsayılan yolda nötr"
+        },
+        {
+          "type": "feat",
+          "scope": "k6",
+          "breaking": false,
+          "sha": "34e3773e",
+          "subject": "k6 2.4.0 aday ikili olarak imajda (2.3 → 2.4 geçişinin 1. adımı)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.211.1",
       "tag": "v20.211.1",
