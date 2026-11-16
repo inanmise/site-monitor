@@ -119,7 +119,11 @@ function BulkDialog({ ctx, items, finding, onClose }) {
               {({ id, describedBy }) => (
                 <NativeSelect id={id} aria-describedby={describedBy} value={format} data-slot="prs-it-bulk-format" className="pointer-coarse:h-10"
                   onChange={(e) => setFormat(e.target.value)}>
-                  {BULK_FORMATS.map((f) => <NativeSelectOption key={f} value={f} disabled={off(f)}>{t(`prs.it.set.format.${f}`)}</NativeSelectOption>)}
+                  {BULK_FORMATS.map((f) => (
+                    <NativeSelectOption key={f} value={f} disabled={off(f)}>
+                      {t(`prs.it.set.format.${f}`)}{off(f) ? ` — ${t('prs.it.set.webpOffShort')}` : ''}
+                    </NativeSelectOption>
+                  ))}
                 </NativeSelect>
               )}
             </Field>

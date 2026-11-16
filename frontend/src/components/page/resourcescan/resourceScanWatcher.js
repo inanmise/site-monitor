@@ -9,6 +9,8 @@
  * Modül düzeyi durum yalnız bu sekmenin belleğinde yaşar (sayfa yenilenince unutulur — bilinçli).
  */
 
+import { onSessionReset } from '../../../utils/sessionResetBus.js'
+
 const started = new Set()          // `${monitorId}:${scanId}` — bu sekmede başlatılanlar
 const watchers = new Map()         // anahtar → { stop }
 
@@ -80,9 +82,13 @@ export function takeBack(monitorId, scanId) {
   return true
 }
 
-/** Testler için: tüm durumu sıfırla. */
+/** Tüm izlemeleri durdur ve "bu sekmede başlatılan" kayıtlarını unut (testler ve oturum sıfırlama). */
 export function resetWatchers() {
   for (const w of [...watchers.values()]) w.stop()
   watchers.clear()
   started.clear()
 }
+
+// Oturum sıfırlandı (çıkış, hareketsizlik çıkışı, oturum düşmesi — inceleme 2026-11-17): arka plan izlemeleri durur; çıkıştan
+// sonra (ya da sıradaki kullanıcı için) eski kullanıcının analizini sorgulamaz, bitiş tostu göstermez.
+onSessionReset(resetWatchers)

@@ -220,7 +220,9 @@ export default function ResponsiveSetDialog({ name, base, blob, info, format = '
                 <NativeSelect id={id} aria-describedby={describedBy} value={fmt} disabled={running} data-slot="prs-it-rs-format"
                   className="pointer-coarse:h-10" onChange={(e) => setFmt(e.target.value)}>
                   {SET_FORMATS.map((f) => (
-                    <NativeSelectOption key={f} value={f} disabled={off(f)}>{t(`prs.it.set.format.${f}`)}</NativeSelectOption>
+                    <NativeSelectOption key={f} value={f} disabled={off(f)}>
+                      {t(`prs.it.set.format.${f}`)}{off(f) ? ` — ${t('prs.it.set.webpOffShort')}` : ''}
+                    </NativeSelectOption>
                   ))}
                 </NativeSelect>
               )}

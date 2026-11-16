@@ -182,6 +182,9 @@ describe('8 — duyarlı set: çıktı biçimi açık seçilir, set tek türdür
     await waitFor(() => expect([...slot('prs-it-rs-format').options].map((o) => o.value)).toEqual(['webp', 'avif', 'jpeg', 'png']))
     // tarayıcı AVIF üretemiyor (destek avif:false) → seçenek görünür ama kapalı
     await waitFor(() => expect([...slot('prs-it-rs-format').options].find((o) => o.value === 'avif').disabled).toBe(true))
+    // nedeni seçeneğin kendisinde yazar (inceleme 2026-11-17 — kapalı seçenek sessiz kalmaz)
+    expect([...slot('prs-it-rs-format').options].find((o) => o.value === 'avif').textContent).toMatch(/bu tarayıcıda yok/)
+    expect([...slot('prs-it-rs-format').options].find((o) => o.value === 'webp').textContent).not.toMatch(/bu tarayıcıda yok/)
     expect(slot('prs-it-rs-format').value).toBe('webp')
     fireEvent.click(slot('prs-it-rs-go'))
     await waitFor(() => expect(eng.processImage).toHaveBeenCalledTimes(3))

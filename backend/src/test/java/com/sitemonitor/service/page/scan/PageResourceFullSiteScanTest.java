@@ -67,6 +67,12 @@ class PageResourceFullSiteScanTest {
     volatile boolean robotsOnlyOtherHost;
     /** Doluysa site haritası isteği bu kadar ms bekletilir (sınırlı) — süre sınırı denetimi. */
     volatile long sitemapStallMs;
+    /** Doluysa robots.txt bu HTTP durumuyla yanıt verir (ör. 500) — robots okunamadı denetimi. */
+    volatile int robotsStatus;
+    /** Ana sayfa yönlendiren bağlantılar listeler (/fwd → /target, /old → /target, /home → /). */
+    volatile boolean redirectSite;
+    /** Doluysa /a isteği bu kadar ms bekletilir (sınırlı) — tüm site taraması uzun sürsün. */
+    volatile long pageStallMs;
     final AtomicInteger userSeq = new AtomicInteger();
 
     static String page(String... links) {
@@ -100,14 +106,37 @@ class PageResourceFullSiteScanTest {
             byte[] body;
             int status = 200;
             String ct = "text/html; charset=utf-8";
+            if (redirectSite && ("/fwd".equals(path) || "/old".equals(path) || "/home".equals(path))) {
+                ex.getResponseHeaders().add("Location", "/home".equals(path) ? host + "/" : host + "/target");
+                try {
+                    ex.sendResponseHeaders("/fwd".equals(path) ? 302 : 301, -1);
+                    ex.close();
+                } catch (IOException ignored) {
+                    // istemci bağlantıyı kesti
+                }
+                return;
+            }
             switch (path) {
-                case "/" -> body = page("/a", "/b").getBytes(StandardCharsets.UTF_8);
-                case "/a" -> body = page("/a/deep1", "/").getBytes(StandardCharsets.UTF_8);
+                case "/" -> body = (redirectSite ? page("/fwd", "/target", "/old", "/home") : page("/a", "/b"))
+                        .getBytes(StandardCharsets.UTF_8);
+                case "/target" -> body = page().getBytes(StandardCharsets.UTF_8);
+                case "/a" -> {
+                    long stall = pageStallMs;
+                    if (stall > 0) {
+                        try {
+                            Thread.sleep(stall);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }
+                    body = page("/a/deep1", "/").getBytes(StandardCharsets.UTF_8);
+                }
                 case "/a/deep1" -> body = page("/a/deep1/deeper").getBytes(StandardCharsets.UTF_8);
                 case "/a/deep1/deeper", "/c", "/only-in-sitemap", "/p5", "/p6" -> body = page().getBytes(StandardCharsets.UTF_8);
                 case "/b" -> body = page("/c", "/p5", "/p6").getBytes(StandardCharsets.UTF_8);
                 case "/s.css" -> { body = "body{color:red}".getBytes(StandardCharsets.UTF_8); ct = "text/css"; }
                 case "/robots.txt" -> {
+                    if (robotsStatus > 0) { body = "err".getBytes(); status = robotsStatus; ct = "text/plain"; break; }
                     if (!withRobots) { body = "no".getBytes(); status = 404; ct = "text/plain"; break; }
                     body = ("User-agent: *\n" + (robotsOtherHost || robotsOnlyOtherHost ? "Sitemap: http://other.example.invalid/sm.xml\n" : "")
                             + (robotsOnlyOtherHost ? "" : "Sitemap: " + host + "/sm-index.xml\n")).getBytes(StandardCharsets.UTF_8);
@@ -251,6 +280,9 @@ class PageResourceFullSiteScanTest {
         assertThat(site.get("unscanned_total")).isEqualTo(unscanned.size());
         assertThat(site.get("incomplete")).isEqualTo(true);
         int firstUnscanned = unscanned.size();
+        String ck1 = jdbc.queryForObject("SELECT site_checkpoint FROM page_resource_scans WHERE id = ?", String.class, first);
+        assertThat(ck1).as("kuyruğu kalan taramanın noktası saklanır, API'ye dönmez").contains("\"done_urls\"");
+        assertThat(((Map<String, Object>) get(one, "scan")).get("resumable")).isEqualTo(true);
 
         long second = startFull(2, 1000, first);
         Map<String, Object> two = awaitEnd(2, second);
@@ -270,8 +302,12 @@ class PageResourceFullSiteScanTest {
 
         assertThatThrownBy(() -> svc.loadResume(2, second)).isInstanceOf(PageResourceScanService.ResumeException.class)
                 .extracting("code").isEqualTo("RESOURCE_SCAN_NOT_RESUMABLE");   // tamamlanan taramanın noktası yok
-        String ck1 = jdbc.queryForObject("SELECT site_checkpoint FROM page_resource_scans WHERE id = ?", String.class, first);
-        assertThat(ck1).as("kuyruğu kalan taramanın noktası saklanır, API'ye dönmez").contains("\"done_urls\"");
+        // İnceleme 2026-11-17: sürdürülen kaynak emekliye ayrılır — aynı kaynaktan ikinci bir zincir açılamaz
+        assertThat(jdbc.queryForObject("SELECT site_checkpoint FROM page_resource_scans WHERE id = ?", String.class, first))
+                .as("kaynak taramanın noktası bırakıldı").isNull();
+        assertThatThrownBy(() -> svc.loadResume(2, first)).isInstanceOf(PageResourceScanService.ResumeException.class)
+                .extracting("code").isEqualTo("RESOURCE_SCAN_NOT_RESUMABLE");
+        assertThat(((Map<String, Object>) get(svc.one(first, 2), "scan")).get("resumable")).isEqualTo(false);
         assertThat(one.toString()).doesNotContain("done_urls").doesNotContain("site_checkpoint");
     }
 
@@ -355,6 +391,69 @@ class PageResourceFullSiteScanTest {
         assertThat(sm.get("from_robots")).isEqualTo(false);
         assertThat((List<?>) get(sm, "errors")).as("varsayılan /sitemap.xml'in yokluğu hata değil").isEmpty();
         assertThat((List<?>) get(site, "pages")).as("yalnız haritadaki sayfa yok").hasSize(8);
+        assertThat(sm).doesNotContainKey("robots_failed");
+        assertThat(((Map<String, Object>) get(site, "crawl")).get("complete")).as("robots 404 = robots yok, keşif tam")
+                .isEqualTo(true);
+    }
+
+    @Test
+    @DisplayName("robots.txt 5xx (okunamadı): robots yok sayılmaz — hata listesinde, keşif eksik, 'her sayfa tarandı' denmez")
+    void robotsFailureMarksDiscoveryIncomplete() throws Exception {
+        robotsStatus = 500;
+        long id = startFull(12, 1000, null);
+        Map<String, Object> site = get(get(awaitEnd(12, id), "analysis"), "site");
+        Map<String, Object> crawl = get(site, "crawl");
+        Map<String, Object> sm = get(crawl, "sitemap");
+        assertThat(sm.get("robots_failed")).isEqualTo(true);
+        assertThat((List<String>) get(sm, "errors")).as("robots.txt hata olarak listelenir").hasSize(1)
+                .allMatch(e -> e.endsWith("/robots.txt"));
+        assertThat(hits("GET /sitemap.xml")).as("varsayılan harita yine denenir").isEqualTo(1);
+        assertThat(crawl.get("stop_reason")).as("kuyruk bitti").isNull();
+        assertThat(crawl.get("complete")).isEqualTo(false);
+        assertThat(crawl.get("discovery_incomplete")).isEqualTo(true);
+    }
+
+    @Test
+    @DisplayName("yönlendirme: taranmış (ya da kuyrukta bekleyen) sayfaya varan bağlantı ikinci kez analiz edilmez")
+    void redirectToScannedPageIsNotAnalysedTwice() throws Exception {
+        redirectSite = true;
+        withRobots = false;
+        long id = startFull(13, 1000, null);
+        Map<String, Object> site = get(get(awaitEnd(13, id), "analysis"), "site");
+        List<Map<String, Object>> pages = get(site, "pages");
+        // /fwd → /target taranır (/target'ın kuyruktaki kaydı atlanır); /old → /target ve /home → / tekrar analiz edilmez
+        assertThat(pages).extracting(p -> p.get("url")).containsExactly(base + "/", base + "/fwd");
+        Map<String, Object> crawl = get(site, "crawl");
+        assertThat(crawl.get("redirect_aliases")).as("/old ve /home").isEqualTo(2);
+        assertThat(crawl.get("complete")).isEqualTo(true);
+        assertThat((List<?>) get(site, "unscanned")).isEmpty();
+        assertThat(hits("GET /target")).as("kuyruktaki /target ayrıca istenmez (yalnız /fwd ve /old yönlendirmeleri)").isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("tüm site taraması kendi yuvasında: olağan analiz yuvalarını tüketmez; ikinci tüm site taraması FULL_BUSY")
+    void fullCrawlHasItsOwnSlot() throws Exception {
+        pageStallMs = 3_000;
+        long id = startFull(14, 1000, null);
+        assertThat(svc.freeFullSlots()).isZero();
+        assertThat(svc.freeSlots()).as("olağan yuvalar boş kalır").isEqualTo(PageResourceScanService.MAX_PER_POD);
+        PageResourceScanService.Start a = svc.start(monitor(15), "u:s1", "Ayşe");
+        PageResourceScanService.Start b = svc.start(monitor(16), "u:s2", "Ayşe");
+        assertThat(a.outcome()).isEqualTo(PageResourceScanService.Outcome.STARTED);
+        assertThat(b.outcome()).as("tüm site sürerken iki tek sayfa analizi birlikte koşar")
+                .isEqualTo(PageResourceScanService.Outcome.STARTED);
+        PageResourceScanService.Start full2 = svc.start(monitor(17), "u:s3", "Ayşe",
+                new PageResourceScanService.SiteOptions(100, true, null));
+        assertThat(full2.outcome()).isEqualTo(PageResourceScanService.Outcome.FULL_BUSY);
+        assertThat(full2.retryAfterSeconds()).isPositive();
+        awaitEnd(15, ((Number) a.scan().get("id")).longValue());
+        awaitEnd(16, ((Number) b.scan().get("id")).longValue());
+        assertThat(get((Map<String, Object>) get(awaitEnd(14, id), "scan"), "status").toString()).isEqualTo("DONE");
+        long until = System.currentTimeMillis() + 10_000;
+        while ((svc.freeFullSlots() < 1 || svc.freeSlots() < PageResourceScanService.MAX_PER_POD)
+                && System.currentTimeMillis() < until) Thread.sleep(20);
+        assertThat(svc.freeFullSlots()).as("tüm site yuvası bırakıldı").isEqualTo(1);
+        assertThat(svc.freeSlots()).isEqualTo(PageResourceScanService.MAX_PER_POD);
     }
 
     @Test

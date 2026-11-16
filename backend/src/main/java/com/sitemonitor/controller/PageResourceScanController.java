@@ -134,6 +134,14 @@ public class PageResourceScanController {
                             + " kaynak analizi birlikte çalışabiliyor ve şu an dolu. Birkaç saniye sonra yeniden deneyin.",
                     "At most " + PageResourceScanService.MAX_PER_POD
                             + " resource analyses can run together on the server and it is busy right now. Try again in a few seconds."));
+            // Tüm site taramasının ayrı yuvası dolu (olağan analizler bundan etkilenmez) — aynı kod, ayrı açıklama
+            case FULL_BUSY -> tooMany("RESOURCE_SCAN_BUSY", r.retryAfterSeconds(), Msg.t(
+                    "Sunucuda aynı anda en çok " + PageResourceScanService.MAX_FULL_PER_POD
+                            + " tüm site taraması çalışabiliyor ve şu an biri sürüyor. Bitmesini bekleyin; bu sayfanın ya da seçili"
+                            + " sayfaların analizi bu sırada çalıştırılabilir.",
+                    "At most " + PageResourceScanService.MAX_FULL_PER_POD
+                            + " full-site scan can run at a time on the server and one is running now. Wait for it to finish;"
+                            + " a single-page or selected-pages analysis can still run meanwhile."));
         };
     }
 
@@ -352,8 +360,10 @@ public class PageResourceScanController {
                         + "-page limit; start a new full-site scan.";
             }
             default -> {
-                tr = "Bu analiz sürdürülemez: tüm site taraması değil ya da sürdürme bilgisi yok. Yeni bir tüm site taraması başlatın.";
-                en = "This analysis cannot be resumed: it is not a full-site scan or has no resume data. Start a new full-site scan.";
+                tr = "Bu analiz sürdürülemez: tüm site taraması değil, sürdürme bilgisi yok ya da daha önce sürdürüldü. En son"
+                        + " tüm site taramasından sürdürün ya da yeni bir tüm site taraması başlatın.";
+                en = "This analysis cannot be resumed: it is not a full-site scan, has no resume data or was already resumed."
+                        + " Resume from the latest full-site scan or start a new one.";
             }
         }
         return error(status, code, Msg.t(tr, en));
