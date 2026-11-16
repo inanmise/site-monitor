@@ -83,6 +83,12 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
   `AlertBanner`'a verildiği için DOM'a hiç yazılmıyordu; bant artık kancalı bir sarmalayıcı içinde.
 
 ### Added
+- **Olay & Hata Geçmişi — yeni olay formunda tarih alanları yeniden tasarlandı.** Oluş, tespit ve çözülme zamanı
+  doğrudan yazılabilir ("16.11 14:30", "dün 09:15", "1430", "şimdi"); hızlı seçim çipleri ("15 dk önce", oluştan "+30 dk");
+  takvim düğmesi ay / yıl açılır listeli takvim ile saat ve dakika listelerini açar; alanın altında "2 sa önce · pazartesi"
+  ya da "25 dk sonra (esas: Oluş Zamanı)" yazar. Okunamayan metin alanın önceki değerini geri getirir, ne yazıldığı ve
+  örnekler gösterilir ve kayıt o düzeltilene dek yapılmaz; yarım yazılan saat ya da yıl kendiliğinden kaydedilmez;
+  Ctrl+Enter alanda yazılı değeri de kaydeder.
 - **Sayfa Hızı testleri:** genişletilmiş ölçümün dalgalarının tek süre sınırını paylaştığını, sorguların doğru indeksle
   koştuğunu (PostgreSQL planı) ve şelale / görsel indirme hataları / kararsız durum / zamanlama hataları / ölçüm kipi
   işaretlerini telefon, tablet ve dizüstünde doğrulayan yeni testler.
@@ -91,15 +97,6 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
   (390 / 768 dokunmatik / 1280).
 
 ## [20.212.3] — 2026-11-17
-### Added
-- **Olay & Hata Geçmişi — yeni olay formunda tarih alanları yeniden tasarlandı.** Oluş, tespit ve çözülme zamanı
-  doğrudan yazılabilir ("16.11 14:30", "dün 09:15", "1430", "şimdi"); hızlı seçim çipleri ("15 dk önce", oluştan "+30 dk");
-  takvim düğmesi ay / yıl açılır listeli takvim ile saat ve dakika listelerini açar; alanın altında "2 sa önce · pazartesi"
-  ya da "25 dk sonra (esas: Oluş Zamanı)" yazar. Okunamayan metin alanın önceki değerini geri getirir, ne yazıldığı ve
-  örnekler gösterilir ve kayıt o düzeltilene dek yapılmaz; yarım yazılan saat ya da yıl kendiliğinden kaydedilmez;
-  Ctrl+Enter alanda yazılı değeri de kaydeder.
-
-## [20.212.2] — 2026-11-16
 
 ### Changed
 - **⚠ Davranış — teknik hata raporu çıktısında kimlik ve üretim satırı yok.** PDF kapağında ve e-posta bandında yalnız
