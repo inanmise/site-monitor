@@ -331,7 +331,8 @@ jobs:
       - name: Test (shard ${{ matrix.shard }}/4, coverage collected)
         env:
           VITEST_COVERAGE_SHARD: "1"
-        run: npx vitest run --coverage --shard=${{ matrix.shard }}/4 --maxWorkers=2 --reporter=blob --reporter=dot
+        # Vitest 4+ (2026-11-16): blob raporu çıktı dosyası verilmezse `.vitest/blob/` altına yazılır — yol açıkça verilir.
+        run: npx vitest run --coverage --shard=${{ matrix.shard }}/4 --maxWorkers=2 --reporter=blob --reporter=dot --outputFile.blob=.vitest-reports/blob-${{ matrix.shard }}-4.json
 
       # `.vitest-reports` noktayla başlar: upload-artifact gizli dosyaları varsayılan olarak ATLAR.
       - name: Upload blob report
@@ -381,7 +382,7 @@ jobs:
 
       # Kapsam eşiğini zorlayan adım (vite.config.js test.coverage.thresholds) — taban altında FAIL eder.
       - name: Merge shards + coverage gate
-        run: npx vitest --merge-reports --coverage --reporter=dot
+        run: npx vitest --merge-reports=.vitest-reports --coverage --reporter=dot
 
       # Global eşik büyük+kapsamsız dosyaları ortalamanın arkasına gizliyordu (2026-08-19
       # SystemHealth olayı: 2324 satır, %11.94). Bu adım dosya-bazlı tabanı zorlar.
