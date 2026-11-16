@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OWASP Dependency-Check bastırmaları (2026-11-16). Yalnız pom.xml `security` profili (dependency-check.yml) okur;
+  normal derleme ve testler bu dosyayı kullanmaz.
+
+  Kural: yalnız KANITLANMIŞ yanlış pozitif buraya girer. Her madde
+    1. CVE kimliğine değil, yanlış eşleşen CPE'ye bağlıdır VE yalnız o pakete uygulanır (packageUrl);
+       başka bir pakette çıkan gerçek bir CVE gizlenmez;
+    2. gerekçesini (CVE açıklaması neyi anlatıyor, bizdeki paket ne) `notes` içinde söyler.
+  Gerçek bir bulgu buraya yazılmaz; bağımlılık yükseltilir (aynı ana sürüm içinde).
+  Ayrıntı: docs/RUNBOOK.md "Yayın güvenlik kapısı (Trivy)" → OWASP bağımlılık taraması.
+-->
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+
+  <suppress>
+    <notes><![CDATA[
+      Yanlış pozitif — CPE cpe:2.3:a:prometheus:prometheus Prometheus SUNUCUSUNU (Go) tanımlar; micrometer'ın sürüm
+      numarasıyla (1.17.x) eşleşiyor. Örnek: CVE-2026-42154 = Prometheus sunucusunun /api/v1/read ucu. Bizdeki paket
+      Java istemci kütüphanesi io.micrometer:micrometer-registry-prometheus; Prometheus sunucusu içermez.
+    ]]></notes>
+    <packageUrl regex="true">^pkg:maven/io\.micrometer/micrometer\-registry\-prometheus@.*$</packageUrl>
+    <cpe>cpe:/a:prometheus:prometheus</cpe>
+  </suppress>
+
+  <suppress>
+    <notes><![CDATA[
+      Yanlış pozitif — CPE cpe:2.3:a:opentelemetry:opentelemetry OpenTelemetry-Go açıklarıyla geliyor; semconv'un sürüm
+      numarasıyla (1.41.x) eşleşiyor. Örnek: CVE-2026-39883 = OpenTelemetry-Go'da BSD/Solaris "kenv" PATH ele geçirme.
+      Bizdeki paket io.opentelemetry.semconv:opentelemetry-semconv (Java; yalnız anlamsal adlandırma sabitleri, çalışan kod
+      ya da dış komut yok).
+    ]]></notes>
+    <packageUrl regex="true">^pkg:maven/io\.opentelemetry\.semconv/opentelemetry\-semconv@.*$</packageUrl>
+    <cpe>cpe:/a:opentelemetry:opentelemetry</cpe>
+  </suppress>
+
+  <suppress>
+    <notes><![CDATA[
+      Yanlış pozitif — CPE cpe:2.3:a:eclipse:angus_mail Angus MAIL'i tanımlar; angus-ACTIVATION paketiyle eşleşiyor.
+      Örnek: CVE-2025-7962 = Jakarta Mail 2.0.2 öncesinde SMTP enjeksiyonu (CVSS 6,0). Bizdeki paket
+      org.eclipse.angus:angus-activation (posta göndermez).
+    ]]></notes>
+    <packageUrl regex="true">^pkg:maven/org\.eclipse\.angus/angus\-activation@.*$</packageUrl>
+    <cpe>cpe:/a:eclipse:angus_mail</cpe>
+  </suppress>
+
+</suppressions>

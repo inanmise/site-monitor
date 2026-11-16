@@ -9,8 +9,8 @@ name: Security — OWASP Dependency-Check (SCA)
 #   • NVD veritabanı ayrı bir dizinde tutulur ve önbelleğe kaydedilir (yalnız güncelleme BAŞARILIYSA): sonraki koşular
 #     yalnız farkı indirir. GitHub kullanılmayan önbelleği 7 günde siler → takvim haftada İKİ (Pzt, Per).
 #   • Sonuç sınıflandırılır: clean / findings (CVSS ≥ 7) / update_failed / error. clean dışındaki her sonuç işi KIRMIZI
-#     yapar (rapor yine yüklenir). Yanlış pozitif (CPE eşleştirmesi, ör. micrometer-registry-prometheus ↔ Prometheus
-#     sunucusu) → pom.xml security profilinde gerekçeli bir bastırma dosyası (`suppressionFiles`).
+#     yapar (rapor yine yüklenir). Kanıtlanmış yanlış pozitif (CPE eşleştirmesi, ör. micrometer-registry-prometheus ↔
+#     Prometheus sunucusu) → backend/dependency-check-suppressions.xml (paket + CPE kapsamlı, gerekçeli).
 #   • NVD_API_KEY sırrı (Settings → Secrets and variables → Actions) tanımlıysa kullanılır; yoksa özet uyarır.
 #     Anahtar: https://nvd.nist.gov/developers/request-an-api-key (ücretsiz).
 #   • Sonatype OSS Index analizcisi kapalı: 2025'ten beri kimlik doğrulaması istiyor, her jar'da hata verip süre yiyordu.

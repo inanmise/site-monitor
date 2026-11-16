@@ -541,6 +541,10 @@
                             </formats>
                             <!-- Sadece derleme/runtime bağımlılıkları; test scope'u dışla. -->
                             <skipTestScope>true</skipTestScope>
+                            <!-- Kanıtlanmış CPE yanlış pozitifleri (2026-11-16): paket + CPE kapsamlı, gerekçeli. -->
+                            <suppressionFiles>
+                                <suppressionFile>${project.basedir}/dependency-check-suppressions.xml</suppressionFile>
+                            </suppressionFiles>
                         </configuration>
                         <executions>
                             <execution>
