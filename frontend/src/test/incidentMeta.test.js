@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseUtc, durationMs, formatDuration, autoDurationMinutes, rcMeta, RC_META } from '../utils/incidentMeta.js'
+import { parseUtc, durationMs, formatDuration, autoDurationMinutes, rcMeta, RC_META, formatIncidentTime } from '../utils/incidentMeta.js'
 
 // Saf tarih/süre yardımcıları — olay (incident) kartlarındaki "ne kadar sürdü" + kök-neden rengi.
 // parseUtc her iki tarafı aynı biçimde UTC'ye çevirdiği için süre farkı timezone'dan bağımsızdır.
@@ -95,5 +95,19 @@ describe('rcMeta', () => {
   it('bilinmeyen / null kategori → unknown fallback', () => {
     expect(rcMeta('nope')).toEqual(RC_META.unknown)
     expect(rcMeta(null)).toEqual(RC_META.unknown)
+  })
+})
+
+describe('formatIncidentTime', () => {
+  it('geçerli an → yerel tarih + saat dilimi; boş / bozuk → "—"', () => {
+    const out = formatIncidentTime('2026-08-16 11:44:23', 'tr-TR')
+    expect(out).toContain('2026')
+    expect(out).toMatch(/14:44:23/)
+    expect(formatIncidentTime(null, 'tr-TR')).toBe('—')
+    expect(formatIncidentTime('yok', 'tr-TR')).toBe('—')
+  })
+
+  it('tanınmayan dil etiketi (RangeError) → ISO dizgesi, istisna dışarı sızmaz', () => {
+    expect(formatIncidentTime('2026-08-16 11:44:23', 'bu-bir-dil-etiketi-degil!!')).toBe('2026-08-16T11:44:23.000Z')
   })
 })
