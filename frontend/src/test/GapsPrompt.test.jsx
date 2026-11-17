@@ -27,7 +27,7 @@ vi.mock('../components/gaps/GapsFix.jsx', async () => {
 })
 
 import { api } from '../api/client'
-import GapsPrompt from '../components/gaps/GapsPrompt.jsx'
+import GapsPrompt, { loadGapsCore } from '../components/gaps/GapsPrompt.jsx'
 import { getGapsSummary, openGapsDialog, publishGapsSummary, requestGapsRefresh } from '../components/gaps/gapsBus.js'
 import {
   AUTO_DEFER_MAX_MS, AUTO_DEFER_POLL_MS, AUTO_PROMPT_DELAY_MS, AUTO_QUIET_MS, GAPS_SESSION_KEY, GAPS_STATE_KEY, SNOOZE_MS,
@@ -36,6 +36,9 @@ import {
 import { emitSessionReset } from '../utils/sessionResetBus.js'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import { pressMenuTrigger } from './helpers/dropdownMenu.js'
+// Kabuk denetleyiciyi tembel yükler (performans 2026-11-17) — testte modül önceden yüklensin: dinamik içe aktarma sahte
+// saatte de mikro görevlerle çözülür, akış zamanlaması gerçek uygulamadakiyle aynı kalır
+await loadGapsCore()
 
 const slot = (name, root = document) => root.querySelector(`[data-slot="${name}"]`)
 const slots = (name, root = document) => [...root.querySelectorAll(`[data-slot="${name}"]`)]

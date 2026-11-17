@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useT } from '../../i18n/index.jsx'
-import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
+import { subscribeSecondTick } from '../../utils/secondTicker.js'
 import { durationMs, formatDuration } from '../../utils/incidentMeta.js'
 import { cn } from '@/lib/utils'
 
@@ -11,14 +11,15 @@ import { cn } from '@/lib/utils'
  * TAMAMI (kartlar, rozetler, menüler) her saniye yeniden çiziliyordu. Artık yalnız bu küçük `<span>` saniyede bir
  * yenilenir. Değer aynı hesaptır: `formatDuration(durationMs(since, until, şimdi))`.
  *
- * <p>`live` (süren olay) iken saniyede bir tazelenir; sekme gizliyken durur, geri gelince hemen tazelenir
- * (useVisibleInterval). `live` değilken saat çalışmaz (çözülmüş olayın süresi `until`'den hesaplanır).
+ * <p>`live` (süren olay) iken saniyede bir tazelenir; sekme gizliyken durur, geri gelince hemen tazelenir. Saat TEK ortak
+ * zamanlayıcıdır (utils/secondTicker.js, performans 2026-11-17) — eskiden her satır kendi 1 sn'lik zamanlayıcısını
+ * kuruyordu. `live` değilken saat çalışmaz (çözülmüş olayın süresi `until`'den hesaplanır).
  * `format(dur)` metni sarar (ör. "3 dk sürüyor"); verilmezse yalnız süre.
  */
 export default function LiveDuration({ since, until, live = false, format, className, ...rest }) {
   const t = useT()
   const [now, setNow] = useState(() => Date.now())
-  useVisibleInterval(() => setNow(Date.now()), live ? 1000 : 0, false)
+  useEffect(() => (live ? subscribeSecondTick(setNow) : undefined), [live])
   const dur = formatDuration(durationMs(since, until, now), t)
   return (
     <span data-slot="live-duration" className={cn('tabular-nums', className)} {...rest}>

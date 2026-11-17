@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
 import { sortMonitorsDefault } from '../utils/monitorSort.js'
 import { freshestRow, mergeSavedRow, reloadAndSyncDetail, withRowFlags } from '../utils/monitorDetailSync.js'
+import { detailCheckKey } from '../utils/detailCheckKey.js'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
@@ -324,6 +325,12 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   selectedIdRef.current = selected?.id ?? null
   const resCheckIdRef = useRef(resCheckId)
   resCheckIdRef.current = resCheckId
+  const selectedRowRef = useRef(null)
+  selectedRowRef.current = selected
+  // Kırılımın (son ölçüm görünümü) hangi ölçüm için okunduğu — `detailCheckKey`; null = bilinmiyor / son okuma başarısız →
+  // sekme görünürken bir sonraki tazelemede yeniden okunur (performans 2026-11-17). Okuma BAŞLARKEN yazılır (uçuştaki
+  // okuma ikinci kez istenmesin), başarısız olursa silinir.
+  const resKeyRef = useRef(null)
   const [modal, setModal] = useState(null)
   const fe = useFormErrors(modal)   // doğrulama hataları alanın altında + ilk hatalıya kaydırma (2026-09-30)
   const [changeNote, setChangeNote] = useState('')
@@ -344,6 +351,8 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('resources')
+  const detailTabRef = useRef(detailTab)
+  detailTabRef.current = detailTab
   const deepLinkTab = useDeepLinkTab('resources')   // ?monitor=…&mtab=changes derin bağlantısı — ilk açılışta bir kez
   // Modaldan koşturulan kontrol Kontrol Geçmişi sekmesini de tazelesin. Sekmenin kendi 30 sn'lik
   // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
@@ -453,8 +462,10 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   // ile yalnizca EN SON istegin yaniti ekrana yazilir.
   const resSeq = useRef(0)
 
-  async function loadResources(id, checkId = null, silent = false) {
+  async function loadResources(id, checkId = null, silent = false, forRow = null) {
     const seq = ++resSeq.current
+    // Son ölçüm görünümü → okunan ölçümün anahtarı; anlık görüntü (checkId) sabittir, tazelenmez
+    resKeyRef.current = checkId == null ? detailCheckKey(forRow ?? selectedRowRef.current, id) : null
     if (!silent) setResLoading(true)
     // try/finally YOKTU: istek reject olursa setResLoading(false) hic calismiyor ve kaynak
     // tablosunun spinner'i modal kapatilip yeniden acilana kadar donuyordu. Bayrak YALNIZ bu
@@ -466,6 +477,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       if (seq !== resSeq.current) return        // daha yeni bir istek var → bu yaniti AT
       if (!res?.success) {
         // Okunamadı: sessiz yenilemede son iyi kırılım KALIR (hata şeridiyle), ilk okumada boş + hata bloğu
+        resKeyRef.current = null                  // sekme görünürken sonraki tazelemede yeniden denenir
         setResError(res?.error || t('pspd.resLoadFailed'))
         if (!silent) { setResources([]); setResTotal(0); setBreaches([]); rsp.setTotal(null) }   // F6: önceki toplam kalmasın
         return
@@ -484,6 +496,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       setResError(null)
     } catch (e) {
       if (seq === resSeq.current) {
+        resKeyRef.current = null
         setResError(e?.message || t('pspd.resLoadFailed'))
         if (!silent) { setResources([]); setResTotal(0); setBreaches([]); rsp.setTotal(null) }
       }
@@ -499,7 +512,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     setResType('all'); setResParty('all'); setResFailed(false); setResFacets(null); setResFiltered(null)
     setDetailTab(deepLinkTab()); setMetric('load')
     setSpeedDx((cur) => (cur && cur.monitorId === m?.id ? cur : null))   // derin bağlantının kayıtlı çalıştırması yalnız KENDİ izlemesinde
-    loadResources(m.id)
+    loadResources(m.id, null, false, m)
   }
   function closeDetail() {
     resSeq.current++
@@ -518,17 +531,34 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   /** Tanılama penceresini aç — başlangıç ekranıyla (koşu kullanıcı "Tanılamayı başlat"a basınca). */
   function openDiagnose(m) { if (m) setSpeedDx({ monitorId: m.id, runId: null, initialRunId: null }) }
 
+  /**
+   * Kırılımı yalnız GEREKİRSE tazele (performans 2026-11-17): "Kaynaklar" sekmesi görünür, son ölçüm görünümünde ve izlemenin
+   * son ölçümü kırılımın okunduğu ölçümden farklı (ya da son okuma başarısız). Eskiden 30 sn'de bir sekme kapalıyken bile
+   * okunuyordu. Anlık görüntü (ihlal anı) sabittir — hiç tazelenmez.
+   */
+  function refreshResourcesIfStale(row) {
+    if (!row || detailTabRef.current !== 'resources' || resCheckIdRef.current != null) return
+    if (resKeyRef.current != null && resKeyRef.current === detailCheckKey(row)) return
+    loadResources(row.id, null, true, row)
+  }
+
   async function refreshModal() {
     if (!selected) return
     const id = selected.id
+    let row = selectedRowRef.current
     // Liste son 30 sn içinde yoklamayla yüklendiyse yeniden çekilmez — kopya o yanıttan tazelendi. Aksi hâlde SIRA
     // KORUMALI load()'dan geçer (2026-10-22, UIM-19) ve kopya aynı yanıttan tazelenir (loadAndSync).
-    if (Date.now() - listSyncedAtRef.current >= DETAIL_REFRESH_MS - LIST_FRESH_SLACK_MS) await loadAndSync()
+    if (Date.now() - listSyncedAtRef.current >= DETAIL_REFRESH_MS - LIST_FRESH_SLACK_MS) {
+      const rows = await loadAndSync()
+      if (Array.isArray(rows)) row = rows.find((x) => x.id === id) ?? row
+    }
     // Pencere o arada kapandı / başka izlemeye geçildi → A'nın kaynakları B'nin penceresine yüklenmesin
     // (loadResources'ın resSeq'i EN SON isteği kazandırır — bayat çağrı en son olmamalı).
     if (selectedIdRef.current !== id) return
-    loadResources(id, resCheckIdRef.current, true)
+    refreshResourcesIfStale(row)
   }
+  // Sekmeye dönüldüğünde (yeni ölçüm geldiyse) hemen tazelenir — 30 sn beklenmez
+  useEffect(() => { refreshResourcesIfStale(selectedRowRef.current) }, [detailTab]) // eslint-disable-line react-hooks/exhaustive-deps
   useVisibleInterval(() => { if (selected) refreshModal() }, selected ? DETAIL_REFRESH_MS : 0, false)
 
   /** Uçuşan form testini geçersiz kılar (form açılışı / kapanışı): geç yanıt yeni forma düşmez, düğme kilitli kalmaz. */
@@ -800,7 +830,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
         // Bayat kapanış YOK: `selected` isteğin başladığı andaki penceredir. Yanıt gelene kadar pencere kapanmış ya da
         // başka izlemeye geçilmiş olabilir → yalnız HÂLÂ açık olan aynı kayıt tazelenir (A'nın kaynakları B'ye düşmez).
         setSelected(prev => (prev?.id === m.id ? withRowFlags(prev, res.data) : prev))
-        if (selectedIdRef.current === m.id) { setResCheckId(null); loadResources(m.id) }
+        if (selectedIdRef.current === m.id) { setResCheckId(null); loadResources(m.id, null, false, res.data) }
         setHistReload(k => k + 1)
         return { ok: true, data: res.data }
       }
