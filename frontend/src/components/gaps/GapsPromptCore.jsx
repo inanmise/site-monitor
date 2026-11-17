@@ -295,14 +295,18 @@ export default function GapsPromptCore({
     load()
   }), [enabled, load])
 
-  // İnce kabuk modül inerken gelen istek (menü "Eksiklerim" / Panom "Denetle") — bağlanınca bir kez işlenir
+  // İnce kabuk modül inerken gelen istek (menü "Eksiklerim" / Panom "Denetle") — bağlanınca bir kez işlenir.
+  // Söküm istek geri konur (e2e 2026-11-17): StrictMode bağla → sök → yeniden bağla yapar; söküm `seq`'i artırıp başlayan
+  // okumayı iptal ediyordu, yeniden bağlanmada istek tüketilmiş olduğundan pencere "yükleniyor"da kalıyordu. Üretimde
+  // denetleyici yalnız kabukla (ve onun pendingRef'iyle) birlikte söküldüğü için geri koymanın başka etkisi yok.
   useEffect(() => {
     const req = pendingRef?.current
-    if (!req) return
+    if (!req) return undefined
     pendingRef.current = null
-    if (!enabled) return
+    if (!enabled) return undefined
     if (req === 'open') { userActed.current = true; setOpen(true) }
     load()
+    return () => { if (pendingRef.current == null) pendingRef.current = req }
   }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Kişisel Panom kutusu "Denetle": pencere açılmadan okuma (sürmekte olan okuma varsa yenisi başlamaz)

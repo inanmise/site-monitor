@@ -18,6 +18,9 @@ export function loadGapsCore() {
   })
 }
 
+/** Yalnız testler: önbelleği boşaltır (denetleyici "henüz inmedi" yolunu yeniden sınamak için). */
+export function resetGapsCoreForTests() { cachedCore = null }
+
 function promptedFor(username) {
   try { return sessionStorage.getItem(GAPS_PROMPTED_KEY) === username } catch { return false }
 }

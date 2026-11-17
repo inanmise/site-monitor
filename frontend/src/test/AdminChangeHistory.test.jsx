@@ -53,7 +53,8 @@ describe('AdminChangeHistory v2', () => {
     expect(screen.getByText(/frobnicate/)).toBeInTheDocument()
     expect(screen.getByText('#9')).toBeInTheDocument()
     // sayfalama: 60 kayıt / 25 → 3 sayfa
-    expect(screen.getByText(/60/)).toBeInTheDocument()
+    // Sayfa aralığı metni ("1–25 of 60 records" / "1–25 / 60 kayıt"): yalnız /60/ demek göreli zamanla ("60 d ago") çakışır
+    expect(screen.getByText(/1–25 (of|\/) 60 (records|kayıt)/)).toBeInTheDocument()
   })
 
   it('olay türü çipi seçince types ile yeniden sorgular ve sayfa 1\\u0027e döner; "Tümü" temizler', async () => {

@@ -22,7 +22,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Grafana dışa aktarıcısının 24 saatlik sentetik koşum sayımı ({@link MonitoringMetricsExporter#SQL_SCRIPTED_RUNS}, her turda)
- * GERÇEK PostgreSQL'de kapsayan {@code idx_sc_checked_cover} dizininden YALNIZ-DİZİN taramasıyla okunur (performans 2026-11-17)
+ * GERÇEK PostgreSQL'de {@code idx_sc_checked_at} dizininin aralık koşuluyla okunur, tablo taranmaz (performans 2026-11-17;
+ * kapsayan bir INCLUDE dizini denendi — satırlar zaman sırasıyla yazıldığı için planlayıcı seçmedi, kaldırıldı)
  * — {@code mvn -Ppostgres-it test}. Laboratuvar şeması: canlı dizinler + ertelenmiş katalog, 30 izleme × 30 gün × 10 dk.
  */
 @PostgresIntegration
@@ -47,7 +48,6 @@ class ScriptedRunsPlanPostgresTest {
         }
         for (String def : jdbc().queryForList("SELECT indexdef FROM pg_indexes WHERE schemaname = ? AND tablename = ?",
                 String.class, live, TABLE)) {
-            if (def.contains("idx_sc_checked_cover")) continue;   // katalogdan aşağıda kurulur
             jdbc().execute(def.replace(" ON " + live + "." + TABLE + " ", " ON " + LAB + "." + TABLE + " "));
         }
         for (DeferredIndexBuilder.Spec s : DeferredIndexBuilder.CATALOG) {
@@ -86,11 +86,12 @@ class ScriptedRunsPlanPostgresTest {
     }
 
     @Test
-    @DisplayName("PostgreSQL: 24 saatlik sentetik koşum sayımı kapsayan dizinden yalnız-dizin taramasıyla (tablo taranmaz)")
-    void scriptedRunsIndexOnly() {
+    @DisplayName("PostgreSQL: 24 saatlik sentetik koşum sayımı checked_at dizininin aralık koşuluyla (tablo taranmaz)")
+    void scriptedRunsUseCheckedAtIndex() {
         String sql = MonitoringMetricsExporter.SQL_SCRIPTED_RUNS.replace("?", "'2026-10-30T00:00:00'");
         String plan = explain("EXPLAIN (ANALYZE, BUFFERS) " + sql);
-        assertThat(plan).as("kapsayan dizin, yalnız-dizin:%n%s", plan).contains("Index Only Scan using idx_sc_checked_cover");
+        assertThat(plan).as("checked_at dizini, aralık koşulu:%n%s", plan).contains("idx_sc_checked_at")
+                .containsPattern("Index Cond:[^\\n]*checked_at");
         assertThat(plan).as("tablo taranmaz:%n%s", plan).doesNotContain("Seq Scan on " + TABLE);
     }
 }

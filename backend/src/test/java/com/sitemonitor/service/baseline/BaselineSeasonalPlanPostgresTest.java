@@ -126,7 +126,7 @@ class BaselineSeasonalPlanPostgresTest {
         String old = "SELECT value_ms, breach FROM " + BaselineSampleStore.TABLE + " WHERE monitor_type = 'http'"
                 + " AND monitor_id = 7 AND checked_ms <= " + upper + " AND LEAST(ABS(MOD(checked_ms, " + DAY + ") - " + nowPos
                 + "), " + DAY + " - ABS(MOD(checked_ms, " + DAY + ") - " + nowPos + ")) <= " + TOL
-                + " ORDER BY checked_ms DESC, id DESC LIMIT 30";
+                + " ORDER BY checked_ms DESC, id DESC LIMIT 200";   // bir pencereden (61 satır) fazla: önceki günlere süzgeçle iner
         assertThat(explain("EXPLAIN (ANALYZE) " + old)).contains("Rows Removed by Filter");
     }
 

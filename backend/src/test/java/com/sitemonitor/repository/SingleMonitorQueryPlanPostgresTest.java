@@ -373,7 +373,7 @@ class SingleMonitorQueryPlanPostgresTest {
     @DisplayName("Ekleme ağırlıklı büyük tablolarda autovacuum_vacuum_insert_scale_factor = 0.02 açılış yamasıyla yerinde")
     void insertScaleFactorPatched() {
         for (String t : List.of("port_checks", "dns_records", "keyword_results", "ping_checks", "http_checks", "page_checks",
-                "activity_log", "uptime_checks", "certificate_checks", "scripted_checks")) {
+                "activity_log", "uptime_checks", "certificate_checks")) {
             List<String> opts = jdbc().queryForList("SELECT unnest(reloptions) FROM pg_class WHERE oid = to_regclass(?::text)",
                     String.class, t);
             assertThat(opts).as(t).contains("autovacuum_vacuum_insert_scale_factor=0.02")

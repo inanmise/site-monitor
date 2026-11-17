@@ -48,7 +48,6 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
   - **Zamanlanmış yollar:**
     - Dinamik tabanın mevsimsel okuması periyot başına bir zaman aralığıdır (eskiden izlemenin bütün örnekleri taranıyordu).
     - Anahtar kelime içerik değişiminin temel metni yalnız gerektiğinde okunur.
-    - Sentetik koşum sayımı kapsayan dizinle yapılır.
     - dbquery bağlantı sağlığı başarılı çalıştırmada en çok 30 sn'de bir yazılır. Kural veritabanında uygulanır: araya
       (hangi pod'dan olursa olsun) bir hata ya da bağlantı denemesi girdiyse sonraki başarı hemen yazılır, durum "failing"de
       takılı kalmaz.
@@ -56,8 +55,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 - `POST /api/monitoring/pagespeed/{id}/image` isteğe bağlı `check_id` alır: adres yalnız o ölçümde aranır. Ölçüm yoksa
   eski davranış (izleme geneli arama) geçerlidir; geçersiz kimlik → 400. Arayüz gösterilen ölçümün kimliğini gönderir.
 - **Yeni yapılandırma:** `site.monitor.alert-team-stats.cache-ms` (`ALERT_TEAM_STATS_CACHE_MS`, varsayılan 30000).
-- Yeni ertelenmiş dizinler: `idx_psr_monitor_reason_checked`, `idx_sc_checked_cover` (PostgreSQL). Açılışta değil,
-  trafik kabul edildikten sonra `CONCURRENTLY` kurulur.
+- Yeni ertelenmiş dizin: `idx_psr_monitor_reason_checked` (PostgreSQL). Açılışta değil, trafik kabul edildikten sonra
+  `CONCURRENTLY` kurulur.
 
 ### Fixed
 - Canlı e2e turu güncel davranışa uyduruldu:

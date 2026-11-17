@@ -1683,10 +1683,8 @@ public class SchedulerService {
         // vakumlar (PG 13+ autovacuum_vacuum_insert_scale_factor 0,2) — arada görünürlük haritası eskir, "index only scan"
         // (MAX(checked_at), sayımlar) yığına gider (Heap Fetches). %2 ile milyon satırlık tabloda ~20 bin eklemede bir.
         // SchemaDdlGuard seçenek yerindeyse atlar; PostgreSQL'e özgü (H2'de patch() sessiz atlar).
-        // scripted_checks (2026-11-17): Grafana dışa aktarıcısının 24 sa sayımı kapsayan indeksten yalnız-dizin okur
-        // (DeferredIndexBuilder kataloğu) — görünürlük haritası taze kalmalı.
         for (String t : new String[]{"port_checks", "dns_records", "keyword_results", "ping_checks", "http_checks",
-                "page_checks", "activity_log", "uptime_checks", "certificate_checks", "scripted_checks"}) {
+                "page_checks", "activity_log", "uptime_checks", "certificate_checks"}) {
             patch("ALTER TABLE " + t + " SET (autovacuum_vacuum_insert_scale_factor = 0.02)");
         }
         // USER artık kendi takımı için olay girer/düzenler — eski sistem-default'u (false) güncelle.
