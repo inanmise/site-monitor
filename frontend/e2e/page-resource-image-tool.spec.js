@@ -394,8 +394,9 @@ for (const vp of VIEWPORTS) {
       await divider.dispatchEvent('pointermove', { pointerId: 1, pointerType: vp.touch ? 'touch' : 'mouse', clientX: sb.x + sb.width / 4, clientY: sb.y + sb.height / 2, bubbles: true })
       await divider.dispatchEvent('pointerup', { pointerId: 1, pointerType: vp.touch ? 'touch' : 'mouse', clientX: sb.x + sb.width / 4, clientY: sb.y + sb.height / 2, bubbles: true })
       // pointermove sürekli öncelikli bir React güncellemesi: değer bir sonraki çizimde gelir — hemen okumak CI'da eski
-      // değeri (100) veriyordu (2026-11-16, iki kez). Değer gelene dek bekle, sonra aralığı denetle.
-      await expect.poll(async () => Number(await divider.getAttribute('aria-valuenow')), { timeout: 5000 }).toBeLessThan(100)
+      // değeri (100) veriyordu (2026-11-16, iki kez). Basışın kendi değeri (sağ kenar, dar sahnede 99) de "100'den küçük"
+      // olduğundan beklenen ARALIK gelene dek beklenir, sonra alt sınır denetlenir.
+      await expect.poll(async () => Number(await divider.getAttribute('aria-valuenow')), { timeout: 5000 }).toBeLessThan(35)
       const moved = Number(await divider.getAttribute('aria-valuenow'))
       expect(moved).toBeGreaterThan(15)
       expect(moved).toBeLessThan(35)

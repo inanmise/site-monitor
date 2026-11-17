@@ -138,6 +138,9 @@ test('süzgeç seçilir seçilmez rozet: pencere açık kalır, kapanan seçici 
   await page.getByRole('option').filter({ hasText: /Partly verified \(1\)|Kısmen doğrulandı \(1\)/ }).click()
   // Seçicinin kapanış animasyonu sürerken (beklemeden) rozete tıklanır
   await page.getByRole('button', { name: /(Partly verified|Kısmen doğrulandı) — / }).first().click()
+  // Yarış gerçekten kuruldu mu: tıklama, seçici hâlâ kapanırken oldu (Playwright örten listeyi bekleseydi test düzeltme
+  // olmadan da geçerdi)
+  await expect(page.locator('[data-slot="popover-content"][data-state="closed"]'), 'seçici hâlâ kapanıyor').toHaveCount(1)
   const detail = page.locator('[data-slot="cert-trust-detail"]')
   await expect(detail).toBeVisible()
   // Seçicinin kapanışı (1,5 sn) bitene dek bekle; pencere hâlâ açık ve odak onun içinde
