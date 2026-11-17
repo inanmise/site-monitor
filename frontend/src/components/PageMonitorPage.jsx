@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense, Fragment } from 'react'
 import { sortMonitorsDefault } from '../utils/monitorSort.js'
 import { freshestRow, mergeSavedRow, reloadAndSyncDetail, withRowFlags } from '../utils/monitorDetailSync.js'
-import { detailCheckKey } from '../utils/detailCheckKey.js'
+import { detailCheckKey, settledDetailCheckKey } from '../utils/detailCheckKey.js'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
@@ -344,7 +344,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   const confSeq = useRef(0)
   async function loadIssues(id, filter = issueFilter, silent = false, forRow = null) {
     const seq = ++issuesSeq.current
-    issuesKeyRef.current = detailCheckKey(forRow ?? selectedRowRef.current, id)
+    const keyRow = forRow ?? selectedRowRef.current
+    const startedAt = Date.now()
+    issuesKeyRef.current = detailCheckKey(keyRow, id)
     if (!silent) setIssuesLoading(true)                              // silent: 30sn oto-yenilemede spinner flaşlamasın
     const issueType = (filter === 'all' || filter === 'firstParty') ? null : filter
     // try/finally YOKTU: istek reject olursa setIssuesLoading(false) hic calismiyor ve
@@ -366,6 +368,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
       setIssues(rows)
       if (filter === 'all') setHistIssues(rows)   // yalnız süzgeçsiz ('all') okuma geçmiş detayının kaynağını tazeler
       setIssuesError(null)
+      // inceleme 2026-11-17: sorun satırları ölçüm satırından SONRA ayrı ifadelerle yazılır (boş liste de geçerli — satırdan
+      // anlaşılmaz): ölçüm çok yeniyse anahtar saklanmaz, sekme görünürken sonraki tazelemede yeniden okunur
+      issuesKeyRef.current = settledDetailCheckKey(keyRow, id, startedAt)
     } catch (e) {
       if (seq === issuesSeq.current) {
         issuesKeyRef.current = null

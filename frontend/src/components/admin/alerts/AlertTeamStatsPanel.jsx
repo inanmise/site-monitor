@@ -35,7 +35,8 @@ export default function AlertTeamStatsPanel({ onPickTeam, activeTeamId, onOpenAl
   const load = useCallback(async () => {
     setFailed(false)
     try {
-      const r = await api.admin.getAlertTeamStats()
+      // Kişi paneli açtı / yeniden denedi: sayılar açtığı listeyle uyuşsun (sunucu belleğini atlar, en çok 5 sn'de bir okur)
+      const r = await api.admin.getAlertTeamStats(true)
       if (r?.success && r.data) setData(r.data)
       else setFailed(true)
     } catch { setFailed(true) }

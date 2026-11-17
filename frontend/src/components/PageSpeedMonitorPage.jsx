@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react'
 import { sortMonitorsDefault } from '../utils/monitorSort.js'
 import { freshestRow, mergeSavedRow, reloadAndSyncDetail, withRowFlags } from '../utils/monitorDetailSync.js'
-import { detailCheckKey } from '../utils/detailCheckKey.js'
+import { detailCheckKey, resourcesOlderThanRow, settledDetailCheckKey } from '../utils/detailCheckKey.js'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
@@ -465,7 +465,9 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   async function loadResources(id, checkId = null, silent = false, forRow = null) {
     const seq = ++resSeq.current
     // Son ölçüm görünümü → okunan ölçümün anahtarı; anlık görüntü (checkId) sabittir, tazelenmez
-    resKeyRef.current = checkId == null ? detailCheckKey(forRow ?? selectedRowRef.current, id) : null
+    const keyRow = forRow ?? selectedRowRef.current
+    const startedAt = Date.now()
+    resKeyRef.current = checkId == null ? detailCheckKey(keyRow, id) : null
     if (!silent) setResLoading(true)
     // try/finally YOKTU: istek reject olursa setResLoading(false) hic calismiyor ve kaynak
     // tablosunun spinner'i modal kapatilip yeniden acilana kadar donuyordu. Bayrak YALNIZ bu
@@ -494,6 +496,11 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       setResServerPaged(filtered != null)
       rsp.setTotal(filtered != null ? filtered : null)
       setResError(null)
+      // inceleme 2026-11-17: yeni ölçümün kaynak satırları ölçüm satırından SONRA ayrı işlemde yazılır — okuma eski ölçümün
+      // satırlarını getirdiyse ya da ölçüm çok yeniyse anahtar saklanmaz, sekme görünürken sonraki tazelemede yeniden okunur
+      if (checkId == null && resKeyRef.current != null) {
+        resKeyRef.current = resourcesOlderThanRow(rows, keyRow) ? null : settledDetailCheckKey(keyRow, id, startedAt)
+      }
     } catch (e) {
       if (seq === resSeq.current) {
         resKeyRef.current = null

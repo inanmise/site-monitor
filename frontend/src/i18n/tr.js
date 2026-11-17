@@ -1099,6 +1099,7 @@ export const TR = {
   "gaps.title": "Tamamlanması gereken bilgiler",
   "gaps.desc": "Bildirimlerin doğru kişilere ulaşması ve izlemenin eksiksiz olması için aşağıdakileri tamamlayın. Yalnız sizin ve takımlarınızın kayıtları ile size bekleyen işler listelenir.",
   "gaps.loading": "Eksikler okunuyor…",
+  "gaps.openFailed": "Eksiklerim penceresi açılamadı; bağlantınızı denetleyip menüden yeniden deneyin.",
   "gaps.fixLoading": "Kişi listesi okunuyor…",
   "gaps.fixUsersFailedTitle": "Eklenebilecek kişilerin listesi okunamadı",
   "gaps.fixUsersFailed": "Sunucu ekleyebileceğiniz kişilerin listesini döndürmedi; şu an kimse seçilemiyor. Bu, hiç kullanıcı olmadığı anlamına gelmez. Biraz sonra yeniden deneyin; sorun sürerse kişiyi Yönetim → Takımlar'dan ekleyin.",

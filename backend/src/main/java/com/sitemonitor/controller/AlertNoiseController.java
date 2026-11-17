@@ -73,12 +73,14 @@ public class AlertNoiseController {
      * boş tablo / her takıma 0.
      */
     @GetMapping("/alerts/team-stats")
-    public ResponseEntity<Map<String, Object>> teamStats(HttpSession session) {
+    public ResponseEntity<Map<String, Object>> teamStats(HttpSession session,
+                                                         @RequestParam(value = "fresh", required = false) String fresh) {
         permissionService.require(session, "alerts.read", "view");
         boolean global = SessionScope.seesAllMonitoring(session);   // + 7/24 operatörü (2026-10-04, salt okuma)
         try {
             return ResponseEntity.ok(Map.of("success", true,
-                    "data", teamStatsService.build(teamId -> SessionScope.canViewMonitoring(session, teamId), global)));
+                    "data", teamStatsService.build(teamId -> SessionScope.canViewMonitoring(session, teamId), global,
+                            fresh != null && ("1".equals(fresh.trim()) || "true".equalsIgnoreCase(fresh.trim())))));
         } catch (AlertTeamStatsService.UnavailableException e) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("success", false, "code", "DB_UNAVAILABLE",
                     "error", Msg.t("Takımların alarm sayıları şu an okunamıyor; veritabanına geçici olarak ulaşılamıyor olabilir. Birkaç saniye sonra yeniden deneyin.",

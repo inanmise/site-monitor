@@ -30,8 +30,8 @@ class AlertNoiseControllerTeamStatsTest {
     @Test
     @DisplayName("okuma hatası → 503 DB_UNAVAILABLE, success=false (asla boş başarı)")
     void readFailureIs503() {
-        when(teamStats.build(any(), anyBoolean())).thenThrow(new AlertTeamStatsService.UnavailableException(new IllegalStateException("db")));
-        ResponseEntity<Map<String, Object>> res = controller.teamStats(new MockHttpSession());
+        when(teamStats.build(any(), anyBoolean(), anyBoolean())).thenThrow(new AlertTeamStatsService.UnavailableException(new IllegalStateException("db")));
+        ResponseEntity<Map<String, Object>> res = controller.teamStats(new MockHttpSession(), null);
         assertThat(res.getStatusCode().value()).isEqualTo(503);
         assertThat(res.getBody()).containsEntry("success", false).containsEntry("code", "DB_UNAVAILABLE").containsKey("error");
         assertThat(res.getBody()).doesNotContainKey("data");
@@ -40,8 +40,8 @@ class AlertNoiseControllerTeamStatsTest {
     @Test
     @DisplayName("okununca 200 + veri (değişmedi)")
     void okUnchanged() {
-        when(teamStats.build(any(), anyBoolean())).thenReturn(Map.of("teams", java.util.List.of(), "total_open", 0L));
-        ResponseEntity<Map<String, Object>> res = controller.teamStats(new MockHttpSession());
+        when(teamStats.build(any(), anyBoolean(), anyBoolean())).thenReturn(Map.of("teams", java.util.List.of(), "total_open", 0L));
+        ResponseEntity<Map<String, Object>> res = controller.teamStats(new MockHttpSession(), null);
         assertThat(res.getStatusCode().value()).isEqualTo(200);
         assertThat(res.getBody()).containsEntry("success", true).containsKey("data");
     }

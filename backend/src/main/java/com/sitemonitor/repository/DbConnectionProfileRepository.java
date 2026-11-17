@@ -41,6 +41,20 @@ public interface DbConnectionProfileRepository extends JpaRepository<DbConnectio
     @Query("UPDATE DbConnectionProfile p SET p.lastUsedAt = :at, p.lastDurationMs = :ms, p.lastOkAt = :at WHERE p.id = :id")
     int recordUseOk(@Param("id") Long id, @Param("at") String at, @Param("ms") Integer ms);
 
+    /**
+     * Başarılı kullanım, SEYRELTİLMİŞ (performans 2026-11-17, inceleme): yalnız son başarılı yazım {@code :cutoff}'tan eskiyse,
+     * ondan sonra bir hata ya da bağlantı denemesi yazıldıysa (en yeni sinyal başarısızdı — durum hemen "ok"a dönsün) ya da
+     * damga ileride (saat kayması) ise yazılır. Kural SQL'de: hangi pod çalıştırırsa çalıştırsın aynı karar (pod belleği yok).
+     * Zamanlar aynı biçimli ISO metinler ({@code yyyy-MM-ddTHH:mm:ss}, UTC) — sözlük sırası = zaman sırası.
+     */
+    @Transactional
+    @Modifying
+    @Query("UPDATE DbConnectionProfile p SET p.lastUsedAt = :at, p.lastDurationMs = :ms, p.lastOkAt = :at WHERE p.id = :id "
+         + "AND (p.lastOkAt IS NULL OR p.lastOkAt < :cutoff OR p.lastOkAt > :at "
+         + "OR (p.lastErrorAt IS NOT NULL AND p.lastErrorAt >= p.lastOkAt) "
+         + "OR (p.lastTestAt IS NOT NULL AND p.lastTestAt >= p.lastOkAt))")
+    int recordUseOkIfStale(@Param("id") Long id, @Param("at") String at, @Param("ms") Integer ms, @Param("cutoff") String cutoff);
+
     /** İzleme çalıştırması bağlantıyı kullandı (hata — maskeli metin). */
     @Transactional
     @Modifying

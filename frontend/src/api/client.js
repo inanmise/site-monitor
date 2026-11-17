@@ -2453,7 +2453,8 @@ export const api = {
     getAlertNoise: (days = 7, teamId) => request(`/admin/alerts/noise?days=${days}${teamId ? `&team=${encodeURIComponent(teamId)}` : ''}`),
     // Isı haritası hücresi (gün × saat, İstanbul) ayrıntısı — 2026-10-01
     getAlertNoiseSlot: (days, dow, hour, teamId) => request(`/admin/alerts/noise/slot?days=${encodeURIComponent(days)}&dow=${encodeURIComponent(dow)}&hour=${encodeURIComponent(hour)}${teamId ? `&team=${encodeURIComponent(teamId)}` : ''}`),   // gürültü analizi (2026-09-12, #18); takım süzgeci (2026-10-01)
-    getAlertTeamStats: () => request('/admin/alerts/team-stats'),               // takım kırılımı (2026-09-16)
+    // takım kırılımı (2026-09-16); fresh (2026-11-17): Yenile / panel açılışı sunucu belleğini atlar (en çok 5 sn'de bir okur)
+    getAlertTeamStats: (fresh = false) => request(fresh === true ? '/admin/alerts/team-stats?fresh=1' : '/admin/alerts/team-stats'),
     getAlertPushDeliveries: (id) => request(`/admin/alerts/${id}/push-deliveries`),
     /** Alarmı KAPSAYAN toplu fırtına push'ları + alıcı durumları + "henüz gitmedi" (2026-10-04, fırtına push'u ↔ alarm bağı). */
     getAlertStormPush: (id) => request(`/admin/alerts/${encodeURIComponent(id)}/storm-push`),

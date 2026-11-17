@@ -193,4 +193,23 @@ class AlertTeamStatsServiceTest {
         service.build(t -> true, true);                                                                  // tam sonuç bellekten
         org.mockito.Mockito.verify(alertEventRepo, org.mockito.Mockito.times(4)).findOpenTeamStatRows();
     }
+
+    @Test
+    @DisplayName("inceleme 2026-11-17: fresh belleği atlar ama kurum okumasını en çok 5 sn'de bir yineler; fresh olmayan çağrı 30 sn belleği kullanır")
+    void freshBypassesMemoAtMostEveryFiveSeconds() {
+        long[] now = {1_000_000L};
+        service.memoNow = () -> now[0];
+        service.cacheMs = 30_000L;
+        when(alertEventRepo.findOpenTeamStatRows()).thenReturn(List.<Object[]>of(ev(1, 1L, "ping.example.com", false, daysAgo(1))));
+        when(alertEventRepo.findTeamStatRowsSince(anyString())).thenReturn(List.<Object[]>of());
+        service.build(t -> true, true);
+        now[0] += 6_000;
+        service.build(t -> true, true);               // fresh değil → bellekten
+        org.mockito.Mockito.verify(alertEventRepo, org.mockito.Mockito.times(1)).findOpenTeamStatRows();
+        service.build(t -> true, true, true);         // fresh, anlık görüntü 6 sn eski → yeniden okunur
+        org.mockito.Mockito.verify(alertEventRepo, org.mockito.Mockito.times(2)).findOpenTeamStatRows();
+        now[0] += 1_000;
+        service.build(t -> true, true, true);         // fresh ama 1 sn önce okundu → bellekten (art arda yenileme çoğaltmaz)
+        org.mockito.Mockito.verify(alertEventRepo, org.mockito.Mockito.times(2)).findOpenTeamStatRows();
+    }
 }

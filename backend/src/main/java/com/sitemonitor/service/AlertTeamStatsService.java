@@ -51,7 +51,9 @@ public class AlertTeamStatsService {
      */
     @org.springframework.beans.factory.annotation.Value("${site.monitor.alert-team-stats.cache-ms:30000}")
     long cacheMs;
-    private final com.sitemonitor.util.TtlMemo<Snapshot> memo = new com.sitemonitor.util.TtlMemo<>(4);
+    /** Test kancası: belleğin saati. */
+    java.util.function.LongSupplier memoNow = System::currentTimeMillis;
+    private final com.sitemonitor.util.TtlMemo<Snapshot> memo = new com.sitemonitor.util.TtlMemo<>(4, () -> memoNow.getAsLong());
     static final String MEMO_KEY = "ORG";
 
     /** Bir alarmın dar satırı (yinelenmeler atılmış). */
@@ -78,9 +80,22 @@ public class AlertTeamStatsService {
     }
 
     public Map<String, Object> build(Predicate<Long> canViewTeam, boolean globalViewer) {
-        Snapshot snap = memo.get(MEMO_KEY, cacheMs, false, this::load, v -> v.namesFailed() ? 0L : Long.MAX_VALUE);
+        return build(canViewTeam, globalViewer, false);
+    }
+
+    /**
+     * {@code fresh} (inceleme 2026-11-17): Yenile / Tekrar dene / panelin açılışı belleği atlar — ama kurum geneli okuma en çok
+     * {@value #FRESH_MIN_MS} ms'de bir yinelenir (çok kullanıcının art arda yenilemesi okumayı çoğaltmaz; İstatistikler
+     * yönetici özetinin kuralı). Takımın "(N)" sayısı açtığı listeyle böylece en çok 5 sn ayrışır.
+     */
+    public Map<String, Object> build(Predicate<Long> canViewTeam, boolean globalViewer, boolean fresh) {
+        long ttl = fresh && cacheMs > 0 ? Math.min(cacheMs, FRESH_MIN_MS) : cacheMs;
+        Snapshot snap = memo.get(MEMO_KEY, ttl, false, this::load, v -> v.namesFailed() ? 0L : Long.MAX_VALUE);
         return compute(snap, canViewTeam, globalViewer);
     }
+
+    /** {@code fresh} isteğinde en kısa bellek ömrü (ms). */
+    static final long FRESH_MIN_MS = 5_000L;
 
     /** Kurum geneli ham veri — okuma hatası {@link UnavailableException} fırlatır (bellek onu saklamaz). */
     private Snapshot load() {

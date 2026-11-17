@@ -139,7 +139,7 @@ class DbQueryCheckerServiceTest {
         assertThat(r.sqlHash()).hasSize(16).isEqualTo(DbQueryCheckerService.sqlHash("SELECT * FROM orders"));
         assertThat(r.checkedAt()).matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}");
         assertThat(r.profileId()).isEqualTo(7L);
-        verify(profiles).recordUseOk(eq(7L), anyString(), eq(42));
+        verify(profiles).recordUseOkIfStale(eq(7L), anyString(), eq(42), anyString());
         // zaman aşımı / satır sınırı varsayılan ve tavanla
         verify(runner).run(any(), eq("SELECT * FROM orders"), eq(30), eq(1000), any(DbQueryRunner.RunOptions.class));
     }
@@ -168,66 +168,37 @@ class DbQueryCheckerServiceTest {
     }
 
     @Test
-    void okUseWritesThrottledErrorsAndFlipsImmediate() {
-        // perf 2026-11-17: aynı bağlantının art arda başarılı kullanımı en çok 30 sn'de bir yazılır; hata hemen, hatadan sonraki
-        // ilk başarı hemen; bu pod'daki bağlantı denemesi belleği sıfırlar; başarısız yazım bellek bırakmaz
-        long[] now = {1_000_000L};
-        svc.useClock = () -> now[0];
+    void okUseGoesThroughSqlThrottleErrorsImmediate() {
+        // perf 2026-11-17 + inceleme: başarılı kullanım her çalıştırmada SQL seyreltmesine gider (karar SQL'de, pod belleği yok —
+        // başka pod'un yazdığı hata / deneme sonraki başarıyı hemen yazdırır); kesim = at − 30 sn, aynı ISO biçimi; hata hemen.
         DbQueryRunner.QueryResult okRun = ok(List.of("a"), new Object[] {1});
         DbQueryRunner.QueryResult failRun = new DbQueryRunner.QueryResult(false, 5, 0, false, List.of(), List.of(), false,
                 "connection refused", "DB_UNREACHABLE", null);
         when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenReturn(okRun);
         DbQueryMonitor m = monitor("SELECT 1", null);
-        for (int i = 0; i < 5; i++) {
-            svc.check(m, false);
-            now[0] += 5_000;   // 5 çalıştırma 20 sn içinde
-        }
-        verify(profiles, org.mockito.Mockito.times(1)).recordUseOk(eq(7L), anyString(), anyInt());
-        now[0] += 10_000;   // ilk yazımdan 30 sn sonra
-        svc.check(m, false);
-        verify(profiles, org.mockito.Mockito.times(2)).recordUseOk(eq(7L), anyString(), anyInt());
+        for (int i = 0; i < 3; i++) svc.check(m, false);
+        org.mockito.ArgumentCaptor<String> at = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.ArgumentCaptor<String> cutoff = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(profiles, org.mockito.Mockito.times(3)).recordUseOkIfStale(eq(7L), at.capture(), anyInt(), cutoff.capture());
+        verify(profiles, org.mockito.Mockito.never()).recordUseOk(any(), anyString(), anyInt());
+        java.time.Instant a = java.time.LocalDateTime.parse(at.getValue()).toInstant(java.time.ZoneOffset.UTC);
+        java.time.Instant c = java.time.LocalDateTime.parse(cutoff.getValue()).toInstant(java.time.ZoneOffset.UTC);
+        assertThat(java.time.Duration.between(c, a)).isEqualTo(java.time.Duration.ofSeconds(30));
+        assertThat(cutoff.getValue()).hasSize(at.getValue().length());
 
-        // başarı → hata: hata HEMEN yazılır (art arda hatalar da)
         when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenReturn(failRun);
-        now[0] += 1_000;
         svc.check(m, false);
-        now[0] += 1_000;
         svc.check(m, false);
         verify(profiles, org.mockito.Mockito.times(2)).recordUseError(eq(7L), anyString(), eq(5), eq("connection refused"));
-        // hata → başarı: hemen
+
+        // yazım hatası akışı bozmaz (yalnız uyarı)
+        org.mockito.Mockito.doThrow(new RuntimeException("db")).when(profiles).recordUseOkIfStale(eq(7L), anyString(), anyInt(), anyString());
         when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenReturn(okRun);
-        now[0] += 1_000;
-        svc.check(m, false);
-        verify(profiles, org.mockito.Mockito.times(3)).recordUseOk(eq(7L), anyString(), anyInt());
-        now[0] += 1_000;
-        svc.check(m, false);   // 30 sn dolmadı → yazılmaz
-        verify(profiles, org.mockito.Mockito.times(3)).recordUseOk(eq(7L), anyString(), anyInt());
+        assertThat(svc.check(m, false).status()).isEqualTo("OK");
 
-        // bu pod'da bağlantı denemesi → sonraki başarılı kullanım hemen yazılır
-        when(runner.test(any(), anyBoolean())).thenReturn(new DbQueryRunner.ConnectionTest(false, 9, null, "reddedildi", "DB_AUTH"));
-        svc.testConnection(profile, null);
-        now[0] += 1_000;
-        svc.check(m, false);
-        verify(profiles, org.mockito.Mockito.times(4)).recordUseOk(eq(7L), anyString(), anyInt());
-
-        // başarısız yazım bellek bırakmaz: sonraki başarı yeniden dener
-        org.mockito.Mockito.doThrow(new RuntimeException("db")).when(profiles).recordUseOk(eq(8L), anyString(), anyInt());
-        DbConnectionProfile p8 = new DbConnectionProfile();
-        p8.setId(8L);
-        p8.setTeamId(3L);
-        p8.setDbType("POSTGRESQL");
-        p8.setHost("db.example");
-        p8.setPort(5432);
-        p8.setDatabaseName("app");
-        p8.setUsername("u");
-        p8.setPasswordEnc("enc:v1:xyz");
-        when(profiles.findById(8L)).thenReturn(Optional.of(p8));
-        DbQueryMonitor m8 = monitor("SELECT 1", null);
-        m8.setProfileId(8L);
-        svc.check(m8, false);
-        now[0] += 1_000;
-        svc.check(m8, false);
-        verify(profiles, org.mockito.Mockito.times(2)).recordUseOk(eq(8L), anyString(), anyInt());
+        assertThat(DbQueryCheckerService.useCutoff("2026-11-17T10:00:20")).isEqualTo("2026-11-17T09:59:50");
+        assertThat(DbQueryCheckerService.useCutoff("bozuk")).isNull();
+        assertThat(DbQueryCheckerService.useCutoff(null)).isNull();
     }
 
     @Test
@@ -267,7 +238,7 @@ class DbQueryCheckerServiceTest {
         assertThat(t.mailRows()).isEmpty();
         assertThat(t.mailColumns()).containsExactly("tutar", "ad", "kart");
         // deneme sağlığa yazmaz
-        verify(profiles, org.mockito.Mockito.times(1)).recordUseOk(anyLong(), anyString(), anyInt());
+        verify(profiles, org.mockito.Mockito.times(1)).recordUseOkIfStale(anyLong(), anyString(), anyInt(), anyString());
     }
 
     @Test

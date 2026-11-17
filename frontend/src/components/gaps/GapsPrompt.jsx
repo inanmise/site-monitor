@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { importWithDeadline } from '../../utils/importWithDeadline.js'
+import { clientFailure } from '../../utils/errorMessages.js'
+import { useT } from '../../i18n/index.jsx'
+import { useToast } from '../ui/Toast.jsx'
 import { onSessionReset } from '../../utils/sessionResetBus.js'
 import { GAPS_PROMPTED_KEY, onGapsRefreshRequest, onOpenGapsDialog } from './gapsBus.js'
 
@@ -26,11 +29,20 @@ function promptedFor(username) {
  *   • kendiliğinden gösterme koşulları sağlanınca (açık, kullanıcı belli, yetkiler + tercihler okundu, bu sekmede henüz
  *     gösterilmedi — denetleyicinin kendi kuralıyla aynı ön koşul; asıl karar yine denetleyicide);
  *   • kullanıcı menüsü "Eksiklerim" ya da Kişisel Panom "Denetle" isteğiyle (istek kaybolmaz: modül inince devredilir).
- * Modül inemezse (bayat paket, ağ) sessizce vazgeçilir; sonraki istek yeniden dener.
+ * Modül inemezse (bayat paket, ağ) bekleyen istek UNUTULUR (inceleme 2026-11-17: yoksa kaybolan "Eksiklerim" tıklaması sonraki
+ * bir Panom yenilemesinde pencereyi kendiliğinden açıyordu); kişinin açma isteğiyse bildirim gösterilir. Sonraki istek
+ * yeniden dener.
  */
 export default function GapsPrompt(props) {
   const { username, enabled = true, prefsSettled = true } = props
   const { loaded: permsLoaded = true } = usePermissions()
+  const t = useT()
+  const toast = useToast()
+  const notifyRef = useRef(null)               // yükleme hatası bildirimi (son çizimin dili / toast'u — etki bağımlılığı değil)
+  notifyRef.current = (e) => {
+    const f = clientFailure(e, { fallback: t('gaps.openFailed'), chunk: t('te.pageUpdated') })
+    toast.error(f.message, { details: f.details })
+  }
   const [Core, setCore] = useState(() => cachedCore)
   const [want, setWant] = useState(0)          // > 0 → denetleyici gerekli (artış = yeniden dene)
   const pendingRef = useRef(null)              // modül inerken gelen istek: 'open' | 'refresh'
@@ -64,7 +76,13 @@ export default function GapsPrompt(props) {
     let alive = true
     loadGapsCore().then(
       (c) => { if (alive && c) setCore(() => c) },
-      () => { /* inemedi: bir sonraki istek (menü / Panom / yeniden giriş) yeniden dener */ },
+      (e) => {
+        if (!alive) return
+        // inemedi: bekleyen istek unutulur (geç bir Panom yenilemesi pencereyi kendiliğinden açmasın); açma isteğiyse söylenir
+        const lost = pendingRef.current
+        pendingRef.current = null
+        if (lost === 'open') notifyRef.current?.(e)
+      },
     )
     return () => { alive = false }
   }, [Core, want])

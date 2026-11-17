@@ -17,6 +17,7 @@ vi.mock('../api/client', () => ({
 import { api } from '../api/client'
 import PageMonitorPage from '../components/PageMonitorPage.jsx'
 import PageSpeedMonitorPage from '../components/PageSpeedMonitorPage.jsx'
+import { DETAIL_SETTLE_MS, resourcesOlderThanRow, serverTimeMs, settledDetailCheckKey } from '../utils/detailCheckKey.js'
 
 const base = { team_id: 5, team_name: 'Takım A', active: true, can_edit: true, can_check: true, can_delete: true }
 const CASES = [
@@ -82,4 +83,77 @@ describe.each(CASES)('%s — ayrıntı sekmesi yalnız görünürken ve yeni öl
     await act(async () => { await vi.advanceTimersByTimeAsync(65_000) })
     expect(api.monitoring[tabFn].mock.calls.length).toBe(afterOk)    // başarılı okumadan sonra aynı ölçümde durur
   }, 30_000)
+
+  it('inceleme 2026-11-17: yeni ölçümün satırları yazılırken okunan sekme ölçüm oturunca bir kez daha okunur, sonra durur', async () => {
+    await openDetail()
+    // Ölçüm satırı ~10 sn önce yazıldı (tazeleme anında): sekme satırları ayrı işlemde henüz yazılıyor olabilir
+    const fresh = new Date(Date.now() + 20_000).toISOString().slice(0, 19)   // zone'suz UTC, ilk tazelemede ~10 sn yaşında
+    api.monitoring[listFn].mockResolvedValue({ success: true, data: [{ ...row, [lastKey]: fresh }] })
+    await act(async () => { await vi.advanceTimersByTimeAsync(35_000) })
+    expect(api.monitoring[tabFn]).toHaveBeenCalledTimes(2)           // yeni ölçüm → okundu, ama anahtar saklanmadı
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+    expect(api.monitoring[tabFn]).toHaveBeenCalledTimes(3)           // ölçüm oturdu → bir kez daha
+    await act(async () => { await vi.advanceTimersByTimeAsync(90_000) })
+    expect(api.monitoring[tabFn]).toHaveBeenCalledTimes(3)           // sonra aynı ölçümde durur
+  }, 30_000)
+})
+
+describe('PageSpeed — gelen kaynak satırları eski ölçümünse yeniden okunur (inceleme 2026-11-17)', () => {
+  const row = CASES[0][4]
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.history.replaceState(null, '', '/')
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
+    api.monitoring.getPageSpeedMonitors.mockResolvedValue({ success: true, data: [row] })
+    api.monitoring.getPageSpeedResources.mockResolvedValue({ success: true,
+      data: { resources: [{ id: 1, url: 'https://s.example.com/a.js', type: 'JS', bytes: 10, checked_at: '2026-09-26T09:00:00' }], total: 1, breaches: [] } })
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+  })
+  afterEach(() => { vi.useRealTimers(); delete document.hidden })
+
+  it('liste yeni ölçümü gösterirken satırlar eskiyse anahtar saklanmaz; yeni satırlar gelince durur', async () => {
+    const r = render(<PageSpeedMonitorPage systemRole="ADMIN" teamId={5} teamName="Takım A" myTeams={[{ id: 5, name: 'Takım A' }]} />)
+    await waitFor(() => expect(r.container.querySelectorAll('.upt-grid > [data-slot="card"]')).toHaveLength(1))
+    fireEvent.click(r.container.querySelector('.upt-grid [data-monitor-open]'))
+    await screen.findByRole('dialog')
+    await waitFor(() => expect(api.monitoring.getPageSpeedResources).toHaveBeenCalledTimes(1))
+    api.monitoring.getPageSpeedMonitors.mockResolvedValue({ success: true, data: [{ ...row, last_check: '2026-09-26T09:30:00' }] })
+    await act(async () => { await vi.advanceTimersByTimeAsync(35_000) })
+    expect(api.monitoring.getPageSpeedResources).toHaveBeenCalledTimes(2)   // yeni ölçüm → okundu, satırlar 09:00 → saklanmadı
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+    expect(api.monitoring.getPageSpeedResources).toHaveBeenCalledTimes(3)   // yeniden denendi
+    api.monitoring.getPageSpeedResources.mockResolvedValue({ success: true,
+      data: { resources: [{ id: 2, url: 'https://s.example.com/a.js', type: 'JS', bytes: 12, checked_at: '2026-09-26T09:30:00' }], total: 1, breaches: [] } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+    expect(api.monitoring.getPageSpeedResources).toHaveBeenCalledTimes(4)
+    await act(async () => { await vi.advanceTimersByTimeAsync(90_000) })
+    expect(api.monitoring.getPageSpeedResources).toHaveBeenCalledTimes(4)   // yeni ölçümün satırları geldi → durur
+  }, 30_000)
+})
+
+describe('detailCheckKey yardımcıları', () => {
+  it('serverTimeMs bölgesiz değeri UTC okur, bölgeli değere dokunmaz', () => {
+    expect(serverTimeMs('2026-09-26T09:00:00')).toBe(Date.UTC(2026, 8, 26, 9, 0, 0))
+    expect(serverTimeMs('2026-09-26T09:00:00+03:00')).toBe(Date.UTC(2026, 8, 26, 6, 0, 0))
+    expect(serverTimeMs('bozuk')).toBeNull()
+    expect(serverTimeMs(null)).toBeNull()
+  })
+  it('settledDetailCheckKey ölçüm oturmadan anahtar vermez; zaman yoksa eski kural', () => {
+    const t = Date.UTC(2026, 8, 26, 9, 0, 0)
+    const row = { id: 7, last_check: '2026-09-26T09:00:00' }
+    expect(settledDetailCheckKey(row, null, t + DETAIL_SETTLE_MS - 1)).toBeNull()
+    expect(settledDetailCheckKey(row, null, t + DETAIL_SETTLE_MS)).toBe('7|2026-09-26T09:00:00')
+    expect(settledDetailCheckKey(row, null, t - 60_000)).toBeNull()         // tarayıcı saati geride → güvenli yön
+    expect(settledDetailCheckKey({ id: 7 }, null, t)).toBe('7|')
+    expect(settledDetailCheckKey(null, null, t)).toBeNull()
+  })
+  it('resourcesOlderThanRow yalnız en yeni satır son ölçümden eskiyse true', () => {
+    const row = { last_check: '2026-09-26T09:30:00' }
+    expect(resourcesOlderThanRow([{ checked_at: '2026-09-26T09:00:00' }], row)).toBe(true)
+    expect(resourcesOlderThanRow([{ checked_at: '2026-09-26T09:00:00' }, { checked_at: '2026-09-26T09:30:00' }], row)).toBe(false)
+    expect(resourcesOlderThanRow([{ checked_at: '2026-09-26T09:29:59.500' }], row)).toBe(false)   // 1 sn tolerans
+    expect(resourcesOlderThanRow([], row)).toBe(false)
+    expect(resourcesOlderThanRow([{ checked_at: null }], row)).toBe(false)
+    expect(resourcesOlderThanRow([{ checked_at: '2026-09-26T09:00:00' }], {})).toBe(false)
+  })
 })

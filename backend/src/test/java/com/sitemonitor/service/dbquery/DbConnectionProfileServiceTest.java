@@ -133,6 +133,35 @@ class DbConnectionProfileServiceTest {
     }
 
     @Test
+    void okUseThrottleRuleInSql() {
+        // perf 2026-11-17 + inceleme: seyreltme kuralı SQL'de — 30 sn içinde ikinci başarı yazılmaz; araya (HERHANGİ bir pod'dan)
+        // hata ya da bağlantı denemesi girdiyse sonraki başarı hemen yazılır (durum "failing"de takılı kalmaz); 30 sn sonra yine.
+        DbConnectionProfile p = saved(1L, "enc:v1:X");
+        Long id = p.getId();
+        assertThat(repo.recordUseOkIfStale(id, "2026-11-17T10:00:00", 5, "2026-11-17T09:59:30")).isEqualTo(1);   // ilk
+        assertThat(repo.recordUseOkIfStale(id, "2026-11-17T10:00:05", 6, "2026-11-17T09:59:35")).isZero();       // 5 sn sonra
+        assertThat(row(id).get("LAST_OK_AT")).isEqualTo("2026-11-17T10:00:00");
+
+        repo.recordUseError(id, "2026-11-17T10:00:06", 9, "connection refused");    // öteki pod'un elle denemesi düştü
+        assertThat(DbConnectionProfileService.healthState(repo.findById(id).orElseThrow(), true)).isEqualTo("failing");
+        assertThat(repo.recordUseOkIfStale(id, "2026-11-17T10:00:07", 7, "2026-11-17T09:59:37")).isEqualTo(1);   // hemen
+        assertThat(DbConnectionProfileService.healthState(repo.findById(id).orElseThrow(), true)).isEqualTo("ok");
+
+        repo.recordTest(id, "2026-11-17T10:00:08", false, 900, "reddedildi", null);   // başarısız deneme
+        assertThat(repo.recordUseOkIfStale(id, "2026-11-17T10:00:09", 8, "2026-11-17T09:59:39")).isEqualTo(1);   // hemen
+        assertThat(DbConnectionProfileService.healthState(repo.findById(id).orElseThrow(), true)).isEqualTo("ok");
+        assertThat(repo.recordUseOkIfStale(id, "2026-11-17T10:00:10", 8, "2026-11-17T09:59:40")).isZero();       // yeniden seyrek
+
+        assertThat(repo.recordUseOkIfStale(id, "2026-11-17T10:00:40", 4, "2026-11-17T10:00:10")).isEqualTo(1);   // 31 sn sonra
+        assertThat(row(id).get("LAST_DURATION_MS")).isEqualTo(4);
+
+        // ileri tarihli damga (saat kayması) beklemeye takılmaz
+        jdbc.update("UPDATE db_connection_profiles SET last_ok_at = ? WHERE id = ?", "2026-11-17T11:00:00", id);
+        assertThat(repo.recordUseOkIfStale(id, "2026-11-17T10:00:41", 3, "2026-11-17T10:00:11")).isEqualTo(1);
+        assertThat(row(id).get("LAST_OK_AT")).isEqualTo("2026-11-17T10:00:41");
+    }
+
+    @Test
     @DisplayName("D4: bayat (ayrık) varlığın kaydı da sağlık kolonlarını / parolayı yazmaz (varlık eşlemesi: updatable = false)")
     void staleEntitySaveNeverWritesHealthOrPassword() {
         DbConnectionProfile p = saved(1L, "enc:v1:ESKI");

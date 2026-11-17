@@ -30,7 +30,11 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
     bölünebilir çizimle güncellenir (canlı veride 10 tuşta uzun görev 8 → 0).
   - Ayrıca daha az yeniden çizim ve arka plan okuması: İstatistikler araması, Sayfa Hızı / Sayfa bütünlüğü ayrıntı
     sekmeleri, kaynak analizi, Olaylar, eskalasyon kişileri, Panom TV ve zaman çizelgesi.
-  - Giriş sonrası eksikler penceresi tembel yüklenir (ilk açılış 399,96 → 384,5 KB gzip).
+  - Sayfa Hızı "Kaynaklar" ve Sayfa bütünlüğü "Sorunlar" sekmesi yalnız sekme görünürken ve yeni ölçüm gelince yeniden
+    okunur. Yeni ölçümün satırları ölçüm satırından sonra yazıldığı için ölçüm 15 sn'den yeniyse (ya da gelen kaynak
+    satırları eski ölçümünse) sekme bir sonraki tazelemede bir kez daha okunur.
+  - Giriş sonrası eksikler penceresi tembel yüklenir (ilk açılış 399,96 → 384,6 KB gzip). Pencerenin parçası
+    indirilemezse "Eksiklerim" tıklaması kaybolmaz: bildirim gösterilir ve pencere sonradan kendiliğinden açılmaz.
   - **Yoklanan uçlar tam varlık yerine dar sorgu okur.** Kapsam: takım sayaçları (`/api/admin/teams/stats`), yönetim
     özeti, nöbetçi görünümü, alan adı rozetleri, alarm iletimi listesi, kanal şablon özeti, aynı URL uyarısı ve kullanıcı
     etkinliği.
@@ -39,12 +43,15 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
     - İhlal anları kendi dizinini kullanır.
     - Parmak izi değişimi `MIN <> MAX` ile bulunur.
     - Yönetici istatistikleri ve yönetim değişiklik akışı dar izdüşüm okur.
-    - Takım alarm istatistikleri kurum geneli 30 sn bellekte tutulur.
+    - Takım alarm istatistikleri kurum geneli 30 sn bellekte tutulur. İstatistikler'de Yenile / Tekrar dene ve Alarm
+      Geçmişi'nde takım panelinin açılışı belleği atlar; kurum okuması yine en çok 5 sn'de bir yapılır.
   - **Zamanlanmış yollar:**
     - Dinamik tabanın mevsimsel okuması periyot başına bir zaman aralığıdır (eskiden izlemenin bütün örnekleri taranıyordu).
     - Anahtar kelime içerik değişiminin temel metni yalnız gerektiğinde okunur.
     - Sentetik koşum sayımı kapsayan dizinle yapılır.
-    - dbquery bağlantı sağlığı başarılı çalıştırmada en çok 30 sn'de bir yazılır.
+    - dbquery bağlantı sağlığı başarılı çalıştırmada en çok 30 sn'de bir yazılır. Kural veritabanında uygulanır: araya
+      (hangi pod'dan olursa olsun) bir hata ya da bağlantı denemesi girdiyse sonraki başarı hemen yazılır, durum "failing"de
+      takılı kalmaz.
     - Alarm akışı / alarm iletimi bildirim gruplarını tek sorguda çözer.
 - `POST /api/monitoring/pagespeed/{id}/image` isteğe bağlı `check_id` alır: adres yalnız o ölçümde aranır. Ölçüm yoksa
   eski davranış (izleme geneli arama) geçerlidir; geçersiz kimlik → 400. Arayüz gösterilen ölçümün kimliğini gönderir.

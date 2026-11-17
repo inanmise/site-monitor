@@ -417,7 +417,6 @@ public class DbQueryCheckerService {
         if (t.privileges() != null && t.privileges().checked()) notePrivileges(profile, t.privileges());
         if (profile.getId() != null && passwordOverride == null) {
             String at = nowIso();
-            lastOkUseWrite.remove(profile.getId());   // deneme sonrası ilk başarılı kullanım hemen yazılsın (bu pod)
             try {
                 profiles.recordTest(profile.getId(), at, t.ok(), (int) Math.min(Integer.MAX_VALUE, t.durationMs()),
                         t.error(), t.serverVersion());
@@ -663,42 +662,40 @@ public class DbQueryCheckerService {
     /**
      * Bağlantı kullanım sağlığı (performans 2026-11-17 — sıcak satır): BAŞARILI çalıştırma profil başına en çok
      * {@value #USE_OK_WRITE_INTERVAL_MS} ms'de bir yazılır (aynı bağlantıyı paylaşan çok izleme her çalıştırmada aynı satırı
-     * güncelliyordu). HATA her zaman HEMEN yazılır ve sonraki ilk başarı da hemen (durum dönüşü gecikmez — {@code
-     * healthState}'in ok / hata sıralaması aynı kalır); başarısız yazım bellek damgası bırakmaz (sonraki çalıştırma yeniden
-     * dener). Görünen etki: art arda başarıda {@code last_used_at} / {@code last_ok_at} / {@code last_duration_ms} en çok
-     * bu kadar eski kalabilir. Bellek pod başına, sınırlı ({@value #USE_OK_WRITE_MEMO_MAX} profil, dolunca temizlenir).
+     * güncelliyordu). Kural SQL'de ({@code recordUseOkIfStale}): son başarılı yazımdan sonra bir HATA ya da bağlantı
+     * DENEMESİ yazıldıysa başarı hemen yazılır — hangi pod yazmış olursa olsun (inceleme 2026-11-17: pod belleğindeki eski
+     * seyreltme başka pod'un yazdığı hatayı görmüyor, en yeni çalıştırma başarılıyken durum 30 sn "failing" kalabiliyordu).
+     * HATA her zaman HEMEN yazılır. Görünen etki: art arda başarıda {@code last_used_at} / {@code last_ok_at} /
+     * {@code last_duration_ms} en çok bu kadar eski kalabilir.
      */
     private void recordUse(Long profileId, String at, DbQueryRunner.QueryResult qr) {
         if (profileId == null) return;
         int ms = (int) Math.min(Integer.MAX_VALUE, qr.durationMs());
         try {
             if (qr.ok()) {
-                long now = useClock.getAsLong();
-                Long last = lastOkUseWrite.get(profileId);
-                if (last != null && now >= last && now - last < USE_OK_WRITE_INTERVAL_MS) return;   // yakın zamanda yazıldı
-                profiles.recordUseOk(profileId, at, ms);
-                if (lastOkUseWrite.size() >= USE_OK_WRITE_MEMO_MAX && !lastOkUseWrite.containsKey(profileId)) {
-                    lastOkUseWrite.clear();
-                }
-                lastOkUseWrite.put(profileId, now);
+                String cutoff = useCutoff(at);
+                if (cutoff == null) profiles.recordUseOk(profileId, at, ms);
+                else profiles.recordUseOkIfStale(profileId, at, ms, cutoff);
             } else {
-                lastOkUseWrite.remove(profileId);   // sonraki başarı hemen yazılsın (hata → başarı dönüşü)
                 profiles.recordUseError(profileId, at, ms, qr.error());
             }
         } catch (RuntimeException e) {
-            lastOkUseWrite.remove(profileId);
             log.warn("Bağlantı kullanım sağlığı yazılamadı (#{}): {}", profileId, e.getClass().getSimpleName());
+        }
+    }
+
+    /** {@code at} − {@value #USE_OK_WRITE_INTERVAL_MS} ms, aynı ISO biçiminde; okunamazsa {@code null} (seyreltmesiz yazılır). */
+    static String useCutoff(String at) {
+        if (at == null) return null;
+        try {
+            return ISO.format(ISO.parse(at, Instant::from).minusMillis(USE_OK_WRITE_INTERVAL_MS));
+        } catch (RuntimeException e) {
+            return null;
         }
     }
 
     /** Art arda başarılı kullanımın yazım aralığı (ms) — bkz. {@link #recordUse}. */
     static final long USE_OK_WRITE_INTERVAL_MS = 30_000L;
-    /** Başarılı kullanım yazım belleğinin en çok profil sayısı (dolunca temizlenir — sınırlı). */
-    static final int USE_OK_WRITE_MEMO_MAX = 10_000;
-    /** profil → son YAZILAN başarılı kullanımın anı (pod saati, ms). */
-    private final Map<Long, Long> lastOkUseWrite = new ConcurrentHashMap<>();
-    /** Test: kullanım yazım belleğinin saati. */
-    java.util.function.LongSupplier useClock = System::currentTimeMillis;
 
 
     /**
