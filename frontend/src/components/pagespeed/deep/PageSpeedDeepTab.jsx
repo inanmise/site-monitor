@@ -7,7 +7,7 @@ import { useToast } from '../../ui/Toast.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import { LoadingBlock } from '../../ui/Progress.jsx'
 import { ImageToolProvider, useImageToolStore } from '../../page/resourcescan/imagetool/ImageToolContext.jsx'
-import { DEADLINE, SNAPSHOT_DEADLINE_MS, buildWaterfall, gradeSnapshot, imageScopeKey, withDeadline } from './pageSpeedDeepModel.js'
+import { DEADLINE, SNAPSHOT_DEADLINE_MS, buildWaterfall, checkIdOfScope, gradeSnapshot, imageScopeKey, withDeadline } from './pageSpeedDeepModel.js'
 import PageSpeedGradeCard from './PageSpeedGradeCard.jsx'
 import PageSpeedWaterfall from './PageSpeedWaterfall.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -52,7 +52,8 @@ export default function PageSpeedDeepTab({ monitor }) {
   const monitorLast = monitor?.last_check || monitor?.checked_at || null
   const lastRef = useRef(monitorLast)
   lastRef.current = monitorLast
-  const fetchImage = useCallback((scanId, url, signal) => api.monitoring.pageSpeedImage(id, url, { signal }), [id])
+  // Ölçüm kimliği deponun anahtarından (`ps-<id>`) — sunucu adresi yalnız o ölçümde arar (2026-11-17, performans)
+  const fetchImage = useCallback((scanId, url, signal) => api.monitoring.pageSpeedImage(id, url, { signal, checkId: checkIdOfScope(scanId) }), [id])
   const store = useImageToolStore(id, fetchImage)
 
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])

@@ -1,6 +1,5 @@
 package com.sitemonitor.service;
 
-import com.sitemonitor.model.AlertEvent;
 import com.sitemonitor.model.CertificateInventory;
 import com.sitemonitor.repository.AlertEventRepository;
 import com.sitemonitor.repository.CertificateInventoryRepository;
@@ -419,21 +418,27 @@ public class ExecutiveStatsService {
         }
         Integer opened = null, resolved = null;
         if (alertsVisible && inventoryRead) {
+            // Dar izdüşümler (2026-11-17, performans): 30 günlük pencerede tam AlertEvent entity'si (context_json dahil)
+            // yalnız saymak için okunmaz. Görünürlük kuralı aynı (damga takımı ya da görülebilir envanter alanı).
             try {
                 int n = 0;
-                for (AlertEvent e : alertEventRepo.findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(since)) {
-                    if (!visible(e, canViewTeam, visibleDomains) || e.getCreatedAt() == null || e.getCreatedAt().compareTo(since) < 0) continue;
+                for (Object[] r : alertEventRepo.findCreatedStatRowsSince(since)) {   // [teamId, domain, createdAt]
+                    if (r == null || r.length < 3) continue;
+                    String createdAt = r[2] == null ? null : String.valueOf(r[2]);
+                    if (!visible(longOf(r[0]), r[1] == null ? null : String.valueOf(r[1]), canViewTeam, visibleDomains)
+                            || createdAt == null || createdAt.compareTo(since) < 0) continue;
                     n++;
                 }
                 opened = n;
             } catch (Exception e) { log.debug("changes: alarm sorgusu düştü: {}", e.toString()); partial = true; }
             // A5 D-3 (2026-09-29): "çözülen" pencerede ÇÖZÜLEN alarmlardır — açılış tarihinden bağımsız (10 gün önce açılıp dün
-            // çözülen alarm sayılır). Sessiz kapanış (D-7: silindi/duraklatıldı/envanter pasif) kurtarma değildir, sayılmaz.
+            // çözülen alarm sayılır). Sessiz kapanış (D-7: silindi/duraklatıldı/envanter pasif) kurtarma değildir, sayılmaz —
+            // sorgu yalnız resolved = true ve sessiz olmayanları döndürür.
             try {
                 int n = 0;
-                for (AlertEvent e : alertEventRepo.findByResolvedAtGreaterThanEqual(since)) {
-                    if (!visible(e, canViewTeam, visibleDomains) || !Boolean.TRUE.equals(e.getResolved())) continue;
-                    if (Boolean.TRUE.equals(e.getResolvedSilently())) continue;
+                for (Object[] r : alertEventRepo.findResolvedStatRowsSince(since)) {   // [teamId, domain]
+                    if (r == null || r.length < 2) continue;
+                    if (!visible(longOf(r[0]), r[1] == null ? null : String.valueOf(r[1]), canViewTeam, visibleDomains)) continue;
                     n++;
                 }
                 resolved = n;
@@ -450,7 +455,11 @@ public class ExecutiveStatsService {
         return canViewTeam.test(i.getTeamId()) || (i.getUgTeamId() != null && canViewTeam.test(i.getUgTeamId()));
     }
 
-    private static boolean visible(AlertEvent e, Predicate<Long> canViewTeam, Set<String> domains) {
-        return (e.getTeamId() != null && canViewTeam.test(e.getTeamId())) || (e.getDomain() != null && domains.contains(e.getDomain()));
+    private static boolean visible(Long teamId, String domain, Predicate<Long> canViewTeam, Set<String> domains) {
+        return (teamId != null && canViewTeam.test(teamId)) || (domain != null && domains.contains(domain));
+    }
+
+    private static Long longOf(Object o) {
+        return o instanceof Number n ? Long.valueOf(n.longValue()) : null;
     }
 }

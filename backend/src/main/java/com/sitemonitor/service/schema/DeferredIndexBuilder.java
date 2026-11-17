@@ -285,7 +285,14 @@ public final class DeferredIndexBuilder {
             Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pc_fail ON page_checks(monitor_id, checked_at)"
                     + " WHERE ok = false"),
             Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dnsr_fail ON dns_records(monitor_id, checked_at)"
-                    + " WHERE value IS NULL OR value = ''"));
+                    + " WHERE value IS NULL OR value = ''"),
+            // ── 2026-11-17 performans incelemesi (EXPLAIN) ──
+            // Sayfa Hızı ihlal anları listesi (PageSpeedResourceRepository.breachSnapshots — her şelale / kaynak okumasında):
+            // monitor_id = ? AND keep_reason = 'BREACH' ORDER BY checked_at DESC LIMIT. Yalnız idx_psr_reason_checked
+            // (keep_reason, checked_at) varken planlayıcı onu geriye tarıyor, BAŞKA izlemelerin BREACH satırlarını okuyup
+            // monitor_id'yi süzgeçle eliyordu. Eşitlikler önde, sıra arkada: yalnız bu izlemenin satırları, sıralı. Mevcut
+            // idx_psr_monitor_reason (monitor_id, keep_reason) düşürülmez (entity indeksi). Taşınabilir (H2'de sade hâli).
+            Spec.portable("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_psr_monitor_reason_checked ON pagespeed_resources(monitor_id, keep_reason, checked_at)"));
 
     /** Bir koşunun özeti. {@code locked=false} → kilit alınamadı, hiçbir şey denenmedi. */
     public record Result(int built, int rebuilt, int valid, int skipped, int failed, boolean locked, long millis) {}

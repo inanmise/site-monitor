@@ -91,6 +91,23 @@ describe('görsel ucu (POST …/resource-scans/{scan}/image)', () => {
   })
 })
 
+describe('Sayfa Hızı görsel ucu (POST …/pagespeed/{id}/image)', () => {
+  it('2026-11-17: ölçüm kimliği verilirse gövdede check_id; yoksa / geçersizse gövde yalnız { url } (eski davranış)', async () => {
+    global.fetch = vi.fn().mockResolvedValue(imageResponse())
+    await api.monitoring.pageSpeedImage(71, 'https://cdn.example.com/a.png', { checkId: 900 })
+    let [url, init] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/monitoring/pagespeed/71/image')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body)).toEqual({ url: 'https://cdn.example.com/a.png', check_id: 900 })
+    for (const checkId of [undefined, null, 0, -4, 1.5, '900', Number.MAX_SAFE_INTEGER + 2]) {
+      global.fetch = vi.fn().mockResolvedValue(imageResponse())
+      await api.monitoring.pageSpeedImage(71, 'https://cdn.example.com/a.png', { checkId })
+      ;[url, init] = global.fetch.mock.calls[0]
+      expect(JSON.parse(init.body), String(checkId)).toEqual({ url: 'https://cdn.example.com/a.png' })
+    }
+  })
+})
+
 describe('not projeksiyonu ucu (POST …/image-projection)', () => {
   it('gövde aynen gider; başarı verisi ve hata durumu (eski sunucu 404) çağırana ulaşır', async () => {
     const data = { capped: false, applied: 2, before: { grade: 61 }, after: { grade: 78 } }

@@ -239,4 +239,22 @@ class AuditLogRepositoryTest {
         assertThat(rows.get(1)[0]).isEqualTo("2026-07-28");
         assertThat(((Number) rows.get(1)[1]).longValue()).isEqualTo(4);
     }
+    @Test
+    @DisplayName("2026-11-17 performans: çapraz akış penceresi (LİSTE + LIMIT, COUNT'suz) = sayfalı sorgunun içeriği — süzgeç, sıra, sınır, kişi")
+    void adminFeedWindowEqualsPageContent() {
+        repo.save(a(5, "2026-07-28T13:00:00", "USER_UPDATE", "ALICE", 1L, "USER", "6", "SUCCESS"));   // aynı an: id DESC bağ kırıcı
+        List<String> types = List.of("USER_UPDATE", "MONITOR_UPDATE", "MONITOR_CREATE");
+        for (int limit : new int[]{1, 2, 3, 50}) {
+            assertThat(repo.findAdminFeedWindow(types, "", limit)).extracting(AuditLog::getId)
+                    .as("limit %d", limit)
+                    .containsExactlyElementsOf(repo.findAdminFeed(types, "", PageRequest.of(0, limit)).getContent()
+                            .stream().map(AuditLog::getId).toList());
+            assertThat(repo.findAdminFeedWindowByActor(types, "2026-07-28T10:30:00", "alice", limit)).extracting(AuditLog::getId)
+                    .as("kişi, limit %d", limit)
+                    .containsExactlyElementsOf(repo.findAdminFeedByActor(types, "2026-07-28T10:30:00", "alice",
+                            PageRequest.of(0, limit)).getContent().stream().map(AuditLog::getId).toList());
+        }
+        assertThat(repo.findAdminFeedWindow(types, "", 50)).hasSize(4);
+        assertThat(repo.findAdminFeedWindowByActor(types, "", "alice", 50)).hasSize(3);
+    }
 }

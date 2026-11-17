@@ -216,9 +216,12 @@ for (const vp of VIEWPORTS) {
       await page.route((u) => new URL(u).pathname === '/api/monitoring/pagespeed', json({ success: true, data: [row] }))
       await page.route((u) => /^\/api\/monitoring\/pagespeed\/\d+\/waterfall$/.test(new URL(u).pathname), json(snapshot(91, T1)))
       const imageCalls = []
+      const imageCheckIds = []
       await page.route((u) => new URL(u).pathname === '/api/monitoring/pagespeed/100/image', (r) => {
-        const url = JSON.parse(r.request().postData() || '{}').url
+        const sent = JSON.parse(r.request().postData() || '{}')
+        const url = sent.url
         imageCalls.push(url)
+        imageCheckIds.push(sent.check_id)
         if (url === IMG('tamam')) {
           return r.fulfill({ status: 200, contentType: 'image/png', body: PNG_1PX, headers: {
             'Content-Disposition': 'attachment; filename="kampanya-tamam.png"', 'X-Image-Type': 'png', 'X-Image-Width': '1', 'X-Image-Height': '1' } })
@@ -278,6 +281,8 @@ for (const vp of VIEWPORTS) {
         await noOverflow(page, vp, '[role="dialog"]', `${key} hatasında`)
       }
       expect(imageCalls).toEqual([IMG('tamam'), IMG('silinmis'), IMG('dev-boyut'), IMG('yasakli'), IMG('yavaslatilan')])
+      // 2026-11-17 (performans): istek gösterilen ölçümün kimliğini taşır — sunucu adresi yalnız o ölçümde arar
+      expect(imageCheckIds).toEqual(Array(imageCalls.length).fill(91))
     })
 
     test(`karara bağlanamayan ölçüm kartta ve geçmişte nötr; genişletilmiş ölçüm işaretleri görünür @${vp.name}`, async ({ page }) => {

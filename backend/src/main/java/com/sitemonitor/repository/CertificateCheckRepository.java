@@ -36,11 +36,18 @@ public interface CertificateCheckRepository extends JpaRepository<CertificateChe
         """)
     List<Object[]> weakObservationsSince(@Param("cutoff") String cutoff);
 
-    /** "Son 7 günde ne değişti" (2026-09-12, #7): pencere içinde birden fazla parmak izi görülen alanlar = yenileme. */
+    /**
+     * "Son 7 günde ne değişti" (2026-09-12, #7): pencere içinde birden fazla parmak izi görülen alanlar = yenileme.
+     *
+     * <p>Performans (2026-11-17, EXPLAIN): {@code COUNT(DISTINCT fingerprint) > 1} PostgreSQL'de pencerenin TÜMÜNÜ
+     * (alan, parmak izi) sırasına dizdiriyordu; {@code MIN <> MAX} karma birleştirmeyle sıralamasız hesaplanır. NULL parmak izi
+     * WHERE'de dışarıda — kalan değerlerde "en az iki farklı değer" ⇔ "en küçük ≠ en büyük" (aynı eşitlik kuralı). Sonuç kümesi
+     * aynı. Kapı: {@code CertificateCheckFingerprintChangeTest}.
+     */
     @Query("""
         SELECT c.domain FROM CertificateCheck c
         WHERE c.checkedAt >= :cutoff AND c.fingerprint IS NOT NULL
-        GROUP BY c.domain HAVING COUNT(DISTINCT c.fingerprint) > 1
+        GROUP BY c.domain HAVING MIN(c.fingerprint) <> MAX(c.fingerprint)
         """)
     List<String> domainsWithFingerprintChangeSince(@Param("cutoff") String cutoff);
 

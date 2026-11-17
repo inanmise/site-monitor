@@ -136,10 +136,12 @@ public class AdminActivityFeedService {
             return new Feed(out, pg.getTotalElements(), p, s, false, 0);
         }
 
-        // Kapsamlı: pencere + satır satır süzme + bellek içi sayfalama
+        // Kapsamlı: pencere + satır satır süzme + bellek içi sayfalama. Pencere LİSTE + LIMIT ile okunur (2026-11-17,
+        // performans): sayfa nesnesinin COUNT sorgusu (toplam burada kullanılmaz) koşmaz.
         List<AuditLog> scanned = who == null
-                ? auditRepo.findAdminFeed(types, since0, PageRequest.of(0, WINDOW_MAX)).getContent()
-                : auditRepo.findAdminFeedByActor(types, since0, who, PageRequest.of(0, WINDOW_MAX)).getContent();
+                ? auditRepo.findAdminFeedWindow(types, since0, WINDOW_MAX)
+                : auditRepo.findAdminFeedWindowByActor(types, since0, who, WINDOW_MAX);
+        if (scanned == null) scanned = List.of();
         Resolver res = new Resolver(scanned);
         Map<String, Set<Long>> allowed = new HashMap<>();
         for (Access a : byArea.values()) if (a.teams() != null) allowed.put(a.area(), new HashSet<>(a.teams()));
@@ -212,7 +214,7 @@ public class AdminActivityFeedService {
             List<AuditLog> contactRows = new ArrayList<>();
             for (AuditLog r : rows) if (ContactHistoryTeams.RESOURCE.equals(r.getResourceType())) contactRows.add(r);
             try {
-                return ContactHistoryTeams.rowTeams(contactRows, liveContactTeams(), auditRepo);
+                return ContactHistoryTeams.rowTeams(contactRows, liveContactTeams(contactRows), auditRepo);
             } catch (RuntimeException e) {
                 return Map.of();                     // takımı çözülemeyen kişi satırı kapsamlıya gizlenir
             }
@@ -229,10 +231,32 @@ public class AdminActivityFeedService {
         }
     }
 
-    private Map<Long, Long> liveContactTeams() {
+    /** Kimlik listesi öbeği — {@code IN} listesi sınırlı (pencere ≤ {@link #WINDOW_MAX} satır). */
+    static final int CONTACT_ID_CHUNK = 500;
+
+    /**
+     * Okunan kişi satırlarındaki kişilerin CANLI takımı (2026-11-17, performans): yalnız bu kişiler, yalnız {@code [id, teamId]}
+     * — eskiden {@code findAll()} her kişiyi tam varlık olarak okuyordu. Silinmiş kişi haritada yok; takımsız kişi {@code null}
+     * değerle var (eski davranışla aynı). Okuma düşerse o ana dek okunan kısım (takımı çözülemeyen satır kapsamlıya gizlenir).
+     */
+    private Map<Long, Long> liveContactTeams(List<AuditLog> contactRows) {
         Map<Long, Long> m = new HashMap<>();
+        Set<Long> ids = new LinkedHashSet<>();
+        for (AuditLog r : contactRows) {
+            Long id = AdminHistoryService.parseLong(r.getResourceId());
+            if (id != null) ids.add(id);
+        }
+        if (ids.isEmpty()) return m;
+        List<Long> all = new ArrayList<>(ids);
         try {
-            contactRepo.findAll().forEach(c -> { if (c.getId() != null) m.put(c.getId(), c.getTeamId()); });
+            for (int i = 0; i < all.size(); i += CONTACT_ID_CHUNK) {
+                List<Object[]> rows = contactRepo.findTeamIdsByIdIn(all.subList(i, Math.min(all.size(), i + CONTACT_ID_CHUNK)));
+                if (rows == null) continue;
+                for (Object[] row : rows) {
+                    if (row == null || row.length < 2 || !(row[0] instanceof Number id)) continue;
+                    m.put(id.longValue(), row[1] instanceof Number t ? Long.valueOf(t.longValue()) : null);
+                }
+            }
         } catch (RuntimeException ignore) { /* takımı çözülemeyen kişi satırı kapsamlıya gizlenir */ }
         return m;
     }
