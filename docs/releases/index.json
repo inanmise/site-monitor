@@ -1,9 +1,93 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-17T08:51:21Z",
+  "generatedAt": "2026-11-17T18:39:42Z",
   "repo": "inanmise/site-monitor",
-  "count": 857,
+  "count": 858,
   "releases": [
+    {
+      "version": "20.213.5",
+      "tag": "v20.213.5",
+      "releasedAt": "2026-11-17T18:39:34Z",
+      "commit": "58be203d52c647c0d557910e0d6647d291c03cc0",
+      "prevVersion": "20.213.4",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 2,
+        "perf": 7,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "58be203d",
+          "subject": "CI düzeltmeleri — eksikler penceresi StrictMode'da takılmaz, kullanılmayan kapsayan dizin kaldırıldı, tarihe bağlı test sağlamlaştı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "a3a18ecd",
+          "subject": "inceleme düzeltmeleri — dbquery sağlık seyreltmesi SQL'de, takım alarm sayıları yenilenebilir, sayfa sekmeleri yarım okumada takılmaz, eksikler penceresi inemezse söyler"
+        },
+        {
+          "type": "perf",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "8e618219",
+          "subject": "yapışkan alt çubuk body:has yerine body işaretiyle; SQL Playground yazarken yalnız editörü çizer"
+        },
+        {
+          "type": "perf",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "6dba7d6f",
+          "subject": "kanal raporu düzenleyicide yazarken yalnız düzenlenen bölüm ve alan çizilir"
+        },
+        {
+          "type": "perf",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "e27fed34",
+          "subject": "fewer re-renders and background reads on stats, page speed, page integrity, resource scan, incidents, contacts, TV and timeline"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "cc3cce0d",
+          "subject": "yoklanan uçlar tam varlık yerine dar sorgu okur (takım sayaçları, nöbetçi, alan adı rozeti, alarm iletimi, kanal şablonu, aynı URL, kullanıcı etkinliği)"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "45eb93d2",
+          "subject": "yavaş SQL yolları — tek kopya kuralı InitPlan, ihlal anları dizini, görsel köprüsü ölçüm kimliği, dar izdüşümler, takım istatistik belleği"
+        },
+        {
+          "type": "perf",
+          "scope": null,
+          "breaking": false,
+          "sha": "6d9a285a",
+          "subject": "zamanlanmış yollarda sorgu maliyeti — mevsimsel taban aralık okuması, tembel temel metni, kapsayan indeks, bağlantı sağlığı seyreltme, toplu bildirim grubu çözümü"
+        },
+        {
+          "type": "perf",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "27168e06",
+          "subject": "SQL Playground her tuşta / çalışırken tüm sayfayı yeniden çizmez; canlı e2e yeni pencereleri tanır"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.213.4",
       "tag": "v20.213.4",

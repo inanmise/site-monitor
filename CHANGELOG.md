@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.213.5] — 2026-11-17
+
 ### Changed
 - **Uçtan uca performans turu.** Sonuçlar ve kararlar değişmez; yalnız maliyet düşer.
   - **Yazarken takılma giderildi.** SQL Playground'da her tuş bütün sayfanın stilini yeniden hesaplatıyordu. Kök neden
@@ -3590,7 +3592,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.213.4...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.213.5...HEAD
+[20.213.5]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.5
 [20.213.4]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.4
 [20.213.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.3
 [20.213.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.2
