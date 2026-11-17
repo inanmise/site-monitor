@@ -27,6 +27,14 @@ for (const vp of VIEWPORTS) {
   test(`güven süzgeci + neden açıklaması (${vp.name} ${vp.width})`, async ({ page }) => {
     test.setTimeout(120_000)
     await page.setViewportSize({ width: vp.width, height: vp.height })
+    // Tanı (2026-11-17): yalnız CI'da ara sıra açılır pencere boş kalıyordu — sayfa yeniden yüklendi mi (Vite bağımlılık
+    // iyileştiricisi), sayfa hatası var mı, odak nereye gitti: düşerse hata iletisine yazılır
+    const events = []
+    page.on('framenavigated', (f) => { if (f === page.mainFrame()) events.push(`nav ${new URL(f.url()).search}`) })
+    page.on('pageerror', (e) => events.push(`pageerror ${String(e?.message).slice(0, 200)}`))
+    page.on('console', (m) => {
+      if (m.type() === 'error' || /\[vite\]/.test(m.text())) events.push(`console.${m.type()} ${m.text().slice(0, 200)}`)
+    })
     await mockApi(page, { perms: PERMS })
     await mockCertApi(page)
     const trustParams = []
@@ -69,13 +77,27 @@ for (const vp of VIEWPORTS) {
         .filter((a) => a.effect?.getComputedTiming?.().iterations !== Infinity)
         .map((a) => a.finished.catch(() => {})))
     })
-    await expect(detail.locator('[data-slot="trust-check"]')).toHaveCount(3)
+    try {
+      await expect(detail.locator('[data-slot="trust-check"]')).toHaveCount(3)
+    } catch (e) {
+      const st = await page.evaluate(() => ({
+        active: document.activeElement?.outerHTML.slice(0, 200),
+        popovers: document.querySelectorAll('[data-slot="cert-trust-detail"]').length,
+        dialogs: [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')]
+          .map((d) => d.getAttribute('data-slot') || d.getAttribute('aria-label') || d.tagName),
+        rows: document.querySelectorAll('[data-domain="kismen.example.com"]').length,
+        url: location.search,
+      })).catch((err) => ({ evaluateFailed: String(err?.message).slice(0, 120) }))
+      throw new Error([e.message, `OLAYLAR: ${events.join(' | ')}`, `DURUM: ${JSON.stringify(st)}`].join('\n'))
+    }
     await expect(detail.locator('[data-slot="trust-check"][data-check="rev"]')).toHaveAttribute('data-state', 'unknown')
     await expect(detail.locator('[data-slot="trust-check"][data-check="rev"] [data-slot="trust-check-hint"]')).toContainText(/OCSP|CRL/)
     const box = await detail.boundingBox()
     expect(box.x).toBeGreaterThanOrEqual(0)
     expect(box.x + box.width).toBeLessThanOrEqual(vp.width + 1)
     expect(box.y + box.height).toBeLessThanOrEqual(vp.height + 1)
+    // GEÇİCİ (2026-11-17, CI kanıtı): geçen koşuda da olaylar yazılır — parça bağlamında sayfa yeniden yükleniyor mu
+    console.log(`CTF-EVENTS ${vp.name}: ${events.join(' | ')}`)
     // Pencere açılınca sertifika penceresi açılmadı (satır tıklaması tetiklenmedi)
     await expect(page.getByRole('dialog', { name: /kismen\.example\.com/ })).toHaveCount(0)
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)

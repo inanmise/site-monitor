@@ -469,7 +469,7 @@ jobs:
   cert-trust-repro:
     name: cert-trust repro (geçici)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: frontend
@@ -487,8 +487,8 @@ jobs:
         run: sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
-      - name: Repeat cert-trust-filter
-        run: npx playwright test e2e/cert-trust-filter.spec.js --repeat-each 15 --retries 0 --trace retain-on-failure
+      - name: Shard 1/4 (cert-trust-filter context)
+        run: npx playwright test --shard=1/4 --retries 0 --trace retain-on-failure
       - name: Upload traces
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
