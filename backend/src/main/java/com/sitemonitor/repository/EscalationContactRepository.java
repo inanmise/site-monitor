@@ -7,6 +7,14 @@ import java.util.List;
 
 public interface EscalationContactRepository extends JpaRepository<EscalationContact, Long> {
     /**
+     * Takım başına AKTİF kişi sayısı (takım sayaçları {@code /api/admin/teams/stats}, 2026-11-17 perf): tam varlık okunmaz.
+     * Alıcı çözümü DEĞİL (yalnız sayı). Satır: {@code [Long teamId, Long count]}; takımsız kişi sayılmaz.
+     */
+    @org.springframework.data.jpa.repository.Query("SELECT c.teamId, COUNT(c) FROM EscalationContact c"
+            + " WHERE c.active = true AND c.teamId IS NOT NULL GROUP BY c.teamId")
+    List<Object[]> countActiveByTeam();
+
+    /**
      * TÜM takımların etkin kontakları — YALNIZ yönetim listesi ({@code AdminController.listContacts}) içindir.
      * Alarm alıcısı çözümünde KULLANILMAZ: takım süzgeci yoktur, başka takımların müdürlerini getirir
      * (2026-09-28 prod hatası). Alıcı çözümü {@code EscalationContactScope.forLevel} üzerinden yapılır;

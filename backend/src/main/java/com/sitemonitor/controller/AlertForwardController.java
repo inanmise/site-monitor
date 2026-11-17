@@ -352,7 +352,17 @@ public class AlertForwardController {
                 readable = false;
             } else {
                 try {
-                    for (NocMonitorDirectory.Row r : directory.all()) monitors.put(AlertForwardService.keyOf(r.type()) + ":" + r.id(), r);
+                    // 2026-11-17 perf: yalnız iletimlerin seçtiği izlemeler (tür + kimlik) — eskiden on türün BÜTÜN izlemeleri
+                    // her istekte okunuyordu. Satır içeriği ve eşleme anahtarı aynı (keyOf(tür) + ":" + kimlik).
+                    Map<NocType, Set<Long>> wanted = new java.util.EnumMap<>(NocType.class);
+                    for (AlertForward f : rows) {
+                        if (!AlertForward.SCOPE_MONITORS.equals(f.getScopeKind())) continue;
+                        for (AlertForwardService.MonitorRef r : AlertForwardService.monitorsOf(f)) {
+                            NocType t = AlertForwardService.nocTypeOf(r.type());
+                            if (t != null) wanted.computeIfAbsent(t, k -> new LinkedHashSet<>()).add(r.id());
+                        }
+                    }
+                    for (NocMonitorDirectory.Row r : directory.byIds(wanted)) monitors.put(AlertForwardService.keyOf(r.type()) + ":" + r.id(), r);
                 } catch (RuntimeException e) {
                     log.warn("Alarm iletimi: izleme dizini okunamadı: {}", e.toString());
                     readable = false;

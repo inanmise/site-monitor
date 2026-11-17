@@ -327,6 +327,41 @@ class NocPersistenceTest {
     }
 
     @Test
+    @DisplayName("2026-11-17 perf: byIds = all()'ın istenen (tür, kimlik) alt kümesi (türev Port/DNS envanter kuralı dahil); istenmeyen tür okunmaz")
+    void byIdsEqualsAllSubset() {
+        inv("www.b.example.com", B, A, true, null, false);
+        CertificateInventory a = inv("www.a.example.com", A, null, true, null, true);
+        PortMonitor derived = port("www.b.example.com", 443, C, false, null, true, null);       // takım envanterden (B)
+        PortMonitor wrongPort = port("www.b.example.com", 8443, C, false, null, true, null);    // türev, envanter portu değil → yok
+        PortMonitor solo = port("solo.example.com", 22, A, true, null, true, null);
+        PortMonitor gone = port("gone.example.com", 22, A, true, NOW, true, null);              // silinmiş → yok
+        DnsMonitor dnsDerived = dns("www.a.example.com", null, false, true);
+        PingMonitor p1 = ping("p1.example.com", A, true, true, null);
+        ping("p2.example.com", B, true, false, null);                                            // istenmez
+
+        Map<NocType, List<Long>> wanted = new java.util.EnumMap<>(NocType.class);
+        wanted.put(NocType.PORT, List.of(derived.getId(), wrongPort.getId(), solo.getId(), gone.getId(), 999_999L));
+        wanted.put(NocType.DNS, List.of(dnsDerived.getId()));
+        wanted.put(NocType.PING, List.of(p1.getId()));
+        wanted.put(NocType.SSL, List.of(a.getId()));
+
+        java.util.Set<String> keys = new java.util.HashSet<>();
+        wanted.forEach((t, ids) -> ids.forEach(id -> keys.add(t.name() + ":" + id)));
+        List<NocMonitorDirectory.Row> expected = directory.all().stream().filter(r -> keys.contains(r.key())).toList();
+
+        CountingJdbc cj = new CountingJdbc(jdbc.getDataSource());
+        NocMonitorDirectory dir = new NocMonitorDirectory(cj);
+        List<NocMonitorDirectory.Row> actual = dir.byIds(wanted);
+        assertThat(actual).containsExactlyInAnyOrderElementsOf(expected).hasSize(5);
+        assertThat(actual).filteredOn(r -> r.id() == derived.getId() && r.type() == NocType.PORT)
+                .singleElement().satisfies(r -> assertThat(r.teamId()).isEqualTo(B));
+        assertThat(cj.count("FROM http_monitors")).as("istenmeyen tür").isZero();
+        assertThat(cj.count("FROM scripted_monitors")).isZero();
+        assertThat(cj.count("SELECT domain, team_id, ug_team_id, port FROM certificate_inventory")).as("envanter en çok bir kez").isEqualTo(1);
+        assertThat(dir.byIds(Map.of())).isEmpty();
+    }
+
+    @Test
     @DisplayName("tekil arama tabloyu TARAMAZ: DNS/Port dışında envanter hiç okunmaz; kimliksiz SSL yalnız o alan adı")
     void singleLookupsDoNotScan() {
         inv("www.b.example.com", B, null, true, null, true);

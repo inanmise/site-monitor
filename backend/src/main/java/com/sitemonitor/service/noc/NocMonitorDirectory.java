@@ -8,8 +8,10 @@ import org.springframework.stereotype.Service;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -77,6 +79,43 @@ public class NocMonitorDirectory {
             } catch (Exception e) {
                 // Bir tablonun okunamaması (yükseltme sırasında eksik kolon) BÜTÜN kapsam ekranını düşürmesin;
                 // o tür eksik görünür ve günlüğe yazılır.
+                log.warn("7/24 kapsamı: {} izlemeleri okunamadı: {}", t, e.getMessage());
+            }
+        }
+        return out;
+    }
+
+    /** {@link #byIds} IN listesi parça boyu. */
+    static final int BY_IDS_CHUNK = 500;
+
+    /**
+     * Yalnız istenen (tür, kimlik) satırları (2026-11-17 perf, alarm iletimi listesi): {@link #all()} her istekte on türün BÜTÜN
+     * izlemelerini okuyordu. Satır içeriği {@link #all()} ile birebir aynı (aynı {@code load}; DNS/Port için aynı canlı envanter
+     * haritası, gerekirse EN ÇOK bir kez); bir türün okunamaması {@link #all()} gibi o türü atlar ve günlüğe yazar. Sıra: tür
+     * sırası (NocType), tür içinde parça sırası. Var olmayan / türev-envanteri canlı olmayan kimlik sonuçta yer almaz.
+     */
+    public List<Row> byIds(Map<NocType, ? extends Collection<Long>> wanted) {
+        List<Row> out = new ArrayList<>();
+        if (wanted == null || wanted.isEmpty()) return out;
+        Map<String, Inv> inv = null;
+        for (NocType t : NocType.values()) {
+            Collection<Long> raw = wanted.get(t);
+            if (raw == null || raw.isEmpty()) continue;
+            List<Long> ids = new ArrayList<>(new LinkedHashSet<>(raw));
+            ids.removeIf(java.util.Objects::isNull);
+            if (ids.isEmpty()) continue;
+            try {
+                if (needsInventory(t) && inv == null) inv = liveInventory();
+                Map<String, Inv> invMap = inv;
+                Function<String, Inv> lookup = invMap == null ? d -> null : d -> invMap.get(d);
+                List<Row> typeRows = new ArrayList<>();
+                for (int i = 0; i < ids.size(); i += BY_IDS_CHUNK) {
+                    List<Long> chunk = ids.subList(i, Math.min(ids.size(), i + BY_IDS_CHUNK));
+                    String marks = String.join(",", java.util.Collections.nCopies(chunk.size(), "?"));
+                    typeRows.addAll(load(t, lookup, " AND id IN (" + marks + ")", chunk.toArray()));
+                }
+                out.addAll(typeRows);
+            } catch (Exception e) {
                 log.warn("7/24 kapsamı: {} izlemeleri okunamadı: {}", t, e.getMessage());
             }
         }

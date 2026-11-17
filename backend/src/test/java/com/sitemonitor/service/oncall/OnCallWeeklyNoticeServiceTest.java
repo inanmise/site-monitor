@@ -115,6 +115,7 @@ class OnCallWeeklyNoticeServiceTest {
             }
             return out;
         });
+        OnCallUserRows.mirrorFindAllById(users);   // 2026-11-17 perf: servis dar satırı okur, fikstür aynı
         when(escalation.teamEmailsForMonitor(eq(5L), any())).thenReturn(List.of("odeme@example.com"));
         when(email.getEmailFrom()).thenReturn("noreply@example.com");
         when(email.sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), eq(false), any())).thenAnswer(i -> {
