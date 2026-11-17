@@ -14,6 +14,20 @@ import { mockApi, MONITORS } from './support/monitorMocks.js'
 import { pathDiffers } from '../src/test/helpers/httpDiagnoseFixtures.js'
 import { failedChecks, kwPathDiffers } from '../src/test/helpers/keywordDiagnoseFixtures.js'
 
+/**
+ * Sabit bekleme + sonlu animasyonların bitmesi (en çok 5 sn). Yalnız sabit 600 ms CI'da yetmiyordu: push ayrıntı paneli
+ * kayarak açılırken (sağ kenar 671 px) ölçülmüştü (2026-11-17). Sonsuz animasyon (döner gösterge) beklenmez.
+ */
+async function settleUi(page, ms = 600) {
+  await page.waitForTimeout(ms)
+  await page.evaluate(() => Promise.race([
+    Promise.all(document.getAnimations()
+      .filter((a) => a.effect?.getComputedTiming().endTime !== Infinity)
+      .map((a) => a.finished.catch(() => null))),
+    new Promise((r) => setTimeout(r, 5000)),
+  ]))
+}
+
 /** App.jsx VALID_TABS ile aynı (sertifika, izleme, yönetim sekmelerinin HEPSİ). */
 const TABS = [
   'dashboard', 'mydash', 'all', 'domains', 'manualcerts', 'forecast', 'renewal', 'renewal-guide',
@@ -279,7 +293,7 @@ for (const vp of VIEWPORTS) {
         await page.locator(`[data-slot="stat-item"][data-key="${kind}"]`).click({ timeout: 20_000 })
         await page.locator(`[data-slot="mo-kpi-dialog"][data-kind="${kind}"]`).waitFor()
         const dlg = page.getByRole('dialog').first()
-        await page.waitForTimeout(600)
+        await settleUi(page)
         const m = await page.evaluate(measure, '[role="dialog"]')
         expect(m.offenders, `monitoring ${kind} penceresi @${vp.name}: ekran dışına taşan öğe`).toEqual([])
         const box = await dlg.boundingBox()
@@ -317,7 +331,7 @@ for (const vp of [...VIEWPORTS, { name: 'laptop', width: 1280, height: 800 }]) {
     await page.locator('[data-slot="mo-sections-toggle"]').click()
     await expect(page.locator('[data-slot="mo-section"][data-state="open"]')).toHaveCount(4)
     await page.locator('[data-slot="mo-type-card"]').first().waitFor()
-    await page.waitForTimeout(600)   // açılma animasyonu
+    await settleUi(page)   // açılma animasyonu
     m = await page.evaluate(measure)
     expect(m.offenders, `akordiyon açık @${vp.name}: ekran dışına taşan öğe`).toEqual([])
     expect(m.pageOverflow, `akordiyon açık @${vp.name}: sayfa taşması (px)`).toBeLessThanOrEqual(1)
@@ -362,7 +376,7 @@ for (const vp of [...VIEWPORTS, { name: 'laptop', width: 1280, height: 800 }]) {
     const dlg = page.locator('[data-slot="pl-detail"]')
     await dlg.waitFor()
     await page.locator('[data-slot="pl-flow"]').waitFor()
-    await page.waitForTimeout(600)
+    await settleUi(page)
     const dm = await page.evaluate(measure, '[data-slot="pl-detail"]')
     expect(dm.offenders, `push ayrıntısı @${vp.name}: taşan öğe`).toEqual([])
     const box = await dlg.boundingBox()
@@ -376,7 +390,7 @@ for (const vp of [...VIEWPORTS, { name: 'laptop', width: 1280, height: 800 }]) {
     await page.goto('/?tab=health&sec=integrations')
     await page.getByRole('button', { name: /Gönderim loglarını görmek|Click to view delivery logs/ }).click({ timeout: 20_000 })
     await page.locator('[data-slot="wa-row"]').first().waitFor()
-    await page.waitForTimeout(600)
+    await settleUi(page)
     const m = await page.evaluate(measure, '[role="dialog"]')
     expect(m.offenders, `haftalık log @${vp.name}: pencerede taşan öğe`).toEqual([])
     const tagName = await page.locator('[data-testid="wa-logs"]').evaluate((el) => el.tagName)
@@ -388,7 +402,7 @@ for (const vp of [...VIEWPORTS, { name: 'laptop', width: 1280, height: 800 }]) {
     // ayrıntı (ikinci pencere) — önizleme genişliği seçicisi ve altlık gezinmesi sığar
     await page.locator('[data-slot="wa-row"]').first().click()
     await page.locator('[data-slot="wa-detail"]').waitFor()
-    await page.waitForTimeout(600)
+    await settleUi(page)
     const dm = await page.evaluate(measure, '[data-slot="wa-detail"]')
     expect(dm.offenders, `haftalık ayrıntı @${vp.name}: taşan öğe`).toEqual([])
     const dlg = page.getByRole('dialog').last()
@@ -425,7 +439,7 @@ for (const vp of [{ name: 'laptop', width: 1280, height: 800 }, { name: 'desktop
     await mockApi(page)
     await page.goto('/?tab=monitoring')
     await page.locator('[data-slot="mo-table"]').waitFor({ timeout: 20_000 })
-    await page.waitForTimeout(600)
+    await settleUi(page)
     const m = await page.evaluate(measure)
     expect(m.offenders, `monitoring@${vp.name}: görünür öğe ekran dışına çıkıyor`).toEqual([])
     expect(m.pageOverflow, `monitoring@${vp.name}: sayfa düzeyinde yatay taşma (px)`).toBeLessThanOrEqual(1)
@@ -811,7 +825,7 @@ for (const vp of VIEWPORTS) {
     await page.goto('/?tab=settings&sec=sysmaint')
     await page.locator('[data-slot="sysmaint-status"]').waitFor({ timeout: 20_000 })
     await page.locator('[data-slot="sysmaint-history-row"]').first().waitFor()
-    await page.waitForTimeout(600)
+    await settleUi(page)
     const m = await page.evaluate(measure)
     expect(m.offenders, `sistem bakımı @${vp.name}: taşan öğe`).toEqual([])
     expect(m.pageOverflow, `sistem bakımı @${vp.name}: sayfa taşması (px)`).toBeLessThanOrEqual(1)
@@ -1174,7 +1188,7 @@ for (const vp of VIEWPORTS_3) {
     await page.goto('/?tab=settings&sec=loginmethods&lm_tab=stats&lm_p=90')
     await page.locator('[data-slot="lm-kpi"]').first().waitFor({ timeout: 20_000 })
     await page.locator('[data-slot="lm-user-row"]').first().waitFor()
-    await page.waitForTimeout(600)
+    await settleUi(page)
     const m = await page.evaluate(measure)
     expect(m.offenders, `istatistikler @${vp.name}: taşan öğe`).toEqual([])
     expect(m.pageOverflow, `istatistikler @${vp.name}: sayfa taşması (px)`).toBeLessThanOrEqual(1)
@@ -1213,7 +1227,7 @@ for (const vp of VIEWPORTS_3) {
     const sheet = page.locator('[data-slot="lm-user-sheet"]')
     await sheet.waitFor({ timeout: 20_000 })
     await page.locator('[data-slot="lm-user-event"]').first().waitFor()
-    await page.waitForTimeout(600)
+    await settleUi(page)
     const m = await page.evaluate(measure, '[data-slot="lm-user-sheet"]')
     expect(m.offenders, `kullanıcı ayrıntısı @${vp.name}: taşan öğe`).toEqual([])
     const box = await sheet.boundingBox()
@@ -1711,7 +1725,7 @@ for (const vp of THEME_PAGE_VIEWPORTS) {
     await page.goto('/?tab=settings&sec=themes')
     await page.locator('[data-testid="theme-settings"]').waitFor({ timeout: 20_000 })
     await expect(page.locator('[data-slot="theme-card"]')).toHaveCount(8)
-    await page.waitForTimeout(600)
+    await settleUi(page)
     const key = `temalar @${vp.name}`
     const m = await page.evaluate(measure)
     expect(m.offenders, `${key}: ekran dışına taşan öğe`).toEqual([])

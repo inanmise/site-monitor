@@ -24,8 +24,12 @@ import { cn } from '@/lib/utils'
 const CARD = 'min-w-0 gap-3 py-4 shadow-none'
 const TOUCH = 'pointer-coarse:h-10 max-sm:h-10'
 
-/** Derin bağlantı kaydırmasının yerleşim değişimini izleme süresi (ms) — sınırlı; sonra gözlemci kapanır. */
-export const FOLLOW_LAYOUT_MS = 3000
+/**
+ * Derin bağlantı kaydırmasının yerleşim değişimini izleme süresi (ms) — sınırlı; sonra gözlemci kapanır. 3 sn yavaş ağda
+ * yetmiyordu: kartın üstündeki içerik 3 sn'den sonra yüklenince kart başlığı görünüm alanının dışında kalıyordu (2026-11-17,
+ * CI'da ara sıra). İzleme kişinin kaydırması / dokunması / tuşu ile hemen biter; yalnız atalar boy değiştirince hizalar.
+ */
+export const FOLLOW_LAYOUT_MS = 10000
 
 /**
  * `ma_sec=push` kaydırması tek seferlikti: kartın üstündeki içerik (özet, yan sütun kartları) sonradan yüklenip boy

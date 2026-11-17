@@ -2129,7 +2129,22 @@ for (const vp of VIEWPORTS) {
       await page.keyboard.press('Escape')
       await expect(page.locator('[data-slot="te-channel-dialog"]')).toHaveCount(0)
       await panel.locator('[data-slot="te-panel-main"]').click()
-      await expect.poll(() => new URL(page.url()).searchParams.get('te_rep'), { timeout: 10_000 }).toBe('100')
+      try {
+        await expect.poll(() => new URL(page.url()).searchParams.get('te_rep'), { timeout: 10_000 }).toBe('100')
+      } catch (e) {
+        // Tanı (2026-11-16 CI'da bir kez): ana pencere isteği reddetti mi (açık pencere / kaydedilmemiş iş), panel ne dedi
+        const main = await page.evaluate(() => ({
+          url: location.search,
+          dialogs: [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], [aria-modal="true"]')]
+            .filter((d) => !d.closest('[data-radix-popper-content-wrapper]'))
+            .map((d) => `${d.getAttribute('data-slot') || d.getAttribute('aria-label') || d.tagName}:${d.getAttribute('data-state')}`),
+          active: document.activeElement?.outerHTML.slice(0, 120),
+          toasts: [...document.querySelectorAll('[data-sonner-toast]')].map((x) => x.textContent.slice(0, 120)),
+        })).catch((err) => ({ evaluateFailed: String(err?.message).slice(0, 120) }))
+        const panelToasts = await panel.evaluate(() => [...document.querySelectorAll('[data-sonner-toast]')]
+          .map((x) => x.textContent.slice(0, 120))).catch(() => null)
+        throw new Error([e.message, `ANA: ${JSON.stringify(main)}`, `PANEL: ${JSON.stringify(panelToasts)}`].join('\n'))
+      }
       expect(new URL(page.url()).searchParams.get('te_view')).toBe('report')
       expect(await page.evaluate(() => window.__noReload), 'sayfa yeniden yüklenmedi').toBe('kanal-raporlari')
       await expect(editor.locator('[data-slot-id="daily-errors"]')).toHaveAttribute('data-has-image', 'true', { timeout: 10_000 })
