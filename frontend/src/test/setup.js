@@ -1,4 +1,27 @@
 import '@testing-library/jest-dom'
+import { configure, getConfig } from '@testing-library/react'
+
+// React 19 (2026-11-17): varsayılan öncelikli bir çizimin PASİF etkileri (useEffect) ayrı bir zamanlayıcı görevinde
+// koşar. RTL'nin waitFor / findBy* koşulu DOM değişiminin mikro görevinde yeniden denenir — koşul (ör. data-state="ok")
+// çizimle sağlanınca bekleme biter, o çizimin etkileri (form doldurma, seçim, sonraki çizim) henüz koşmamış olur ve
+// testin hemen ardından yaptığı eşzamanlı sorgular yarışır (React 18'de bu etkiler daha erken koşuyordu). Burada
+// bekleme başarıyla bittikten sonra, act DIŞI pencere kapanmadan, React zamanlayıcısının BEKLEYEN görevleri birkaç
+// setImmediate adımında boşaltılır (çizim → etki → çizim zinciri). Yalnız sırada bekleyen React işini koşturur;
+// askıdaki sözler (deferred) askıda kalır, ara durumlar korunur. Zamanlayıcı Node'da GERÇEK setImmediate'i yükleme
+// anında yakalar; sahte zamanlayıcılı testler setImmediate'i sahteleyebildiği için gerçek olanı burada saklarız.
+// Sınırlı: en çok SCHEDULER_DRAIN_TICKS adım.
+const realSetImmediate = globalThis.setImmediate
+const SCHEDULER_DRAIN_TICKS = 6
+const baseAsyncWrapper = getConfig().asyncWrapper
+configure({
+  asyncWrapper: (cb) => baseAsyncWrapper(async () => {
+    const result = await cb()
+    if (typeof realSetImmediate === 'function') {
+      for (let i = 0; i < SCHEDULER_DRAIN_TICKS; i++) await new Promise((resolve) => realSetImmediate(resolve))
+    }
+    return result
+  }),
+})
 
 // jsdom does not implement matchMedia — stub it so ThemeProvider can initialise
 Object.defineProperty(window, 'matchMedia', {
