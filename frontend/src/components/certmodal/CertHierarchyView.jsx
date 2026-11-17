@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useId, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Download, FileBadge, Landmark, ListTree, ShieldCheck, ShieldQuestion } from 'lucide-react'
 import { formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -273,12 +273,16 @@ export default function CertHierarchyView({ nodes: rawNodes, initialSelected = '
   const [focusIdx, setFocusIdx] = useState(() => initialIndex(nodes, initialSelected))
   const itemRefs = useRef([])
 
-  // Başka bir sürüm / zincir geldi → seçim ve odak yeniden açılış düğümüne
-  useEffect(() => {
+  // Başka bir sürüm / zincir geldi → seçim ve odak yeniden açılış düğümüne. Çizim sırasında ayarlanır (React'in "bir
+  // değer değişince durumu ayarla" kalıbı): etki (useEffect) ilk takılmada da koşar ve React 19'da henüz koşmamış bu
+  // etki, hemen yapılan tıklamanın seçimini yaprağa geri çeviriyordu (2026-11-17, CI'da yakalandı).
+  const [seen, setSeen] = useState({ nodes, initialSelected })
+  if (seen.nodes !== nodes || seen.initialSelected !== initialSelected) {
     const i = initialIndex(nodes, initialSelected)
+    setSeen({ nodes, initialSelected })
     setSelected(i)
     setFocusIdx(i)
-  }, [nodes, initialSelected])
+  }
 
   if (!nodes.length) {
     return <p data-slot="cert-hierarchy" className="m-0 text-sm text-muted-foreground">{emptyText || t('chier.empty')}</p>

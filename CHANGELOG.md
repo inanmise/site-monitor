@@ -23,6 +23,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
   getirebiliyordu; performans bütçesi penceresi kendi okuması bitmeden "hazır" görünüyordu (test / e2e kancası
   `data-state`). React 19'da etkiler yalnız kökteki `StrictMode`'da iki kez koşar; sağlayıcı içine yerleştirilmiş
   `<StrictMode>` kullanan testler kök düzeyine (`reactStrictMode`) alındı ki çift kurulum korumalarını gerçekten sınasınlar.
+  Sertifika hiyerarşi ağacında açılışın hemen ardından seçilen düğüm (ör. kök) yaprağa geri dönebiliyordu; seçim artık
+  yalnız gerçekten yeni bir zincir gelince açılış düğümüne döner.
 
 ## [20.213.1] — 2026-11-17
 
