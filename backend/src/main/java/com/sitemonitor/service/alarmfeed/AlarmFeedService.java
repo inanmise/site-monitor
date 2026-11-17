@@ -387,7 +387,9 @@ public class AlarmFeedService {
                 log.debug("Alarm akışı: izleme dizini okunamadı: {}", ex.toString());
             }
         }
-        Map<String, List<String>> recipientMemo = new HashMap<>();
+        Set<Long> stampedGroups = new LinkedHashSet<>();
+        for (AlertEvent e : byId.values()) if (e.getNotificationGroupId() != null) stampedGroups.add(e.getNotificationGroupId());
+        RecipientMemo recipientMemo = new RecipientMemo(stampedGroups);
         Map<Long, Item> items = new LinkedHashMap<>();
         for (AlertEvent e : byId.values()) items.put(e.getId(), item(e, inv, teams, snap, noc, recipientMemo));
 
@@ -650,7 +652,7 @@ public class AlarmFeedService {
      *            yükselir (karar "7/24 dışı" sayılmaz). Kapalıyken çözülemeyen izleme yalnız ad / takım kaybıdır (debug).
      */
     private Item item(AlertEvent e, Map<String, CertificateInventory> inv, Map<Long, Team> teams,
-                      NocMonitorDirectory.Snapshot snap, NocConfigService.Config noc, Map<String, List<String>> recipientMemo) {
+                      NocMonitorDirectory.Snapshot snap, NocConfigService.Config noc, RecipientMemo recipientMemo) {
         boolean inventoryRouted = AlertOwnership.routesLikeInventory(e);
         CertificateInventory row = inventoryRouted ? inv.get(lower(e.getDomain())) : null;
         String monitorName = null;
@@ -709,17 +711,48 @@ public class AlarmFeedService {
      * → takım e-postası ({@code NotificationGroupService.overrideFor}); grup servisi yoksa / okunamazsa takım e-postası.
      */
     private AlarmFeedRows.TeamInfo teamInfo(Long id, Map<Long, Team> teams, Long stampedGroupId,
-                                            Map<String, List<String>> memo) {
+                                            RecipientMemo memo) {
         if (id == null) return null;
         Team t = teams.get(id);
-        List<String> mails = memo.computeIfAbsent(id + "|" + stampedGroupId, k -> recipients(id, t, stampedGroupId));
+        List<String> mails = memo.mails.computeIfAbsent(id + "|" + stampedGroupId, k -> recipients(id, t, stampedGroupId, memo));
         return new AlarmFeedRows.TeamInfo(id, t == null ? null : t.getName(), mails);
     }
 
-    private List<String> recipients(Long teamId, Team t, Long stampedGroupId) {
+    /**
+     * Görüntü kurulumu başına alıcı belleği: (takım, damga) → adresler + bildirim grubu çözümleyicisi (performans 2026-11-17).
+     * Çözümleyici ilk gerekişte TEK kez kurulur ({@link NotificationGroupService#resolver} — tüm aktif varsayılanlar + alarmların
+     * damgalı grupları ön yüklenir; takım sayısından bağımsız sorgu); kurulamazsa (okuma hatası / sahte servis) eski tek tek
+     * {@code overrideFor} yoluna düşülür — sonuç ve hata davranışı aynı.
+     */
+    static final class RecipientMemo {
+        final Map<String, List<String>> mails = new HashMap<>();
+        final Set<Long> stampedGroups;
+        NotificationGroupService.Resolver resolver;
+        boolean resolverTried;
+
+        RecipientMemo(Set<Long> stampedGroups) {
+            this.stampedGroups = stampedGroups;
+        }
+    }
+
+    private NotificationGroupService.Override groupOverride(Long teamId, Long stampedGroupId, RecipientMemo memo) {
+        NotificationGroupService g = notificationGroups;
+        if (memo != null && !memo.resolverTried) {
+            memo.resolverTried = true;
+            try {
+                memo.resolver = g.resolver(memo.stampedGroups);
+            } catch (Exception ex) {
+                log.debug("Alarm akışı: bildirim grupları toplu okunamadı, tek tek okunacak: {}", ex.toString());
+            }
+        }
+        NotificationGroupService.Resolver r = memo == null ? null : memo.resolver;
+        return r != null ? r.overrideFor(teamId, stampedGroupId) : g.overrideFor(teamId, stampedGroupId);
+    }
+
+    private List<String> recipients(Long teamId, Team t, Long stampedGroupId, RecipientMemo memo) {
         if (notificationGroups != null) {
             try {
-                NotificationGroupService.Override ov = notificationGroups.overrideFor(teamId, stampedGroupId);
+                NotificationGroupService.Override ov = groupOverride(teamId, stampedGroupId, memo);
                 if (ov != null && ov.applies()) return withoutInactive(emails(String.join(",", ov.emails())));
             } catch (Exception ex) {
                 log.debug("Alarm akışı: bildirim grubu okunamadı (takım {}): {}", teamId, ex.toString());

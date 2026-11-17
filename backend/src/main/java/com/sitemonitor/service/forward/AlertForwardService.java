@@ -360,6 +360,7 @@ public class AlertForwardService implements AlertForwardRouting {
             }
         }
         Map<Long, List<String>> teamEmails = new HashMap<>();
+        GroupLookup lookup = new GroupLookup();
         List<Fwd> all = new ArrayList<>();
         for (AlertForward f : rows) {
             if (f.getId() == null || f.getOwnerTeamId() == null || f.getRecipientTeamId() == null) continue;
@@ -370,7 +371,7 @@ public class AlertForwardService implements AlertForwardRouting {
             List<Long> memberIds = new ArrayList<>();
             List<String> emails;
             if (whole) {
-                emails = recipientActive ? teamEmailsSafe(teamEmails, rt, recipient) : List.of();
+                emails = recipientActive ? teamEmailsSafe(teamEmails, rt, recipient, lookup) : List.of();
             } else {
                 List<String> e = new ArrayList<>();
                 Set<String> seen = new HashSet<>();
@@ -418,12 +419,12 @@ public class AlertForwardService implements AlertForwardRouting {
      * yalnız push kalır, e-postası "alıcı yok"), WARN; öbür takımlar ve iletimler aynen kurulur. Takım adresine geri DÜŞÜLMEZ
      * (varsayılan grubu olan takımın postası yanlış adrese gitmesin).
      */
-    private List<String> teamEmailsSafe(Map<Long, List<String>> cache, long rt, Team recipient) {
+    private List<String> teamEmailsSafe(Map<Long, List<String>> cache, long rt, Team recipient, GroupLookup lookup) {
         List<String> cached = cache.get(rt);
         if (cached != null) return cached;
         List<String> out;
         try {
-            out = teamAlarmEmails(recipient);
+            out = teamAlarmEmails(recipient, lookup);
         } catch (RuntimeException e) {
             log.warn("Alarm iletimi: alıcı takım {} adresleri çözülemedi — bu turda yalnız push ({})", rt, e.toString());
             out = List.of();
@@ -573,9 +574,37 @@ public class AlertForwardService implements AlertForwardRouting {
     }
 
     private List<String> teamAlarmEmails(Team t) {
+        return teamAlarmEmails(t, null);
+    }
+
+    /**
+     * Görüntü kurulumu başına bildirim grubu çözümleyicisi (performans 2026-11-17): ilk gerekişte TEK kez kurulur
+     * ({@link NotificationGroupService#resolver} — tüm aktif varsayılan gruplar tek sorguda; alıcı takım sayısından bağımsız);
+     * kurulamazsa (okuma hatası / sahte servis) takım başına eski {@code overrideFor} yoluna düşülür — sonuç ve takım başına
+     * hata davranışı (H2#8: o takımın adresleri BİLİNMİYOR) aynı.
+     */
+    private final class GroupLookup {
+        private NotificationGroupService.Resolver resolver;
+        private boolean tried;
+
+        NotificationGroupService.Override override(Long teamId) {
+            if (!tried) {
+                tried = true;
+                try {
+                    resolver = groups.resolver(List.of());
+                } catch (RuntimeException e) {
+                    log.debug("Alarm iletimi: bildirim grupları toplu okunamadı, takım başına okunacak: {}", e.toString());
+                }
+            }
+            return resolver != null ? resolver.overrideFor(teamId, null) : groups.overrideFor(teamId, null);
+        }
+    }
+
+    private List<String> teamAlarmEmails(Team t, GroupLookup lookup) {
         if (t == null || t.getId() == null) return List.of();
         List<String> raw;
-        NotificationGroupService.Override ov = groups == null ? null : groups.overrideFor(t.getId(), null);
+        NotificationGroupService.Override ov = groups == null ? null
+                : lookup != null ? lookup.override(t.getId()) : groups.overrideFor(t.getId(), null);
         raw = ov != null && ov.applies() ? ov.emails() : splitEmails(t.getEmail());
         List<String> out = new ArrayList<>();
         Set<String> seen = new HashSet<>();

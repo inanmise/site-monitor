@@ -81,12 +81,23 @@ public class NotificationGroupService {
      */
     public Override overrideFor(Long teamId, Long stampedGroupId) {
         if (teamId == null) return Override.NONE;
+        return resolve(teamId, stampedGroupId, () -> groupRepo.findById(stampedGroupId),
+                () -> groupRepo.findFirstByTeamIdAndIsDefaultTrueAndActiveTrue(teamId));
+    }
 
+    /**
+     * {@link #overrideFor(Long, Long)}'un kuralları — TEK kaynak: grupların nereden okunduğu dışında (tek tek depo okuması ya da
+     * {@link #resolver ön yüklenmiş} toplu okuma) karar ve günlük satırları aynıdır. Okumalar tembel: damgasız alarmda damga,
+     * damgalı grup uygulanırsa varsayılan okunmaz (eski sorgu sayısı korunur).
+     */
+    private Override resolve(Long teamId, Long stampedGroupId,
+                             java.util.function.Supplier<Optional<NotificationGroup>> stampedLookup,
+                             java.util.function.Supplier<Optional<NotificationGroup>> defaultLookup) {
         // 1) Damgalı grup. SAHİPLİK kontrolü şart: başka takıma ait bir id damgalanmışsa (veri
         //    taşıma, elle müdahale, takım değişimi) o takımın adreslerine posta göndermek sızıntı
         //    olurdu — yok sayılır ve UYARI loglanır, sessizce yutulmaz.
         if (stampedGroupId != null) {
-            Optional<NotificationGroup> stamped = groupRepo.findById(stampedGroupId);
+            Optional<NotificationGroup> stamped = stampedLookup.get();
             if (stamped.isPresent()) {
                 NotificationGroup g = stamped.get();
                 if (!teamId.equals(g.getTeamId())) {
@@ -105,7 +116,7 @@ public class NotificationGroupService {
         }
 
         // 2) Takımın aktif varsayılan grubu
-        Optional<NotificationGroup> def = groupRepo.findFirstByTeamIdAndIsDefaultTrueAndActiveTrue(teamId);
+        Optional<NotificationGroup> def = defaultLookup.get();
         // Aktiflik BURADA da doğrulanır. Sorgu adı zaten aktif süzüyor ama garanti, bir metot
         // adının doğru kalmasına bağlı OLMAMALI: sorgu ileride değişirse ya da bu dal başka bir
         // kaynaktan beslenirse pasif grup sessizce uygulanır ve takım adresi atlanırdı.
@@ -135,6 +146,63 @@ public class NotificationGroupService {
     /** Damgasız kısayol — storm, olay bildirimi ve alarm zinciri dışı gönderimler için. */
     public Override overrideFor(Long teamId) {
         return overrideFor(teamId, null);
+    }
+
+    /** Ön yükleme okumasında tek ifadedeki en çok damgalı grup kimliği. */
+    static final int RESOLVER_CHUNK = 500;
+
+    /**
+     * Çok takımlı TOPLU çözümleyici (performans 2026-11-17 — alarm akışı / alarm iletimi görüntüsü takım × damga başına
+     * {@link #overrideFor} çağırıp her birinde 1–2 sorgu yapıyordu): TÜM aktif varsayılan gruplar TEK sorguda
+     * ({@code findDefaultsForTeams}'in takım süzgeçsiz hâli) + verilen damgalı gruplar ({@value #RESOLVER_CHUNK}'lik dilimlerle)
+     * ön yüklenir; {@link Resolver#overrideFor} AYNI kuralları ({@link #resolve}) bellekte uygular — sorgu sayısı takım
+     * sayısından bağımsızdır. Birebirlik için: ön yüklenmemiş damga, ya da birden çok aktif varsayılan grubu olan takım
+     * (eski {@code findFirst…} seçimi belirsiz) tek tek eski yola ({@link #overrideFor}) düşer. Ön yükleme hata verirse istisna
+     * yükselir — çağıran tek tek eski yola döner (hata davranışı eskisiyle aynı).
+     */
+    public Resolver resolver(java.util.Collection<Long> stampedGroupIds) {
+        java.util.Map<Long, List<NotificationGroup>> defaults = new java.util.HashMap<>();
+        for (NotificationGroup g : groupRepo.findAllActiveDefaults()) {
+            if (g != null && g.getTeamId() != null) defaults.computeIfAbsent(g.getTeamId(), k -> new ArrayList<>(1)).add(g);
+        }
+        java.util.Map<Long, NotificationGroup> stamped = new java.util.HashMap<>();
+        Set<Long> requested = new HashSet<>();
+        if (stampedGroupIds != null) {
+            for (Long id : stampedGroupIds) if (id != null) requested.add(id);
+        }
+        List<Long> ids = new ArrayList<>(requested);
+        for (int i = 0; i < ids.size(); i += RESOLVER_CHUNK) {
+            for (NotificationGroup g : groupRepo.findAllById(ids.subList(i, Math.min(ids.size(), i + RESOLVER_CHUNK)))) {
+                if (g != null && g.getId() != null) stamped.put(g.getId(), g);
+            }
+        }
+        return new Resolver(defaults, stamped, requested);
+    }
+
+    /** Ön yüklenmiş grup çözümleyicisi — {@link #resolver}. Tek görüntü kurulumu boyunca kullanılır (paylaşılmaz). */
+    public final class Resolver {
+        private final java.util.Map<Long, List<NotificationGroup>> defaults;
+        private final java.util.Map<Long, NotificationGroup> stamped;
+        private final Set<Long> stampedRead;
+
+        private Resolver(java.util.Map<Long, List<NotificationGroup>> defaults, java.util.Map<Long, NotificationGroup> stamped,
+                         Set<Long> stampedRead) {
+            this.defaults = defaults;
+            this.stamped = stamped;
+            this.stampedRead = stampedRead;
+        }
+
+        /** {@link NotificationGroupService#overrideFor(Long, Long)} ile AYNI sonuç — ön yüklü gruplardan. */
+        public Override overrideFor(Long teamId, Long stampedGroupId) {
+            if (teamId == null) return Override.NONE;
+            if (stampedGroupId != null && !stampedRead.contains(stampedGroupId)) {
+                return NotificationGroupService.this.overrideFor(teamId, stampedGroupId);   // ön yüklenmemiş damga
+            }
+            List<NotificationGroup> defs = defaults.getOrDefault(teamId, List.of());
+            if (defs.size() > 1) return NotificationGroupService.this.overrideFor(teamId, stampedGroupId);   // belirsiz "ilk"
+            return resolve(teamId, stampedGroupId, () -> Optional.ofNullable(stamped.get(stampedGroupId)),
+                    () -> defs.isEmpty() ? Optional.empty() : Optional.of(defs.get(0)));
+        }
     }
 
     /**

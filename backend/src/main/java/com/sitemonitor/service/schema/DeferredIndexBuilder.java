@@ -285,7 +285,14 @@ public final class DeferredIndexBuilder {
             Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pc_fail ON page_checks(monitor_id, checked_at)"
                     + " WHERE ok = false"),
             Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_dnsr_fail ON dns_records(monitor_id, checked_at)"
-                    + " WHERE value IS NULL OR value = ''"));
+                    + " WHERE value IS NULL OR value = ''"),
+            // ── 2026-11-17 performans (zamanlanmış / arka plan yolları) ──
+            // Grafana dışa aktarıcısı her turda (60 sn) son 24 saatin sentetik koşum sayımı (MonitoringMetricsExporter
+            // .SQL_SCRIPTED_RUNS: checked_at >= ? AND manual / recheck süzgeci, GROUP BY status, k6_version) — idx_sc_checked_at
+            // üzerinden satır başına yığın okuması yapıyordu. Kapsayan indeks sorgunun okuduğu TÜM kolonları taşır → yalnız-dizin
+            // taraması (görünürlük haritası için scripted_checks ekleme ağırlıklı vakum listesinde). INCLUDE PostgreSQL'e özgü.
+            Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sc_checked_cover ON scripted_checks(checked_at)"
+                    + " INCLUDE (status, k6_version, manual, recheck)"));
 
     /** Bir koşunun özeti. {@code locked=false} → kilit alınamadı, hiçbir şey denenmedi. */
     public record Result(int built, int rebuilt, int valid, int skipped, int failed, boolean locked, long millis) {}

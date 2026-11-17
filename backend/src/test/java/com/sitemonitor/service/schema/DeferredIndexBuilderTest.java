@@ -94,6 +94,8 @@ class DeferredIndexBuilderTest {
         EXPECTED.put("idx_hc_fail", "http_checks(monitor_id, checked_at) WHERE ok = false");
         EXPECTED.put("idx_pc_fail", "page_checks(monitor_id, checked_at) WHERE ok = false");
         EXPECTED.put("idx_dnsr_fail", "dns_records(monitor_id, checked_at) WHERE value IS NULL OR value = ''");
+        // Grafana dışa aktarıcısının 24 sa sentetik koşum sayımı (2026-11-17 performans): kapsayan, PG'ye özgü (INCLUDE)
+        EXPECTED.put("idx_sc_checked_cover", "scripted_checks(checked_at) INCLUDE (status, k6_version, manual, recheck)");
     }
     /** TEKİL indeksler — {@code CREATE UNIQUE INDEX …}, {@code ux_} öneki. */
     private static final Set<String> UNIQUE = Set.of("ux_push_eventless_key_user", "ux_der_mon_exp_thr", "ux_audit_seq");
@@ -103,7 +105,7 @@ class DeferredIndexBuilderTest {
                     "idx_app_users_upper_username", "ux_push_eventless_key_user", "idx_dnsr_pending", "ux_der_mon_exp_thr",
                     "ux_audit_seq", "idx_act_reason_time", "idx_kwr_change_checked", "idx_dnsr_changed",
                     "idx_ae_resolution_notify_open", "idx_portc_fail", "idx_kwr_fail", "idx_pingc_fail", "idx_hc_fail",
-                    "idx_pc_fail", "idx_dnsr_fail");
+                    "idx_pc_fail", "idx_dnsr_fail", "idx_sc_checked_cover");
 
     private static final Path MAIN = Path.of("src/main/java/com/sitemonitor");
 

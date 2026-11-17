@@ -102,11 +102,53 @@ public final class KeywordChangeDetector {
                 com.sitemonitor.service.keyword.KeywordRequestRules.requestFingerprint(spec));
     }
 
-    /** Karşılaştırmada kullanılan temel alanları (+ alarm postası için alınma zamanı / kaynağı — karşılaştırmaya girmez). */
+    /**
+     * Karşılaştırmada kullanılan temel alanları (+ alarm postası için alınma zamanı / kaynağı — karşılaştırmaya girmez).
+     *
+     * <p>{@code lazyText} (performans 2026-11-17): temel metni (≤ {@value #BASELINE_TEXT_MAX} karakter) yalnız GEREKİNCE —
+     * parmak izleri farklıyken fark özeti için — okunur; değişmemiş sayfada hiç okunmaz. {@link #text()} metni (verildiyse)
+     * ya da tembel okumayı (ilk çağrıda bir kez) döner. Tembel okuma başarısızsa (satır bu arada silindi / başka içerikle
+     * yeniden alındı, veritabanı hatası) istisna yükselir — çağıran değişimi bu kontrolde DEĞERLENDİRMEZ (kalem yok).</p>
+     */
     public record BaselineView(String fingerprint, String specHash, String text, boolean textTruncated, String takenAt,
-                               String source) {
+                               String source, LazyText lazyText) {
         public BaselineView(String fingerprint, String specHash, String text, boolean textTruncated) {
-            this(fingerprint, specHash, text, textTruncated, null, null);
+            this(fingerprint, specHash, text, textTruncated, null, null, null);
+        }
+
+        public BaselineView(String fingerprint, String specHash, String text, boolean textTruncated, String takenAt,
+                            String source) {
+            this(fingerprint, specHash, text, textTruncated, takenAt, source, null);
+        }
+
+        /** Temel metni: verilen metin; yoksa tembel okuma (ilk çağrıda bir kez, sonra bellekten). */
+        @Override
+        public String text() {
+            return text == null && lazyText != null ? lazyText.get() : text;
+        }
+    }
+
+    /** Temel metninin tembel, bir kez okunan kaynağı (başarısız okuma belleğe alınmaz, istisna çağırana gider). */
+    public static final class LazyText {
+        private final java.util.function.Supplier<String> loader;
+        private boolean loaded;
+        private String value;
+
+        public LazyText(java.util.function.Supplier<String> loader) {
+            this.loader = java.util.Objects.requireNonNull(loader, "loader");
+        }
+
+        public synchronized String get() {
+            if (!loaded) {
+                value = loader.get();
+                loaded = true;
+            }
+            return value;
+        }
+
+        /** Test / tanılama: metin okundu mu. */
+        public synchronized boolean loaded() {
+            return loaded;
         }
     }
 

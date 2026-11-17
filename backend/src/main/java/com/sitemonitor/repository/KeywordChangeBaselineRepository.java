@@ -98,6 +98,22 @@ public interface KeywordChangeBaselineRepository extends JpaRepository<KeywordCh
                   @Param("takenAt") String takenAt, @Param("takenBy") String takenBy,
                   @Param("takenByName") String takenByName, @Param("source") String source);
 
+    /**
+     * Temellerin METİNSİZ özeti (performans 2026-11-17): {@code [monitorId, fingerprint, specHash, textTruncated, takenAt,
+     * takenBy, takenByName, source, bytes, version]}. Her değişim ölçümünde ve liste satırında yalnız bu okunur — ≤ 64 000
+     * karakterlik {@code text} yalnız parmak izi farklıyken ({@link #findTextIfFingerprint}) ya da düzenleyici görünümünde.
+     */
+    @Query("SELECT b.monitorId, b.fingerprint, b.specHash, b.textTruncated, b.takenAt, b.takenBy, b.takenByName, b.source, "
+            + "b.bytes, b.version FROM KeywordChangeBaseline b WHERE b.monitorId IN :ids")
+    java.util.List<Object[]> findSummaries(@Param("ids") java.util.Collection<Long> ids);
+
+    /**
+     * Temel metni — YALNIZ satır hâlâ aynı parmak iziyle duruyorsa ({@code [monitorId, text]}; boş liste = satır silindi ya da
+     * başka içerikle yeniden alındı). Parmak izi tüm (kırpılmamış) maskeli metnin özetidir: aynı parmak izi = aynı saklı metin.
+     */
+    @Query("SELECT b.monitorId, b.text FROM KeywordChangeBaseline b WHERE b.monitorId = :id AND b.fingerprint = :fp")
+    java.util.List<Object[]> findTextIfFingerprint(@Param("id") Long id, @Param("fp") String fingerprint);
+
     /** İzlemenin temelini siler; silinen satır sayısı. */
     @Modifying
     @Transactional

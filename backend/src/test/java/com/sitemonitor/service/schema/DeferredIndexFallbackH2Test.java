@@ -69,7 +69,7 @@ class DeferredIndexFallbackH2Test {
                 "coalesce", "and", "in", "or");   // işlev / anahtar sözcük — kolon değil
         List<String> out = new ArrayList<>();
         // Tırnaklı sabitler (ör. kısmi indeksin 'TEST' / tarih kesimi) kolon değil — taranmadan çıkarılır (2026-10-21)
-        Matcher m = Pattern.compile("[a-z_]+").matcher(tail.replaceAll("'[^']*'", " ").toLowerCase(Locale.ROOT));
+        Matcher m = Pattern.compile("[a-z_][a-z0-9_]*").matcher(tail.replaceAll("'[^']*'", " ").toLowerCase(Locale.ROOT));
         while (m.find()) if (!keywords.contains(m.group())) out.add(m.group());
         return out;
     }
