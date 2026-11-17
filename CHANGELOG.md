@@ -15,8 +15,6 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
-## [20.213.1] — 2026-11-17
-
 ### Changed
 - **React 18 → 19.3.1** (react, react-dom). Uygulamanın davranışı değişmez; React 19'da kaldırılan API'ler
   (işlev bileşeninde `defaultProps`, `react-dom/test-utils`, `findDOMNode`, dize ref) kodda yoktu. shadcn bileşenlerindeki
@@ -25,6 +23,10 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
   getirebiliyordu; performans bütçesi penceresi kendi okuması bitmeden "hazır" görünüyordu (test / e2e kancası
   `data-state`). React 19'da etkiler yalnız kökteki `StrictMode`'da iki kez koşar; sağlayıcı içine yerleştirilmiş
   `<StrictMode>` kullanan testler kök düzeyine (`reactStrictMode`) alındı ki çift kurulum korumalarını gerçekten sınasınlar.
+
+## [20.213.1] — 2026-11-17
+
+### Changed
 - **Ön yüz derleme ve test araçları ana sürüm yükseltildi.** Vite 5 → 8 (Rolldown), @vitejs/plugin-react 4 → 6,
   Vitest 3 → 5, @vitest/coverage-v8 3 → 5, jsdom 29 → 31, @testing-library/jest-dom 6 → 7. Uygulamanın davranışı
   değişmez. İlk açılış yine tek parça (Rolldown'un bölmesi `$initial` grubuyla birleştirildi; yoksa 135 dosya, 88'i
