@@ -466,10 +466,14 @@ jobs:
 
   # GEÇİCİ (2026-11-17): cert-trust-filter.spec.js yalnız CI Linux'ta ara sıra düşüyor; yerelde (tam parça 1/4 dahil)
   # yeniden üretilemedi. Testi tekrarlayıp izini yakalamak için — kök neden bulununca KALDIRILIR.
-  cert-trust-repro:
-    name: cert-trust repro (geçici)
+  monitor-create-repro:
+    name: monitor-create repro (geçici ${{ matrix.run }}/4)
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [1, 2, 3, 4]
     defaults:
       run:
         working-directory: frontend
@@ -487,13 +491,13 @@ jobs:
         run: sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
-      - name: Shard 1/4 (cert-trust-filter context)
-        run: npx playwright test --shard=1/4 --retries 0 --trace retain-on-failure
+      - name: monitor-create (tekrarlı, iz açık)
+        run: npx playwright test e2e/monitor-create.spec.js --repeat-each 4 --retries 0 --trace retain-on-failure
       - name: Upload traces
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: cert-trust-repro
+          name: monitor-create-repro-${{ matrix.run }}
           path: frontend/test-results/
           if-no-files-found: ignore
           retention-days: 7
