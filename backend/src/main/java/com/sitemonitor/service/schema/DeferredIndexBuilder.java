@@ -292,7 +292,14 @@ public final class DeferredIndexBuilder {
             // (keep_reason, checked_at) varken planlayıcı onu geriye tarıyor, BAŞKA izlemelerin BREACH satırlarını okuyup
             // monitor_id'yi süzgeçle eliyordu. Eşitlikler önde, sıra arkada: yalnız bu izlemenin satırları, sıralı. Mevcut
             // idx_psr_monitor_reason (monitor_id, keep_reason) düşürülmez (entity indeksi). Taşınabilir (H2'de sade hâli).
-            Spec.portable("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_psr_monitor_reason_checked ON pagespeed_resources(monitor_id, keep_reason, checked_at)"));
+            Spec.portable("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_psr_monitor_reason_checked ON pagespeed_resources(monitor_id, keep_reason, checked_at)"),
+            // ── 2026-11-17 performans (zamanlanmış / arka plan yolları) ──
+            // Grafana dışa aktarıcısı her turda (60 sn) son 24 saatin sentetik koşum sayımı (MonitoringMetricsExporter
+            // .SQL_SCRIPTED_RUNS: checked_at >= ? AND manual / recheck süzgeci, GROUP BY status, k6_version) — idx_sc_checked_at
+            // üzerinden satır başına yığın okuması yapıyordu. Kapsayan indeks sorgunun okuduğu TÜM kolonları taşır → yalnız-dizin
+            // taraması (görünürlük haritası için scripted_checks ekleme ağırlıklı vakum listesinde). INCLUDE PostgreSQL'e özgü.
+            Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sc_checked_cover ON scripted_checks(checked_at)"
+                    + " INCLUDE (status, k6_version, manual, recheck)"));
 
     /** Bir koşunun özeti. {@code locked=false} → kilit alınamadı, hiçbir şey denenmedi. */
     public record Result(int built, int rebuilt, int valid, int skipped, int failed, boolean locked, long millis) {}

@@ -66,6 +66,14 @@ public interface NotificationGroupRepository extends JpaRepository<NotificationG
          + "AND g.isDefault = true AND g.active = true")
     List<NotificationGroup> findDefaultsForTeams(@Param("teamIds") java.util.Collection<Long> teamIds);
 
+    /**
+     * TÜM takımların aktif varsayılan grupları — takım süzgeçsiz tek sorgu (performans 2026-11-17,
+     * {@code NotificationGroupService.resolver}: alarm akışı / iletim görüntüsü takım sayısından bağımsız okur). Satır sayısı
+     * en çok takım sayısı kadardır (takım başına bir varsayılan); küçük tablo.
+     */
+    @Query("SELECT g FROM NotificationGroup g WHERE g.isDefault = true AND g.active = true")
+    List<NotificationGroup> findAllActiveDefaults();
+
     /** Bir takımın diğer varsayılanlarını indirir — "en fazla bir varsayılan" kısıtının uygulaması. */
     @org.springframework.transaction.annotation.Transactional
     // clearAutomatically: toplu UPDATE satirlari dogrudan veritabaninda degistirir; kalicilik

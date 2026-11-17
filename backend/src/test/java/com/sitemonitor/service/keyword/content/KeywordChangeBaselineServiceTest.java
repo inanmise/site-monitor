@@ -151,6 +151,83 @@ class KeywordChangeBaselineServiceTest {
         assertThat(service.takeAuto(null, snap("a"), 1, "s")).isFalse();
     }
 
+    /** Depo çağrılarını sayan ince sarmalayıcı (yöntem adı listesi) — gerçek depoya iletir. */
+    private static KeywordChangeBaselineRepository counting(KeywordChangeBaselineRepository target, List<String> calls) {
+        return (KeywordChangeBaselineRepository) java.lang.reflect.Proxy.newProxyInstance(
+                KeywordChangeBaselineRepository.class.getClassLoader(), new Class<?>[] { KeywordChangeBaselineRepository.class },
+                (proxy, m, args) -> {
+                    calls.add(m.getName());
+                    try {
+                        return m.invoke(target, args);
+                    } catch (java.lang.reflect.InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+    }
+
+    @Test
+    @DisplayName("perf 2026-11-17: view() METİNSİZ özet okur; değişmemiş sayfada metin hiç okunmaz, değişince BİR kez (fark eager "
+            + "görünümle aynı); liste satırı metinsiz; temel arada yeniden alınırsa tembel okuma istisna verir")
+    void lazyTextReads() {
+        List<String> calls = new java.util.concurrent.CopyOnWriteArrayList<>();
+        KeywordChangeBaselineService svc = new KeywordChangeBaselineService(counting(repo, calls), null);
+        svc.forceDialect(false);
+        svc.setClock(Clock.fixed(Instant.parse("2026-11-05T08:00:00Z"), ZoneOffset.UTC));
+        KeywordChangeDetector.Snapshot base = snap("a", "b", "c");
+        svc.takeAuto(5L, base, 10, "s");
+        calls.clear();
+
+        KeywordChangeDetector.BaselineView v = svc.view(5L);
+        assertThat(calls).containsExactly("findSummaries");
+        assertThat(v.fingerprint()).isEqualTo(base.fingerprint());
+        assertThat(v.specHash()).isEqualTo("s");
+        assertThat(v.takenAt()).isEqualTo("2026-11-05T08:00:00");
+        assertThat(v.source()).isEqualTo("AUTO");
+        assertThat(v.textTruncated()).isFalse();
+        assertThat(v.lazyText().loaded()).isFalse();
+
+        // Değişmemiş sayfa: metin okunmaz
+        KeywordChangeDetector.Comparison same = KeywordChangeDetector.compare(v, snap("a", "b", "c"), "s");
+        assertThat(same.changed()).isFalse();
+        assertThat(calls).containsExactly("findSummaries");
+        assertThat(v.lazyText().loaded()).isFalse();
+
+        // Değişen sayfa: metin BİR kez okunur, fark eager görünümünkiyle aynı
+        KeywordChangeDetector.Snapshot cur = snap("a", "X", "c", "d");
+        KeywordChangeDetector.Comparison changed = KeywordChangeDetector.compare(v, cur, "s");
+        KeywordChangeDetector.Comparison eager = KeywordChangeDetector.compare(
+                new KeywordChangeDetector.BaselineView(base.fingerprint(), "s", base.text(), base.textTruncated()), cur, "s");
+        assertThat(changed.changed()).isTrue();
+        assertThat(changed.summary()).isEqualTo(eager.summary());
+        assertThat(v.text()).isEqualTo(base.text());
+        assertThat(base.text()).isEqualTo(String.join("\n", "a", "b", "c"));
+        assertThat(calls.stream().filter("findTextIfFingerprint"::equals).count()).isEqualTo(1);
+        assertThat(calls).doesNotContain("findById", "findAllById");
+
+        // Liste satırı: metinsiz, tek okuma
+        calls.clear();
+        Map<Long, KeywordChangeBaseline> rows = svc.byMonitorIds(List.of(5L, 6L));
+        assertThat(calls).containsExactly("findSummaries");
+        KeywordChangeBaseline full = repo.findById(5L).orElseThrow();
+        KeywordChangeBaseline sum = rows.get(5L);
+        assertThat(rows).containsOnlyKeys(5L);
+        assertThat(sum.getText()).isNull();
+        assertThat(KeywordChangeBaselineService.toApi(sum, false)).isEqualTo(KeywordChangeBaselineService.toApi(full, false));
+        assertThat(sum.getSpecHash()).isEqualTo(full.getSpecHash());
+        assertThat(sum.getFingerprint()).isEqualTo(full.getFingerprint());
+        assertThat(sum.getVersion()).isEqualTo(full.getVersion());
+        assertThat(svc.findSummary(5L)).isPresent();
+        assertThat(svc.findSummary(6L)).isEmpty();
+        assertThat(svc.findSummary(null)).isEmpty();
+        assertThat(svc.view(6L)).isNull();
+
+        // Yarış: görünüm alındıktan sonra temel başka içerikle yeniden alındı → tembel okuma istisna (değerlendirilmez)
+        KeywordChangeDetector.BaselineView stale = svc.view(5L);
+        svc.takeManual(5L, snap("yeni"), 1, "s", "ali", null);
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> KeywordChangeDetector.compare(stale, snap("baska"), "s")).isInstanceOf(IllegalStateException.class);
+    }
+
     @Test
     @DisplayName("API biçimi: taken_at, taken_by_name, source, bytes (+ metinle: text_truncated, line_count, text)")
     void apiShape() {

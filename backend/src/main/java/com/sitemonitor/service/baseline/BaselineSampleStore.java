@@ -121,7 +121,10 @@ public class BaselineSampleStore {
      * uzaklık {@code LEAST(|Δ|, period−|Δ|)} ile hesaplanır (gün sonu ↔ gün başı sarması doğru). {@code complete=false}
      * (muhafazakâr): mevsimsel geçmişin tamamı okunmadı varsayılır — kontrollü uyumun "geçmişi kaplıyor" kolu mevsimselde
      * devre dışı kalır, yalnız {@code window} uzunluğundaki ihlal dizisi uyum sağlar. {@code nowPos} = {@code beforeMs}'in
-     * periyot içindeki konumu (çağıran hesaplar). H2 + PostgreSQL ortak: {@code MOD/ABS/LEAST}.
+     * periyot içindeki konumu (çağıran hesaplar). Okuma periyot başına bir dizin ARALIĞIDIR ({@link #readSeasonalRanges},
+     * performans 2026-11-17 — dairesel uzaklık süzgeci dizin koşulu olmadığından dizin geriye taranıp yığın okunuyordu);
+     * sonuç eski {@code MOD/ABS/LEAST} ifadesiyle satır satır ve sırasıyla aynıdır (oracle testi
+     * {@code BaselineSeasonalReadOracleTest}).
      */
     public History readSeasonal(String type, long monitorId, long beforeMs, int limit,
                                 long periodMs, long nowPos, long toleranceMs) {
@@ -129,13 +132,9 @@ public class BaselineSampleStore {
         // En az bir periyot önceki örnekler: dünün aynı saatinin ±tol penceresinin en yeni ucu (before − period + tol)
         long upper = Math.min(beforeMs - 1, beforeMs - periodMs + Math.max(0, toleranceMs));
         try {
-            List<Sample> rows = jdbc.query(
-                    "SELECT value_ms, breach FROM " + TABLE + " WHERE monitor_type = ? AND monitor_id = ? "
-                            + "AND checked_ms <= ? "
-                            + "AND LEAST(ABS(MOD(checked_ms, ?) - ?), ? - ABS(MOD(checked_ms, ?) - ?)) <= ? "
-                            + "ORDER BY checked_ms DESC, id DESC LIMIT ?",
-                    (rs, n) -> new Sample(rs.getLong(1), rs.getBoolean(2)),
-                    type, monitorId, upper, periodMs, nowPos, periodMs, periodMs, nowPos, toleranceMs, limit);
+            List<Sample> rows = rangeReadable(periodMs, nowPos, toleranceMs, upper)
+                    ? readSeasonalRanges(type, monitorId, upper, limit, periodMs, nowPos, toleranceMs) : null;
+            if (rows == null) rows = readSeasonalCircular(type, monitorId, upper, limit, periodMs, nowPos, toleranceMs);
             return new History(rows, false, false);   // complete=false (muhafazakâr) — bkz. javadoc
         } catch (BadSqlGrammarException missing) {
             ready = false;
@@ -144,6 +143,112 @@ public class BaselineSampleStore {
             log.debug("Mevsimsel taban geçmişi okunamadı ({}#{}): {}", type, monitorId, e.getMessage());
             return History.EMPTY;
         }
+    }
+
+    // ── Mevsimsel okuma: periyot başına dizin aralığı (performans 2026-11-17) ─────────────────────────────────────
+
+    /** Bir okuma ifadesinin İLK turdaki periyot (aralık) sayısı — tipik izlemede ilk tur sınırı doldurur. */
+    static final int SEASON_BATCH_FIRST = 8;
+    /** Seyrek eşleşmede (sınır dolmadıkça) aralık sayısı tur başına ikiye katlanır, en çok bu kadar. */
+    static final int SEASON_BATCH_MAX = 64;
+
+    /**
+     * Aralık okumasının dairesel uzaklık kuralına BİREBİR denk olduğu koşullar: {@code 0 ≤ pos < period}, {@code 0 ≤ tol}
+     * ve {@code 2·tol < period} (her satır en çok bir periyodun ±tol penceresine düşer — pencereler ayrık), üst sınır negatif
+     * değil. Çağıranlar (±30 dk, gün / hafta) her zaman bu koşuldadır; değilse eski ifade ({@link #readSeasonalCircular}).
+     */
+    static boolean rangeReadable(long periodMs, long nowPos, long toleranceMs, long upper) {
+        return periodMs > 0 && nowPos >= 0 && nowPos < periodMs && toleranceMs >= 0 && toleranceMs < periodMs / 2
+                && upper >= 0 && upper <= Long.MAX_VALUE / 4;
+    }
+
+    /**
+     * ESKİ ifade (dairesel uzaklık süzgeci) — yalnız {@link #rangeReadable} dışı girdilerde ve aralıklar negatif zamana
+     * ulaştığında. Süzgeç dizin koşulu DEĞİLDİR: dizin geriye taranıp her satırın yığın kaydı okunarak süzülür (haftalık
+     * mevsim, 200 pencere, 60 sn aralıkta kontrol başına ~33 000 satır) — bu yüzden olağan yol aralık okumasıdır.
+     */
+    private List<Sample> readSeasonalCircular(String type, long monitorId, long upper, int limit,
+                                              long periodMs, long nowPos, long toleranceMs) {
+        return jdbc.query(
+                "SELECT value_ms, breach FROM " + TABLE + " WHERE monitor_type = ? AND monitor_id = ? "
+                        + "AND checked_ms <= ? "
+                        + "AND LEAST(ABS(MOD(checked_ms, ?) - ?), ? - ABS(MOD(checked_ms, ?) - ?)) <= ? "
+                        + "ORDER BY checked_ms DESC, id DESC LIMIT ?",
+                (rs, n) -> new Sample(rs.getLong(1), rs.getBoolean(2)),
+                type, monitorId, upper, periodMs, nowPos, periodMs, periodMs, nowPos, toleranceMs, limit);
+    }
+
+    /**
+     * Dairesel uzaklık kuralının aralık hâli: {@code c ≥ 0} için "{@code LEAST(|c mod P − pos|, P − |c mod P − pos|) ≤ tol}"
+     * ⇔ bir k tamsayısı için {@code c ∈ [pos + kP − tol, pos + kP + tol]} ({@code 2·tol < P} → pencereler ayrık, satır en
+     * çok birine düşer). En yeni pencereden (üst sınırı içeren k) geriye doğru, her pencere {@code checked_ms BETWEEN} ile
+     * {@code idx_mbs_monitor}'un DİZİN KOŞULU olur — yalnız eşleşen satırlar okunur. Pencereler yeniden eskiye ve ayrık
+     * olduğundan turların birleşimi eski {@code ORDER BY checked_ms DESC, id DESC} sırasının aynısıdır. Turlar: ilk
+     * {@value #SEASON_BATCH_FIRST} pencere; sınır dolmadıysa izlemenin EN ESKİ örneği okunur (tek dizin yoklaması) ve
+     * pencereler onu geçene dek (tur başına iki katı, en çok {@value #SEASON_BATCH_MAX}) devam edilir — satır kalmayınca
+     * durur, budamaya güvenmez (budama kapalı / gecikmiş olsa da sonuç eskisiyle aynı). Aralık negatif zamana inerse
+     * {@code null} (çağıran eski ifadeye döner — gerçek veride olmaz).
+     */
+    private List<Sample> readSeasonalRanges(String type, long monitorId, long upper, int limit,
+                                            long periodMs, long nowPos, long toleranceMs) {
+        List<Sample> out = new java.util.ArrayList<>(Math.min(limit, 1024));
+        long k = Math.floorDiv(upper + toleranceMs - nowPos, periodMs);   // alt ucu üst sınıra ulaşan en yeni pencere
+        int batch = SEASON_BATCH_FIRST;
+        Long oldest = null;
+        boolean oldestRead = false;
+        while (out.size() < limit) {
+            List<long[]> ranges = new java.util.ArrayList<>(batch);
+            boolean exhausted = false;
+            for (int i = 0; i < batch; i++, k--) {
+                long target = nowPos + k * periodMs;
+                long lo = target - toleranceMs;
+                long hi = Math.min(target + toleranceMs, upper);
+                if (oldestRead && hi < oldest) { exhausted = true; break; }   // daha eski satır yok
+                if (lo < 0) return null;                                       // negatif zaman: eski ifade
+                ranges.add(new long[] { lo, hi });
+            }
+            if (!ranges.isEmpty()) out.addAll(queryRanges(type, monitorId, ranges, limit - out.size()));
+            if (out.size() >= limit || exhausted) break;
+            if (!oldestRead) {
+                oldest = jdbc.queryForObject("SELECT MIN(checked_ms) FROM " + TABLE
+                        + " WHERE monitor_type = ? AND monitor_id = ?", Long.class, type, monitorId);
+                oldestRead = true;
+                if (oldest == null) break;   // izlemenin hiç örneği yok
+            }
+            if (ranges.isEmpty() || ranges.get(ranges.size() - 1)[0] <= oldest) break;   // en eski satır bu turda kaldı
+            batch = Math.min(batch * 2, SEASON_BATCH_MAX);
+        }
+        return out;
+    }
+
+    /** Pencere başına bir dal ({@code UNION ALL}), dalın kendi sınırı; dış sıra + sınır. */
+    private List<Sample> queryRanges(String type, long monitorId, List<long[]> ranges, int remaining) {
+        List<Object> args = new java.util.ArrayList<>(ranges.size() * 5 + 1);
+        for (long[] r : ranges) {
+            args.add(type);
+            args.add(monitorId);
+            args.add(r[0]);
+            args.add(r[1]);
+            args.add(remaining);
+        }
+        args.add(remaining);
+        return jdbc.query(seasonalRangesSql(ranges.size()), (rs, n) -> new Sample(rs.getLong(1), rs.getBoolean(2)),
+                args.toArray());
+    }
+
+    /**
+     * Aralık okumasının ifadesi ({@code n} pencere): her dal {@code (monitor_type, monitor_id, checked_ms)} dizininin tam
+     * dizin koşulu (eşitlik + aralık) — süzgeç yok. H2 + PostgreSQL ortak (türetilmiş tablo içinde ORDER BY / LIMIT).
+     */
+    static String seasonalRangesSql(int n) {
+        StringBuilder sb = new StringBuilder("SELECT value_ms, breach FROM (");
+        for (int i = 0; i < n; i++) {
+            if (i > 0) sb.append(" UNION ALL ");
+            sb.append("SELECT * FROM (SELECT checked_ms, id, value_ms, breach FROM ").append(TABLE)
+                    .append(" WHERE monitor_type = ? AND monitor_id = ? AND checked_ms >= ? AND checked_ms <= ?")
+                    .append(" ORDER BY checked_ms DESC, id DESC LIMIT ?) b").append(i);
+        }
+        return sb.append(") u ORDER BY checked_ms DESC, id DESC LIMIT ?").toString();
     }
 
     /** İzlemenin tüm örneklerini siler (hedef / tanım değişti ya da taban çizgisi kapatıldı — eski ölçüler karışmasın). */

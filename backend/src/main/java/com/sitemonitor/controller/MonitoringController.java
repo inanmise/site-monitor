@@ -4369,7 +4369,7 @@ public class MonitoringController {
         if (!Boolean.TRUE.equals(m.getChangeDetect()) || m.getId() == null || keywordBaselines == null) return null;
         com.sitemonitor.model.KeywordChangeBaseline b;
         try {
-            b = preloaded != null ? preloaded.get(m.getId()) : keywordBaselines.find(m.getId()).orElse(null);
+            b = preloaded != null ? preloaded.get(m.getId()) : keywordBaselines.findSummary(m.getId()).orElse(null);   // metinsiz (perf 2026-11-17)
         } catch (RuntimeException e) {
             return null;
         }
