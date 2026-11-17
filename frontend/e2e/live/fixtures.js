@@ -17,12 +17,15 @@ export const test = base.extend({
   // use() kancası sanıp hata veriyordu.
   page: async ({ page }, provide, testInfo) => {
     // Ürün turu kapalı (ilk açılışta tıklamaları örtmesin); arayüz Türkçe (metin denetimleri TR sözlüğüne göre)
-    await page.addInitScript(() => {
+    // Giriş sonrası eksikler penceresi (2026-11-15) kendiliğinden açılıp tıklamaları örtmesin: bu sekmede bu kullanıcıya
+    // "soruldu" sayılır (GapsPrompt PROMPTED_KEY = kullanıcı adı). Pencerenin kendi testi sahte API'li login-gaps.spec.js'tir.
+    await page.addInitScript((user) => {
       try {
         localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 }))
         localStorage.setItem('site-monitor-lang', 'tr')
+        if (user) sessionStorage.setItem('sm.gaps.prompted', user)
       } catch { /* depolama yok */ }
-    })
+    }, process.env.E2E_USER || '')
     // Entegrasyon hatası yakalayıcı: yakalanmamış istisna ve /api 5xx testi DÜŞÜRÜR; konsol hataları rapora yazılır
     const problems = []
     const consoleErrors = new Set()
@@ -232,4 +235,18 @@ export async function expectDialogFits(page, dialog, vp, label) {
 export function stopwatch(label) {
   const t0 = Date.now()
   return () => console.log(`[live] ${label}: ${((Date.now() - t0) / 1000).toFixed(1)} sn`)
+}
+
+/**
+ * Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalı bir izleme / envanter kaydı kaydedilirken "7/24 bildirimi
+ * seçilmedi" sorusu gelebilir (yalnız 7/24 kullanılabilir ortamda). Soru gelirse "Hayır, bildirmeden kaydet" seçilir —
+ * canlı test kaydın 7/24 ayarını değiştirmez. Soru gelmeden kayıt isteği yanıtlanırsa hiçbir şey yapılmaz.
+ */
+export async function answerNocConfirmIfAsked(page, request) {
+  const noc = page.getByRole('dialog').filter({ hasText: '7/24 bildirimi seçilmedi' })
+  const which = await Promise.race([
+    request.then(() => 'request', () => 'request'),
+    noc.waitFor({ timeout: 30_000 }).then(() => 'noc', () => 'none'),
+  ])
+  if (which === 'noc') await noc.getByRole('button', { name: 'Hayır, bildirmeden kaydet' }).click()
 }

@@ -151,12 +151,11 @@ export default function SqlPlayground() {
   const clearSelection = useCallback(() => setSelState({ tabId: null, text: '' }), [])
   const [running, setRunning] = useState(null)   // { tabId, runId, kind: 'execute' | 'explain' }
   const [stopping, setStopping] = useState(false)
-  const [elapsed, setElapsed] = useState(0)
+  // Çalışmanın başlangıç anı; geçen süreyi ResultsPanel'in yaprak bileşeni sayar (sayfa 100 ms'de bir çizilmez).
+  const [runStartedAt, setRunStartedAt] = useState(null)
   const [exportState, setExportState] = useState(null)   // { busy, format, runId }
   const seq = useRef(0)
   const runningRef = useRef(false)
-  const tick = useRef(null)
-  useEffect(() => () => clearInterval(tick.current), [])
 
   const [tableDetail, setTableDetail] = useState(null)   // { table, details, loading }
   const [diagram, setDiagram] = useState(null)           // { focus, n }
@@ -296,12 +295,7 @@ export default function SqlPlayground() {
     return { body: pb.body }
   }, [layout, setRtTab, t, toast])
 
-  const startTimer = () => {
-    setElapsed(0)
-    const t0 = Date.now()
-    clearInterval(tick.current)
-    tick.current = setInterval(() => setElapsed(Date.now() - t0), 100)
-  }
+  const startTimer = () => setRunStartedAt(Date.now())
 
   const run = useCallback(async (override) => {
     const tab = activeRef.current
@@ -322,7 +316,6 @@ export default function SqlPlayground() {
     } catch (e) {
       next = { success: false, error: e?.message || t('sql.err.noResponse') }
     } finally {
-      clearInterval(tick.current)
       runningRef.current = false
       setRunning(null)
       setStopping(false)
@@ -383,7 +376,6 @@ export default function SqlPlayground() {
     } catch (e) {
       plan = { error: e?.message || t('sql.plan.failed') }
     } finally {
-      clearInterval(tick.current)
       runningRef.current = false
       setRunning(null)
       setStopping(false)
@@ -470,7 +462,13 @@ export default function SqlPlayground() {
     writeEditor(tableQuery(name), { replace: true })
   }, [writeEditor])
 
-  const onCaret = useCallback((c) => setSelState({ tabId: activeRef.current.id, text: c.text || '' }), [])
+  // İmleç her harfte hareket eder: seçim değişmediyse aynı durum nesnesi döner, sayfa yeniden çizilmez.
+  // Sekme kimliği ÇAĞRI anında okunur (güncelleyici sonra çalışır; sekme kapanırken eski editörün seçimi yeni sekmeye geçmesin).
+  const onCaret = useCallback((c) => {
+    const tabId = activeRef.current.id
+    const text = c.text || ''
+    setSelState((prev) => (prev.tabId === tabId && prev.text === text ? prev : { tabId, text }))
+  }, [])
 
   // ── Sekme işlemleri ──
   const addNewTab = useCallback((init = {}) => {
@@ -626,11 +624,15 @@ export default function SqlPlayground() {
     </>
   )
 
-  const explorerProps = {
-    tables, loading: tablesLoading, error: tablesError, onRefresh: () => { refreshTables(); loadRelations() },
+  // Şema gezgini (yüzlerce tablo) her tuşta yeniden çizilmesin: props sabit, gezgin memo'lu.
+  const refreshExplorer = useCallback(() => { refreshTables(); loadRelations() }, [refreshTables, loadRelations])
+  const insertFromExplorer = useCallback((text) => writeEditor(text), [writeEditor])
+  const explorerProps = useMemo(() => ({
+    tables, loading: tablesLoading, error: tablesError, onRefresh: refreshExplorer,
     columnsMap, onLoadColumns: ensureColumns, fkMap, pkMap, dictionary,
-    onQuery: queryTable, onInsert: (text) => writeEditor(text), onDetails: openTableDetails, onDiagram: openDiagram,
-  }
+    onQuery: queryTable, onInsert: insertFromExplorer, onDetails: openTableDetails, onDiagram: openDiagram,
+  }), [tables, tablesLoading, tablesError, refreshExplorer, columnsMap, ensureColumns, fkMap, pkMap, dictionary,
+    queryTable, insertFromExplorer, openTableDetails, openDiagram])
 
   const moreItems = [
     { label: t('sql.saved.saveAs'), icon: <BookmarkPlus />, onClick: () => openSave('create'), hidden: !savedSupported },
@@ -701,7 +703,7 @@ export default function SqlPlayground() {
 
   const resultRows = art.result && !art.result.error && !art.result.cancelled && Array.isArray(art.result.rows) ? art.result.rows : []
   const resultsPanel = (cls, phone = false) => (
-    <ResultsPanel result={art.result} running={isRunningHere} elapsedMs={elapsed} phone={phone} samples={samples}
+    <ResultsPanel result={art.result} running={isRunningHere} startedAt={runStartedAt} phone={phone} samples={samples}
       onPickSample={(s) => writeEditor(s, { replace: true })} onRevealError={revealError} className={cls}
       resultView={art.view ?? 'table'} onViewChange={(v) => setRtTab(activeTab.id, { view: v })}
       onStop={stop} stopping={stopping}

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import { ChevronRight, Database, Network, RefreshCw, Search, Table2, TableProperties, X } from 'lucide-react'
 import { formatDateSec } from '../../../api/client'
 import { useDateLocale, useT } from '../../../i18n/index.jsx'
@@ -29,7 +29,7 @@ function KeyTag({ kind, title }) {
  * Veri sözlüğü (2026-11-13, D3): `dictionary` (`{ tables: { ad: { description, columns: { kolon: açıklama } } } }`) varsa
  * tablo ve kolon açıklamaları adın altında (sararak) görünür ve aramaya dahil olur; uç yoksa (eski sunucu) hiç çizilmez.
  */
-export default function SchemaExplorer({
+function SchemaExplorer({
   tables, loading, error, onRefresh, columnsMap, onLoadColumns, fkMap, pkMap,
   onQuery, onInsert, onDetails, onDiagram, className, headerless = false, dictionary = null,
 }) {
@@ -200,3 +200,6 @@ export default function SchemaExplorer({
     </section>
   )
 }
+
+// Sayfa her tuşta yeniden çizilir; gezgin (yüzlerce tablo satırı) yalnız kendi props'u değişince çizilir.
+export default memo(SchemaExplorer)
