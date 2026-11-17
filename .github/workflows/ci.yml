@@ -451,6 +451,53 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # Düşen / titreyen testin izi (2026-11-17): CI'da `line` raporlayıcısı playwright-report/ ÜRETMEZ — yukarıdaki adım
+      # hiçbir şey yüklemiyordu, yalnız CI'da düşen bir e2e'nin sayfa anlık görüntüsü (error-context.md) ve yeniden
+      # denemenin izi (trace.zip, `trace: 'on-first-retry'`) kayboluyordu. Yalnız bir test düştüğünde ya da yeniden
+      # denendiğinde dosya oluşur; başarılı koşuda klasör boştur.
+      - name: Upload failure traces
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: playwright-test-results-${{ matrix.shard }}
+          path: frontend/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # GEÇİCİ (2026-11-17): cert-trust-filter.spec.js yalnız CI Linux'ta ara sıra düşüyor; yerelde (tam parça 1/4 dahil)
+  # yeniden üretilemedi. Testi tekrarlayıp izini yakalamak için — kök neden bulununca KALDIRILIR.
+  cert-trust-repro:
+    name: cert-trust repro (geçici)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node 26
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Drop unrelated third-party apt sources
+        run: sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Repeat cert-trust-filter
+        run: npx playwright test e2e/cert-trust-filter.spec.js --repeat-each 15 --retries 0 --trace retain-on-failure
+      - name: Upload traces
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: cert-trust-repro
+          path: frontend/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
   # ──────────────────────────────────────────────
   # 3. Helm lint
   # ──────────────────────────────────────────────
