@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   WF_TYPES, wfType, buildWaterfall, niceTicks, barBox, typeTotals, CMP_METRICS, compareSnapshots, GRADE_COMPONENTS, GRADE_RECS,
-  gradeLetterOf, curveScore, gradeSnapshot, imageItemOf, imageScopeKey, withDeadline, DEADLINE, isLowerBound, CMP_CUT_SENSITIVE,
+  gradeLetterOf, curveScore, gradeSnapshot, imageItemOf, imageScopeKey, checkIdOfScope, withDeadline, DEADLINE, isLowerBound, CMP_CUT_SENSITIVE,
 } from '../components/pagespeed/deep/pageSpeedDeepModel.js'
 import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
@@ -226,6 +226,18 @@ describe('görsel aracı köprüsü', () => {
   it('depo anahtarı ayrı ad alanı', () => {
     expect(imageScopeKey(42)).toBe('ps-42')
     expect(imageScopeKey(null)).toBe('ps-latest')
+  })
+  it('anahtardaki ölçüm kimliği (2026-11-17): yalnız ps-<sayı>; son ölçüm / bozuk anahtar → null (kimlik gönderilmez)', () => {
+    expect(checkIdOfScope(imageScopeKey(42))).toBe(42)
+    expect(checkIdOfScope('ps-9007199254740')).toBe(9007199254740)
+    expect(checkIdOfScope(imageScopeKey(null))).toBeNull()
+    expect(checkIdOfScope('ps-0')).toBeNull()
+    expect(checkIdOfScope('ps--3')).toBeNull()
+    expect(checkIdOfScope('ps-12a')).toBeNull()
+    expect(checkIdOfScope('ps-1234567890123456')).toBeNull()   // 16 hane: sınır dışı
+    expect(checkIdOfScope('12')).toBeNull()
+    expect(checkIdOfScope(12)).toBeNull()
+    expect(checkIdOfScope(undefined)).toBeNull()
   })
 })
 

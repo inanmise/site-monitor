@@ -241,6 +241,20 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
     org.springframework.data.domain.Page<AuditLog> findAdminFeed(@Param("types") Collection<String> types,
                                                                   @Param("since") String since, Pageable pageable);
 
+    /**
+     * Çapraz akışın kapsamlı görüntüleyici penceresi (2026-11-17, performans): {@link #findAdminFeed} ile aynı süzgeç ve sıra,
+     * ama LİSTE + {@code LIMIT} — sayfa nesnesinin gereksiz {@code COUNT} sorgusu koşmaz (toplam bellekte süzülen satırlardan).
+     */
+    @Query("SELECT a FROM AuditLog a WHERE a.eventType IN :types AND a.eventTime >= :since ORDER BY a.eventTime DESC, a.id DESC LIMIT :limit")
+    List<AuditLog> findAdminFeedWindow(@Param("types") Collection<String> types, @Param("since") String since,
+                                       @Param("limit") int limit);
+
+    /** Kapsamlı pencere — tek kişinin değişiklikleri ({@link #findAdminFeedByActor} ile aynı süzgeç ve sıra, COUNT'suz). */
+    @Query("SELECT a FROM AuditLog a WHERE a.eventType IN :types AND a.eventTime >= :since AND LOWER(a.actor) = :actor"
+         + " ORDER BY a.eventTime DESC, a.id DESC LIMIT :limit")
+    List<AuditLog> findAdminFeedWindowByActor(@Param("types") Collection<String> types, @Param("since") String since,
+                                              @Param("actor") String actor, @Param("limit") int limit);
+
     /** Çapraz akış — tek kişinin değişiklikleri (harf duyarsız aktör; çağıran küçük harfe çevirir). */
     @Query(value = "SELECT a FROM AuditLog a WHERE a.eventType IN :types AND a.eventTime >= :since AND LOWER(a.actor) = :actor"
                  + " ORDER BY a.eventTime DESC, a.id DESC",

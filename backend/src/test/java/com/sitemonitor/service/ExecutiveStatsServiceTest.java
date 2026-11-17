@@ -320,8 +320,8 @@ class ExecutiveStatsServiceTest {
         assertThat(c.get("alerts_opened")).isNull();
         assertThat(c.get("alerts_resolved")).isNull();
         assertThat(c).containsKeys("alerts_opened", "alerts_resolved");   // alan adları korunur (eski istemci)
-        org.mockito.Mockito.verify(alertEventRepo, org.mockito.Mockito.never()).findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(anyString());
-        org.mockito.Mockito.verify(alertEventRepo, org.mockito.Mockito.never()).findByResolvedAtGreaterThanEqual(anyString());
+        org.mockito.Mockito.verify(alertEventRepo, org.mockito.Mockito.never()).findCreatedStatRowsSince(anyString());
+        org.mockito.Mockito.verify(alertEventRepo, org.mockito.Mockito.never()).findResolvedStatRowsSince(anyString());
         assertThat(svc.recentChanges(7, t -> t != null && t == 1L, true, null)).containsEntry("alerts_visible", true)
                 .containsEntry("alerts_opened", 1);
     }
@@ -331,12 +331,12 @@ class ExecutiveStatsServiceTest {
     void recentChangesReadFailureIsNullAndNotMemoised() {
         changesFixture();
         org.springframework.test.util.ReflectionTestUtils.setField(svc, "changesCacheMs", 60_000L);
-        org.mockito.Mockito.doThrow(new RuntimeException("db")).when(alertEventRepo).findByResolvedAtGreaterThanEqual(anyString());
+        org.mockito.Mockito.doThrow(new RuntimeException("db")).when(alertEventRepo).findResolvedStatRowsSince(anyString());
         Map<String, Object> c = svc.recentChanges(7, t -> t != null && t == 1L, true, "T:1");
         assertThat(c).containsEntry("added", 1).containsEntry("alerts_opened", 1);
         assertThat(c.get("alerts_resolved")).isNull();
         // Kısmi sonuç saklanmadı: düzelen sorgu bir sonraki çağrıda okunur
-        org.mockito.Mockito.doReturn(List.of()).when(alertEventRepo).findByResolvedAtGreaterThanEqual(anyString());
+        org.mockito.Mockito.doReturn(List.of()).when(alertEventRepo).findResolvedStatRowsSince(anyString());
         assertThat(svc.recentChanges(7, t -> t != null && t == 1L, true, "T:1")).containsEntry("alerts_resolved", 0);
         org.mockito.Mockito.verify(inventoryRepo, org.mockito.Mockito.times(2)).findAllByOrderByDomainAsc();
         svc.recentChanges(7, t -> t != null && t == 1L, true, "T:1");   // tam sonuç bellekten
@@ -348,5 +348,60 @@ class ExecutiveStatsServiceTest {
             if ("removed".equals(k)) continue;   // geçmiş deposu yok (dilimli kurulum) → 0 sözleşmesi
             assertThat(noInv.get(k)).as(k).isNull();
         }
+    }
+    @Test
+    @DisplayName("2026-11-17 performans: /stats/changes alarm sayaçları DAR izdüşümden — tam entity sorgusu çağrılmaz; sayılar eski entity yoluyla aynı")
+    void recentChangesUseNarrowProjections() {
+        CertificateInventory mine = inv("mine.example.com", 1L); mine.setId(201L);
+        mine.setCreatedAt(ISO.format(Instant.now().minus(40, ChronoUnit.DAYS)));
+        CertificateInventory ug = inv("ug.example.com", 2L); ug.setId(202L); ug.setUgTeamId(1L);
+        ug.setCreatedAt(ISO.format(Instant.now().minus(40, ChronoUnit.DAYS)));
+        CertificateInventory foreign = inv("foreign.example.com", 2L); foreign.setId(203L);
+        foreign.setCreatedAt(ISO.format(Instant.now().minus(40, ChronoUnit.DAYS)));
+        when(inventoryRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(mine, ug, foreign));
+        when(certificateCheckRepo.domainsWithFingerprintChangeSince(anyString())).thenReturn(List.of());
+
+        // Fikstür: eski yolun gördüğü entity'ler (7 günlük pencere)
+        List<AlertEvent> events = new java.util.ArrayList<>();
+        events.add(ev(1, "x.example.com", 1L, "CRITICAL", 1));                       // damga takım 1 → görünür
+        events.add(ev(2, "mine.example.com", null, "WARNING", 2));                   // damgasız, görünür envanter alanı
+        events.add(ev(3, "ug.example.com", 9L, "WARNING", 3));                       // UG takımı 1 → alan görünür
+        events.add(ev(4, "foreign.example.com", 2L, "WARNING", 1));                  // başka takım → görünmez
+        events.add(ev(5, "x.example.com", 1L, "WARNING", 20));                       // pencere dışı açılış
+        events.add(ev(6, "mine.example.com", null, "WARNING", 3));
+        String recent = ISO.format(Instant.now().minus(1, ChronoUnit.DAYS));
+        for (AlertEvent e : events) { e.setResolved(true); e.setResolvedAt(recent); }
+        events.get(1).setResolvedSilently(true);                                     // sessiz kapanış → çözülen sayılmaz
+        events.get(4).setResolvedSilently(false);
+        events.get(5).setResolved(false); events.get(5).setResolvedAt(null);         // açık
+
+        String since = ISO.format(Instant.now().minus(7, ChronoUnit.DAYS));
+        java.util.function.Predicate<Long> can = t -> t != null && t == 1L;
+        java.util.Set<String> visDomains = java.util.Set.of("mine.example.com", "ug.example.com");
+        java.util.function.Predicate<AlertEvent> vis = e -> (e.getTeamId() != null && can.test(e.getTeamId()))
+                || (e.getDomain() != null && visDomains.contains(e.getDomain()));
+        // ESKİ kural (entity + Java süzgeci)
+        long oldOpened = events.stream().filter(e -> e.getCreatedAt().compareTo(since) >= 0).filter(vis).count();
+        long oldResolved = events.stream().filter(e -> e.getResolvedAt() != null && e.getResolvedAt().compareTo(since) >= 0)
+                .filter(vis).filter(e -> Boolean.TRUE.equals(e.getResolved()) && !Boolean.TRUE.equals(e.getResolvedSilently())).count();
+
+        // Dar izdüşümler: SQL koşullarını uygulayan sahte (createdAt >= since | resolvedAt >= since, resolved, sessiz değil)
+        List<Object[]> created = new java.util.ArrayList<>();
+        for (AlertEvent e : events) if (e.getCreatedAt().compareTo(since) >= 0) created.add(new Object[]{e.getTeamId(), e.getDomain(), e.getCreatedAt()});
+        List<Object[]> resolved = new java.util.ArrayList<>();
+        for (AlertEvent e : events) {
+            if (e.getResolvedAt() == null || e.getResolvedAt().compareTo(since) < 0 || !Boolean.TRUE.equals(e.getResolved())
+                    || Boolean.TRUE.equals(e.getResolvedSilently())) continue;
+            resolved.add(new Object[]{e.getTeamId(), e.getDomain()});
+        }
+        when(alertEventRepo.findCreatedStatRowsSince(anyString())).thenReturn(created);
+        when(alertEventRepo.findResolvedStatRowsSince(anyString())).thenReturn(resolved);
+
+        Map<String, Object> c = svc.recentChanges(7, can, true, null);
+        assertThat(c).containsEntry("alerts_opened", (int) oldOpened).containsEntry("alerts_resolved", (int) oldResolved);
+        assertThat(oldOpened).isEqualTo(4);
+        assertThat(oldResolved).isEqualTo(3);   // 1, 3 ve pencere dışı açılıp pencerede çözülen 5 (2 sessiz, 6 açık)
+        org.mockito.Mockito.verify(alertEventRepo, org.mockito.Mockito.never()).findByCreatedAtGreaterThanEqualOrderByCreatedAtDesc(anyString());
+        org.mockito.Mockito.verify(alertEventRepo, org.mockito.Mockito.never()).findByResolvedAtGreaterThanEqual(anyString());
     }
 }

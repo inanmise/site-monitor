@@ -34,10 +34,17 @@ public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedReso
     /**
      * Aynı ölçümün TEK kopyası (inceleme B4): ihlalin başladığı ölçümün satırları hem LATEST hem BREACH olarak yazılır — ölçüm
      * seçilince ikisi birden dönüp liste / CSV / sayaçlar iki kat oluyordu. BREACH kopyası varsa yalnız o (kalıcı delil),
-     * yoksa LATEST. {@code :monitorId} / {@code :checkId} adlı parametreleri kullanır.
+     * yoksa LATEST. {@code :monitorId} / {@code :checkId} adlı parametreleri kullanır; ana sorgu da AYNI iki parametreyle
+     * süzer ({@code r.monitorId = :monitorId AND r.checkId = :checkId}).
+     *
+     * <p>Performans (2026-11-17, EXPLAIN denetimi): alt sorgu artık dış satıra BAĞLI DEĞİL — bağlı biçim
+     * ({@code b.monitorId = r.monitorId AND b.checkId = r.checkId}) {@code OR} içinde kaldığı için birleştirmeye
+     * çevrilemiyor, satır başına bir SubPlan koşuyordu (ölçümün kaynak sayısında karesel; 2000 kaynaklık ölçüm ≈ 1,5 sn).
+     * Dış satır zaten aynı izleme + ölçüm kimliğine süzüldüğünden iki biçim AYNI satırları döndürür; bağımsız biçim tek bir
+     * InitPlan'dır ({@code idx_psr_check}). Kapı: {@code PageSpeedResourceRepositoryTest.oneCopyRuleMatchesJavaOracle}.
      */
-    String ONE_COPY = "AND (r.keepReason = 'BREACH' OR NOT EXISTS (SELECT 1 FROM PageSpeedResource b WHERE b.monitorId = r.monitorId "
-            + "AND b.checkId = r.checkId AND b.keepReason = 'BREACH')) ";
+    String ONE_COPY = "AND (r.keepReason = 'BREACH' OR NOT EXISTS (SELECT 1 FROM PageSpeedResource b WHERE b.monitorId = :monitorId "
+            + "AND b.checkId = :checkId AND b.keepReason = 'BREACH')) ";
 
     /** Son ölçümün (LATEST) kontrol kimliği — CSV bir kez okur ve o ölçümü sayfalar (inceleme B5); kırılım yoksa null. */
     @Query("SELECT MAX(r.checkId) FROM PageSpeedResource r WHERE r.monitorId = :id AND r.keepReason = 'LATEST'")
@@ -51,6 +58,23 @@ public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedReso
      */
     @Query("SELECT r FROM PageSpeedResource r WHERE r.monitorId = :id AND r.type = 'IMG' AND r.url = :url LIMIT 1")
     List<PageSpeedResource> findStoredImage(@Param("id") Long id, @Param("url") String url);
+
+    /**
+     * Görsel aracı köprüsü, ölçüm kimliği verilmişse (performans 2026-11-17): adres yalnız O ölçümün saklanan görselleri
+     * arasında aranır ({@code idx_psr_check} — izlemenin tüm satırları taranmaz; toplu ZIP'te görsel başına bir kez). Güvenlik
+     * kuralı aynı: satır BU izlemenin saklanan IMG kaynağı olmalı.
+     */
+    @Query("SELECT r FROM PageSpeedResource r WHERE r.monitorId = :id AND r.checkId = :checkId AND r.type = 'IMG' "
+         + "AND r.url = :url LIMIT 1")
+    List<PageSpeedResource> findStoredImageInCheck(@Param("id") Long id, @Param("checkId") Long checkId, @Param("url") String url);
+
+    /**
+     * Ölçümün bu izlemede HİÇ saklanan satırı var mı (en çok 1 kimlik; {@code idx_psr_check}). Görsel köprüsü: ölçüm kimliği
+     * verilen ama satırı artık olmayan (son ölçüm yeniden yazıldı — LATEST her kontrolde silinip yazılır) istek bugünkü
+     * izleme geneli aramaya düşer; satırı olan başka bir ölçümde adres yoksa 404.
+     */
+    @Query("SELECT r.id FROM PageSpeedResource r WHERE r.monitorId = :id AND r.checkId = :checkId LIMIT 1")
+    List<Long> anyRowOfCheck(@Param("id") Long id, @Param("checkId") Long checkId);
 
     /**
      * Şelale (2026-11-15): bir ölçümün kaynakları isteğin ATILDIĞI ana göre (start_ms; eski satırda NULL → sonda), ölçümün TEK
@@ -82,10 +106,10 @@ public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedReso
             @Param("party") int party, @Param("failed") boolean failed, org.springframework.data.domain.Pageable p);
 
     /** Bir ihlal anının (checkId) kırılımı, süzgeçli ve sayfalı — izleme kimliğiyle birlikte (başka izlemenin satırı dönmez). */
-    @Query(value = "SELECT r FROM PageSpeedResource r WHERE r.monitorId = :id AND r.checkId = :checkId " + ONE_COPY + FILTER
+    @Query(value = "SELECT r FROM PageSpeedResource r WHERE r.monitorId = :monitorId AND r.checkId = :checkId " + ONE_COPY + FILTER
                  + "ORDER BY r.bytes DESC NULLS LAST, r.id ASC",
-           countQuery = "SELECT COUNT(r) FROM PageSpeedResource r WHERE r.monitorId = :id AND r.checkId = :checkId " + ONE_COPY + FILTER)
-    org.springframework.data.domain.Page<PageSpeedResource> checkPage(@Param("id") Long id, @Param("checkId") Long checkId,
+           countQuery = "SELECT COUNT(r) FROM PageSpeedResource r WHERE r.monitorId = :monitorId AND r.checkId = :checkId " + ONE_COPY + FILTER)
+    org.springframework.data.domain.Page<PageSpeedResource> checkPage(@Param("monitorId") Long id, @Param("checkId") Long checkId,
             @Param("allTypes") boolean allTypes, @Param("types") java.util.Collection<String> types,
             @Param("party") int party, @Param("failed") boolean failed, org.springframework.data.domain.Pageable p);
 
@@ -97,11 +121,16 @@ public interface PageSpeedResourceRepository extends JpaRepository<PageSpeedReso
 
     /** Süzgeç sayaçları — bir ihlal anı. */
     @Query("SELECT r.type, r.thirdParty, CASE WHEN r.statusCode IS NULL OR r.statusCode >= 400 THEN 1 ELSE 0 END, COUNT(r) "
-         + "FROM PageSpeedResource r WHERE r.monitorId = :id AND r.checkId = :checkId " + ONE_COPY
+         + "FROM PageSpeedResource r WHERE r.monitorId = :monitorId AND r.checkId = :checkId " + ONE_COPY
          + "GROUP BY r.type, r.thirdParty, CASE WHEN r.statusCode IS NULL OR r.statusCode >= 400 THEN 1 ELSE 0 END")
-    List<Object[]> checkFacets(@Param("id") Long id, @Param("checkId") Long checkId);
+    List<Object[]> checkFacets(@Param("monitorId") Long id, @Param("checkId") Long checkId);
 
-    /** İhlal anları listesi (hangi ölçümlerin donmuş kırılımı var) — en yeniden eskiye. */
+    /**
+     * İhlal anları listesi (hangi ölçümlerin donmuş kırılımı var) — en yeniden eskiye. Her şelale / kaynak okumasında çağrılır;
+     * PostgreSQL'de ertelenmiş {@code idx_psr_monitor_reason_checked (monitor_id, keep_reason, checked_at)} dizininden geriye
+     * okunur (2026-11-17: yalnız {@code idx_psr_reason_checked} varken BAŞKA izlemelerin BREACH satırları da taranıp
+     * {@code monitor_id} süzgeçle eleniyordu). Kapı: {@code PageSpeedQueryPlanPostgresTest.breachSnapshotsUseMonitorIndex}.
+     */
     @Query("SELECT DISTINCT r.checkId, r.checkedAt FROM PageSpeedResource r "
          + "WHERE r.monitorId = :id AND r.keepReason = 'BREACH' ORDER BY r.checkedAt DESC LIMIT :limit")
     List<Object[]> breachSnapshots(@Param("id") Long id, @Param("limit") int limit);

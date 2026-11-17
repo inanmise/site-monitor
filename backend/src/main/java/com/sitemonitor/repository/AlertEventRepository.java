@@ -91,6 +91,15 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     List<Object[]> findCreatedStatRowsSince(@Param("since") String since);
 
     /**
+     * "Son N günde ne değişti" çözülen alarm sayacı (2026-11-17, performans): {@code since}'ten bu yana ÇÖZÜLEN, sessiz
+     * kapanmayan alarmların dar izdüşümü — tam entity ({@code context_json} dahil) okunmaz. Koşul eski Java süzgeciyle aynı:
+     * {@code resolved = true} ve {@code resolved_silently} NULL ya da false. Sütunlar: {@code [teamId, domain]}.
+     */
+    @Query("SELECT e.teamId, e.domain FROM AlertEvent e WHERE e.resolvedAt >= :since AND e.resolved = true "
+         + "AND (e.resolvedSilently IS NULL OR e.resolvedSilently = false)")
+    List<Object[]> findResolvedStatRowsSince(@Param("since") String since);
+
+    /**
      * Kişisel Panom "Alarm eğilimi" (2026-11-14): {@code since}'ten beri AÇILAN alarmlar — sahip (damgalı takım + hedef) ve UTC
      * saat kovası ({@code yyyy-MM-ddTHH}) başına gruplu sayım; aynı hedefin bir saatte yüz kez açılıp kapanması tek satırdır
      * (ham satır taşınmaz). Kapsam çağıranda (Alarm Geçmişi kuralı: damga ya da envanterin SY / UG'si).

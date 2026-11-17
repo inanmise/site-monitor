@@ -129,7 +129,8 @@ public class PageResourceImageController {
      * SAKLANAN kaynakları (son ölçüm ya da ihlal anı) arasında görsel türünde birebir bulunmalı — sunucu açık vekil olamaz.
      * Kapılar kaynak analizi görseliyle aynı ({@code monitoring.trigger/execute} + takımda çalıştırma; paylaşım EXECUTE dahil);
      * vekil kararı ölçümün kendi kararı (izlemenin adresine göre). Yanıt ve hata kodları {@link #image} ile aynı;
-     * {@code RESOURCE_MONITOR_NOT_FOUND} izleme yok / görünmüyor.
+     * {@code RESOURCE_MONITOR_NOT_FOUND} izleme yok / görünmüyor. İsteğe bağlı {@code check_id} (2026-11-17): adres o ölçümde
+     * aranır ({@link #storedImage}); geçersiz değer 400 {@code VALIDATION_FAILED} alan {@code check_id}.
      */
     @PostMapping("/pagespeed/{id}/image")
     public ResponseEntity<?> pageSpeedImage(@PathVariable Long id, @RequestBody(required = false) Map<String, Object> body,
@@ -143,8 +144,8 @@ public class PageResourceImageController {
                     "You cannot download a page speed image on this team's monitor."));
         }
         String url = urlOf(body == null ? null : body.get("url"), "url");
-        List<PageSpeedResource> rows = pageSpeedResourceRepo.findStoredImage(m.getId(), url);
-        PageSpeedResource row = rows.isEmpty() ? null : rows.get(0);
+        Long checkId = checkIdOf(body == null ? null : body.get("check_id"));
+        PageSpeedResource row = storedImage(m.getId(), checkId, url);
         ImageResult r = row == null ? ImageResult.of(PageResourceImageService.ImageOutcome.NOT_FOUND)
                 : images.imageFromStored(url, row.getBytes(), viaProxy(m), userKey(session));
         try {
@@ -153,6 +154,40 @@ public class PageResourceImageController {
         } finally {
             r.release();
         }
+    }
+
+    /**
+     * Saklanan görsel satırı (performans 2026-11-17). İstemci gösterdiği ölçümün kimliğini ({@code check_id}) gönderirse adres
+     * yalnız o ölçümün satırlarında aranır ({@code idx_psr_check} — izlemenin TÜM satırları taranmaz; toplu ZIP'te görsel
+     * başına bir kez). O ölçümün bu izlemede hiç satırı kalmadıysa (son ölçüm yeniden yazıldı, başka izlemenin ölçümü) bugünkü
+     * izleme geneli arama — sonuç eski davranışla aynı; satırı olan başka bir ölçümde adres yoksa {@code null} (404). Kimlik
+     * yoksa (eski istemci) bugünkü arama. Her yolda satır BU izlemenin saklanan IMG kaynağıdır (sunucu açık vekil olamaz).
+     */
+    private PageSpeedResource storedImage(Long monitorId, Long checkId, String url) {
+        if (checkId != null) {
+            List<PageSpeedResource> inCheck = pageSpeedResourceRepo.findStoredImageInCheck(monitorId, checkId, url);
+            if (inCheck != null && !inCheck.isEmpty()) return inCheck.get(0);
+            List<Long> any = pageSpeedResourceRepo.anyRowOfCheck(monitorId, checkId);
+            if (any != null && !any.isEmpty()) return null;   // ölçüm duruyor, adres onda yok → 404
+        }
+        List<PageSpeedResource> rows = pageSpeedResourceRepo.findStoredImage(monitorId, url);
+        return rows == null || rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /** {@code check_id}: yoksa {@code null}; pozitif tam sayı (sayı ya da sayısal metin) değilse 400 {@code check_id}. */
+    static Long checkIdOf(Object raw) {
+        if (raw == null) return null;
+        Long v = null;
+        if (raw instanceof Integer || raw instanceof Long || raw instanceof Short) {
+            v = ((Number) raw).longValue();
+        } else if (raw instanceof String str && !str.isBlank() && str.length() <= 19) {
+            try { v = Long.parseLong(str.trim()); } catch (NumberFormatException ignore) { v = null; }
+        }
+        if (v == null || v <= 0) {
+            throw new FieldValidationException("check_id", Msg.t("check_id pozitif bir tam sayı olmalı.",
+                    "check_id must be a positive whole number."));
+        }
+        return v;
     }
 
     private boolean viaProxy(PageSpeedMonitor m) {

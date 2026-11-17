@@ -42,6 +42,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       ({@code idx_psr_check}), tablo taranmaz — ana sorgu da {@code NOT EXISTS} alt sorgusu da;</li>
  *   <li>{@code PageSpeedResourceRepository.findStoredImage} (görsel aracı köprüsü): izleme kimliği önce gelen dizinden
  *       ({@code idx_psr_monitor_reason}), tablo taranmaz — bulunamayan adres tüm tabloyu okumaz.</li>
+ *   <li>2026-11-17 (performans): tek kopya kuralının {@code NOT EXISTS}'i satır başına SubPlan değil TEK InitPlan;
+ *       {@code breachSnapshots} izleme önce gelen ertelenmiş {@code idx_psr_monitor_reason_checked}'ten (başka izlemelerin
+ *       BREACH satırları süzgeçle elenmez); {@code findStoredImageInCheck} ölçüm kimliği dizininden.</li>
  * </ul>
  * Diğer testlerin satırlarına ve istatistiklerine dokunulmaz; şema sonda düşürülür.
  */
@@ -218,18 +221,72 @@ class PageSpeedQueryPlanPostgresTest {
     }
 
     @Test
-    @DisplayName("PostgreSQL: şelale (waterfall, tek kopya kuralı) ölçüm kimliği dizininden — ana sorgu da NOT EXISTS de taramaz")
+    @DisplayName("PostgreSQL: şelale (waterfall, tek kopya kuralı) ölçüm kimliği dizininden — ana sorgu da NOT EXISTS de taramaz; NOT EXISTS satır başına değil TEK InitPlan")
     void waterfallUsesCheckIndex() {
         PageSpeedResourceRepository repo = bean(PageSpeedResourceRepository.class);
         List<String> sqls = sqlOf(() -> repo.waterfall(MONITOR, CHECK, 2001));
         String sql = select(sqls, "pagespeed_resources");
-        List<Object> values = new ArrayList<>(List.of(MONITOR, CHECK));
-        if (marks(sql) == 3) values.add(2001);
+        // Yer tutucu sırası (2026-11-17): r.monitor_id, r.check_id, NOT EXISTS içindeki b.monitor_id, b.check_id [, LIMIT]
+        List<Object> values = new ArrayList<>(List.of(MONITOR, CHECK, MONITOR, CHECK));
+        if (marks(sql) == 5) values.add(2001);
         for (String plan : List.of(customPlan(sql, values.toArray()), genericPlan(sql))) {
             assertNoSeqScan("waterfall", plan, "pagespeed_resources");
             assertThat(plan).as("ölçüm kimliği dizini:%n%s", plan).contains("idx_psr_check");
+            // 2026-11-17 performans: alt sorgu dış satıra bağlı değil → InitPlan (bir kez); ilişkili SubPlan satır başına koşuyordu
+            assertThat(plan).as("NOT EXISTS tek InitPlan olmalı:%n%s", plan).contains("InitPlan").doesNotContain("SubPlan");
         }
         assertThat(repo.waterfall(MONITOR, CHECK, 10)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("PostgreSQL: ölçüm sayfası (checkPage, tek kopya kuralı) — NOT EXISTS tek InitPlan, ölçüm kimliği dizininden, tablo taranmaz")
+    void checkPageOneCopyIsInitPlan() {
+        PageSpeedResourceRepository repo = bean(PageSpeedResourceRepository.class);
+        List<String> sqls = sqlOf(() -> repo.countByMonitorIdAndCheckId(MONITOR, CHECK));
+        String sql = select(sqls, "pagespeed_resources");
+        assertThat(marks(sql)).as("r.monitor_id, r.check_id, b.monitor_id, b.check_id: %s", sql).isEqualTo(4);
+        for (String plan : List.of(customPlan(sql, MONITOR, CHECK, MONITOR, CHECK), genericPlan(sql))) {
+            assertNoSeqScan("countByMonitorIdAndCheckId", plan, "pagespeed_resources");
+            assertThat(plan).as("ölçüm kimliği dizini:%n%s", plan).contains("idx_psr_check");
+            assertThat(plan).as("NOT EXISTS tek InitPlan olmalı:%n%s", plan).contains("InitPlan").doesNotContain("SubPlan");
+        }
+        assertThat(repo.countByMonitorIdAndCheckId(MONITOR, CHECK)).isZero();
+    }
+
+    @Test
+    @DisplayName("PostgreSQL: ihlal anları listesi (breachSnapshots) izleme önce gelen dizinden — başka izlemelerin BREACH satırları okunup süzgeçle elenmez")
+    void breachSnapshotsUseMonitorIndex() {
+        PageSpeedResourceRepository repo = bean(PageSpeedResourceRepository.class);
+        List<String> sqls = sqlOf(() -> repo.breachSnapshots(MONITOR, 20));
+        String sql = select(sqls, "pagespeed_resources");
+        List<Object> values = new ArrayList<>(List.of(MONITOR));
+        if (marks(sql) == 2) values.add(20);
+        for (String plan : List.of(customPlan(sql, values.toArray()), genericPlan(sql))) {
+            assertNoSeqScan("breachSnapshots", plan, "pagespeed_resources");
+            // 2026-11-17: yalnız (keep_reason, checked_at) dizini geriye taranıp monitor_id süzgeçle eleniyordu
+            assertThat(plan).as("keep_reason + checked_at dizini (izleme süzgeçli) kullanılmamalı:%n%s", plan)
+                    .doesNotContain("idx_psr_reason_checked");
+            assertThat(plan).as("izleme kimliği önce gelen dizin:%n%s", plan).contains("idx_psr_monitor_reason");
+            assertThat(plan).as("monitor_id süzgeçle elenmemeli:%n%s", plan).doesNotContainPattern(MONITOR_FILTER);
+        }
+        assertThat(repo.breachSnapshots(MONITOR, 20)).as("canlı şemada bu izlemenin satırı yok").isEmpty();
+    }
+
+    @Test
+    @DisplayName("PostgreSQL: görsel köprüsü ölçüm kimliğiyle (findStoredImageInCheck) ölçüm kimliği dizininden — tablo taranmaz")
+    void findStoredImageInCheckUsesCheckIndex() {
+        PageSpeedResourceRepository repo = bean(PageSpeedResourceRepository.class);
+        String url = "https://site913.example.test/r/7/0";
+        List<String> sqls = sqlOf(() -> repo.findStoredImageInCheck(MONITOR, CHECK, url));
+        String sql = select(sqls, "pagespeed_resources");
+        List<Object> values = new ArrayList<>(List.of(MONITOR, CHECK, url));
+        if (marks(sql) == 4) values.add(1);
+        for (String plan : List.of(customPlan(sql, values.toArray()), genericPlan(sql))) {
+            assertNoSeqScan("findStoredImageInCheck", plan, "pagespeed_resources");
+            assertThat(plan).as("ölçüm kimliği dizini:%n%s", plan).contains("idx_psr_check");
+        }
+        assertThat(repo.findStoredImageInCheck(MONITOR, CHECK, url)).isEmpty();
+        assertThat(repo.anyRowOfCheck(MONITOR, CHECK)).isEmpty();
     }
 
     @Test

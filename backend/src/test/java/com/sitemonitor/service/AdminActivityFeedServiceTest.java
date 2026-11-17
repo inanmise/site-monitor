@@ -1,7 +1,6 @@
 package com.sitemonitor.service;
 
 import com.sitemonitor.model.AuditLog;
-import com.sitemonitor.model.EscalationContact;
 import com.sitemonitor.repository.AuditLogRepository;
 import com.sitemonitor.repository.EscalationContactRepository;
 import org.junit.jupiter.api.DisplayName;
@@ -26,6 +25,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -118,15 +118,28 @@ class AdminActivityFeedServiceTest {
     }
 
     @Test
+    @DisplayName("2026-11-17 performans: kapsamlı + kişi süzgeci → COUNT'suz pencere listesi (sayfa sorgusu yok), aynı süzgeç değerleriyle")
+    void scopedActorUsesWindowList() {
+        when(auditRepo.findAdminFeedWindowByActor(anyCollection(), anyString(), anyString(), anyInt()))
+                .thenReturn(List.of(row(1, "TEAM_UPDATE", "TEAM", "1", null), row(2, "TEAM_UPDATE", "TEAM", "2", null)));
+        var f = service.feed(List.of(acc("teams", List.of(1L))), "  Ayse.Yilmaz ", "2026-10-14T00:00:00", 0, 25);
+        assertThat(f.items()).extracting(e -> e.row().getId()).containsExactly(1L);
+        assertThat(f.total()).isEqualTo(1);
+        verify(auditRepo).findAdminFeedWindowByActor(anyCollection(), eq("2026-10-14T00:00:00"), eq("ayse.yilmaz"),
+                eq(AdminActivityFeedService.WINDOW_MAX));
+        verify(auditRepo, never()).findAdminFeedByActor(anyCollection(), anyString(), anyString(), any(Pageable.class));
+        verify(auditRepo, never()).findAdminFeedWindow(anyCollection(), anyString(), anyInt());
+        verifyNoInteractions(contactRepo, groupHistory);
+    }
+
+    @Test
     @DisplayName("Kapsamlı: alan başına takım süzgeci; takımı çözülemeyen satır gizlenir (sayılır); izinsiz alan atlanır")
     void scopedFiltersPerArea() {
-        EscalationContact c = new EscalationContact();
-        c.setId(30L); c.setTeamId(1L);
-        when(contactRepo.findAll()).thenReturn(List.of(c));
+        when(contactRepo.findTeamIdsByIdIn(anyCollection())).thenReturn(List.<Object[]>of(new Object[]{30L, 1L}));
         when(groupHistory.rowTeams(anyList())).thenReturn(Map.of(
                 5L, new NotificationGroupHistoryService.RowTeams(1L, java.util.Set.of(1L)),
                 6L, new NotificationGroupHistoryService.RowTeams(2L, java.util.Set.of(2L))));
-        when(auditRepo.findAdminFeed(anyCollection(), anyString(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of(
+        when(auditRepo.findAdminFeedWindow(anyCollection(), anyString(), eq(AdminActivityFeedService.WINDOW_MAX))).thenReturn(List.of(
                 row(1, "TEAM_UPDATE", "TEAM", "1", null),                          // takım 1 → görünür
                 row(2, "TEAM_UPDATE", "TEAM", "2", null),                          // takım 2 → kapsam dışı
                 row(3, "CONTACT_UPDATE", "ESCALATION_CONTACT", "30", null),        // canlı kişi → takım 1
@@ -134,7 +147,7 @@ class AdminActivityFeedServiceTest {
                 row(5, "NOTIFICATION_GROUP_UPDATE", "NOTIFICATION_GROUP", "40", null),   // grup → takım 1
                 row(6, "NOTIFICATION_GROUP_DELETE", "NOTIFICATION_GROUP", "41", null),   // grup → takım 2
                 row(7, "TEAM_ACCESS_GRANT_CREATE", "TEAM", "1", null),             // paylaşım: yönetim kapsamı 3
-                row(8, "TEAM_UPDATE", "USER", "1", null))));                       // kaynak türü uymuyor → gizli
+                row(8, "TEAM_UPDATE", "USER", "1", null)));                        // kaynak türü uymuyor → gizli
         var f = service.feed(List.of(
                         acc("teams", List.of(1L)), acc("contacts", List.of(1L)), acc("groups", List.of(1L)),
                         acc("sharing", List.of(3L))),
@@ -144,6 +157,12 @@ class AdminActivityFeedServiceTest {
         assertThat(f.total()).isEqualTo(3);
         assertThat(f.hidden()).isEqualTo(2);           // silinmiş kişi + kaynak türü uymayan
         assertThat(f.truncated()).isFalse();
+        // 2026-11-17 performans: pencere COUNT'suz liste; kişi tablosu YALNIZ okunan kişilerin takımı için (findAll yok)
+        verify(auditRepo, never()).findAdminFeed(anyCollection(), anyString(), any(Pageable.class));
+        verify(contactRepo, never()).findAll();
+        @SuppressWarnings("unchecked") ArgumentCaptor<Collection<Long>> ids = ArgumentCaptor.forClass(Collection.class);
+        verify(contactRepo).findTeamIdsByIdIn(ids.capture());
+        assertThat(ids.getValue()).containsExactlyInAnyOrder(30L, 99L);
     }
 
     @Test
@@ -152,9 +171,9 @@ class AdminActivityFeedServiceTest {
         when(groupHistory.rowTeams(anyList())).thenReturn(Map.of(
                 1L, new NotificationGroupHistoryService.RowTeams(2L, java.util.Set.of(1L, 2L)),   // taşıma A → B
                 2L, new NotificationGroupHistoryService.RowTeams(1L, java.util.Set.of(1L))));     // taşımadan önceki düzenleme
-        when(auditRepo.findAdminFeed(anyCollection(), anyString(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of(
+        when(auditRepo.findAdminFeedWindow(anyCollection(), anyString(), anyInt())).thenReturn(List.of(
                 row(1, "NOTIFICATION_GROUP_UPDATE", "NOTIFICATION_GROUP", "40", null),
-                row(2, "NOTIFICATION_GROUP_UPDATE", "NOTIFICATION_GROUP", "40", null))));
+                row(2, "NOTIFICATION_GROUP_UPDATE", "NOTIFICATION_GROUP", "40", null)));
         var a = service.feed(List.of(acc("groups", List.of(1L))), null, "", 0, 25);
         assertThat(a.items()).extracting(e -> e.row().getId()).containsExactly(1L, 2L);
         var b = service.feed(List.of(acc("groups", List.of(2L))), null, "", 0, 25);
@@ -169,7 +188,7 @@ class AdminActivityFeedServiceTest {
         for (int i = 0; i < AdminActivityFeedService.WINDOW_MAX; i++) {
             rows.add(row(i + 1, i % 2 == 0 ? "TEAM_UPDATE" : "ONCALL_SCHEDULE_SAVE", "TEAM", "1", null));
         }
-        when(auditRepo.findAdminFeed(anyCollection(), anyString(), any(Pageable.class))).thenReturn(new PageImpl<>(rows));
+        when(auditRepo.findAdminFeedWindow(anyCollection(), anyString(), anyInt())).thenReturn(rows);
         var f = service.feed(List.of(acc("teams", List.of(1L))), null, "", 1, 10);
         assertThat(f.total()).isEqualTo(AdminActivityFeedService.WINDOW_MAX / 2);
         assertThat(f.items()).hasSize(10).allMatch(e -> "teams".equals(e.area()));
@@ -180,12 +199,10 @@ class AdminActivityFeedServiceTest {
     @Test
     @DisplayName("2026-11-13 hata taraması: taşınan kişinin taşıma satırı İKİ takıma görünür; taşımadan önceki satır eski takımda kalır")
     void contactMoveRowVisibleToBothTeams() {
-        EscalationContact c = new EscalationContact();
-        c.setId(30L); c.setTeamId(2L);                                            // kişi ŞİMDİ B'de
-        when(contactRepo.findAll()).thenReturn(List.of(c));
+        when(contactRepo.findTeamIdsByIdIn(anyCollection())).thenReturn(List.<Object[]>of(new Object[]{30L, 2L}));   // kişi ŞİMDİ B'de
         AuditLog move = row(2, "CONTACT_UPDATE", "ESCALATION_CONTACT", "30", "{\"teamId\":{\"from\":1,\"to\":2}}");
         AuditLog before = row(1, "CONTACT_UPDATE", "ESCALATION_CONTACT", "30", "{\"role\":{\"from\":\"PO\",\"to\":\"TECH\"}}");
-        when(auditRepo.findAdminFeed(anyCollection(), anyString(), any(Pageable.class))).thenReturn(new PageImpl<>(List.of(move, before)));
+        when(auditRepo.findAdminFeedWindow(anyCollection(), anyString(), anyInt())).thenReturn(List.of(move, before));
         when(auditRepo.findByResourceTypeAndEventTypeAndResourceIdInAndChangesContaining(eq("ESCALATION_CONTACT"), eq("CONTACT_UPDATE"), anyCollection(), any(), any(Pageable.class)))
                 .thenReturn(List.of(move, before));
         var a = service.feed(List.of(acc("contacts", List.of(1L))), null, "", 0, 25);

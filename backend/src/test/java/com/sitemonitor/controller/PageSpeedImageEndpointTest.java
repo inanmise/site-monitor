@@ -121,6 +121,81 @@ class PageSpeedImageEndpointTest {
         verify(images).imageFromStored(URL, 420_000L, true, "u:2");
         verify(auditService).recordAction(eq("PAGE_RESOURCE_IMAGE_DOWNLOAD"), any(HttpSession.class), eq("PAGESPEED_MONITOR"),
                 eq("71"), org.mockito.ArgumentMatchers.contains("\"check_id\":900"), isNull());
+        // check_id gönderilmedi → bugünkü izleme geneli arama (ölçüm sorguları hiç çalışmaz)
+        verify(pageSpeedResourceRepo, never()).findStoredImageInCheck(any(), any(), anyString());
+        verify(pageSpeedResourceRepo, never()).anyRowOfCheck(any(), any());
+    }
+
+    private static PageSpeedResource stored(long checkId, long bytes) {
+        PageSpeedResource r = new PageSpeedResource();
+        r.setMonitorId(71L);
+        r.setCheckId(checkId);
+        r.setUrl(URL);
+        r.setType("IMG");
+        r.setBytes(bytes);
+        return r;
+    }
+
+    @Test
+    @DisplayName("2026-11-17 performans: check_id verilince adres YALNIZ o ölçümde aranır (izleme geneli arama yok); denetim o ölçümün kimliğiyle")
+    void checkIdFoundInThatCheck() throws Exception {
+        when(pageSpeedResourceRepo.findStoredImageInCheck(71L, 950L, URL)).thenReturn(List.of(stored(950L, 333_000L)));
+        mvc.perform(req(PATH, "{\"url\":\"" + URL + "\",\"check_id\":950}", session("USER", 5L, 2L)))
+                .andExpect(status().isOk())
+                .andExpect(content().bytes(PNG));
+        verify(images).imageFromStored(URL, 333_000L, true, "u:2");
+        verify(pageSpeedResourceRepo, never()).findStoredImage(any(), anyString());
+        verify(pageSpeedResourceRepo, never()).anyRowOfCheck(any(), any());
+        verify(auditService).recordAction(eq("PAGE_RESOURCE_IMAGE_DOWNLOAD"), any(HttpSession.class), eq("PAGESPEED_MONITOR"),
+                eq("71"), org.mockito.ArgumentMatchers.contains("\"check_id\":950"), isNull());
+        // sayısal metin de kabul
+        mvc.perform(req(PATH, "{\"url\":\"" + URL + "\",\"check_id\":\"950\"}", session("USER", 5L, 2L)))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("2026-11-17: satırı DURAN başka bir ölçümün kimliği, adres onda yok → 404 RESOURCE_IMAGE_NOT_FOUND; izleme geneli aramaya düşmez, dışarıya istek yok")
+    void otherCheckIs404() throws Exception {
+        when(pageSpeedResourceRepo.findStoredImageInCheck(71L, 901L, URL)).thenReturn(List.of());
+        when(pageSpeedResourceRepo.anyRowOfCheck(71L, 901L)).thenReturn(List.of(5L));
+        mvc.perform(req(PATH, "{\"url\":\"" + URL + "\",\"check_id\":901}", session("USER", 5L, 2L)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RESOURCE_IMAGE_NOT_FOUND"));
+        verify(pageSpeedResourceRepo, never()).findStoredImage(any(), anyString());
+        verify(images, never()).imageFromStored(anyString(), any(), anyBoolean(), anyString());
+        verify(auditService, never()).recordAction(anyString(), any(HttpSession.class), anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    @DisplayName("2026-11-17: ölçümün bu izlemede satırı kalmadı (son ölçüm yeniden yazıldı / başka izlemenin ölçümü) → bugünkü izleme geneli arama, aynı sonuç")
+    void vanishedCheckFallsBackToMonitorWide() throws Exception {
+        when(pageSpeedResourceRepo.findStoredImageInCheck(71L, 777L, URL)).thenReturn(List.of());
+        when(pageSpeedResourceRepo.anyRowOfCheck(71L, 777L)).thenReturn(List.of());
+        mvc.perform(req(PATH, "{\"url\":\"" + URL + "\",\"check_id\":777}", session("USER", 5L, 2L)))
+                .andExpect(status().isOk());
+        verify(pageSpeedResourceRepo).findStoredImage(71L, URL);
+        verify(images).imageFromStored(URL, 420_000L, true, "u:2");
+        // geri düşüşte de güvenlik kuralı aynı: bu izlemenin saklanmayan adresi → 404
+        when(pageSpeedResourceRepo.findStoredImageInCheck(71L, 777L, "https://evil.example.test/x.png")).thenReturn(List.of());
+        mvc.perform(req(PATH, "{\"url\":\"https://evil.example.test/x.png\",\"check_id\":777}", session("USER", 5L, 2L)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RESOURCE_IMAGE_NOT_FOUND"));
+    }
+
+    @Test
+    @DisplayName("2026-11-17: geçersiz check_id (metin, sıfır / eksi, ondalık, mantıksal, çok uzun) → 400 VALIDATION_FAILED alan check_id; arama yok")
+    void invalidCheckId() throws Exception {
+        for (String bad : List.of("\"abc\"", "0", "-3", "1.5", "true", "\"99999999999999999999\"", "\"\"", "{}")) {
+            mvc.perform(req(PATH, "{\"url\":\"" + URL + "\",\"check_id\":" + bad + "}", session("USER", 5L, 2L)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.field").value("check_id"));
+        }
+        // null = gönderilmemiş sayılır (eski davranış)
+        mvc.perform(req(PATH, "{\"url\":\"" + URL + "\",\"check_id\":null}", session("USER", 5L, 2L)))
+                .andExpect(status().isOk());
+        verify(pageSpeedResourceRepo, never()).findStoredImageInCheck(any(), any(), anyString());
+        verify(images, org.mockito.Mockito.times(1)).imageFromStored(anyString(), any(), anyBoolean(), anyString());
     }
 
     @Test

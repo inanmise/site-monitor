@@ -42,6 +42,28 @@ public class AlertTeamStatsService {
     private final CertificateInventoryRepository inventoryRepo;
     private final TeamRepository teamRepo;
 
+    /**
+     * Kurum geneli ham veri belleği (2026-11-17, performans): Alarm Geçmişi paneli ve İstatistikler takım karnesi bu ucu her
+     * kullanıcı için yokluyor; her çağrı envanteri + açık ve 30 günlük alarm satırlarını yeniden okuyordu. Kapsam süzgeci
+     * HER çağrıda bellekte uygulanır (anahtar kapsamdan bağımsız — tek kurum anlık görüntüsü). Okuma hatası
+     * ({@link UnavailableException}) saklanmaz; takım adları okunamadıysa anlık görüntü de saklanmaz (bir sonraki çağrı yeniden
+     * okur). {@code site.monitor.alert-team-stats.cache-ms}; 0 → kapalı (birim testinde {@code new} ile kurulunca varsayılan).
+     */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.alert-team-stats.cache-ms:30000}")
+    long cacheMs;
+    private final com.sitemonitor.util.TtlMemo<Snapshot> memo = new com.sitemonitor.util.TtlMemo<>(4);
+    static final String MEMO_KEY = "ORG";
+
+    /** Bir alarmın dar satırı (yinelenmeler atılmış). */
+    private record Ev(Long teamId, String domain, Boolean resolved, String createdAt) {}
+
+    /**
+     * Kurum geneli ham veri — kapsamdan bağımsız, PAYLAŞILIR (değiştirilmez). Pencere sınırları okuma anındaki "şimdi"ye
+     * göredir; bellekten okuyan çağrı aynı sınırları kullanır (sonuç, anlık görüntü anında yapılan çağrıyla aynı).
+     */
+    private record Snapshot(Map<String, Long> domainTeam, Map<String, Long> domainUg, List<Ev> events,
+                            Map<Long, String> names, boolean namesFailed, String since30, String since7) {}
+
     /** Satır: takım → açık / kapalı / son 7 gün / son 30 gün. */
     private static final class Row {
         long open, closed, last7, last30;
@@ -56,11 +78,17 @@ public class AlertTeamStatsService {
     }
 
     public Map<String, Object> build(Predicate<Long> canViewTeam, boolean globalViewer) {
+        Snapshot snap = memo.get(MEMO_KEY, cacheMs, false, this::load, v -> v.namesFailed() ? 0L : Long.MAX_VALUE);
+        return compute(snap, canViewTeam, globalViewer);
+    }
+
+    /** Kurum geneli ham veri — okuma hatası {@link UnavailableException} fırlatır (bellek onu saklamaz). */
+    private Snapshot load() {
         Map<String, Long> domainTeam = new LinkedHashMap<>();
         Map<String, Long> domainUg = new LinkedHashMap<>();
         String since30 = ISO.format(Instant.now().minus(WINDOW_DAYS, ChronoUnit.DAYS));
         String since7 = ISO.format(Instant.now().minus(7, ChronoUnit.DAYS));
-        List<Object[]> events = new ArrayList<>();
+        List<Object[]> raw = new ArrayList<>();
         try {
             // Dar izdüşüm (2026-11-13, performans): tam envanter / alarm entity'si (context_json dahil) okunmaz
             for (Object[] r : inventoryRepo.findActiveDomainTeams()) {
@@ -69,26 +97,47 @@ public class AlertTeamStatsService {
                 if (r[1] instanceof Number n) domainTeam.put(domain, n.longValue());
                 if (r.length > 2 && r[2] instanceof Number u) domainUg.put(domain, u.longValue());
             }
-            events.addAll(alertEventRepo.findOpenTeamStatRows());                                  // açıklar: pencereden bağımsız
-            events.addAll(alertEventRepo.findTeamStatRowsSince(since30));
+            raw.addAll(alertEventRepo.findOpenTeamStatRows());                                  // açıklar: pencereden bağımsız
+            raw.addAll(alertEventRepo.findTeamStatRowsSince(since30));
         } catch (RuntimeException e) {
             log.warn("takım kırılımı: envanter / alarm okunamadı: {}", e.toString());
             throw new UnavailableException(e);
         }
+        List<Ev> events = new ArrayList<>(raw.size());
+        java.util.Set<Long> seen = new java.util.HashSet<>();
+        for (Object[] r : raw) {
+            if (r == null || r.length < 5) continue;
+            Long id = r[0] instanceof Number n ? Long.valueOf(n.longValue()) : null;
+            if (id != null && !seen.add(id)) continue;   // iki sorgunun kesişimi bir kez sayılır
+            events.add(new Ev(r[1] instanceof Number n ? Long.valueOf(n.longValue()) : null,
+                    r[2] == null ? null : String.valueOf(r[2]),
+                    r[3] instanceof Boolean b ? b : null,
+                    r[4] == null ? null : String.valueOf(r[4])));
+        }
+        Map<Long, String> names = new LinkedHashMap<>();
+        boolean namesFailed = false;
+        try { for (Team t : teamRepo.findAll()) names.put(t.getId(), t.getName()); }
+        catch (Exception e) { log.debug("takım kırılımı: takım adları okunamadı: {}", e.toString()); namesFailed = true; }
+        return new Snapshot(java.util.Collections.unmodifiableMap(domainTeam), java.util.Collections.unmodifiableMap(domainUg),
+                java.util.Collections.unmodifiableList(events), java.util.Collections.unmodifiableMap(names), namesFailed,
+                since30, since7);
+    }
 
+    /** Kapsam süzgeci + sayım — her çağrıda, bellekteki ham veriden (DB okuması yok). */
+    private static Map<String, Object> compute(Snapshot snap, Predicate<Long> canViewTeam, boolean globalViewer) {
+        Map<String, Long> domainTeam = snap.domainTeam();
+        Map<String, Long> domainUg = snap.domainUg();
+        String since30 = snap.since30();
+        String since7 = snap.since7();
         Map<Long, Row> rows = new LinkedHashMap<>();
         Row unassigned = new Row();
         long totalOpen = 0, totalClosed = 0, total7 = 0, total30 = 0;
 
-        java.util.Set<Long> seen = new java.util.HashSet<>();
-        for (Object[] r : events) {
-            if (r == null || r.length < 5) continue;
-            Long id = r[0] instanceof Number n ? Long.valueOf(n.longValue()) : null;
-            Long teamId = r[1] instanceof Number n ? Long.valueOf(n.longValue()) : null;
-            String eventDomain = r[2] == null ? null : String.valueOf(r[2]);
-            Boolean resolved = r[3] instanceof Boolean b ? b : null;
-            String createdAt = r[4] == null ? null : String.valueOf(r[4]);
-            if (id != null && !seen.add(id)) continue;   // iki sorgunun kesişimi bir kez sayılır
+        for (Ev ev : snap.events()) {
+            Long teamId = ev.teamId();
+            String eventDomain = ev.domain();
+            Boolean resolved = ev.resolved();
+            String createdAt = ev.createdAt();
             // Alarmın takımları (2026-10-22, ALERTS-3 / DATA-5): damga + envanterin SY ve UG takımı — hücre penceresinin
             // açtığı Alarm Geçmişi süzgeciyle (teamId = X → damga ya da envanter SY / UG) AYNI küme; böylece satırdaki
             // "(N)" pencerede listelenen satır sayısına eşit olur ve UG takımı kendi alarmlarını görür. Toplamlar her
@@ -122,9 +171,7 @@ public class AlertTeamStatsService {
             if (in7) total7++;
         }
 
-        Map<Long, String> names = new LinkedHashMap<>();
-        try { for (Team t : teamRepo.findAll()) names.put(t.getId(), t.getName()); }
-        catch (Exception e) { log.debug("takım kırılımı: takım adları okunamadı: {}", e.toString()); }
+        Map<Long, String> names = snap.names();
 
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map.Entry<Long, Row> en : rows.entrySet()) out.add(row(en.getKey(), names.get(en.getKey()), en.getValue()));

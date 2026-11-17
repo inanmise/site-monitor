@@ -336,6 +336,17 @@ export function imageItemOf(r) {
 /** Görsel aracı deposunun anahtarı (kaynak analizi tarama kimliğinden ayrı ad alanı). */
 export const imageScopeKey = (checkId) => `ps-${checkId ?? 'latest'}`
 
+/**
+ * Anahtardaki ölçüm kimliği (2026-11-17, performans): görsel isteği bunu `check_id` olarak gönderir — sunucu adresi yalnız o
+ * ölçümün saklanan görselleri arasında arar. `ps-latest` / bozuk anahtar → null (kimlik gönderilmez, eski davranış).
+ */
+export function checkIdOfScope(scope) {
+  const m = /^ps-(\d{1,15})$/.exec(typeof scope === 'string' ? scope : '')
+  if (!m) return null
+  const n = Number(m[1])
+  return Number.isSafeInteger(n) && n > 0 ? n : null
+}
+
 // ── Süre sınırı ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
 /**

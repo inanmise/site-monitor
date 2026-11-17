@@ -283,4 +283,100 @@ class PageSpeedResourceRepositoryTest {
         assertThat(repo.findStoredImage(1L, "https://b/other.png")).isEmpty();
         assertThat(repo.findStoredImage(1L, "https://a/HERO.png")).isEmpty();
     }
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("2026-11-17 performans: ilişkisiz (InitPlan) tek kopya kuralı = Java kahini — BREACH'li ölçüm, BREACH'siz ölçüm, başka izlemenin aynı ölçüm kimliği, başka ölçümün BREACH'i")
+    void oneCopyRuleMatchesJavaOracle() {
+        repo.saveAll(List.of(
+                // izleme 1, ölçüm 20: LATEST + BREACH (ihlal anı) → yalnız BREACH
+                res(1, 20L, PageSpeedResource.KEEP_LATEST, "https://a/1.js", "JS", 900, 200, false),
+                res(1, 20L, PageSpeedResource.KEEP_LATEST, "https://a/2.png", "IMG", 500, 404, true),
+                res(1, 20L, PageSpeedResource.KEEP_BREACH, "https://a/1.js", "JS", 900, 200, false),
+                res(1, 20L, PageSpeedResource.KEEP_BREACH, "https://a/2.png", "IMG", 500, 404, true),
+                // izleme 1, ölçüm 21: yalnız LATEST; ölçüm 19 BREACH satırı onu gizlemez
+                res(1, 21L, PageSpeedResource.KEEP_LATEST, "https://a/3.css", "CSS", 300, 200, false),
+                res(1, 21L, PageSpeedResource.KEEP_LATEST, "https://a/4.js", "JS", 200, null, true),
+                res(1, 19L, PageSpeedResource.KEEP_BREACH, "https://a/eski.js", "JS", 50, 200, false),
+                // izleme 2: AYNI ölçüm kimliği 21 BREACH ile (bozuk / el yapımı veri) → izleme 1 LATEST satırlarını gizlemez
+                res(2, 21L, PageSpeedResource.KEEP_BREACH, "https://b/x.js", "JS", 70, 200, false),
+                // izleme 2, ölçüm 20: yalnız LATEST — izleme 1 ölçüm 20 BREACH satırları onu gizlemez
+                res(2, 20L, PageSpeedResource.KEEP_LATEST, "https://b/y.js", "JS", 80, 200, false),
+                // kimliksiz satır hiçbir ölçüme düşmez
+                res(1, null, PageSpeedResource.KEEP_LATEST, "https://a/kimliksiz.js", "JS", 10, 200, false)));
+        List<PageSpeedResource> all = repo.findAll();
+        var any = com.sitemonitor.controller.MonitoringController.ResFilter.of(null, null, false);
+        var failedOnly = com.sitemonitor.controller.MonitoringController.ResFilter.of(null, null, true);
+        for (long m : new long[]{1L, 2L, 3L}) {
+            for (long c : new long[]{19L, 20L, 21L, 22L}) {
+                // Kahin: eski (ilişkili) kuralın Java karşılığı
+                boolean hasBreach = all.stream().anyMatch(b -> b.getMonitorId() == m && Long.valueOf(c).equals(b.getCheckId())
+                        && PageSpeedResource.KEEP_BREACH.equals(b.getKeepReason()));
+                List<Long> oracle = all.stream()
+                        .filter(r -> r.getMonitorId() == m && Long.valueOf(c).equals(r.getCheckId()))
+                        .filter(r -> PageSpeedResource.KEEP_BREACH.equals(r.getKeepReason()) || !hasBreach)
+                        .map(PageSpeedResource::getId).sorted().toList();
+                String at = "izleme " + m + " ölçüm " + c;
+                var page = repo.checkPage(m, c, any.allTypes(), any.types(), any.party(), any.failed(),
+                        org.springframework.data.domain.PageRequest.of(0, 50));
+                assertThat(page.getContent().stream().map(PageSpeedResource::getId).sorted().toList()).as(at).isEqualTo(oracle);
+                assertThat(page.getTotalElements()).as(at).isEqualTo(oracle.size());
+                assertThat(repo.countByMonitorIdAndCheckId(m, c)).as(at).isEqualTo(oracle.size());
+                assertThat(repo.waterfall(m, c, 100).stream().map(PageSpeedResource::getId).sorted().toList()).as(at).isEqualTo(oracle);
+                long facetTotal = repo.checkFacets(m, c).stream().mapToLong(row -> ((Number) row[3]).longValue()).sum();
+                assertThat(facetTotal).as(at).isEqualTo(oracle.size());
+                // süzgeçli sayfa: yalnız alınamayanlar (statusCode NULL ya da >= 400) — kural süzgeçle birlikte de aynı
+                long oracleFailed = all.stream().filter(r -> oracle.contains(r.getId()))
+                        .filter(r -> r.getStatusCode() == null || r.getStatusCode() >= 400).count();
+                assertThat(repo.checkPage(m, c, failedOnly.allTypes(), failedOnly.types(), failedOnly.party(), failedOnly.failed(),
+                        org.springframework.data.domain.PageRequest.of(0, 50)).getTotalElements()).as(at + " (alınamayan)").isEqualTo(oracleFailed);
+            }
+        }
+        // somut beklentiler (kahin de yanılmasın)
+        assertThat(repo.countByMonitorIdAndCheckId(1L, 20L)).isEqualTo(2);
+        assertThat(repo.countByMonitorIdAndCheckId(1L, 21L)).isEqualTo(2);
+        assertThat(repo.countByMonitorIdAndCheckId(2L, 21L)).isEqualTo(1);
+        assertThat(repo.countByMonitorIdAndCheckId(2L, 20L)).isEqualTo(1);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("2026-11-17 performans: görsel köprüsü ölçüm kimliğiyle — yalnız o ölçümün saklı GÖRSEL satırı; ölçümün satırı var mı (en çok 1)")
+    void findStoredImageInCheck_onlyThatCheck() {
+        repo.saveAll(List.of(
+                res(1, 20L, PageSpeedResource.KEEP_BREACH, "https://a/hero.png", "IMG", 420_000, 200, false),
+                res(1, 21L, PageSpeedResource.KEEP_LATEST, "https://a/hero.png", "IMG", 430_000, 200, false),
+                res(1, 21L, PageSpeedResource.KEEP_LATEST, "https://a/app.js", "JS", 1000, 200, false),
+                res(2, 22L, PageSpeedResource.KEEP_LATEST, "https://a/hero.png", "IMG", 5, 200, false)));
+        assertThat(repo.findStoredImageInCheck(1L, 21L, "https://a/hero.png")).singleElement()
+                .satisfies(r -> assertThat(r.getBytes()).isEqualTo(430_000L));
+        assertThat(repo.findStoredImageInCheck(1L, 20L, "https://a/hero.png")).singleElement()
+                .satisfies(r -> assertThat(r.getBytes()).isEqualTo(420_000L));
+        assertThat(repo.findStoredImageInCheck(1L, 21L, "https://a/app.js")).isEmpty();          // görsel değil
+        assertThat(repo.findStoredImageInCheck(1L, 22L, "https://a/hero.png")).isEmpty();        // başka izlemenin ölçümü
+        assertThat(repo.findStoredImageInCheck(1L, 23L, "https://a/hero.png")).isEmpty();
+        assertThat(repo.anyRowOfCheck(1L, 21L)).hasSize(1);
+        assertThat(repo.anyRowOfCheck(1L, 22L)).isEmpty();
+        assertThat(repo.anyRowOfCheck(2L, 22L)).hasSize(1);
+        assertThat(repo.anyRowOfCheck(1L, 99L)).isEmpty();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("İhlal anları listesi: yalnız bu izlemenin BREACH ölçümleri, ölçüm başına bir satır, en yeniden eskiye, sınır")
+    void breachSnapshots_perMonitorNewestFirst() {
+        PageSpeedResource a = res(1, 20L, PageSpeedResource.KEEP_BREACH, "https://a/1.js", "JS", 1, 200, false);
+        a.setCheckedAt("2026-11-10T10:00:00");
+        PageSpeedResource a2 = res(1, 20L, PageSpeedResource.KEEP_BREACH, "https://a/2.js", "JS", 1, 200, false);
+        a2.setCheckedAt("2026-11-10T10:00:00");
+        PageSpeedResource b = res(1, 21L, PageSpeedResource.KEEP_BREACH, "https://a/1.js", "JS", 1, 200, false);
+        b.setCheckedAt("2026-11-12T10:00:00");
+        PageSpeedResource latest = res(1, 22L, PageSpeedResource.KEEP_LATEST, "https://a/1.js", "JS", 1, 200, false);
+        latest.setCheckedAt("2026-11-13T10:00:00");
+        PageSpeedResource other = res(2, 30L, PageSpeedResource.KEEP_BREACH, "https://b/1.js", "JS", 1, 200, false);
+        other.setCheckedAt("2026-11-14T10:00:00");
+        repo.saveAll(List.of(a, a2, b, latest, other));
+        assertThat(repo.breachSnapshots(1L, 20)).extracting(r -> ((Number) r[0]).longValue()).containsExactly(21L, 20L);
+        assertThat(repo.breachSnapshots(1L, 1)).extracting(r -> ((Number) r[0]).longValue()).containsExactly(21L);
+        assertThat(repo.breachSnapshots(3L, 20)).isEmpty();
+    }
 }

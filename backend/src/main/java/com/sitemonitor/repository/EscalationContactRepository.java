@@ -38,6 +38,16 @@ public interface EscalationContactRepository extends JpaRepository<EscalationCon
      */
     boolean existsByActiveTrueAndDelayMinutesGreaterThan(Integer minutes);
 
+    /**
+     * Kişi kimliği → takım (2026-11-17, performans): yönetim değişiklik akışı denetim satırının takımını çözerken yalnız
+     * okunan satırlardaki kişilerin takımını okur (eskiden {@code findAll()} — her kişi tam varlık). Sütunlar
+     * {@code [id, teamId]}; ad / e-posta / webhook DÖNMEZ, alıcı çözümünde kullanılmaz (takım süzgeci bilinçli yok — kişiler
+     * kimlikle seçilir; kişi kaydı döndürmediği için {@code EscalationContactScopeTest}'in kişi sorgusu kapısı kapsamında
+     * değil). Çağıran kimlikleri öbekler.
+     */
+    @org.springframework.data.jpa.repository.Query("SELECT c.id, c.teamId FROM EscalationContact c WHERE c.id IN :ids")
+    List<Object[]> findTeamIdsByIdIn(@org.springframework.data.repository.query.Param("ids") java.util.Collection<Long> ids);
+
     // ── Toplu işlem hedefli yazımları (2026-11-13) ─────────────────────────────────────────────
     // Bayat bir okumadan TÜM varlık yazılmaz: aynı anda yapılan tekil düzenleme (ad, e-posta, webhook, gecikme) asla
     // ezilmez. Her UPDATE yalnız kendi kolonunu yazar ve okunan değere koşulludur — 0 satır = kayıt bu arada değişti.
