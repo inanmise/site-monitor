@@ -44,6 +44,7 @@ import {
 import { storageOwner } from '../../utils/personalStorage.js'
 import { errorInfoOf } from '../../utils/errorMessages.js'
 import { useElementHeight } from '../../hooks/useElementHeight.js'
+import { useStickyBottomBar } from '../../hooks/useStickyBottomBar.js'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
 import { cn } from '@/lib/utils'
 import { useLatestCallback } from '../../hooks/useLatestCallback.js'
@@ -239,6 +240,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   // A4 (2026-10-17): yapışkan eylem çubuğunun GERÇEK yüksekliği → kabın alt boşluğu (sabit pb-24 üç satıra sarılan
   // çubukta son bölüm kartını örtüyordu); ölçüm yokken (jsdom / ilk boyama) pb-24 taban kalır
   const [actionsRef, actionsHeight] = useElementHeight()
+  const actionsBarRef = useStickyBottomBar(actionsRef)
   const historyBtnRef = useRef(null)
   const titleRef = useRef(null)
   const seq = useRef(0)
@@ -1699,7 +1701,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       <ReportHistorySheet reportId={reportId} open={historyOpen} onClose={() => setHistoryOpen(false)} uiLang={uiLang}
         returnFocusRef={historyBtnRef} />
 
-      <div ref={actionsRef}
+      <div ref={actionsBarRef}
         className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-2 rounded-t-xl border-t bg-background/95 px-1 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur"
         data-slot="te-report-actions">
         <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]" aria-live="polite" data-slot="te-save-status"

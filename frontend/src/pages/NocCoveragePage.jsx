@@ -29,6 +29,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { useElementWidthState } from '../hooks/useElementWidth.js'
+import { useStickyBottomBar } from '../hooks/useStickyBottomBar.js'
 
 /**
  * **7/24 Kapsamı** (`?tab=noc`, 2026-09-27; `.migration/noc/CONTRACT.md`).
@@ -80,6 +81,7 @@ export default function NocCoveragePage({
   systemRole = 'USER', globalAdmin = false, myTeamIds = [], myTeams = [], userId = null, refreshKey = null, nocOperator = false,
 }) {
   const t = useT()
+  const stickyBarRef = useStickyBottomBar()
   const toast = useToast()
   const copyLink = useCopyLink()
   const isMobile = useIsMobile()
@@ -412,7 +414,7 @@ export default function NocCoveragePage({
           </section>
 
           {selectedLive.length > 0 && (
-            <div data-slot="noc-bulk-bar" role="region" aria-label={t('noc.bulkRegion')}
+            <div ref={stickyBarRef} data-slot="noc-bulk-bar" role="region" aria-label={t('noc.bulkRegion')}
               className="sticky bottom-0 z-[60] flex flex-wrap items-center gap-2 rounded-xl border border-primary bg-card/95 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-4px_18px_rgba(0,0,0,.10)] backdrop-blur">
               <span className="mr-auto text-sm font-semibold tabular-nums">{t('noc.bulkSelected', selectedLive.length)}</span>
               <Button type="button" variant="outline" className="h-10 flex-1 sm:h-9 sm:flex-none sm:pointer-coarse:h-10" onClick={() => setSelected(new Set())} disabled={bulkBusy}>

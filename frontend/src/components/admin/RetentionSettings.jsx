@@ -22,6 +22,7 @@ import { SETTINGS_STACK, SettingsHeader, SettingsSection, ToggleRow } from './Se
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { cn } from '@/lib/utils'
+import { useStickyBottomBar } from '../../hooks/useStickyBottomBar.js'
 
 /** Veri sınıfı sırası — uyum onayı gerektirenler üstte. */
 const CLASSES = [
@@ -42,6 +43,7 @@ const CLASSES = [
  */
 export default function RetentionSettings({ readOnly = false }) {
   const t = useT()
+  const stickyBarRef = useStickyBottomBar()
   const toast = useToast()
   const { showConfirm, showPrompt } = useDialog()
 
@@ -399,7 +401,7 @@ export default function RetentionSettings({ readOnly = false }) {
 
       {/* ── Yapışkan gözden geçir/kaydet çubuğu ── (telefonda güvenli alan payı) */}
       {pending.length > 0 && (
-        <div data-slot="retention-sticky-bar"
+        <div ref={stickyBarRef} data-slot="retention-sticky-bar"
           className="sticky bottom-0 z-[60] mt-2 flex flex-wrap items-center gap-2.5 rounded-xl border border-primary bg-card px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-4px_18px_rgba(0,0,0,.10)]">
           <span className="mr-auto inline-flex items-center gap-2 text-[13px] font-bold">
             <span aria-hidden="true" className="size-2.5 rounded-full bg-amber-500 ring-3 ring-amber-500/25" />

@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { useStickyBottomBar } from '../../hooks/useStickyBottomBar.js'
 import {
   ArrowDown, ArrowUp, BookmarkPlus, Braces, ChartColumn, ChevronDown, CircleAlert, FileSearch, FileText, Gauge, History, Import,
   LibraryBig, ListPlus, Plus, RefreshCw, RotateCcw, Save, ScrollText, Table2, Trash2, TrendingUp, TriangleAlert, Undo2,
@@ -123,6 +124,7 @@ export const TplClientErrorContext = createContext(null)
 
 export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
   const t = useT()
+  const stickyBarRef = useStickyBottomBar()
   const toast = useToast()
   const { showConfirm } = useDialog()
   const [state, setState] = useState({ loading: true, error: null, status: null })
@@ -698,7 +700,7 @@ export default function TemplateEditor({ channelId, onDirtyChange, onSaved }) {
       </div>
 
       {canEdit && (
-        <div className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-2 rounded-t-xl border-t bg-background/95 px-1 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur"
+        <div ref={stickyBarRef} className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-2 rounded-t-xl border-t bg-background/95 px-1 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur"
           data-slot="te-tpl-actions">
           <p className="text-sm text-muted-foreground" aria-live="polite">{dirty ? t('te.unsaved') : t('te.allSaved')}</p>
           <div className="flex flex-wrap gap-2">

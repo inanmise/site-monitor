@@ -160,9 +160,10 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 @media (min-width: 768px) { .app-body { padding-bottom: 20px; } }
 /* Yapışkan alt eylem çubuğu varken düğme zaten çubuğun ÜSTÜNE kalkar (aşağıdaki help-fab kuralı) ve sayfanın son öğesi
    çubuğun kendisidir → eski alt boşluk. Büyük boşluk kalsaydı sayfa sonunda çubuk 72 px yukarıda durup kalkmış
-   düğmenin altına girerdi. */
-body:has(.app-main .sticky.bottom-0) .app-body { padding-bottom: 12px; }
-@media (min-width: 640px) { body:has(.app-main .sticky.bottom-0) .app-body { padding-bottom: 20px; } }
+   düğmenin altına girerdi. İşareti (`data-sticky-bar`) hooks/useStickyBottomBar koyar — `body:has(...)` KULLANMA: her DOM
+   değişiminde bütün sayfanın stilini yeniden hesaplatıyordu (2026-11-17, SQL Playground'da tuş başına ~1480 öğe). */
+body[data-sticky-bar] .app-body { padding-bottom: 12px; }
+@media (min-width: 640px) { body[data-sticky-bar] .app-body { padding-bottom: 20px; } }
 
 /* ── Sidebar ─────────────────────────────────────────── */
 /* Kenar çubuğu shadcn Sidebar bileşeni (components/Nav.jsx, Tailwind) — legacy .sb-* ailesi kaldırıldı
@@ -3025,7 +3026,7 @@ body:has(.app-main .sticky.bottom-0) .app-body { padding-bottom: 12px; }
 /* Yardım düğmesi HelpDrawer'da Tailwind ile çizilir (z-40, Sheet/Dialog z-50 altında). Sayfada yapışkan alt eylem çubuğu
    varken düğme onun üstüne kalkar — yoksa çubuğun sağ ucundaki Kaydet/Gönder düğmesini örtüyordu (2026-09-27). Eski
    .help-fab sınıf kuralları öğe artık o sınıfı taşımadığı için silindi. */
-body:has(.app-main .sticky.bottom-0) [data-tour="help-fab"] { bottom: calc(88px + env(safe-area-inset-bottom)); }
+body[data-sticky-bar] [data-tour="help-fab"] { bottom: calc(88px + env(safe-area-inset-bottom)); }
 .helpd { width: min(520px, 100%); height: 100%; background: var(--bg-surface); color: var(--text); border-left: 1px solid var(--border);
   box-shadow: -12px 0 40px rgba(0,0,0,.25); display: flex; flex-direction: column; }
 .helpd-title { flex: 1; min-width: 0; }

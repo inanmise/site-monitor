@@ -15,6 +15,54 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Changed
+- **Uçtan uca performans turu.** Sonuçlar ve kararlar değişmez; yalnız maliyet düşer.
+  - **Yazarken takılma giderildi.** SQL Playground'da her tuş bütün sayfanın stilini yeniden hesaplatıyordu. Kök neden
+    App.css'teki `body:has(.app-main .sticky.bottom-0)` kuralıydı: her DOM değişiminde ~1480 öğe yeniden hesaplanıyordu
+    (30 tuşta ~567 ms → ~32 ms). Kuralın işlevi korunuyor: yapışkan alt eylem çubuğu varken alt boşluk küçülür, Yardım
+    düğmesi çubuğun üstüne kalkar. Artık bunu sağlayan, çubuğun takılınca `body`'ye koyduğu bir işaret
+    (`useStickyBottomBar`).
+  - **SQL Playground yazarken yalnız editörü çizer.** Başlık, araç çubuğu, kapalı Geçmiş / Kayıtlı panelleri, sonuç
+    paneli ve şema gezgini tuş başına çizilmez. Sorgu çalışırken sayfa saniyede 10 kez yeniden çizilmez; geçen süreyi
+    küçük bir sayaç bileşeni sayar.
+  - Ölçüm (geliştirme derlemesi, 30 tuş): uzun görev 16 → 0–1.
+  - **Kanal raporu düzenleyici yazarken yalnız düzenlenen bölümü ve alanı çizer.** Öteki bölümler ertelenmiş taslakla,
+    bölünebilir çizimle güncellenir (canlı veride 10 tuşta uzun görev 8 → 0).
+  - Ayrıca daha az yeniden çizim ve arka plan okuması: İstatistikler araması, Sayfa Hızı / Sayfa bütünlüğü ayrıntı
+    sekmeleri, kaynak analizi, Olaylar, eskalasyon kişileri, Panom TV ve zaman çizelgesi.
+  - Giriş sonrası eksikler penceresi tembel yüklenir (ilk açılış 399,96 → 384,5 KB gzip).
+  - **Yoklanan uçlar tam varlık yerine dar sorgu okur.** Kapsam: takım sayaçları (`/api/admin/teams/stats`), yönetim
+    özeti, nöbetçi görünümü, alan adı rozetleri, alarm iletimi listesi, kanal şablon özeti, aynı URL uyarısı ve kullanıcı
+    etkinliği.
+  - **Yavaş SQL yolları:**
+    - Sayfa Hızı "tek kopya" kuralı satır başına alt sorgu yerine tek InitPlan çalıştırır.
+    - İhlal anları kendi dizinini kullanır.
+    - Parmak izi değişimi `MIN <> MAX` ile bulunur.
+    - Yönetici istatistikleri ve yönetim değişiklik akışı dar izdüşüm okur.
+    - Takım alarm istatistikleri kurum geneli 30 sn bellekte tutulur.
+  - **Zamanlanmış yollar:**
+    - Dinamik tabanın mevsimsel okuması periyot başına bir zaman aralığıdır (eskiden izlemenin bütün örnekleri taranıyordu).
+    - Anahtar kelime içerik değişiminin temel metni yalnız gerektiğinde okunur.
+    - Sentetik koşum sayımı kapsayan dizinle yapılır.
+    - dbquery bağlantı sağlığı başarılı çalıştırmada en çok 30 sn'de bir yazılır.
+    - Alarm akışı / alarm iletimi bildirim gruplarını tek sorguda çözer.
+- `POST /api/monitoring/pagespeed/{id}/image` isteğe bağlı `check_id` alır: adres yalnız o ölçümde aranır. Ölçüm yoksa
+  eski davranış (izleme geneli arama) geçerlidir; geçersiz kimlik → 400. Arayüz gösterilen ölçümün kimliğini gönderir.
+- **Yeni yapılandırma:** `site.monitor.alert-team-stats.cache-ms` (`ALERT_TEAM_STATS_CACHE_MS`, varsayılan 30000).
+- Yeni ertelenmiş dizinler: `idx_psr_monitor_reason_checked`, `idx_sc_checked_cover` (PostgreSQL). Açılışta değil,
+  trafik kabul edildikten sonra `CONCURRENTLY` kurulur.
+
+### Fixed
+- Canlı e2e turu güncel davranışa uyduruldu:
+  - Giriş sonrası eksikler penceresi oturumun gerçek kullanıcı adıyla bastırılır.
+  - Kayıtta 7/24 onayı sorulursa yanıtlanır.
+  - Kılavuzdaki şablon yer tutucuları (`{konu}`, `{ay} {yil}`) kod biçiminde.
+- Performans bekçileri eklendi:
+  - `e2e/perf-render.spec.js`: SQL Playground'da 30 tuşta ≤ 2 uzun görev; Sayfa Hızı'nda sekme dışında `/resources`
+    okunmaz; İstatistik aramasında grafikler değişmez.
+  - Yapışkan çubuk işareti + Yardım düğmesinin kalkması e2e'de (Veri Saklama, 390 / 768 / 1280).
+  - Kaynak kapısı: CSS'te `:has(` yok; sayfa düzeyindeki her yapışkan alt çubuk işaretini koyar.
+
 ## [20.213.4] — 2026-11-17
 
 ### Fixed

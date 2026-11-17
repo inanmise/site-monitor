@@ -12,6 +12,7 @@ import { runWithConcurrency } from '../../utils/concurrentQueue.js'
 import { navigateTo } from '../../utils/navigate.js'
 import { clientFailure } from '../../utils/errorMessages.js'
 import { writeDbQueryDraft } from '../../utils/sqlDbQueryDraft.js'
+import { useLatestCallback } from '../../hooks/useLatestCallback.js'
 import { useDialog } from '../ui/Dialog.jsx'
 import HintPopover from '../ui/HintPopover.jsx'
 import KebabMenu from '../ui/KebabMenu.jsx'
@@ -579,8 +580,26 @@ export default function SqlPlayground() {
   const isRunningHere = running?.tabId === activeTab.id && running?.kind === 'execute'
 
   // ── Parçalar ────────────────────────────────────────────────────────────────────
+  // Tuş başına yeniden çizilmeyen parçalar (2026-11-17, performans): editöre yazmak yalnız `sql`i değiştirir; başlık,
+  // araç çubuğu ve kapalı Geçmiş / Kayıtlı panelleri sabit işleyicilerle useMemo'lu öğedir — öğe kimliği aynı kalınca React
+  // o alt ağacı hiç çizmez (geliştirmede tuş başına ~50–68 ms'lik görevler bunlardan geliyordu).
+  const hasSql = Boolean(sql.trim())
+  const sqlEmpty = !sql
+  const isRunning = Boolean(running)
+  const hasSelection = Boolean(runSelection)
+  const pickQuery = useLatestCallback((s) => writeEditor(s, { replace: true }))
+  const clearEditor = useLatestCallback(() => writeEditor('', { replace: true }))
+  const runNowL = useLatestCallback(runNow)
+  const stopL = useLatestCallback(stop)
+  const openDiagramL = useLatestCallback(() => openDiagram())
+  const openSaveL = useLatestCallback(openSave)
+  const explainL = useLatestCallback(explain)
+  const toDbQueryL = useLatestCallback(toDbQuery)
+  const formatEditor = useCallback(() => editorRef.current?.format(), [])
+  const openSavedPanel = useCallback(() => setSavedOpen(true), [])
+  const openHistoryPanel = useCallback(() => setHistoryOpen(true), [])
   const rules = t('sql.pg.rules', MAX_ROWS.toLocaleString(), QUERY_TIMEOUT_SEC)
-  const meta = (
+  const meta = useMemo(() => (
     <>
       <HintPopover content={rules} aria-label={t('sql.pg.readOnlyHint')}>
         <Badge variant="outline" className="gap-1 border-success/30 bg-success/10 font-medium text-success">
@@ -595,26 +614,26 @@ export default function SqlPlayground() {
       <Badge variant="outline" className="gap-1 font-normal tabular-nums"><Table2 aria-hidden="true" /> {t('sql.pg.tablesCount', tables.length)}</Badge>
       <Badge variant="outline" className="gap-1 font-normal tabular-nums"><Gauge aria-hidden="true" /> {t('sql.pg.limits', MAX_ROWS.toLocaleString(), QUERY_TIMEOUT_SEC)}</Badge>
     </>
-  )
-  const actions = (
+  ), [t, rules, dbInfo, tables.length])
+  const actions = useMemo(() => (
     <>
-      <Button type="button" variant="outline" onClick={() => openDiagram()} className="pointer-coarse:h-10">
+      <Button type="button" variant="outline" onClick={openDiagramL} className="pointer-coarse:h-10">
         <Network /> {t('sql.pg.diagram')}
       </Button>
-      <Button type="button" variant="outline" onClick={() => writeEditor('', { replace: true })} disabled={!sql} className="pointer-coarse:h-10">
+      <Button type="button" variant="outline" onClick={clearEditor} disabled={sqlEmpty} className="pointer-coarse:h-10">
         <Eraser /> {t('sql.clear')}
       </Button>
-      {running ? (
-        <Button type="button" variant="destructive" onClick={stop} disabled={stopping} aria-busy={stopping || undefined}
+      {isRunning ? (
+        <Button type="button" variant="destructive" onClick={stopL} disabled={stopping} aria-busy={stopping || undefined}
           data-slot="sql-stop" className="pointer-coarse:h-10">
           {stopping ? <Spinner size={14} inline decorative /> : <OctagonX />}
           {stopping ? t('sql.stop.stopping') : t('sql.stop.label')}
         </Button>
       ) : (
-        <Button type="button" onClick={runNow} disabled={!sql.trim()}
+        <Button type="button" onClick={runNowL} disabled={!hasSql}
           aria-keyshortcuts={IS_MAC ? 'Meta+Enter' : 'Control+Enter'} className="pointer-coarse:h-10">
           <Play />
-          {runSelection ? t('sql.runSelection') : t('sql.run')}
+          {hasSelection ? t('sql.runSelection') : t('sql.run')}
           <KbdGroup className="ml-1 hidden sm:inline-flex" aria-hidden="true">
             <Kbd className="bg-primary-foreground/15 text-primary-foreground">{IS_MAC ? '⌘' : 'Ctrl'}</Kbd>
             <Kbd className="bg-primary-foreground/15 text-primary-foreground">↵</Kbd>
@@ -622,7 +641,11 @@ export default function SqlPlayground() {
         </Button>
       )}
     </>
-  )
+  ), [t, openDiagramL, clearEditor, sqlEmpty, isRunning, stopL, stopping, runNowL, hasSql, hasSelection])
+  const header = useMemo(() => (
+    <PageHeader icon={Database} title={t('app.sqlPlaygroundTitle')} description={t('sql.pg.desc')} meta={meta} actions={actions}
+      className="mb-3" />
+  ), [t, meta, actions])
 
   // Şema gezgini (yüzlerce tablo) her tuşta yeniden çizilmesin: props sabit, gezgin memo'lu.
   const refreshExplorer = useCallback(() => { refreshTables(); loadRelations() }, [refreshTables, loadRelations])
@@ -634,13 +657,50 @@ export default function SqlPlayground() {
   }), [tables, tablesLoading, tablesError, refreshExplorer, columnsMap, ensureColumns, fkMap, pkMap, dictionary,
     queryTable, insertFromExplorer, openTableDetails, openDiagram])
 
-  const moreItems = [
-    { label: t('sql.saved.saveAs'), icon: <BookmarkPlus />, onClick: () => openSave('create'), hidden: !savedSupported },
-    { label: t('sql.hist.open'), icon: <History />, onClick: () => setHistoryOpen(true) },
-    { label: t('sql.plan.run'), icon: <ScanSearch />, onClick: () => explain(false), disabled: !sql.trim() || Boolean(running) },
-    { label: t('sql.plan.analyze'), icon: <ScanSearch />, onClick: () => explain(true), disabled: !sql.trim() || Boolean(running) },
-    { label: t('sql.dq.create'), icon: <DatabaseZap />, onClick: toDbQuery, hidden: !canCreateMonitor, disabled: !sql.trim() },
-  ]
+  const moreItems = useMemo(() => [
+    { label: t('sql.saved.saveAs'), icon: <BookmarkPlus />, onClick: () => openSaveL('create'), hidden: !savedSupported },
+    { label: t('sql.hist.open'), icon: <History />, onClick: openHistoryPanel },
+    { label: t('sql.plan.run'), icon: <ScanSearch />, onClick: () => explainL(false), disabled: !hasSql || isRunning },
+    { label: t('sql.plan.analyze'), icon: <ScanSearch />, onClick: () => explainL(true), disabled: !hasSql || isRunning },
+    { label: t('sql.dq.create'), icon: <DatabaseZap />, onClick: toDbQueryL, hidden: !canCreateMonitor, disabled: !hasSql },
+  ], [t, openSaveL, savedSupported, openHistoryPanel, explainL, hasSql, isRunning, toDbQueryL, canCreateMonitor])
+  const saveShort = activeTab.savedId != null && activeTab.savedMine !== false
+  // Telefonda iki sütunlu ızgara (6 eylem tek satıra sıkışıp etiketleri 0 genişliğe inmesin); sm ve üstünde satır
+  const editorActions = useMemo(() => (
+    <div data-slot="sql-editor-actions" className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+      <QueryPicker kind="samples" items={samples} onPick={pickQuery} className="w-full pointer-coarse:min-h-10 sm:w-auto" />
+      <QueryPicker kind="history" items={history} onPick={pickQuery} className="w-full pointer-coarse:min-h-10 sm:w-auto" />
+      <Button type="button" variant="outline" size="sm" onClick={formatEditor} disabled={!hasSql}
+        data-slot="sql-format" aria-keyshortcuts={IS_MAC ? 'Meta+Shift+F' : 'Control+Shift+F'} className="w-full pointer-coarse:h-10 sm:w-auto">
+        <WandSparkles /> {t('sql.fmt.label')}
+      </Button>
+      {savedSupported && (
+        <>
+          <Button type="button" variant="outline" size="sm" onClick={openSavedPanel} data-slot="sql-saved-open" className="w-full pointer-coarse:h-10 sm:w-auto">
+            <BookMarked /> {t('sql.saved.short')}
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => openSaveL('update')} disabled={!hasSql} data-slot="sql-save"
+            className="w-full pointer-coarse:h-10 sm:w-auto">
+            <BookmarkPlus /> {saveShort ? t('sql.saved.saveShort') : t('sql.saved.saveNew')}
+          </Button>
+        </>
+      )}
+      <KebabMenu variant="labeled" label={t('sql.more')} items={moreItems} />
+    </div>
+  ), [samples, history, pickQuery, formatEditor, hasSql, t, savedSupported, openSavedPanel, openSaveL, saveShort, moreItems])
+
+  const historyUse = useLatestCallback((s) => { setHistoryOpen(false); writeEditor(s, { replace: true }) })
+  const historyOpenTab = useLatestCallback((s) => { setHistoryOpen(false); addNewTab({ sql: s }) })
+  const historyRun = useLatestCallback((s) => { setHistoryOpen(false); writeEditor(s, { replace: true }); run(s) })
+  const historyPanel = useMemo(() => (
+    <HistoryPanel open={historyOpen} onOpenChange={setHistoryOpen} onUse={historyUse} onOpenTab={historyOpenTab} onRun={historyRun} />
+  ), [historyOpen, historyUse, historyOpenTab, historyRun])
+  const savedOpenRow = useLatestCallback(openSavedRow)
+  const savedEditRow = useLatestCallback(editSavedRow)
+  const savedPanel = useMemo(() => (
+    <SavedQueriesPanel open={savedOpen} onOpenChange={setSavedOpen} onOpen={savedOpenRow} reloadKey={savedReload}
+      onEdit={savedEditRow} onUnsupported={markSavedUnsupported} />
+  ), [savedOpen, savedOpenRow, savedReload, savedEditRow, markSavedUnsupported])
 
   const tabsBar = (
     <SqlTabsBar state={tabsState} running={running?.tabId} onSelect={(id) => { setTabsState((s) => ({ ...s, active: id })); clearSelection() }}
@@ -659,27 +719,7 @@ export default function SqlPlayground() {
             <PanelLeft /> {t('sql.schema')}
           </Button>
         )}
-        {/* Telefonda iki sütunlu ızgara (6 eylem tek satıra sıkışıp etiketleri 0 genişliğe inmesin); sm ve üstünde satır */}
-        <div data-slot="sql-editor-actions" className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-wrap sm:items-center">
-          <QueryPicker kind="samples" items={samples} onPick={(s) => writeEditor(s, { replace: true })} className="w-full pointer-coarse:min-h-10 sm:w-auto" />
-          <QueryPicker kind="history" items={history} onPick={(s) => writeEditor(s, { replace: true })} className="w-full pointer-coarse:min-h-10 sm:w-auto" />
-          <Button type="button" variant="outline" size="sm" onClick={() => editorRef.current?.format()} disabled={!sql.trim()}
-            data-slot="sql-format" aria-keyshortcuts={IS_MAC ? 'Meta+Shift+F' : 'Control+Shift+F'} className="w-full pointer-coarse:h-10 sm:w-auto">
-            <WandSparkles /> {t('sql.fmt.label')}
-          </Button>
-          {savedSupported && (
-            <>
-              <Button type="button" variant="outline" size="sm" onClick={() => setSavedOpen(true)} data-slot="sql-saved-open" className="w-full pointer-coarse:h-10 sm:w-auto">
-                <BookMarked /> {t('sql.saved.short')}
-              </Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => openSave('update')} disabled={!sql.trim()} data-slot="sql-save"
-                className="w-full pointer-coarse:h-10 sm:w-auto">
-                <BookmarkPlus /> {activeTab.savedId != null && activeTab.savedMine !== false ? t('sql.saved.saveShort') : t('sql.saved.saveNew')}
-              </Button>
-            </>
-          )}
-          <KebabMenu variant="labeled" label={t('sql.more')} items={moreItems} />
-        </div>
+        {editorActions}
       </div>
       <SqlEditor key={activeTab.id} ref={editorRef} value={sql} onChange={setSql} onRun={(sel) => run(sel ?? undefined)} onCaret={onCaret}
         label={t('sql.editorLabel')} placeholder={t('sql.editorPlaceholder')} className="min-h-0 flex-1"
@@ -701,23 +741,39 @@ export default function SqlPlayground() {
       className={cn('max-h-64 overflow-y-auto', cls)} />
   )
 
-  const resultRows = art.result && !art.result.error && !art.result.cancelled && Array.isArray(art.result.rows) ? art.result.rows : []
-  const resultsPanel = (cls, phone = false) => (
-    <ResultsPanel result={art.result} running={isRunningHere} startedAt={runStartedAt} phone={phone} samples={samples}
-      onPickSample={(s) => writeEditor(s, { replace: true })} onRevealError={revealError} className={cls}
-      resultView={art.view ?? 'table'} onViewChange={(v) => setRtTab(activeTab.id, { view: v })}
-      onStop={stop} stopping={stopping}
-      chartSlot={resultRows.length ? (
-        <Suspense fallback={<LoadingBlock label={t('sql.chart.loading')} size={18} />}>
-          <ResultChart key={art.result?.seq} rows={resultRows} masked={art.result?.masked_columns} />
-        </Suspense>
-      ) : (
-        <div data-slot="sql-chart-none" className="p-3 text-sm text-muted-foreground">{t('sql.chart.needRows')}</div>
-      )}
-      planSlot={<PlanView state={art.plan} onExplain={explain} canRun={Boolean(sql.trim()) && !running} />}
-      compareSlot={<CompareView key={activeTab.id} runs={art.runs} pkCols={pkCols} />}
-      onServerExport={resultRows.length ? serverExport : null} serverExport={exportState} onCancelExport={cancelExport} />
-  )
+  // Sonuç paneli de tuş başına çizilmez: öğe yalnız sonuç / çalışma / görünüm / plan / karşılaştırma değişince yeniden kurulur.
+  const revealErrorL = useLatestCallback(revealError)
+  const serverExportL = useLatestCallback(serverExport)
+  const cancelExportL = useLatestCallback(cancelExport)
+  const activeTabId = activeTab.id
+  const setResultView = useLatestCallback((v) => setRtTab(activeTabId, { view: v }))
+  const canExplain = hasSql && !isRunning
+  const resultsPhone = layout === 'phone'
+  const resultsCls = layout === 'phone' ? '' : layout === 'tablet' ? 'max-h-[80dvh] min-h-80' : 'min-h-56 flex-[1_1_14rem]'
+  const artResult = art.result
+  const artView = art.view
+  const artPlan = art.plan
+  const artRuns = art.runs
+  const resultsEl = useMemo(() => {
+    const resultRows = artResult && !artResult.error && !artResult.cancelled && Array.isArray(artResult.rows) ? artResult.rows : []
+    return (
+      <ResultsPanel result={artResult} running={isRunningHere} startedAt={runStartedAt} phone={resultsPhone} samples={samples}
+        onPickSample={pickQuery} onRevealError={revealErrorL} className={resultsCls}
+        resultView={artView ?? 'table'} onViewChange={setResultView}
+        onStop={stopL} stopping={stopping}
+        chartSlot={resultRows.length ? (
+          <Suspense fallback={<LoadingBlock label={t('sql.chart.loading')} size={18} />}>
+            <ResultChart key={artResult?.seq} rows={resultRows} masked={artResult?.masked_columns} />
+          </Suspense>
+        ) : (
+          <div data-slot="sql-chart-none" className="p-3 text-sm text-muted-foreground">{t('sql.chart.needRows')}</div>
+        )}
+        planSlot={<PlanView state={artPlan} onExplain={explainL} canRun={canExplain} />}
+        compareSlot={<CompareView key={activeTabId} runs={artRuns} pkCols={pkCols} />}
+        onServerExport={resultRows.length ? serverExportL : null} serverExport={exportState} onCancelExport={cancelExportL} />
+    )
+  }, [artResult, isRunningHere, runStartedAt, resultsPhone, samples, pickQuery, revealErrorL, resultsCls, artView, setResultView,
+    stopL, stopping, t, artPlan, explainL, canExplain, activeTabId, artRuns, pkCols, serverExportL, exportState, cancelExportL])
 
   let body
   if (layout === 'phone') {
@@ -739,7 +795,7 @@ export default function SqlPlayground() {
           {paramsForm('shrink-0')}
         </TabsContent>
         <TabsContent value="results" forceMount className="data-[state=inactive]:hidden">
-          {resultsPanel('', true)}
+          {resultsEl}
         </TabsContent>
         <TabsContent value="schema" forceMount className="data-[state=inactive]:hidden">
           <SchemaExplorer {...explorerProps} className="h-[70dvh]" />
@@ -752,7 +808,7 @@ export default function SqlPlayground() {
         {tabsBar}
         {editorCard('h-80')}
         {paramsForm('shrink-0')}
-        {resultsPanel('max-h-[80dvh] min-h-80')}
+        {resultsEl}
         <Sheet open={explorerOpen} onOpenChange={setExplorerOpen}>
           <SheetContent side="left" className="w-[min(24rem,90vw)] gap-0 p-0 sm:max-w-sm">
             <SheetHeader className="border-b pr-12">
@@ -772,7 +828,7 @@ export default function SqlPlayground() {
           {tabsBar}
           {editorCard('h-[36%] min-h-44 shrink-0')}
           {paramsForm('min-h-24 shrink')}
-          {resultsPanel('min-h-56 flex-[1_1_14rem]')}
+          {resultsEl}
         </div>
       </div>
     )
@@ -780,8 +836,7 @@ export default function SqlPlayground() {
 
   return (
     <div data-slot="sql-playground" data-layout={layout} className="flex min-w-0 flex-col">
-      <PageHeader icon={Database} title={t('app.sqlPlaygroundTitle')} description={t('sql.pg.desc')} meta={meta} actions={actions}
-        className="mb-3" />
+      {header}
       {body}
 
       {tableDetail && (
@@ -799,13 +854,9 @@ export default function SqlPlayground() {
           onOpenDetails={openTableDetails} onQuery={queryTable} />
       )}
 
-      <HistoryPanel open={historyOpen} onOpenChange={setHistoryOpen}
-        onUse={(s) => { setHistoryOpen(false); writeEditor(s, { replace: true }) }}
-        onOpenTab={(s) => { setHistoryOpen(false); addNewTab({ sql: s }) }}
-        onRun={(s) => { setHistoryOpen(false); writeEditor(s, { replace: true }); run(s) }} />
+      {historyPanel}
 
-      <SavedQueriesPanel open={savedOpen} onOpenChange={setSavedOpen} onOpen={openSavedRow} reloadKey={savedReload}
-        onEdit={editSavedRow} onUnsupported={markSavedUnsupported} />
+      {savedPanel}
       {saveDlg && (
         <SaveQueryDialog open mode={saveDlg.mode} base={saveDlg.base} sql={saveDlg.sql} paramTypes={saveDlg.paramTypes}
           onClose={() => setSaveDlg(null)} onSaved={onSaved} />
