@@ -62,6 +62,7 @@ class UserActivityServiceEnrichmentTest {
     @BeforeEach
     void setUp() {
         service = new UserActivityService(auditLogRepo, userRepo, teamRepo, userService, pageUsage, jdbc, appSettings);
+        UserActivityRows.mirrorFindAll(userRepo);   // 2026-11-17 perf: servis dar satırı okur, fikstür aynı
         when(appSettings.getInt(eq("site.monitor.ui.inactivity-minutes"), anyInt())).thenReturn(30);
         when(teamRepo.findAll()).thenReturn(List.of(team(5L, "Takım A"), team(9L, "Takım B")));
         when(userRepo.findAllWithActiveSession()).thenReturn(List.of());
@@ -115,7 +116,10 @@ class UserActivityServiceEnrichmentTest {
                 "username", "user_id", "display_name", "system_role", "team_name", "auth_source", "last_login_at", "created_at");
         Map<String, Object> r = dormant.get(1);
         assertThat(r.get("team_id")).isEqualTo(9L);
-        assertThat(r.get("team_ids")).isEqualTo(List.of(9L, 5L));
+        // Sıra anlam taşımaz (AppUser.teamIds Hibernate HashSet'i olarak yüklenir); 2026-11-17 perf: dar satırdan kurulan
+        // geçici nesne de HashSet — üretimdeki varlıkla aynı hash sırası
+        @SuppressWarnings("unchecked") List<Long> teamIds = (List<Long>) r.get("team_ids");
+        assertThat(teamIds).containsExactlyInAnyOrder(9L, 5L);
         assertThat(r.get("org_role")).isEqualTo("TECH");
         assertThat(r.get("department")).isEqualTo("Bölüm X");
         assertThat(r.get("inactive_days")).isEqualTo(100L);
@@ -181,7 +185,7 @@ class UserActivityServiceEnrichmentTest {
         Map<String, Object> first = service.getDormantAccounts();
         Map<String, Object> second = service.getDormantAccounts();
         assertThat(second).isSameAs(first);
-        verify(userRepo, times(1)).findAll();
+        verify(userRepo, times(1)).findActivityRows();                         // 2026-11-17 perf: dar satır, tek okuma
         verify(teamRepo, times(1)).findAll();
         verifyNoInteractions(auditLogRepo);                                    // audit penceresi okunmaz
         @SuppressWarnings("unchecked") List<Map<String, Object>> rows = (List<Map<String, Object>>) first.get("rows");

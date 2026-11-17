@@ -482,8 +482,14 @@ class AlertForwardControllerTest {
     @DisplayName("hedef adres her satırda maskeli (gelen iletim dahil): sorgudaki gizli değer alıcıya gitmez")
     void monitorTargetMasked() throws Exception {
         rows.add(fwd(2, 3, "MONITORS", null, "http:5", "TEAM", 1, null));   // takım 1'e gelen
-        when(directory.all()).thenReturn(List.of(new NocMonitorDirectory.Row(NocType.HTTP, 5, "Ödeme API",
-                "https://pay.example.com/health?token=s3cr3t-deger&lang=tr", 3L, null, true, false, null, false)));
+        // 2026-11-17 perf: liste yalnız iletimlerin seçtiği izlemeleri okur (tür + kimlik) — on türün tamamı (all()) değil
+        when(directory.byIds(anyMap())).thenAnswer(i -> {
+            Map<NocType, ? extends java.util.Collection<Long>> wanted = i.getArgument(0);
+            assertThat(wanted).containsOnlyKeys(NocType.HTTP);
+            assertThat(wanted.get(NocType.HTTP)).containsExactly(5L);
+            return List.of(new NocMonitorDirectory.Row(NocType.HTTP, 5, "Ödeme API",
+                    "https://pay.example.com/health?token=s3cr3t-deger&lang=tr", 3L, null, true, false, null, false));
+        });
         mvc.perform(get("/api/alert-forwards").session(teamAdmin1()))
                 .andExpect(jsonPath("$.data.incoming[0].scope_monitors[0].name").value("Ödeme API"))
                 .andExpect(jsonPath("$.data.incoming[0].scope_monitors[0].target")
@@ -491,6 +497,7 @@ class AlertForwardControllerTest {
         mvc.perform(get("/api/alert-forwards").session(admin()))
                 .andExpect(jsonPath("$.data.items[0].scope_monitors[0].target")
                         .value("https://pay.example.com/health?token=*****&lang=tr"));
+        verify(directory, never()).all();
     }
 
     @Test
@@ -544,7 +551,7 @@ class AlertForwardControllerTest {
     void monitorsUnreadableStateUnknown() throws Exception {
         rows.add(fwd(1, 1, "MONITORS", null, "http:5", "TEAM", 2, null));
         rows.add(fwd(2, 1, "ALL", null, null, "TEAM", 3, null));
-        when(directory.all()).thenThrow(new RuntimeException("dizin okunamadı"));
+        when(directory.byIds(anyMap())).thenThrow(new RuntimeException("dizin okunamadı"));
         mvc.perform(get("/api/alert-forwards").session(admin()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0].state").value("unknown"))

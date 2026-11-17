@@ -64,6 +64,7 @@ class OnCallServiceTest {
             return out;
         });
         when(users.findById(anyLong())).thenAnswer(i -> Optional.of(user(i.getArgument(0), true)));
+        OnCallUserRows.mirrorFindAllById(users);   // 2026-11-17 perf: servis dar satırı okur, fikstür aynı
     }
 
     private static AppUser user(Long id, boolean active) {
@@ -206,5 +207,41 @@ class OnCallServiceTest {
         verify(overrides).deleteByTeam(1L);
         verify(users, never()).deleteAll();
         assertThat(Set.of()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("2026-11-17 perf: görünüm ve şu anki nöbetçi kişileri dar satırdan okur (findAllById / fotoğraf yok); silinmiş = missing, pasif = active:false")
+    @SuppressWarnings("unchecked")
+    void viewAndCurrentReadNarrowRows() {
+        AppUserRepository narrow = mock(AppUserRepository.class);
+        OnCallService s2 = new OnCallService(schedules, overrides, narrow);
+        when(narrow.findAllById(any())).thenThrow(new AssertionError("tam varlık okunmamalı"));
+        when(narrow.findOnCallPersonRows(anyCollection())).thenAnswer(i -> {
+            List<Object[]> out = new ArrayList<>();
+            for (Object id : (Collection<?>) i.getArgument(0)) {
+                long v = (Long) id;
+                if (v == 77L) continue;                                       // silinmiş
+                out.add(new Object[] { v, "N" + v, v == 11L ? " " : "Kişi " + v, v == 11L ? null : "kisi" + v + "@example.com", v != 99L });
+            }
+            return out;
+        });
+        OnCallSchedule legacy = new OnCallSchedule();
+        legacy.setTeamId(4L);
+        legacy.setEnabled(true);
+        legacy.setRotation("WEEKLY");
+        legacy.setAnchor(LocalDateTime.now(OnCallRotation.TZ).minusDays(1).withSecond(0).withNano(0).toString().substring(0, 16));
+        legacy.setMemberIds("10,11,77,99");
+        rows.add(legacy);
+        Map<String, Object> v = s2.view(4L, Instant.now());
+        List<Map<String, Object>> members = (List<Map<String, Object>>) v.get("members");
+        assertThat(members).extracting(m -> m.get("name")).containsExactly("Kişi 10", "N11", null, "Kişi 99");
+        assertThat(members).extracting(m -> m.get("missing")).containsExactly(false, false, true, false);
+        assertThat(members).extracting(m -> m.get("active")).containsExactly(true, true, false, false);
+        assertThat(members).extracting(m -> m.get("has_email")).containsExactly(true, false, false, true);
+        OnCallService.OnCallPerson cur = s2.currentFor(List.of(4L)).get(4L);
+        assertThat(cur.userId()).isEqualTo(10L);
+        assertThat(cur.email()).isEqualTo("kisi10@example.com");
+        assertThat(cur.active()).isTrue();
+        verify(narrow, never()).findAllById(any());
     }
 }

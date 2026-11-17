@@ -453,7 +453,7 @@ public class UserActivityService {
     /**
      * TÜM kullanıcıların giriş durumu (yalnız o an oturumu açık olanlar değil).
      *
-     * <p>Ek sorgu YOK: {@code usersByName()} zaten {@code findAll()} yapıyor. Sıralama son girişe
+     * <p>Ek sorgu YOK: {@code usersByName()} zaten tüm kullanıcıları (dar satır) okuyor. Sıralama son girişe
      * göre azalan, hiç girmemişler sonda — "atıl hesap" ve "parola denenen hesap" aynı ekranda
      * görünür.
      */
@@ -482,7 +482,7 @@ public class UserActivityService {
             m.put("title",        u.getTitle());
             m.put("department",   u.getDepartment());
             // Fotoğrafın kendisi değil, VAR MI bayrağı (2026-09-28; TeamDirectory ile aynı): dizin fotoğrafı olmayan
-            // her avatar için boşuna /api/users/{id}/photo (204) isteği atıyordu. photo_base64 findAll ile zaten yüklü.
+            // her avatar için boşuna /api/users/{id}/photo (204) isteği atıyordu. dar satırdaki VAR MI bayrağı (fotoğrafın kendisi okunmaz).
             m.put("has_photo",    u.getPhotoBase64() != null && !u.getPhotoBase64().isBlank());
             Map<String, Object> ts = TourStateService.parse(u.getTourState());
             String tourStatus = ts == null ? null : String.valueOf(ts.get("status"));
@@ -771,9 +771,69 @@ public class UserActivityService {
      *  eşleştiği için her iki yazım da giriş yapabilir → eşleştirmeyi de case-insensitive yapmalıyız,
      *  aksi halde küçük-harf login eden kullanıcının resmi/adı top-user & rol/takım listesinde çıkmaz. */
     private Map<String, AppUser> usersByName() {
+        // 2026-11-17 perf: Sistem Sağlığı bu ucu 30 sn'de bir yoklar — findAll() her kullanıcının AD fotoğrafını (base64 TEXT)
+        // yüklüyordu. Dar satırdan KAYDEDİLMEYEN geçici kullanıcı nesneleri kurulur (yalnız bu servisin okuduğu alanlar;
+        // kapı UserActivityProjectionGateTest), ek takımlar tek sorguyla. Fotoğrafın kendisi değil VAR MI bayrağı taşınır.
+        Map<Long, Set<Long>> extraTeams = new HashMap<>();
+        for (Object[] p : userRepo.findAllTeamMembershipPairs()) {
+            if (p != null && p.length >= 2 && p[0] instanceof Number id && p[1] instanceof Number t) {
+                extraTeams.computeIfAbsent(id.longValue(), k -> new HashSet<>()).add(t.longValue());
+            }
+        }
         Map<String, AppUser> m = new HashMap<>();
-        for (AppUser u : userRepo.findAll()) if (u.getUsername() != null) m.put(lc(u.getUsername()), u);
+        for (Object[] r : userRepo.findActivityRows()) {
+            AppUser u = activityUser(r, extraTeams);
+            if (u != null && u.getUsername() != null) m.put(lc(u.getUsername()), u);
+        }
         return m;
+    }
+
+    /** {@code findActivityRows} satırı: [0 id … 28 activeSessionId, 29 hasPhoto] — sorgu ile aynı sıra. */
+    static final int ACTIVITY_COLUMNS = 30;
+
+    /**
+     * Fotoğraf VAR işareti (geçici nesne): {@code has_photo} kontrolleri ({@code photo != null && !isBlank()}) aynen çalışsın diye
+     * fotoğrafın kendisi yerine konur; nesne kaydedilmez ve yanıta konmaz (yalnız bayrak türetilir).
+     */
+    static final String PHOTO_PRESENT = "1";
+
+    /** Dar satır → geçici (kaydedilmeyen) kullanıcı; ek takımlar Hibernate'in yüklediği gibi {@code HashSet} (sıra anlamsız). */
+    static AppUser activityUser(Object[] r, Map<Long, Set<Long>> extraTeams) {
+        if (r == null || r.length < ACTIVITY_COLUMNS) return null;
+        AppUser u = new AppUser();
+        u.setId(r[0] instanceof Number n ? n.longValue() : null);
+        u.setUsername((String) r[1]);
+        u.setDisplayName((String) r[2]);
+        u.setFirstName((String) r[3]);
+        u.setLastName((String) r[4]);
+        u.setEmail((String) r[5]);
+        u.setActive((Boolean) r[6]);
+        u.setTeamId(r[7] instanceof Number n ? n.longValue() : null);
+        u.setSystemRole((String) r[8]);
+        u.setOrgRole((String) r[9]);
+        u.setAuthSource((String) r[10]);
+        u.setCreatedAt((String) r[11]);
+        u.setLastLoginAt((String) r[12]);
+        u.setLastLoginIp((String) r[13]);
+        u.setLastLoginMethod((String) r[14]);
+        u.setLastSeenAt((String) r[15]);
+        u.setPrevLoginAt((String) r[16]);
+        u.setPrevLoginIp((String) r[17]);
+        u.setFailedBeforeLogin(r[18] instanceof Number n ? n.intValue() : null);
+        u.setFailedSinceLogin(r[19] instanceof Number n ? n.intValue() : null);
+        u.setLastFailedLoginAt((String) r[20]);
+        u.setLastFailedLoginIp((String) r[21]);
+        u.setLastFailedLoginReason((String) r[22]);
+        u.setPermanentLock((Boolean) r[23]);
+        u.setDepartment((String) r[24]);
+        u.setEmployeeId((String) r[25]);
+        u.setTitle((String) r[26]);
+        u.setTourState((String) r[27]);
+        u.setActiveSessionId((String) r[28]);
+        u.setPhotoBase64(Boolean.TRUE.equals(r[29]) ? PHOTO_PRESENT : null);
+        Set<Long> extra = u.getId() == null ? null : extraTeams.get(u.getId());
+        u.setTeamIds(extra == null ? new HashSet<>() : extra);
+        return u;
     }
 
     /** Case-insensitive eşleştirme anahtarı (Locale.ROOT — Türkçe i/ı tuzağından kaçınmak için). */
