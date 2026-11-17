@@ -288,10 +288,10 @@ jobs:
       # /app/releases.json olarak kopyalar, ReleaseIndexService okur (çalışma anında GitHub'a çıkılmaz).
       # --check: mevcut dosya tag geçmişiyle tutarlı mı (tam tag geçmişi gerekir → checkout fetch-depth: 0).
       # --append: bu sürümü BUMP COMMIT'İNDEN ÖNCE ekler; commit = content_sha, tarih = build_time.
-      - name: Set up Node 24
+      - name: Set up Node 26
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: "26"
 
       - name: Update release index and changelog
         env:

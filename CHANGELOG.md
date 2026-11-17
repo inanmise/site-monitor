@@ -15,6 +15,12 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.213.3] — 2026-11-17
+
+### Changed
+- **Node 24 → 26** (ön yüz derleme imajı `node:26.13.1-alpine3.24` ve CI). Çalışan imaja Node girmez (çalışma zamanı
+  Temurin 25 JRE); değişen yalnız ön yüzün derlendiği ortam. Uygulamanın davranışı değişmez.
+
 ## [20.213.2] — 2026-11-17
 
 ### Changed
@@ -3513,7 +3519,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.213.2...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.213.3...HEAD
+[20.213.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.3
 [20.213.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.2
 [20.213.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.1
 [20.213.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.0
