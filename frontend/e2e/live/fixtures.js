@@ -18,14 +18,21 @@ export const test = base.extend({
   page: async ({ page }, provide, testInfo) => {
     // Ürün turu kapalı (ilk açılışta tıklamaları örtmesin); arayüz Türkçe (metin denetimleri TR sözlüğüne göre)
     // Giriş sonrası eksikler penceresi (2026-11-15) kendiliğinden açılıp tıklamaları örtmesin: bu sekmede bu kullanıcıya
-    // "soruldu" sayılır (GapsPrompt PROMPTED_KEY = kullanıcı adı). Pencerenin kendi testi sahte API'li login-gaps.spec.js'tir.
+    // "soruldu" sayılır (GapsPrompt PROMPTED_KEY = /api/me'deki kullanıcı adı, BİREBİR — giriş büyük/küçük harf duyarsız,
+    // saklı ad farklı yazılmış olabilir). Oturum yoksa (giriş projesi) ortamdaki ad kullanılır. Pencerenin kendi testi
+    // sahte API'li login-gaps.spec.js'tir.
+    let liveUser = process.env.E2E_USER || ''
+    try {
+      const me = await page.request.get(`${LIVE_BASE_URL}/api/me`, { timeout: 10_000 })
+      if (me.ok()) liveUser = (await me.json())?.username || liveUser
+    } catch { /* oturum yok / sunucu yanıtsız: ortamdaki ad */ }
     await page.addInitScript((user) => {
       try {
         localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 }))
         localStorage.setItem('site-monitor-lang', 'tr')
         if (user) sessionStorage.setItem('sm.gaps.prompted', user)
       } catch { /* depolama yok */ }
-    }, process.env.E2E_USER || '')
+    }, liveUser)
     // Entegrasyon hatası yakalayıcı: yakalanmamış istisna ve /api 5xx testi DÜŞÜRÜR; konsol hataları rapora yazılır
     const problems = []
     const consoleErrors = new Set()

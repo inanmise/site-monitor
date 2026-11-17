@@ -1,4 +1,4 @@
-import { Fragment, createContext, useContext, useEffect, useRef, useState } from 'react'
+import { Fragment, createContext, useContext, useEffect, useRef, useState, memo } from 'react'
 import { ArrowDown, ArrowUp, ChevronDown, CircleCheck, CircleDashed, PenLine, TriangleAlert, Wand2 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -364,6 +364,31 @@ export function MetricField({ field: f, values, resolve, uiLang, previous, readO
 }
 
 /**
+ * Alanın çizimini etkileyen DEĞERLER (2026-11-17 performans): kendi değeri / üssü / hedefi, karşılaştırma hedefi, hataları,
+ * otomatik hesabı ve (adet alanında) türeyen oranlar. Bölüm her tuşta çizilir; yalnız bunları değişen alan yeniden çizilir.
+ * Yeni bir `values` / `errors` / `calc` okuması MetricField'a eklenirse buraya da eklenmeli (kilit: TechErrorMetricFieldMemo.test.jsx).
+ */
+function metricFieldSig(p) {
+  const f = p.field
+  const id = f.id
+  const v = p.values || {}
+  const c = p.calc
+  const cmp = f.calc?.kind === 'compare' ? f.calc.of : null
+  const derived = f.type === 'number'
+    ? derivedRates(p.templateFields || [], id).map((d) => [d.id, fieldExempt(d, v.fields), c?.[d.id] ?? null])
+    : null
+  return JSON.stringify([v.fields?.[id] ?? null, v.units?.[id] ?? null, v.targets?.[id] ?? null, cmp ? v.targets?.[cmp] ?? null : null,
+    p.errors?.[`values.${id}`] ?? null, p.errors?.[`targets.${id}`] ?? null, c?.[id] ?? null, derived])
+}
+const METRIC_FIELD_REF_PROPS = ['field', 'resolve', 'uiLang', 'previous', 'readOnly', 'onField', 'onFieldError', 'templateFields',
+  'onTarget', 'outageConflict']
+export function sameMetricFieldProps(a, b) {
+  for (const k of METRIC_FIELD_REF_PROPS) if (a[k] !== b[k]) return false
+  return metricFieldSig(a) === metricFieldSig(b)
+}
+const MetricFieldMemo = memo(MetricField, sameMetricFieldProps)
+
+/**
  * Bir gösterge bölümünün alanları: kısa alanlar ızgarada (telefonda tek, 640+ iki, 1024+ üç kolon), uzun açıklamalar tam
  * satır. "Hayır" cevabıyla muaf alanlar çizilmez; bölümün bütün alanları muafsa `te.sectionExempt` notu (PDF'te bölüm
  * hiç basılmaz). `columns`: kısa alan ızgarasının en çok kolonu (özet kartının içinde 2 — kart dar kalabilir).
@@ -378,7 +403,7 @@ export function MetricFieldsGrid({ section, values, templateFields, columns = 3,
   const all = templateFields || section.fields || []
   const compact = fields.filter((f) => f.type !== 'textarea')
   const long = fields.filter((f) => f.type === 'textarea')
-  const one = (f) => <MetricField key={f.id} field={f} values={values} templateFields={all} {...rest} />
+  const one = (f) => <MetricFieldMemo key={f.id} field={f} values={values} templateFields={all} {...rest} />
   return (
     <>
       {compact.length > 0 && (
@@ -389,7 +414,7 @@ export function MetricFieldsGrid({ section, values, templateFields, columns = 3,
   )
 }
 
-export function MetricsBlock({ section, values, resolve, uiLang, previous, readOnly, errors, onField, onFieldError, templateFields,
+function MetricsBlockImpl({ section, values, resolve, uiLang, previous, readOnly, errors, onField, onFieldError, templateFields,
   calc = null, onTarget = null, outageConflict = 0 }) {
   return (
     <SectionShell title={resolve(section.title)} slot="te-metrics" sectionId={section.id}>
@@ -405,7 +430,7 @@ export function issueErrorKey(sectionId, issueId, key) {
   return `issue:${sectionId}:${issueId}:${key}`
 }
 
-export function TextBlock({ section, values, resolve, resolveText, readOnly, errors, onText }) {
+function TextBlockImpl({ section, values, resolve, resolveText, readOnly, errors, onText }) {
   const t = useT()
   const stored = values.texts[section.id]
   // Varsayılan gövde metin sınırıyla çözülür (başlık sınırıyla değil — PDF ile aynı metin)
@@ -448,7 +473,7 @@ function focusValueField(fieldId) {
  * çevirir; elle düzenlenirken güncel otomatik metin açılır kutuda görülür (farklıysa söylenir); "Otomatik metne dön"
  * kopyayı siler (onayla). Boş bırakılan elle metin kayıtta otomatiğe döner (özet kilitlenmez).
  */
-export function SummaryBlock({ section, template, values, channelName, year, month, resolve, readOnly, errors, onText, onClearText,
+function SummaryBlockImpl({ section, template, values, channelName, year, month, resolve, readOnly, errors, onText, onClearText,
   embedded = [], fieldValues = null, uiLang, previous, onField, onFieldError, templateFields, calc = null, onTarget = null,
   outageConflict = 0 }) {
   const t = useT()
@@ -698,7 +723,7 @@ function SummaryPreview({ blocks, t }) {
  * tablo dar ekranda 45 px'lik kutulara sıkışmaz. Her hücrenin adı "Satır — Sütun"dur (iki görünümde de). Hata
  * hücrenin altında; anahtar sunucununkiyle aynı (`tables.<bölüm>.<satır>.<sütun>`).
  */
-export function TableBlock({ section, values, resolve, uiLang, tplLang, readOnly, errors, onCell, onFieldError }) {
+function TableBlockImpl({ section, values, resolve, uiLang, tplLang, readOnly, errors, onCell, onFieldError }) {
   const t = useT()
   const [ref, width] = useElementWidth()
   const cols = section.columns || []
@@ -840,3 +865,15 @@ export function TableBlock({ section, values, resolve, uiLang, tplLang, readOnly
     </SectionShell>
   )
 }
+
+// Rapor düzenleyici her tuşta yeniden çizilir; bölüm yalnız kendi props'u değişince çizilir (2026-11-17 performans).
+export const MetricsBlock = memo(MetricsBlockImpl)
+
+// Rapor düzenleyici her tuşta yeniden çizilir; bölüm yalnız kendi props'u değişince çizilir (2026-11-17 performans).
+export const TextBlock = memo(TextBlockImpl)
+
+// Rapor düzenleyici her tuşta yeniden çizilir; bölüm yalnız kendi props'u değişince çizilir (2026-11-17 performans).
+export const SummaryBlock = memo(SummaryBlockImpl)
+
+// Rapor düzenleyici her tuşta yeniden çizilir; bölüm yalnız kendi props'u değişince çizilir (2026-11-17 performans).
+export const TableBlock = memo(TableBlockImpl)
