@@ -15,10 +15,28 @@ const PopoverTrigger = React.forwardRef(function PopoverTrigger(props, ref) {
   return <PopoverPrimitive.Trigger ref={ref} data-slot="popover-trigger" {...props} />
 })
 
+/**
+ * Kapanan açılır pencere odağı tetiğine YALNIZ odak kaybolduysa geri versin (2026-11-17, cert-trust-filter titrek e2e kök
+ * nedeni). Radix Popover 1.3 dışarı tıklamayı `click` anına erteler; tıklanan öğe (ör. güven rozeti) `click` yayılımını
+ * durdurursa kapanmakta olan pencere bunu "dışarıyla etkileşim yok" sayar ve kapanış animasyonu bitince odağı kendi
+ * tetiğine taşır. O arada açılmış YENİ pencere odağı kaybedip kendiliğinden kapanır (kullanıcı da görür: süzgeç seçip
+ * hemen bir rozete tıklayınca rozet penceresi açılıp kapanıyordu). Kural: odak bağlı, gövde dışı bir öğedeyse (kişi
+ * başka bir yere geçti) yerinde kalır; odak kapanan içerikle birlikte gittiyse (gövdeye düştü / kopuk öğe) Radix tetiği
+ * odaklar — klavye kullanıcısının seçimden sonra tetiğe dönüşü değişmez.
+ */
+export function keepMovedFocus(event) {
+  const doc = event?.target?.ownerDocument ?? globalThis.document
+  const active = doc?.activeElement
+  if (!active || active === doc.body || !active.isConnected) return
+  if (active.hasAttribute?.('data-radix-focus-guard')) return
+  event.preventDefault()
+}
+
 function PopoverContent({
   className,
   align = "center",
   sideOffset = 4,
+  onCloseAutoFocus,
   ...props
 }) {
   return (
@@ -27,6 +45,10 @@ function PopoverContent({
         data-slot="popover-content"
         align={align}
         sideOffset={sideOffset}
+        onCloseAutoFocus={(e) => {
+          onCloseAutoFocus?.(e)
+          if (!e.defaultPrevented) keepMovedFocus(e)
+        }}
         className={cn(
           "z-50 w-72 origin-(--radix-popover-content-transform-origin) rounded-md border bg-popover p-4 text-popover-foreground shadow-md outline-hidden data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
           className

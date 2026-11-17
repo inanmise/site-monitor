@@ -15,6 +15,23 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.213.4] — 2026-11-17
+
+### Fixed
+- **Açılır pencere, kapanan seçici yüzünden kendiliğinden kapanmaz.** Bir seçicide (ör. Tüm Sertifikalar → Güven süzgeci)
+  seçim yapıp hemen başka bir açılır pencereyi açınca (ör. güven rozetinin "neden" penceresi), kapanmakta olan seçici
+  kapanış animasyonu bitince odağı kendi düğmesine geri alıyor ve yeni açılan pencere kapanıyordu (Radix Popover 1.3
+  ertelenen dışarı tıklama + tıklamanın yayılımını durduran öğe). Kapanan pencere artık odağı yalnız odak gerçekten
+  kaybolduysa geri verir; kişi başka bir öğeye geçtiyse odak orada kalır. Klavyeyle seçimden sonra düğmeye dönüş
+  değişmez. CI'da tablet / masaüstünde ara sıra düşen `cert-trust-filter` e2e testinin kök nedeni buydu.
+- **Etkinliklerim → push tercihleri derin bağlantısı** yavaş ağda da kartı başa hizalar: üstteki içerik 3 sn'den geç
+  yüklenince kart görünüm alanının dışında kalıyordu; yerleşim izleme 10 sn'ye çıktı (kişinin kaydırması / dokunması /
+  tuşu izlemeyi hemen bitirir).
+- E2E sağlamlığı: push logu ayrıntı paneli ve öteki duyarlı yerleşim ölçümleri açılış animasyonu bitince yapılır
+  (sabit bekleme CI'da yetmiyordu); görsel aracı karşılaştırma bölücüsü değeri güncellenene dek beklenir; kanal raporu
+  "Ana pencerede aç" adımı düşerse ana pencerenin ve panelin durumu hata iletisine yazılır. CI, düşen e2e testlerinin
+  izini ve sayfa anlık görüntüsünü yükler.
+
 ## [20.213.3] — 2026-11-17
 
 ### Changed
@@ -3519,7 +3536,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.213.3...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.213.4...HEAD
+[20.213.4]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.4
 [20.213.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.3
 [20.213.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.2
 [20.213.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.1
