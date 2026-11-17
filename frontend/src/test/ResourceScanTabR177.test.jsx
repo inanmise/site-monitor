@@ -364,7 +364,11 @@ describe('iptal, bitiş bildirimi, ilerleme', () => {
   it('iptal: onay → uç çağrılır → "İptal ediliyor…"; geçen süre sunucu saatinden (42 sn), sunucu adı', async () => {
     runningSetup({ cancel: ok({ id: 40, status: 'RUNNING' }) })
     await mountDone()
-    expect(slot('prs-elapsed').textContent).toMatch(/42 sn/)
+    // Sunucu saatinden 42 sn; görüldükten sonra gerçek zamanla ilerler (yük altında 1–3 sn) — tarayıcı saatinden
+    // hesaplansaydı (09:00:00 → test anı) dakikalar / saatler çıkardı
+    const elapsed = Number(slot('prs-elapsed').textContent.match(/(\d+) sn/)?.[1])
+    expect(elapsed).toBeGreaterThanOrEqual(42)
+    expect(elapsed).toBeLessThanOrEqual(45)
     expect(slot('prs-stage').textContent).toMatch(/site-monitor-abc/)
     fireEvent.click(slot('prs-cancel'))
     fireEvent.click(await screen.findByRole('button', { name: 'İptal et' }))
