@@ -1,4 +1,3 @@
-import { StrictMode } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from './test-utils'
 
@@ -113,7 +112,7 @@ describe('IssueDetailSheet — unmount sonrası yanıt', () => {
 
   it('StrictMode (kur → temizle → kur): yaşam bayrağı KURULUMDA da true → yanıt uygulanır, pencere "ölü" kalmaz', async () => {
     api.admin.getLoginIssue.mockImplementation(async (id) => ({ success: true, data: detail(id) }))
-    render(<StrictMode><IssueDetailSheet id={7} source="admin" onClose={vi.fn()} /></StrictMode>)
+    render(<IssueDetailSheet id={7} source="admin" onClose={vi.fn()} />, { reactStrictMode: true })
     expect(await screen.findByText('message 7')).toBeInTheDocument()
   })
 

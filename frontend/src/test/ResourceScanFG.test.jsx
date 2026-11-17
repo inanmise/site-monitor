@@ -84,9 +84,11 @@ describe('başlatma menüsü (G)', () => {
     fireEvent.change(select, { target: { value: '7' } })
     fireEvent.click(screen.getByRole('button', { name: '7 sayfayı analiz et' }))
     await waitFor(() => expect(api.monitoring.startResourceScan).toHaveBeenCalledWith(100, { scope: 'site', max_pages: 7 }))
-    await waitFor(() => expect(slot('prs-run-site')).not.toBeNull())
-    expect(slot('prs-run-site').textContent).toBe('Site · sayfa 2 / 7')
-    expect(slot('prs-site-ignored')).toBeNull()
+    // Koşu kartı kısa yoklamayla (pollMs 15) bitebilir — durum, koşulun sağlandığı anda bekleme İÇİNDE okunur
+    await waitFor(() => {
+      expect(slot('prs-run-site')?.textContent).toBe('Site · sayfa 2 / 7')
+      expect(slot('prs-site-ignored')).toBeNull()
+    })
     await waitFor(() => expect(slot('prs-site-dialog')).toBeNull())
   })
 
@@ -96,9 +98,10 @@ describe('başlatma menüsü (G)', () => {
     pressMenuTrigger(slot('prs-start-more'))
     fireEvent.click(await screen.findByRole('menuitem', { name: /Siteyi analiz et/ }))
     fireEvent.click(await screen.findByRole('button', { name: '5 sayfayı analiz et' }))
-    await waitFor(() => expect(slot('prs-site-ignored')).not.toBeNull())
-    expect(slot('prs-site-ignored').textContent).toMatch(/çok sayfalı analizi bilmiyor/)
-    expect(slot('prs-run-site')).toBeNull()
+    await waitFor(() => {
+      expect(slot('prs-site-ignored')?.textContent).toMatch(/çok sayfalı analizi bilmiyor/)
+      expect(slot('prs-run-site')).toBeNull()
+    })
   })
 
   it('başlatma hatası: pencere açık kalır (yeniden denenebilir), hata tostu', async () => {

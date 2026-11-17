@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest'
-import { StrictMode } from 'react'
 import { render, screen, waitFor, fireEvent, within } from './test-utils.jsx'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -78,7 +77,7 @@ describe('KeywordChangePanel', () => {
 
   it('StrictMode (bağla → sök → yeniden bağla) altında da yanıt işlenir — "yükleniyor"da kalmaz', async () => {
     api.monitoring.keywordChange.mockResolvedValue({ success: true, data: BASELINE })
-    render(<StrictMode><KeywordChangePanel monitorId={7} canEdit /></StrictMode>)
+    render(<KeywordChangePanel monitorId={7} canEdit />, { reactStrictMode: true })
     await waitFor(() => expect(slot('kw-change-baseline')).not.toBeNull())
     expect(slot('kw-change-skeleton')).toBeNull()
   })

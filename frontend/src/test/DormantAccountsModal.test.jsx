@@ -1,4 +1,3 @@
-import { StrictMode } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within, act } from './test-utils.jsx'
 import DormantAccountsModal from '../components/admin/useractivity/dormant/DormantAccountsModal.jsx'
@@ -277,10 +276,11 @@ describe('DormantAccountsModal — tam liste (açılışta bir kez, yoklama yok)
 
   it('bayat yanıt ezmez: AYNI bileşenin eski isteği (StrictMode bağla-çöz-bağla) yeni yanıtın üstüne yazmaz', async () => {
     // StrictMode etkiyi bağla → temizle → yeniden bağla diye koşar; ref'ler korunur → iki istek aynı durumun sahibi.
-    // Sıra koruması olmasa geç gelen A (1 satır) yeni B'yi (4 satır) ezerdi.
+    // Sıra koruması olmasa geç gelen A (1 satır) yeni B'yi (4 satır) ezerdi. React 19: etkiler yalnız KÖKTEKİ
+    // StrictMode'da iki kez koşar (sağlayıcıların içine yerleştirilmiş <StrictMode> artık yetmez) → RTL `reactStrictMode`.
     const a = deferred(), b = deferred()
     api.admin.getDormantAccounts.mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise)
-    render(<StrictMode><DormantAccountsModal data={DATA} isAdmin globalAdmin onClose={vi.fn()} /></StrictMode>)
+    render(<DormantAccountsModal data={DATA} isAdmin globalAdmin onClose={vi.fn()} />, { reactStrictMode: true })
     expect(api.admin.getDormantAccounts).toHaveBeenCalledTimes(2)
     await act(async () => { b.resolve(fullRes(DORMANT.slice(0, 4))) })
     await waitFor(() => expect(title()).toMatch(/· 4$/))

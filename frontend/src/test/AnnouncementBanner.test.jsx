@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { StrictMode } from 'react'
 import { render, screen, fireEvent, waitFor } from './test-utils'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -68,10 +67,10 @@ describe('AnnouncementBanner — giriş "hero" kartı', () => {
     // Uygulamadaki sıra: branding sağlayıcısı ÖNCE yüklenir, şerit girişten SONRA takılır (App.jsx) — StrictMode'un
     // takılma anındaki çift efekt çağrısı tam bu durumda zamanlayıcıyı öldürüyordu.
     const Gate = ({ show }) => (show ? <AnnouncementBanner heroOnMount /> : null)
-    const { rerender, unmount } = render(<StrictMode><BrandingProvider><Gate show={false} /></BrandingProvider></StrictMode>)
+    const { rerender, unmount } = render(<BrandingProvider><Gate show={false} /></BrandingProvider>, { reactStrictMode: true })
     await waitFor(() => expect(api.getBranding).toHaveBeenCalled())
     await new Promise((r) => setTimeout(r, 20))
-    rerender(<StrictMode><BrandingProvider><Gate show /></BrandingProvider></StrictMode>)
+    rerender(<BrandingProvider><Gate show /></BrandingProvider>)
     await waitFor(() => expect(document.querySelector('[data-slot="announcement-hero"]')).not.toBeNull())
     await waitFor(() => expect(document.querySelector('[data-slot="announcement-hero"]')).toBeNull(), { timeout: 3000 })
     expect(screen.getByRole('status')).toBeVisible()
