@@ -659,16 +659,43 @@ public class DbQueryCheckerService {
                 outcome.metricValue(), slow, null, null, at, hash, p.getId(), qr.serverVersion());
     }
 
+    /**
+     * Bağlantı kullanım sağlığı (performans 2026-11-17 — sıcak satır): BAŞARILI çalıştırma profil başına en çok
+     * {@value #USE_OK_WRITE_INTERVAL_MS} ms'de bir yazılır (aynı bağlantıyı paylaşan çok izleme her çalıştırmada aynı satırı
+     * güncelliyordu). Kural SQL'de ({@code recordUseOkIfStale}): son başarılı yazımdan sonra bir HATA ya da bağlantı
+     * DENEMESİ yazıldıysa başarı hemen yazılır — hangi pod yazmış olursa olsun (inceleme 2026-11-17: pod belleğindeki eski
+     * seyreltme başka pod'un yazdığı hatayı görmüyor, en yeni çalıştırma başarılıyken durum 30 sn "failing" kalabiliyordu).
+     * HATA her zaman HEMEN yazılır. Görünen etki: art arda başarıda {@code last_used_at} / {@code last_ok_at} /
+     * {@code last_duration_ms} en çok bu kadar eski kalabilir.
+     */
     private void recordUse(Long profileId, String at, DbQueryRunner.QueryResult qr) {
         if (profileId == null) return;
         int ms = (int) Math.min(Integer.MAX_VALUE, qr.durationMs());
         try {
-            if (qr.ok()) profiles.recordUseOk(profileId, at, ms);
-            else profiles.recordUseError(profileId, at, ms, qr.error());
+            if (qr.ok()) {
+                String cutoff = useCutoff(at);
+                if (cutoff == null) profiles.recordUseOk(profileId, at, ms);
+                else profiles.recordUseOkIfStale(profileId, at, ms, cutoff);
+            } else {
+                profiles.recordUseError(profileId, at, ms, qr.error());
+            }
         } catch (RuntimeException e) {
             log.warn("Bağlantı kullanım sağlığı yazılamadı (#{}): {}", profileId, e.getClass().getSimpleName());
         }
     }
+
+    /** {@code at} − {@value #USE_OK_WRITE_INTERVAL_MS} ms, aynı ISO biçiminde; okunamazsa {@code null} (seyreltmesiz yazılır). */
+    static String useCutoff(String at) {
+        if (at == null) return null;
+        try {
+            return ISO.format(ISO.parse(at, Instant::from).minusMillis(USE_OK_WRITE_INTERVAL_MS));
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** Art arda başarılı kullanımın yazım aralığı (ms) — bkz. {@link #recordUse}. */
+    static final long USE_OK_WRITE_INTERVAL_MS = 30_000L;
 
 
     /**

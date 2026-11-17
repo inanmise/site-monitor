@@ -94,6 +94,8 @@ class DeferredIndexBuilderTest {
         EXPECTED.put("idx_hc_fail", "http_checks(monitor_id, checked_at) WHERE ok = false");
         EXPECTED.put("idx_pc_fail", "page_checks(monitor_id, checked_at) WHERE ok = false");
         EXPECTED.put("idx_dnsr_fail", "dns_records(monitor_id, checked_at) WHERE value IS NULL OR value = ''");
+        // 2026-11-17 performans incelemesi: Sayfa Hızı ihlal anları listesi izleme başına (taşınabilir)
+        EXPECTED.put("idx_psr_monitor_reason_checked", "pagespeed_resources(monitor_id, keep_reason, checked_at)");
     }
     /** TEKİL indeksler — {@code CREATE UNIQUE INDEX …}, {@code ux_} öneki. */
     private static final Set<String> UNIQUE = Set.of("ux_push_eventless_key_user", "ux_der_mon_exp_thr", "ux_audit_seq");

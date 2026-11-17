@@ -23,7 +23,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {
   test, expect, liveGate, openApp, apiGet, apiCall, liveRequest, purgeLiveRecords, liveInventoryRows, waitPastHourlySweep,
-  expectFits, expectDialogFits, expectCleanText, stopwatch, LIVE_PREFIX,
+  expectFits, expectDialogFits, expectCleanText, stopwatch, LIVE_PREFIX, answerNocConfirmIfAsked,
 } from './fixtures.js'
 
 const CERT_DIR = process.env.E2E_CERT_DIR || ''
@@ -573,6 +573,7 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     await desc.fill('e2e canlı test — envanter formundan düzenlendi')
     const put = page.waitForResponse((r) => /\/api\/admin\/inventory\/\d+$/.test(new URL(r.url()).pathname) && r.request().method() === 'PUT')
     await form.locator('[data-slot="inv-form-actions"]').getByRole('button', { name: 'Kaydet', exact: true }).click()
+    await answerNocConfirmIfAsked(page, put)
     const pr = await put
     const pb = await pr.json()
     expect(pr.status(), `envanter kaydet: ${JSON.stringify(pb?.errors || pb?.error || '')}`).toBe(200)
@@ -616,6 +617,7 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     await expect(confirm).toContainText('Takip adı değiştirilsin mi?')
     await expect(confirm).toContainText(NEW_KEY)
     await confirm.getByRole('button', { name: 'Adı değiştir' }).click()
+    await answerNocConfirmIfAsked(page, put)
     const pr = await put
     expect(pr.status(), `yeniden adlandır: ${JSON.stringify((await pr.json())?.error || '')}`).toBe(200)
     await expect(form).toHaveCount(0)
@@ -758,6 +760,7 @@ test.describe('manuel sertifika — canlı uçtan uca', () => {
     await form.locator('[data-slot="inv-form-actions"]').getByRole('button', { name: 'Kaydet', exact: true }).click()
     const confirm = page.getByRole('dialog').filter({ hasText: 'Takip adı değiştirilsin mi?' })
     await confirm.getByRole('button', { name: 'Adı değiştir' }).click()
+    await answerNocConfirmIfAsked(page, put)
     const pr = await put
     expect(pr.status(), `yeniden adlandır: ${JSON.stringify((await pr.json())?.error || '')}`).toBe(200)
     await expect(form).toHaveCount(0)

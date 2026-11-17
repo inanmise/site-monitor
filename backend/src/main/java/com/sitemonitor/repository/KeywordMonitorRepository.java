@@ -10,6 +10,22 @@ import java.util.List;
 import java.util.Optional;
 
 public interface KeywordMonitorRepository extends JpaRepository<KeywordMonitor, Long> {
+
+    /**
+     * Takım başına AKTİF izleme sayısı (takım sayaçları {@code /api/admin/teams/stats}, 2026-11-17 perf): tam varlık
+     * okunmaz. Satır: {@code [Long teamId, Long count]}; takımsız satırlar sayılmaz.
+     */
+    @Query("SELECT m.teamId, COUNT(m) FROM KeywordMonitor m WHERE m.active = true AND m.teamId IS NOT NULL GROUP BY m.teamId")
+    List<Object[]> countActiveByTeam();
+
+    /**
+     * Aynı URL uyarısı ({@code GET /api/monitoring/keyword/same-url}, form yazarken sorar) — 2026-11-17 perf: tam varlıklar
+     * (özel başlıklar, istek gövdesi, kural JSON'u …) yerine dar satır; sıra {@code findAllByOrderByNameAsc} ile AYNI.
+     * Satır: {@code [Long id, String name, Long teamId, String keyword, Boolean active, String url]}.
+     */
+    @Query("SELECT k.id, k.name, k.teamId, k.keyword, k.active, k.url FROM KeywordMonitor k ORDER BY k.name ASC")
+    List<Object[]> findSameUrlRows();
+
     List<KeywordMonitor> findByActiveTrue();
 
     /** Öksüz alarm temizliğinin kimlik kümesi (2026-11-06, performans PF3 #3): TÜM izlemelerin URL'leri (aktif + pasif) — tam varlık

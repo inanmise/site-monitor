@@ -161,15 +161,14 @@ public class OnCallService {
             userIds.add(slot.userId());
         }
         if (slots.isEmpty()) return Map.of();
-        Map<Long, AppUser> byId = new HashMap<>();
-        for (AppUser u : users.findAllById(userIds)) byId.put(u.getId(), u);
+        Map<Long, Person> byId = peopleById(userIds);
         Map<Long, OnCallPerson> out = new LinkedHashMap<>();
         for (Map.Entry<Long, OnCallRotation.Slot> e : slots.entrySet()) {
-            AppUser u = byId.get(e.getValue().userId());
+            Person u = byId.get(e.getValue().userId());
             if (u == null) continue;
-            boolean active = !Boolean.FALSE.equals(u.getActive());
+            boolean active = !Boolean.FALSE.equals(u.active());
             if (onlyNotify && !active) continue;   // pasif hesaba bildirim gitmez (InactiveRecipientGuard ile aynı kural)
-            out.put(e.getKey(), new OnCallPerson(e.getKey(), u.getId(), u.getUsername(), u.getDisplayName(), u.getEmail(), active,
+            out.put(e.getKey(), new OnCallPerson(e.getKey(), u.id(), u.username(), u.displayName(), u.email(), active,
                     e.getValue().override(), e.getValue().end() == null ? null : ISO.format(e.getValue().end())));
         }
         return out;
@@ -189,8 +188,7 @@ public class OnCallService {
         Set<Long> ids = new LinkedHashSet<>();
         if (cfg != null) ids.addAll(cfg.members());
         for (OnCallOverride o : ovRows) ids.add(o.getUserId());
-        Map<Long, AppUser> byId = new HashMap<>();
-        if (!ids.isEmpty()) for (AppUser u : users.findAllById(ids)) byId.put(u.getId(), u);
+        Map<Long, Person> byId = peopleById(ids);
 
         out.put("enabled", s != null && Boolean.TRUE.equals(s.getEnabled()));
         out.put("rotation", s == null ? OnCallSchedule.WEEKLY : s.getRotation());
@@ -221,18 +219,37 @@ public class OnCallService {
         return out;
     }
 
-    private static Map<String, Object> person(Long id, AppUser u) {
+    /**
+     * Nöbetçi kişinin okunan alanları (2026-11-17 perf): {@code findAllById} her kişinin AD fotoğrafını ve takım koleksiyonunu
+     * yüklüyordu ({@code /api/oncall/current} Kişisel Panom'da dakikada bir). Var olmayan (silinmiş) kişi haritada YOK.
+     */
+    record Person(Long id, String username, String displayName, String email, Boolean active) { }
+
+    /** Kimlik → kişi (dar satır; fotoğraf okunmaz). Silinmiş hesap haritada yer almaz ({@code missing:true} kuralı aynı). */
+    private Map<Long, Person> peopleById(java.util.Collection<Long> ids) {
+        Map<Long, Person> byId = new HashMap<>();
+        java.util.Set<Long> wanted = new LinkedHashSet<>();
+        for (Long id : ids) if (id != null) wanted.add(id);
+        if (wanted.isEmpty()) return byId;
+        for (Object[] r : users.findOnCallPersonRows(wanted)) {
+            if (r == null || r.length < 5 || !(r[0] instanceof Number id)) continue;
+            byId.put(id.longValue(), new Person(id.longValue(), (String) r[1], (String) r[2], (String) r[3], (Boolean) r[4]));
+        }
+        return byId;
+    }
+
+    private static Map<String, Object> person(Long id, Person u) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("user_id", id);
-        m.put("name", u == null ? null : (u.getDisplayName() == null || u.getDisplayName().isBlank() ? u.getUsername() : u.getDisplayName()));
-        m.put("username", u == null ? null : u.getUsername());
-        m.put("active", u != null && !Boolean.FALSE.equals(u.getActive()));
-        m.put("has_email", u != null && u.getEmail() != null && !u.getEmail().isBlank());
+        m.put("name", u == null ? null : (u.displayName() == null || u.displayName().isBlank() ? u.username() : u.displayName()));
+        m.put("username", u == null ? null : u.username());
+        m.put("active", u != null && !Boolean.FALSE.equals(u.active()));
+        m.put("has_email", u != null && u.email() != null && !u.email().isBlank());
         m.put("missing", u == null);
         return m;
     }
 
-    private static Map<String, Object> slotJson(OnCallRotation.Slot sl, AppUser u) {
+    private static Map<String, Object> slotJson(OnCallRotation.Slot sl, Person u) {
         Map<String, Object> m = new LinkedHashMap<>(person(sl.userId(), u));
         m.put("starts_at", sl.start() == null ? null : ISO.format(sl.start()));
         m.put("ends_at", sl.end() == null ? null : ISO.format(sl.end()));

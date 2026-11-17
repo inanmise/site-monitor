@@ -139,7 +139,7 @@ class DbQueryCheckerServiceTest {
         assertThat(r.sqlHash()).hasSize(16).isEqualTo(DbQueryCheckerService.sqlHash("SELECT * FROM orders"));
         assertThat(r.checkedAt()).matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}");
         assertThat(r.profileId()).isEqualTo(7L);
-        verify(profiles).recordUseOk(eq(7L), anyString(), eq(42));
+        verify(profiles).recordUseOkIfStale(eq(7L), anyString(), eq(42), anyString());
         // zaman aşımı / satır sınırı varsayılan ve tavanla
         verify(runner).run(any(), eq("SELECT * FROM orders"), eq(30), eq(1000), any(DbQueryRunner.RunOptions.class));
     }
@@ -165,6 +165,40 @@ class DbQueryCheckerServiceTest {
         assertThat(r.failureReason()).isEqualTo("DB_UNREACHABLE");
         assertThat(r.error()).isEqualTo("connection refused");
         verify(profiles).recordUseError(eq(7L), anyString(), eq(5), eq("connection refused"));
+    }
+
+    @Test
+    void okUseGoesThroughSqlThrottleErrorsImmediate() {
+        // perf 2026-11-17 + inceleme: başarılı kullanım her çalıştırmada SQL seyreltmesine gider (karar SQL'de, pod belleği yok —
+        // başka pod'un yazdığı hata / deneme sonraki başarıyı hemen yazdırır); kesim = at − 30 sn, aynı ISO biçimi; hata hemen.
+        DbQueryRunner.QueryResult okRun = ok(List.of("a"), new Object[] {1});
+        DbQueryRunner.QueryResult failRun = new DbQueryRunner.QueryResult(false, 5, 0, false, List.of(), List.of(), false,
+                "connection refused", "DB_UNREACHABLE", null);
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenReturn(okRun);
+        DbQueryMonitor m = monitor("SELECT 1", null);
+        for (int i = 0; i < 3; i++) svc.check(m, false);
+        org.mockito.ArgumentCaptor<String> at = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.ArgumentCaptor<String> cutoff = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(profiles, org.mockito.Mockito.times(3)).recordUseOkIfStale(eq(7L), at.capture(), anyInt(), cutoff.capture());
+        verify(profiles, org.mockito.Mockito.never()).recordUseOk(any(), anyString(), anyInt());
+        java.time.Instant a = java.time.LocalDateTime.parse(at.getValue()).toInstant(java.time.ZoneOffset.UTC);
+        java.time.Instant c = java.time.LocalDateTime.parse(cutoff.getValue()).toInstant(java.time.ZoneOffset.UTC);
+        assertThat(java.time.Duration.between(c, a)).isEqualTo(java.time.Duration.ofSeconds(30));
+        assertThat(cutoff.getValue()).hasSize(at.getValue().length());
+
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenReturn(failRun);
+        svc.check(m, false);
+        svc.check(m, false);
+        verify(profiles, org.mockito.Mockito.times(2)).recordUseError(eq(7L), anyString(), eq(5), eq("connection refused"));
+
+        // yazım hatası akışı bozmaz (yalnız uyarı)
+        org.mockito.Mockito.doThrow(new RuntimeException("db")).when(profiles).recordUseOkIfStale(eq(7L), anyString(), anyInt(), anyString());
+        when(runner.run(any(), anyString(), anyInt(), anyInt(), any(DbQueryRunner.RunOptions.class))).thenReturn(okRun);
+        assertThat(svc.check(m, false).status()).isEqualTo("OK");
+
+        assertThat(DbQueryCheckerService.useCutoff("2026-11-17T10:00:20")).isEqualTo("2026-11-17T09:59:50");
+        assertThat(DbQueryCheckerService.useCutoff("bozuk")).isNull();
+        assertThat(DbQueryCheckerService.useCutoff(null)).isNull();
     }
 
     @Test
@@ -204,7 +238,7 @@ class DbQueryCheckerServiceTest {
         assertThat(t.mailRows()).isEmpty();
         assertThat(t.mailColumns()).containsExactly("tutar", "ad", "kart");
         // deneme sağlığa yazmaz
-        verify(profiles, org.mockito.Mockito.times(1)).recordUseOk(anyLong(), anyString(), anyInt());
+        verify(profiles, org.mockito.Mockito.times(1)).recordUseOkIfStale(anyLong(), anyString(), anyInt(), anyString());
     }
 
     @Test

@@ -69,11 +69,19 @@ export function CopyTextButton({ text, className }) {
 }
 
 /** Yerel saatle kısa tarih-saat (dd.MM.yyyy HH:mm). */
+// Biçimleyici dil başına bir kez kurulur (rapor başlığı her tuşta yeniden çizilir; Intl kurulumu pahalı)
+const DATE_TIME_FMT = new Map()
 export function fmtDateTime(iso, lang) {
   if (!iso) return '—'
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return '—'
-  return new Intl.DateTimeFormat(lang === 'en' ? 'en-GB' : 'tr-TR', {
-    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul',
-  }).format(d)
+  const locale = lang === 'en' ? 'en-GB' : 'tr-TR'
+  let f = DATE_TIME_FMT.get(locale)
+  if (!f) {
+    f = new Intl.DateTimeFormat(locale, {
+      day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul',
+    })
+    DATE_TIME_FMT.set(locale, f)
+  }
+  return f.format(d)
 }

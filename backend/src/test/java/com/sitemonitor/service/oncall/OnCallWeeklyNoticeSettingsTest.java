@@ -73,6 +73,7 @@ class OnCallWeeklyNoticeSettingsTest {
             }
             return out;
         });
+        OnCallUserRows.mirrorFindAllById(users);   // 2026-11-17 perf: servis dar satırı okur, fikstür aynı
     }
 
     private static OnCallService.WeeklyNoticePatch patch(Boolean enabled, Boolean mail, Boolean push, Integer day, String time) {

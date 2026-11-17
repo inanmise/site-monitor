@@ -131,7 +131,7 @@ describe('kişisel push tercihleri kartına bağlantı (ma_sec=push)', () => {
 
 describe('eksikler penceresi — tembel modüller', () => {
   const dialogSrc = fs.readFileSync(path.resolve(__dirname, '../components/gaps/GapsDialog.jsx'), 'utf8')
-  const promptSrc = fs.readFileSync(path.resolve(__dirname, '../components/gaps/GapsPrompt.jsx'), 'utf8')
+  const promptSrc = fs.readFileSync(path.resolve(__dirname, '../components/gaps/GapsPromptCore.jsx'), 'utf8')
   it('dışa aktarma (Excel yazıcısı) yalnız tıklamada; düzeltme pencereleri tembel', () => {
     expect(dialogSrc).not.toMatch(/^import .*gapsExport/m)
     expect(dialogSrc).toMatch(/import\('\.\/gapsExport\.js'\)/)

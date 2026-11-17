@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useId } from 'react'
+import { useState, useEffect, useMemo, useId, useDeferredValue } from 'react'
 import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
 import { useT } from '../../i18n/index.jsx'
@@ -13,6 +13,7 @@ import { ArrowRight, Download, Timer, UserPlus, UserX, Users } from 'lucide-reac
 import { toCsv, downloadCsv, stampedName } from '../../utils/csvExport.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import { useFormErrors } from '../../hooks/useFormErrors.js'
+import { useLatestCallback } from '../../hooks/useLatestCallback.js'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import { usePagination } from '../../hooks/usePagination.js'
 import ModalShell from '../ui/ModalShell.jsx'
@@ -135,17 +136,20 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
     WARNING: t('ec.level.warning'), HIGH: t('ec.level.high'), CRITICAL: t('ec.level.critical'),
   }
 
+  // Arama ERTELENİR (performans 2026-11-17): kutu her tuşta anında güncellenir, liste süzme ve sayfalama React'in kesilebilir
+  // arka plan çiziminde — kapsam matrisi (memo) hiç yeniden hesaplanmaz.
+  const qDeferred = useDeferredValue(q)
   const filteredContacts = useMemo(() => {
-    const needle = q.trim().toLowerCase()
+    const needle = qDeferred.trim().toLowerCase()
     return contacts.filter(c =>
       (!needle || (c.name || '').toLowerCase().includes(needle) || (c.email || '').toLowerCase().includes(needle))
       && (!fRole  || c.role === fRole)
       && (!fLevel || c.min_alert_level === fLevel)
       && (!fTeam  || String(c.team_id) === String(fTeam)))
-  }, [contacts, q, fRole, fLevel, fTeam])
+  }, [contacts, qDeferred, fRole, fLevel, fTeam])
 
   // Proje standardı sayfalama (2026-09-21): usePagination + PaginationBar (istemci-taraflı)
-  const pager = usePagination(filteredContacts, { listKey: 'admin-contacts', preset: 'panel', resetDeps: [q, fRole, fLevel, fTeam] })
+  const pager = usePagination(filteredContacts, { listKey: 'admin-contacts', preset: 'panel', resetDeps: [qDeferred, fRole, fLevel, fTeam] })
   const pagedContacts = pager.pageItems
 
   // ── Toplu işlem (2026-11-13): seçim yalnız YÖNETİLEBİLİR satırlarda (K2 yönetim kapsamı bilinmiyorsa rol kuralı — sunucu
@@ -251,6 +255,8 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
     setModal('add')
   }
   /** Kapsam matrisindeki boşluk/kısmi satırdan hızlı ekle: takım + WARNING eşiği (tüm seviyeleri karşılar) önceden dolu. */
+  // Kapsam matrisine KARARLI işleyici (matris memo — her çizimde yeni fonksiyon onu yeniden çizerdi)
+  const onQuickAddStable = useLatestCallback((teamId) => openAddForGap(teamId))
   function openAddForGap(teamId) {
     setMsg(null)
     setForm({ ...emptyContact, team_id: teamId ?? '', min_alert_level: 'WARNING' })
@@ -352,7 +358,7 @@ export default function EscalationContacts({ teams = [], systemRole, isAdmin: is
       {!(loadError && contacts.length === 0) && (
         <CoveragePanel contacts={contacts} teams={teams} inactiveIds={inactiveUserIds}
           knownIds={usersListComplete ? null : knownUserIds} stats={stats}
-          canManage={canManage} onQuickAdd={openAddForGap} />
+          canManage={canManage} onQuickAdd={onQuickAddStable} />
       )}
 
       {/* Filtre çubuğu — ad/e-posta araması + Rol/Seviye/Takım (telefonda tam genişlik, alt alta) */}

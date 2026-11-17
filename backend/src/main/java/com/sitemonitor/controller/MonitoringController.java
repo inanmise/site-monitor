@@ -4369,7 +4369,7 @@ public class MonitoringController {
         if (!Boolean.TRUE.equals(m.getChangeDetect()) || m.getId() == null || keywordBaselines == null) return null;
         com.sitemonitor.model.KeywordChangeBaseline b;
         try {
-            b = preloaded != null ? preloaded.get(m.getId()) : keywordBaselines.find(m.getId()).orElse(null);
+            b = preloaded != null ? preloaded.get(m.getId()) : keywordBaselines.findSummary(m.getId()).orElse(null);   // metinsiz (perf 2026-11-17)
         } catch (RuntimeException e) {
             return null;
         }
@@ -4858,18 +4858,22 @@ public class MonitoringController {
         int hidden = 0;
         if (key != null) {
             Map<Long, String> teams = null;
-            for (KeywordMonitor k : keywordMonitorRepo.findAllByOrderByNameAsc()) {
-                if (excludeId != null && excludeId.equals(k.getId())) continue;
-                if (!key.equals(keywordUrlKey(k.getUrl()))) continue;
-                if (!SessionScope.canViewMonitoring(session, k.getTeamId())) { hidden++; continue; }
+            // 2026-11-17 perf: dar satır [id, name, teamId, keyword, active, url] — tam varlıklar (başlıklar, gövde, kurallar) okunmaz
+            for (Object[] k : keywordMonitorRepo.findSameUrlRows()) {
+                if (k == null || k.length < 6) continue;
+                Long id = k[0] instanceof Number n ? n.longValue() : null;
+                Long teamId = k[2] instanceof Number n ? n.longValue() : null;
+                if (excludeId != null && excludeId.equals(id)) continue;
+                if (!key.equals(keywordUrlKey((String) k[5]))) continue;
+                if (!SessionScope.canViewMonitoring(session, teamId)) { hidden++; continue; }
                 if (visible.size() >= 20) continue;
                 if (teams == null) teams = teamNameMap();
                 Map<String, Object> row = new LinkedHashMap<>();
-                row.put("id", k.getId());
-                row.put("name", k.getName());
-                row.put("team_name", k.getTeamId() != null ? teams.get(k.getTeamId()) : null);
-                row.put("keyword", k.getKeyword());
-                row.put("active", k.getActive());
+                row.put("id", id);
+                row.put("name", k[1]);
+                row.put("team_name", teamId != null ? teams.get(teamId) : null);
+                row.put("keyword", k[3]);
+                row.put("active", k[4]);
                 visible.add(row);
             }
         }
@@ -10630,15 +10634,43 @@ public class MonitoringController {
                 .filter(c -> c.getMonitorId() != null)
                 .collect(Collectors.toMap(DomainCheck::getMonitorId, c -> c, (a, b) -> a));
         Map<Long, String> teams = teamNameMap();
-        Map<String, AlertEvent> alarms = new HashMap<>();   // domain başına en şiddetli açık DOMAINMON_* alarmı
-        for (AlertEvent e : alertEventRepo.findAllOpenOrderBySeverity()) {
-            if (EscalationService.isDomainMon(e.getAlertType()) && e.getDomain() != null) alarms.putIfAbsent(e.getDomain(), e);
-        }
         // IDOR (H2): yalnız görüntülenebilir takımların monitörleri (global admin → hepsi).
-        List<Map<String, Object>> result = domainMonitorRepo.findAllByOrderByNameAsc().stream()
-                .filter(m -> SessionScope.canViewMonitoring(session, m.getTeamId()))
+        List<DomainMonitor> visible = domainMonitorRepo.findAllByOrderByNameAsc().stream()
+                .filter(m -> SessionScope.canViewMonitoring(session, m.getTeamId())).toList();
+        Map<String, AlertEvent> alarms = openDomainMonBadges(visible);   // domain başına en şiddetli açık DOMAINMON_* alarmı
+        List<Map<String, Object>> result = visible.stream()
                 .map(m -> enrichDomain(m, latest.get(m.getId()), teams, alarms.get(m.getDomain()))).toList();
         return ok(withDiagnoseFlag(session, result));
+    }
+
+    /** Alan adı rozet sorgusu parça boyu (IN listesi). */
+    static final int DOMAIN_BADGE_CHUNK = 500;
+
+    /**
+     * Listelenen alan adlarının açık DOMAINMON_* alarm rozeti (2026-11-17 perf): liste ucu her yoklamada kurumun BÜTÜN açık alarm
+     * varlıklarını ({@code context_json} dahil) okuyup süzüyordu. Artık yalnız listelenen alan adlarının, yalnız bu türlerdeki
+     * açık alarmları; dar satır (seviye + onay — {@code enrichDomain}'in okuduğu iki alan). Seçim AYNI: alan adı başına
+     * {@code findAllOpenOrderBySeverity} sırasındaki ilk alarm (en şiddetli, aynı seviyede en yeni); bir alan adı tek parçada.
+     */
+    private Map<String, AlertEvent> openDomainMonBadges(List<DomainMonitor> monitors) {
+        java.util.LinkedHashSet<String> domains = new java.util.LinkedHashSet<>();
+        for (DomainMonitor m : monitors) if (m.getDomain() != null) domains.add(m.getDomain());
+        Map<String, AlertEvent> alarms = new HashMap<>();
+        if (domains.isEmpty()) return alarms;
+        List<String> all = new ArrayList<>(domains);
+        for (int i = 0; i < all.size(); i += DOMAIN_BADGE_CHUNK) {
+            List<String> chunk = all.subList(i, Math.min(all.size(), i + DOMAIN_BADGE_CHUNK));
+            for (Object[] r : alertEventRepo.findOpenBadgeRowsByDomainIn(DOMAINMON_ALERT_TYPES, chunk)) {
+                if (r == null || r.length < 3 || !(r[0] instanceof String domain)) continue;
+                if (alarms.containsKey(domain)) continue;
+                AlertEvent badge = new AlertEvent();   // yalnız rozet alanları — kaydedilmez, döndürülmez
+                badge.setDomain(domain);
+                badge.setAlertLevel((String) r[1]);
+                badge.setAcknowledged((Boolean) r[2]);
+                alarms.put(domain, badge);
+            }
+        }
+        return alarms;
     }
 
     /**

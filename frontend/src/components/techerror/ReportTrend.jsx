@@ -45,7 +45,7 @@ const measureTick = measureWith(10)
  * gerekir" diye gösterilmez — "okunamadı" der. Bu ay "Hayır" cevabıyla muaf olan alanın grafiği gösterilmez (PDF'e de
  * girmez — muaf alanın kuralı).
  */
-export function TrendBlock({ section, template, trend, draftFields: liveFields, resolve, tplLang }) {
+function TrendBlockImpl({ section, template, trend, draftFields: liveFields, resolve, tplLang }) {
   const t = useT()
   // Yazarken grafik çizilmez: bu ayın değeri yazma durunca (TREND_DRAFT_DELAY_MS) grafiğe geçer. 2026-10-15 ölçümü (4×
   // yavaş CPU): her tuş 5 grafiği yeniden çiziyordu (tek uzun görev 740 ms); düşük öncelik (useDeferredValue) yazılan
@@ -199,3 +199,6 @@ function TrendTooltip({ active, payload, field, lang }) {
     </div>
   )
 }
+
+// Rapor düzenleyici her tuşta yeniden çizilir; bölüm yalnız kendi props'u değişince çizilir (2026-11-17 performans).
+export const TrendBlock = memo(TrendBlockImpl)

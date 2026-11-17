@@ -1,7 +1,6 @@
 package com.sitemonitor.service;
 
 import com.sitemonitor.model.AlertThreshold;
-import com.sitemonitor.model.AppUser;
 import com.sitemonitor.model.EscalationContact;
 import com.sitemonitor.model.NotificationGroup;
 import com.sitemonitor.model.Team;
@@ -59,22 +58,33 @@ public class AdminOverviewService {
             if (active && t.getLeaderId() == null) teamsNoLeader++;
             if (active && (t.getEmail() == null || t.getEmail().isBlank())) teamsNoEmail++;
         }
-        // Kullanıcılar
+        // Kullanıcılar — dar satırlar (2026-11-17 perf): findAll() her kullanıcının fotoğrafını ve takım koleksiyonunu yüklüyordu.
+        // Satır: [id, teamId, active, systemRole, permanentLock, lastLoginAt]; ek takımlar yalnız kapsamlı görünümde okunur.
+        Set<Long> extraMember = new HashSet<>();
+        if (!unrestricted) {
+            for (Object[] pr : userRepo.findAllTeamMembershipPairs()) {
+                if (pr != null && pr.length >= 2 && pr[0] instanceof Number id && pr[1] instanceof Number t
+                        && allowed.contains(t.longValue())) extraMember.add(id.longValue());
+            }
+        }
         int users = 0, usersActive = 0, admins = 0, locked = 0, never = 0, dormant = 0;
-        for (AppUser u : userRepo.findAll()) {
+        for (Object[] r : userRepo.findCounterRows()) {
+            if (r == null || r.length < 6) continue;
+            Long id = r[0] instanceof Number n ? n.longValue() : null;
+            Long teamId = r[1] instanceof Number n ? n.longValue() : null;
             if (!unrestricted) {
-                boolean member = (u.getTeamId() != null && allowed.contains(u.getTeamId()))
-                        || (u.getTeamIds() != null && u.getTeamIds().stream().anyMatch(allowed::contains));
+                boolean member = (teamId != null && allowed.contains(teamId)) || (id != null && extraMember.contains(id));
                 if (!member) continue;
             }
             users++;
-            boolean active = Boolean.TRUE.equals(u.getActive());
+            boolean active = Boolean.TRUE.equals(r[2]);
+            String lastLoginAt = (String) r[5];
             if (active) usersActive++;
-            if (active && "ADMIN".equals(u.getSystemRole())) admins++;
-            if (Boolean.TRUE.equals(u.getPermanentLock())) locked++;
+            if (active && "ADMIN".equals(r[3])) admins++;
+            if (Boolean.TRUE.equals(r[4])) locked++;
             if (active) {
-                if (u.getLastLoginAt() == null || u.getLastLoginAt().isBlank()) never++;
-                else if (u.getLastLoginAt().compareTo(dormantCut) < 0) dormant++;
+                if (lastLoginAt == null || lastLoginAt.isBlank()) never++;
+                else if (lastLoginAt.compareTo(dormantCut) < 0) dormant++;
             }
         }
         // Eskalasyon kişileri

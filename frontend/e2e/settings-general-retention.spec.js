@@ -244,6 +244,15 @@ for (const vp of VIEWPORTS) {
       await expect(row).toHaveAttribute('data-changed', 'true')
       const sticky = root.locator('[data-slot="retention-sticky-bar"]')
       await expect(sticky).toContainText(/1 pending changes|1 bekleyen/)
+      // Yapışkan çubuk varken body işaretlenir ve Yardım düğmesi çubuğun üstüne kalkar (2026-11-17: body:has yerine
+      // useStickyBottomBar → data-sticky-bar; :has her DOM değişiminde bütün sayfanın stilini yeniden hesaplatıyordu)
+      const fab = page.locator('[data-tour="help-fab"]')
+      await expect(page.locator('body')).toHaveAttribute('data-sticky-bar', '')
+      await expect(fab).toHaveCSS('bottom', '88px')
+      const fb = await fab.boundingBox()
+      const sb = await sticky.getByRole('button', { name: /Review and save|Gözden geçir/ }).boundingBox()
+      expect(fb && sb && (fb.y + fb.height <= sb.y || fb.y >= sb.y + sb.height || fb.x >= sb.x + sb.width || fb.x + fb.width <= sb.x),
+        `${vp.name}: Yardım düğmesi kaydet düğmesini örtüyor`).toBe(true)
       await checkLayout(page, `retention dirty@${vp.name}`, ROOT_RET)
       await sticky.getByRole('button', { name: /Review and save|Gözden geçir/ }).click()
       const review = page.locator('[data-slot="retention-review"]')
@@ -266,6 +275,9 @@ for (const vp of VIEWPORTS) {
       expect(state.puts[1]).toEqual({ values: { [ACT_KEY]: '180' } })
       await expect(toast(page, /Retention settings saved/)).toBeVisible()
       await expect(sticky).toHaveCount(0)
+      // Çubuk kalkınca işaret de kalkar, düğme yerine iner
+      await expect(page.locator('body')).not.toHaveAttribute('data-sticky-bar')
+      await expect(fab).toHaveCSS('bottom', '18px')
       await openClass(page, 'PERSONAL')
       await expect(days).toHaveValue('180')
 

@@ -100,6 +100,40 @@ function TvClock() {
 }
 
 /**
+ * TV katmanının çerçevesi — denetimlerin görünürlüğü (4 sn hareketsizlikte gizlenir, imleç de) YALNIZ burada tutulur
+ * (performans 2026-11-17). Eskiden durum MyDashTv'deydi: her göster / gizle geçişi tüm sayfaları ve kutuları yeniden
+ * çiziyordu. Üst bileşenin verdiği `header` ve `children` öğeleri değişmediği sürece React onları yeniden çizmez — yalnız
+ * çerçevenin öznitelikleri (`data-controls`, imleç, üst çubuğun saydamlığı) değişir. `pokeRef` üst bileşenin klavye
+ * işleyicisinin denetimleri göstermesi içindir.
+ */
+function TvFrame({ rootRef, pokeRef, label, cur, count, header, children }) {
+  const [controls, setControls] = useState(true)
+  const hideTimer = useRef(null)
+  const poke = useCallback(() => {
+    setControls(true)
+    clearTimeout(hideTimer.current)
+    hideTimer.current = setTimeout(() => setControls(false), CONTROLS_HIDE_MS)
+  }, [])
+  pokeRef.current = poke
+  useEffect(() => {
+    poke()
+    return () => clearTimeout(hideTimer.current)
+  }, [poke])
+  return (
+    <div ref={rootRef} tabIndex={-1} data-slot="mydash-tv" data-controls={controls ? 'shown' : 'hidden'} data-page={cur + 1} data-pages={count}
+      role="dialog" aria-modal="true" aria-label={label}
+      className={cn('fixed inset-0 z-[1900] flex flex-col bg-background text-foreground outline-none', !controls && 'cursor-none')}
+      onMouseMove={poke} onPointerDown={poke} onTouchStart={poke}>
+      <header className={cn('flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-3 transition-opacity sm:px-6',
+        !controls && 'opacity-0 focus-within:opacity-100')} data-slot="mydash-tv-bar">
+        {header}
+      </header>
+      {children}
+    </div>
+  )
+}
+
+/**
  * TV / duvar ekranı kipi (2026-10-11): pano kutuları tam ekran, büyük yazıyla; kutular ekrana sığan sayfalara bölünür
  * ve seçilen aralıkla döner (Duraklat / önceki / sonraki; ← → tuşları, Boşluk). Denetimler 4 sn hareketsizlikte gizlenir
  * (imleç de). Açıkken uygulamanın hareketsizlik çıkışı ertelenir (utils/tvMode.js), ekran uyku kilidi istenir
@@ -124,10 +158,9 @@ export default function MyDashTv({ widgets, refreshKey, onExit, permsFailed = fa
   ), [widgets, area.w, area.h, settings.density, settings.panels])
   const [slide, setSlide] = useState(0)
   const [paused, setPaused] = useState(false)
-  const [controls, setControls] = useState(true)
   const [fullscreen, setFullscreen] = useState(() => typeof document !== 'undefined' && !!document.fullscreenElement)
-  const hideTimer = useRef(null)
   const rootRef = useRef(null)
+  const pokeRef = useRef(() => {})
   const count = pages.length
   const cur = count ? Math.min(slide, count - 1) : 0
   const { fit, clipped } = useFitScale(mainRef, [cur, count, area.w, area.h, settings.panels, settings.density])
@@ -195,15 +228,8 @@ export default function MyDashTv({ widgets, refreshKey, onExit, permsFailed = fa
 
   const go = useCallback((dir) => setSlide((p) => (count ? (Math.min(p, count - 1) + dir + count) % count : 0)), [count])
 
-  const poke = useCallback(() => {
-    setControls(true)
-    clearTimeout(hideTimer.current)
-    hideTimer.current = setTimeout(() => setControls(false), CONTROLS_HIDE_MS)
-  }, [])
-  useEffect(() => {
-    poke()
-    return () => clearTimeout(hideTimer.current)
-  }, [poke])
+  // Denetimleri göster (zamanlayıcı ve görünürlük TvFrame'de — bu bileşen göster / gizle ile yeniden çizilmez)
+  const poke = useCallback(() => pokeRef.current(), [])
 
   const exit = useCallback(() => {
     try { if (document.fullscreenElement) document.exitFullscreen?.() } catch { /* yoksay */ }
@@ -273,13 +299,8 @@ export default function MyDashTv({ widgets, refreshKey, onExit, permsFailed = fa
   }
 
   const btn = 'h-10 min-w-10'
-  return (
-    <div ref={rootRef} tabIndex={-1} data-slot="mydash-tv" data-controls={controls ? 'shown' : 'hidden'} data-page={cur + 1} data-pages={count}
-      role="dialog" aria-modal="true" aria-label={t('mydash.tv.region')}
-      className={cn('fixed inset-0 z-[1900] flex flex-col bg-background text-foreground outline-none', !controls && 'cursor-none')}
-      onMouseMove={poke} onPointerDown={poke} onTouchStart={poke}>
-      <header className={cn('flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-3 transition-opacity sm:px-6',
-        !controls && 'opacity-0 focus-within:opacity-100')} data-slot="mydash-tv-bar">
+  const header = (
+      <>
         <div className="flex min-w-0 items-center gap-2 text-lg font-semibold sm:text-xl">
           <LayoutGrid className="size-5 shrink-0" aria-hidden="true" />
           <span className="min-w-0 [overflow-wrap:anywhere]">{t('mydash.title')}</span>
@@ -334,7 +355,10 @@ export default function MyDashTv({ widgets, refreshKey, onExit, permsFailed = fa
             <span>{t('mydash.tv.exit')}</span>
           </Button>
         </div>
-      </header>
+      </>
+  )
+  return (
+    <TvFrame rootRef={rootRef} pokeRef={pokeRef} label={t('mydash.tv.region')} cur={cur} count={count} header={header}>
 
       {permsFailed && (
         <div role="status" data-slot="mydash-tv-perms"
@@ -380,6 +404,6 @@ export default function MyDashTv({ widgets, refreshKey, onExit, permsFailed = fa
           )
         })}
       </main>
-    </div>
+    </TvFrame>
   )
 }

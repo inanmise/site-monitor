@@ -63,25 +63,82 @@ class TeamAdminServiceTest {
         a.setTeamIds(new LinkedHashSet<>(List.of(teams))); return a;
     }
 
+    /** Kullanıcı fikstürü: varlık listesi (taşıma / etki yolları) + takım sayaçlarının dar izdüşümleri (aynı veriden). */
+    private void users(List<AppUser> list) {
+        when(userRepo.findAll()).thenReturn(list);
+        List<Object[]> rows = new java.util.ArrayList<>();
+        List<Object[]> pairs = new java.util.ArrayList<>();
+        for (AppUser u : list) {
+            rows.add(new Object[] { u.getId(), u.getTeamId(), u.getActive(), u.getSystemRole(), u.getPermanentLock(), u.getLastLoginAt() });
+            if (u.getTeamIds() != null) for (Long t : u.getTeamIds()) pairs.add(new Object[] { u.getId(), t });
+        }
+        when(userRepo.findCounterRows()).thenReturn(rows);
+        when(userRepo.findAllTeamMembershipPairs()).thenReturn(pairs);
+    }
+
+    private void activeInventory(List<CertificateInventory> list) {
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(list);
+        when(inventoryRepo.findActiveDomainTeams()).thenReturn(list.stream()
+                .map(i -> new Object[] { i.getDomain(), i.getTeamId(), i.getUgTeamId() }).toList());
+    }
+
+    private static List<Object[]> activeByTeam(List<? extends com.sitemonitor.model.MonitorSchedule> monitors) {
+        return grouped(monitors.stream().filter(m -> Boolean.TRUE.equals(m.getActive())).map(com.sitemonitor.model.MonitorSchedule::getTeamId));
+    }
+
+    /** GROUP BY team_id taklidi: takımsız satır sayılmaz. */
+    private static List<Object[]> grouped(java.util.stream.Stream<Long> teamIds) {
+        Map<Long, Long> m = new java.util.LinkedHashMap<>();
+        teamIds.filter(java.util.Objects::nonNull).forEach(t -> m.merge(t, 1L, Long::sum));
+        return m.entrySet().stream().map(e -> new Object[] { e.getKey(), e.getValue() }).toList();
+    }
+
     @BeforeEach
     void setUp() {
         when(teamRepo.findAll()).thenReturn(List.of(team(7, "A"), team(9, "B")));
         when(teamRepo.findById(9L)).thenReturn(Optional.of(team(9, "B")));
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(inv("a.example.com", 7L), inv("b.example.com", 7L), inv("c.example.com", 9L)));
+        activeInventory(List.of(inv("a.example.com", 7L), inv("b.example.com", 7L), inv("c.example.com", 9L)));
         when(inventoryRepo.findByTeamIdOrderByDomainAsc(7L)).thenReturn(List.of(inv("a.example.com", 7L), inv("b.example.com", 7L)));
         HttpMonitor h = new HttpMonitor(); h.setId(1L); h.setName("site"); h.setTeamId(7L); h.setActive(true);
         PortMonitor derived = new PortMonitor(); derived.setId(2L); derived.setName("443"); derived.setTeamId(null); derived.setActive(true);
         when(httpRepo.findAll()).thenReturn(List.of(h));
         when(portRepo.findAll()).thenReturn(List.of(derived));
-        when(userRepo.findAll()).thenReturn(List.of(user(1, "ali", 7L, 7L), user(2, "veli", 9L, 9L, 7L), user(3, "ayse", 9L, 9L)));
+        when(httpRepo.countActiveByTeam()).thenReturn(activeByTeam(List.of(h)));
+        when(portRepo.countActiveByTeam()).thenReturn(activeByTeam(List.of(derived)));
+        users(List.of(user(1, "ali", 7L, 7L), user(2, "veli", 9L, 9L, 7L), user(3, "ayse", 9L, 9L)));
         AlertEvent open = new AlertEvent(); open.setTeamId(7L); open.setResolved(false);
         when(alertEventRepo.findAllOpenOrderBySeverity()).thenReturn(List.of(open));
+        when(alertEventRepo.countOpenByTeam()).thenReturn(grouped(java.util.stream.Stream.of(open.getTeamId())));
         EscalationContact c = new EscalationContact(); c.setId(5L); c.setName("PO"); c.setTeamId(7L); c.setActive(true);
         when(contactRepo.findAll()).thenReturn(List.of(c));
+        when(contactRepo.countActiveByTeam()).thenReturn(grouped(java.util.stream.Stream.of(c).filter(x -> Boolean.TRUE.equals(x.getActive())).map(EscalationContact::getTeamId)));
         when(contactRepo.findByTeamIdOrderByRoleAsc(7L)).thenReturn(List.of(c));
         NotificationGroup g = new NotificationGroup(); g.setId(3L); g.setName("Ops"); g.setTeamId(7L); g.setIsDefault(true); g.setActive(true);
         when(groupRepo.findAll()).thenReturn(List.of(g));
+        when(groupRepo.countActiveByTeam()).thenReturn(grouped(java.util.stream.Stream.of(g).filter(x -> !Boolean.FALSE.equals(x.getActive())).map(NotificationGroup::getTeamId)));
         when(groupRepo.findByTeamIdOrderByNameAsc(7L)).thenReturn(List.of(g));
+    }
+
+    @Test
+    @DisplayName("2026-11-17 perf: stats tam varlık okumaz (kullanıcı fotoğrafı, izleme / alarm / kişi / grup satırları) — sonuç eski yolla birebir")
+    void stats_readsNoEntities_sameResult() {
+        AppUser gone = user(4, "gone", 7L, 7L, 9L);
+        gone.setActive(false);
+        users(List.of(user(1, "ali", 7L, 7L), user(2, "veli", 9L, 9L, 7L), user(3, "ayse", 9L, 9L), gone, user(5, "takimsiz", null)));
+        Map<Long, Map<String, Object>> s = service.stats();
+        // Eski yol (findAll + Java süzgeci) aynı fikstürle — kıyas
+        assertThat(s.get(7L)).containsEntry("members", 3).containsEntry("members_inactive", 1).containsEntry("domains", 2)
+                .containsEntry("monitors", 1).containsEntry("open_alerts", 1).containsEntry("contacts", 1).containsEntry("groups", 1)
+                .containsEntry("ug_domains", 0);
+        assertThat(s.get(9L)).containsEntry("members", 3).containsEntry("members_inactive", 1).containsEntry("domains", 1)
+                .containsEntry("monitors", 0).containsEntry("open_alerts", 0).containsEntry("contacts", 0).containsEntry("groups", 0);
+        verify(userRepo, never()).findAll();
+        verify(httpRepo, never()).findAll();
+        verify(portRepo, never()).findAll();
+        verify(alertEventRepo, never()).findAllOpenOrderBySeverity();
+        verify(inventoryRepo, never()).findByActiveTrueOrderByDomainAsc();
+        verify(contactRepo, never()).findAll();
+        verify(groupRepo, never()).findAll();
     }
 
     @Test
@@ -99,7 +156,7 @@ class TeamAdminServiceTest {
     void stats_countsInactiveMembers() {
         AppUser gone = user(4, "gone", 7L, 7L);
         gone.setActive(false);
-        when(userRepo.findAll()).thenReturn(List.of(user(1, "ali", 7L, 7L), user(2, "veli", 9L, 9L, 7L), gone));
+        users(List.of(user(1, "ali", 7L, 7L), user(2, "veli", 9L, 9L, 7L), gone));
         Map<Long, Map<String, Object>> s = service.stats();
         assertThat(s.get(7L)).containsEntry("members", 3).containsEntry("members_inactive", 1);
         assertThat(s.get(9L)).containsEntry("members", 1).containsEntry("members_inactive", 0);
@@ -110,7 +167,7 @@ class TeamAdminServiceTest {
     void stats_ugDomainsAndTeamEmailInactiveOnly() {
         CertificateInventory ugOnly = inv("ug.example.com", 7L); ugOnly.setUgTeamId(9L);
         CertificateInventory sameUg = inv("same.example.com", 9L); sameUg.setUgTeamId(9L);
-        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(ugOnly, sameUg));
+        activeInventory(List.of(ugOnly, sameUg));
         Team a = team(7, "A"); a.setEmail("pasif@x.com");
         Team b = team(9, "B"); b.setEmail("aktif@x.com; pasif@x.com");
         Team c = team(11, "C");

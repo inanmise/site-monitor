@@ -97,6 +97,45 @@ public class TechErrorReportController {
 
     private record SummaryMemo(long at, Map<String, Object> data) { }
 
+    /**
+     * Kanal satırının şablondan okuduğu dört değer (2026-11-17 perf): genel bakış / kanal listesi her çağrıda HER kanalın
+     * {@code template_json}'unu (≤ 64 KB) baştan ayrıştırıyordu. Kanal başına önbellek: anahtar sürüm + JSON uzunluğu + JSON
+     * özeti ({@code hashCode}) — şablon değişince (sürüm artmasa bile metin değişince) yeniden ayrıştırılır; ayrıştırma
+     * atarsa önbelleğe yazılmaz. {@link TechErrorTemplate#fromStored} bozuk metni sistem şablonuna çevirir (hata değil, sonuç).
+     */
+    record TemplateSummary(String lang, int sections, int fields, int slots) {
+        static TemplateSummary of(Template t) {
+            return new TemplateSummary(t.lang(), t.sections().size(), t.allFields().size(), t.allSlots().size());
+        }
+    }
+
+    /** Kanal kimliği → son ayrıştırılan şablon özeti; ≤ {@link #MAX} kanal (taşarsa boşaltılır). */
+    static final class TemplateSummaryCache {
+        static final int MAX = 2000;
+        private record Entry(int version, int length, int hash, TemplateSummary summary) { }
+        private final java.util.function.Function<String, Template> parser;
+        private final java.util.concurrent.ConcurrentHashMap<Long, Entry> byChannel = new java.util.concurrent.ConcurrentHashMap<>();
+
+        TemplateSummaryCache(java.util.function.Function<String, Template> parser) { this.parser = parser; }
+
+        TemplateSummary get(Long channelId, int version, String json) {
+            int length = json == null ? -1 : json.length();
+            int hash = json == null ? 0 : json.hashCode();
+            Entry e = channelId == null ? null : byChannel.get(channelId);
+            if (e != null && e.version() == version && e.length() == length && e.hash() == hash) return e.summary();
+            TemplateSummary summary = TemplateSummary.of(parser.apply(json));   // atarsa önbelleğe yazılmaz
+            if (channelId != null) {
+                if (byChannel.size() >= MAX && !byChannel.containsKey(channelId)) byChannel.clear();
+                byChannel.put(channelId, new Entry(version, length, hash, summary));
+            }
+            return summary;
+        }
+
+        int size() { return byChannel.size(); }
+    }
+
+    final TemplateSummaryCache templateSummaries = new TemplateSummaryCache(TechErrorTemplate::fromStored);
+
     /** Testler için: dönem özeti önbelleğini boşaltır (denetleyici örneği test sınıfının yöntemleri arasında paylaşılır). */
     void resetSummaryCache() {
         summaryMemo.clear();
@@ -1924,7 +1963,7 @@ public class TechErrorReportController {
     // ── DTO ──────────────────────────────────────────────────────────────────────────────────────────
 
     private Map<String, Object> channelDto(TechErrorChannel ch, Team team, HttpSession session, boolean writer) {
-        Template t = TechErrorTemplate.fromStored(ch.getTemplateJson());
+        TemplateSummary t = templateSummaries.get(ch.getId(), ch.getTemplateVersion(), ch.getTemplateJson());
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", ch.getId());
         m.put("team_id", ch.getTeamId());
@@ -1936,9 +1975,9 @@ public class TechErrorReportController {
         m.put("template_version", ch.getTemplateVersion());
         m.put("template_updated_at", iso(ch.getTemplateUpdatedAt()));
         m.put("lang", t.lang());
-        m.put("section_count", t.sections().size());
-        m.put("field_count", t.allFields().size());
-        m.put("slot_count", t.allSlots().size());
+        m.put("section_count", t.sections());
+        m.put("field_count", t.fields());
+        m.put("slot_count", t.slots());
         m.put("can_edit", writer && canWriteOwn(session, ch.getTeamId()));       // kanal / şablon: takımın kendi kapsamı
         m.put("can_report", writer && canWrite(session, ch.getTeamId()));        // rapor açma / içerik: paylaşım EDIT de (9. sürüm)
         m.put("can_delete", writer && SessionScope.canManage(session, ch.getTeamId()));

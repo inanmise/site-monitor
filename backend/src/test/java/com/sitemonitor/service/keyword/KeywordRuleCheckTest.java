@@ -204,6 +204,55 @@ class KeywordRuleCheckTest {
         assertThat(other.get("baseline_missing")).isEqualTo(true);
     }
 
+    /** Sonucun değişim anahtarları (süre gibi ölçüme bağlı alanlar hariç). */
+    private static Map<String, Object> changeKeys(Map<String, Object> r) {
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        for (String k : List.of("content_changed", "change_summary", "baseline_missing", "baseline_taken_at", "baseline_source",
+                "content_fingerprint", "change_skipped", "ok")) {
+            if (r.containsKey(k)) out.put(k, r.get(k));
+        }
+        return out;
+    }
+
+    @Test
+    @DisplayName("perf 2026-11-17: tembel temel metni — değişmemiş sayfada HİÇ okunmaz, değişince BİR kez okunur; sonuç anahtarları "
+            + "metni baştan taşıyan görünümle aynı; tembel okuma başarısızsa değişim bu kontrolde değerlendirilmez, karar bozulmaz")
+    void lazyBaselineTextSameResult() throws IOException {
+        String url = serve("<div><p>Kampanya bugün</p><p>Fiyat 1250 TL</p></div>");
+        var capture = new KeywordCheckSpec.ChangeCapture();
+        checker().check(spec(url, "Fiyat").changeDetect(true).changeCapture(capture).build());
+        var snap = capture.snapshot();
+        var eager = new KeywordChangeDetector.BaselineView(snap.fingerprint(), capture.specHash(), snap.text(),
+                snap.textTruncated(), "2026-11-05T06:00:00", "AUTO");
+        java.util.concurrent.atomic.AtomicInteger loads = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.function.Supplier<KeywordChangeDetector.BaselineView> lazy = () -> new KeywordChangeDetector.BaselineView(
+                snap.fingerprint(), capture.specHash(), null, snap.textTruncated(), "2026-11-05T06:00:00", "AUTO",
+                new KeywordChangeDetector.LazyText(() -> { loads.incrementAndGet(); return snap.text(); }));
+
+        // aynı sayfa → metin okunmaz, sonuç aynı
+        Map<String, Object> e1 = checker().check(spec(url, "Fiyat").changeDetect(true).baseline(eager).build());
+        Map<String, Object> l1 = checker().check(spec(url, "Fiyat").changeDetect(true).baseline(lazy.get()).build());
+        assertThat(e1.get("content_changed")).isEqualTo(false);
+        assertThat(changeKeys(l1)).isEqualTo(changeKeys(e1));
+        assertThat(loads.get()).isZero();
+
+        // değişen sayfa → metin bir kez okunur, özet aynı
+        body.set("<div><p>Kampanya sona erdi</p><p>Fiyat 1250 TL</p><p>Yeni satır</p></div>");
+        Map<String, Object> e2 = checker().check(spec(url, "Fiyat").changeDetect(true).baseline(eager).build());
+        Map<String, Object> l2 = checker().check(spec(url, "Fiyat").changeDetect(true).baseline(lazy.get()).build());
+        assertThat(e2.get("content_changed")).isEqualTo(true);
+        assertThat(e2).containsKey("change_summary");
+        assertThat(changeKeys(l2)).isEqualTo(changeKeys(e2));
+        assertThat(loads.get()).isEqualTo(1);
+
+        // tembel okuma başarısız (temel arada yeniden alındı / silindi) → değişim değerlendirilmez, kontrol kararı aynı
+        var failing = new KeywordChangeDetector.BaselineView(snap.fingerprint(), capture.specHash(), null, snap.textTruncated(),
+                "2026-11-05T06:00:00", "AUTO", new KeywordChangeDetector.LazyText(() -> { throw new IllegalStateException("x"); }));
+        Map<String, Object> f = checker().check(spec(url, "Fiyat").changeDetect(true).baseline(failing).build());
+        assertThat(f).doesNotContainKeys("content_changed", "change_summary", "baseline_missing");
+        assertThat(f.get("ok")).isEqualTo(e2.get("ok"));
+    }
+
     @Test
     @DisplayName("Değişim yalnız kabul edilen yanıtta: durum kuralı reddettiyse değişim anahtarı yok, anlık görüntü alınmaz")
     void changeSkippedWhenStatusRejected() throws IOException {

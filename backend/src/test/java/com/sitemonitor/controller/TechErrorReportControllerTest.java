@@ -189,6 +189,35 @@ class TechErrorReportControllerTest {
     }
 
     @Test
+    @DisplayName("2026-11-17 perf: kanal satırı şablonu her çağrıda ayrıştırmaz (kanal + sürüm + metin önbelleği); değerler eski yolla birebir")
+    void overviewParsesTemplateOncePerChannelVersion() throws Exception {
+        TechErrorTemplate.Template en = TechErrorTemplate.defaults("en");
+        TechErrorChannel c = channel(77, A);
+        String json = TechErrorTemplate.toJson(new TechErrorTemplate.Template("en", "perf-test-77 {kanal}", en.sections()));
+        c.setTemplateJson(json);
+        TechErrorTemplate.Template expected = TechErrorTemplate.fromStored(json);   // eski yol: her satırda fromStored
+        try (org.mockito.MockedStatic<TechErrorTemplate> parse =
+                     org.mockito.Mockito.mockStatic(TechErrorTemplate.class, org.mockito.Mockito.CALLS_REAL_METHODS)) {
+            for (int i = 0; i < 2; i++) {
+                mvc.perform(get("/api/tech-error-reports/overview").session(audit()))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.data.channels[?(@.id == 77)].lang").value("en"))
+                        .andExpect(jsonPath("$.data.channels[?(@.id == 77)].section_count").value(expected.sections().size()))
+                        .andExpect(jsonPath("$.data.channels[?(@.id == 77)].field_count").value(expected.allFields().size()))
+                        .andExpect(jsonPath("$.data.channels[?(@.id == 77)].slot_count").value(expected.allSlots().size()));
+            }
+            parse.verify(() -> TechErrorTemplate.fromStored(json), org.mockito.Mockito.times(1));
+            // Metin değişince (sürüm aynı olsa da) yeniden ayrıştırılır — eski özet gösterilmez
+            String json2 = TechErrorTemplate.toJson(new TechErrorTemplate.Template("tr", "perf-test-77b", en.sections().subList(0, 1)));
+            c.setTemplateJson(json2);
+            mvc.perform(get("/api/tech-error-reports/overview").session(audit()))
+                    .andExpect(jsonPath("$.data.channels[?(@.id == 77)].lang").value("tr"))
+                    .andExpect(jsonPath("$.data.channels[?(@.id == 77)].section_count").value(1));
+            parse.verify(() -> TechErrorTemplate.fromStored(json2), org.mockito.Mockito.times(1));
+        }
+    }
+
+    @Test
     @DisplayName("başka takımın kanalı / raporu / görseli kimliğiyle istenirse 404 (varlığı sızmaz)")
     void foreignIs404() throws Exception {
         report(200, 20, B, null);

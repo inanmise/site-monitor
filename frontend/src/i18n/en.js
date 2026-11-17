@@ -1097,6 +1097,7 @@ export const EN = {
   "gaps.menu": "My gaps",
   "gaps.title": "Information to complete",
   "gaps.desc": "Complete the items below so notifications reach the right people and monitoring has no gaps. Only your own records, your teams' records and tasks waiting for you are listed.",
+  "gaps.openFailed": "The My gaps window could not be opened; check your connection and try again from the menu.",
   "gaps.loading": "Reading the gaps…",
   "gaps.fixLoading": "Reading the people list…",
   "gaps.fixUsersFailedTitle": "The people list could not be read",

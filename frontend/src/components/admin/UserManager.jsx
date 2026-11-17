@@ -43,6 +43,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Card } from '@/components/shadcn/card'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
+import { useStickyBottomBar } from '../../hooks/useStickyBottomBar.js'
 
 const AVATAR_PALETTE = [
   'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
@@ -126,6 +127,7 @@ function UserKpi({ kpiKey, icon: Icon, label, value, sub, tone, active = false, 
 
 export default function UserManager({ systemRole, ownTeamId, currentUsername, teams, globalAdmin = false }) {
   const t = useT()
+  const stickyBarRef = useStickyBottomBar()
   const toast = useToast()
   const isAdmin = systemRole === 'ADMIN'
   const isTeamAdmin = systemRole === 'TEAM_ADMIN'
@@ -714,11 +716,11 @@ export default function UserManager({ systemRole, ownTeamId, currentUsername, te
         )}
       </div>
 
-      {/* Toplu işlem çubuğu — seçim varken; telefonda ekranın altına yapışık. `sticky bottom-0` App.css'teki yardım düğmesi
-          kaldırma kuralını tetikler (SettingsSaveBar ile aynı) + güvenli alan dolgusu; çubuk 88 px'ten uzun olabildiği için
+      {/* Toplu işlem çubuğu — seçim varken; telefonda ekranın altına yapışık. `useStickyBottomBar` ref'i App.css'teki yardım
+          düğmesi kaldırma kuralını tetikler (SettingsSaveBar ile aynı) + güvenli alan dolgusu; çubuk 88 px'ten uzun olabildiği için
           telefonda sağda yardım düğmesi payı (pr-14, WeeklyReportsPage çubuğuyla aynı) — sağ uçtaki denetimler örtülmez. */}
       {canManage && selected.size > 0 && (
-        <div data-testid="bulk-bar" role="region" aria-label={t('bulk.aria')} aria-busy={bulkBusy || undefined}
+        <div ref={stickyBarRef} data-testid="bulk-bar" role="region" aria-label={t('bulk.aria')} aria-busy={bulkBusy || undefined}
           className="sticky bottom-0 z-20 flex flex-wrap items-center gap-2 rounded-[10px] border border-primary bg-card pt-2 pr-14 pb-[max(0.5rem,env(safe-area-inset-bottom))] pl-3 shadow-lg md:static md:bottom-auto md:pr-3 md:pb-2 md:shadow-none">
           <span className="mr-1 font-bold">{t('usr.selected', selected.size)}</span>
           <Button variant="secondary" size="sm" onClick={() => runBulk('activate')} disabled={bulkBusy}>{t('usr.bulkActivate')}</Button>

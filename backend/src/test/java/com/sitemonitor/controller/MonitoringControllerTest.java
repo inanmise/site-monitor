@@ -7674,6 +7674,49 @@ class MonitoringControllerTest {
                 .andExpect(jsonPath("$.data[1].days_remaining").value(org.hamcrest.Matchers.nullValue()));
     }
 
+    @Test
+    @DisplayName("GET /domain (2026-11-17 perf): açık alarm rozeti yalnız LİSTELENEN alan adlarından, dar satırla — kurumun bütün açık alarm varlıkları okunmaz; seçim aynı (alan adı başına ilk = en şiddetli)")
+    @SuppressWarnings("unchecked")
+    void listDomain_alarmBadgesOnlyForListedDomains() throws Exception {
+        com.sitemonitor.model.DomainMonitor a = new com.sitemonitor.model.DomainMonitor();
+        a.setId(1L); a.setName("a"); a.setDomain("a.example.test"); a.setTeamId(2L); a.setActive(true);
+        com.sitemonitor.model.DomainMonitor b = new com.sitemonitor.model.DomainMonitor();
+        b.setId(2L); b.setName("b"); b.setDomain("b.example.test"); b.setTeamId(3L); b.setActive(true);
+        com.sitemonitor.model.DomainMonitor c = new com.sitemonitor.model.DomainMonitor();
+        c.setId(3L); c.setName("c"); c.setDomain("c.example.test"); c.setTeamId(2L); c.setActive(true);
+        when(domainMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(a, b, c));
+        when(domainCheckRepo.findLatestPerMonitor()).thenReturn(List.of());
+        // Sorgunun sırası findAllOpenOrderBySeverity ile aynı (CRITICAL önce); a için iki açık alarm
+        List<Object[]> open = List.of(
+                new Object[] {"a.example.test", "CRITICAL", true},
+                new Object[] {"b.example.test", "HIGH", false},
+                new Object[] {"a.example.test", "WARNING", false});
+        java.util.List<java.util.Collection<String>> asked = new java.util.ArrayList<>();
+        when(alertEventRepo.findOpenBadgeRowsByDomainIn(anyCollection(), anyCollection())).thenAnswer(i -> {
+            java.util.Collection<String> types = i.getArgument(0);
+            java.util.Collection<String> domains = i.getArgument(1);
+            asked.add(new java.util.ArrayList<>(domains));
+            assertThat(types).containsExactlyInAnyOrderElementsOf(MonitoringController.DOMAINMON_ALERT_TYPES);
+            return open.stream().filter(r -> domains.contains((String) r[0])).toList();
+        });
+        MockHttpSession scoped = mudurSession();
+        scoped.setAttribute("viewTeamIds", List.of(2L));
+        mvc.perform(get("/api/monitoring/domain").session(scoped))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].active_alarm").value(true))
+                .andExpect(jsonPath("$.data[0].alarm_level").value("CRITICAL"))
+                .andExpect(jsonPath("$.data[0].alarm_acknowledged").value(true))
+                .andExpect(jsonPath("$.data[1].active_alarm").value(false))
+                .andExpect(jsonPath("$.data[1].alarm_level").value(org.hamcrest.Matchers.nullValue()));
+        assertThat(asked).hasSize(1);
+        assertThat(asked.get(0)).containsExactly("a.example.test", "c.example.test");   // kapsam dışı b sorulmaz
+        mvc.perform(get("/api/monitoring/domain").session(session("ADMIN")))
+                .andExpect(jsonPath("$.data[1].alarm_level").value("HIGH"))
+                .andExpect(jsonPath("$.data[1].alarm_acknowledged").value(false));
+        verify(alertEventRepo, never()).findAllOpenOrderBySeverity();
+    }
+
     // ── Sayfa Bütünlüğü / Sayfa Hızı liste satırı can_diagnose (2026-10-05) ─────────────────────
 
     @Test
@@ -10069,6 +10112,9 @@ class MonitoringControllerTest {
             com.sitemonitor.model.KeywordMonitor other = stored(94L, 5L); other.setUrl("https://baska.example.com/");
             when(keywordMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(a, b, c, other));
             when(keywordMonitorRepo.findAll()).thenReturn(List.of(a, b, c, other));
+            // 2026-11-17 perf: aynı URL ucu dar satırı okur (aynı veriden, aynı ad sırası)
+            when(keywordMonitorRepo.findSameUrlRows()).thenReturn(java.util.stream.Stream.of(a, b, c, other)
+                    .map(k -> new Object[] { k.getId(), k.getName(), k.getTeamId(), k.getKeyword(), k.getActive(), k.getUrl() }).toList());
             when(keywordResultRepo.findLatestPerMonitor()).thenReturn(List.of());
             when(certificateService.teamNamesById()).thenReturn(java.util.Map.of(5L, "Dijital Kanallar"));
 
@@ -10090,6 +10136,7 @@ class MonitoringControllerTest {
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.data.monitors.length()").value(0))
                     .andExpect(jsonPath("$.data.hidden_count").value(0));
+            verify(keywordMonitorRepo, never()).findAllByOrderByNameAsc();   // tam varlık okunmaz (2026-11-17 perf)
 
             mvc.perform(get("/api/monitoring/keyword").session(member))
                     .andExpect(status().isOk())

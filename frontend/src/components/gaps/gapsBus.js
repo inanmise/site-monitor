@@ -6,6 +6,8 @@
 //   • publishGapsSummary(s)       — GapsPrompt her okumadan / gizlemeden sonra yayınlar (yalnız sayılar, ad / kimlik yok)
 //   • subscribe / getGapsSummary  — useSyncExternalStore için; özet yoksa null (henüz denetlenmedi)
 const EVENT = 'sm:open-gaps'
+/** Bu sekmede kendiliğinden gösterme kararı verildi mi (sessionStorage; oturum sıfırlanınca unutulur). */
+export const GAPS_PROMPTED_KEY = 'sm.gaps.prompted'
 const REFRESH = 'sm:refresh-gaps'
 
 export function openGapsDialog() {

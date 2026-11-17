@@ -7,6 +7,14 @@ import java.util.List;
 
 public interface EscalationContactRepository extends JpaRepository<EscalationContact, Long> {
     /**
+     * Takım başına AKTİF kişi sayısı (takım sayaçları {@code /api/admin/teams/stats}, 2026-11-17 perf): tam varlık okunmaz.
+     * Alıcı çözümü DEĞİL (yalnız sayı). Satır: {@code [Long teamId, Long count]}; takımsız kişi sayılmaz.
+     */
+    @org.springframework.data.jpa.repository.Query("SELECT c.teamId, COUNT(c) FROM EscalationContact c"
+            + " WHERE c.active = true AND c.teamId IS NOT NULL GROUP BY c.teamId")
+    List<Object[]> countActiveByTeam();
+
+    /**
      * TÜM takımların etkin kontakları — YALNIZ yönetim listesi ({@code AdminController.listContacts}) içindir.
      * Alarm alıcısı çözümünde KULLANILMAZ: takım süzgeci yoktur, başka takımların müdürlerini getirir
      * (2026-09-28 prod hatası). Alıcı çözümü {@code EscalationContactScope.forLevel} üzerinden yapılır;
@@ -37,6 +45,16 @@ public interface EscalationContactRepository extends JpaRepository<EscalationCon
      * {@code EscalationContactScope}) çözülür. {@code EscalationContactScopeTest.UNSCOPED_READS_ALLOWED} listesinde.
      */
     boolean existsByActiveTrueAndDelayMinutesGreaterThan(Integer minutes);
+
+    /**
+     * Kişi kimliği → takım (2026-11-17, performans): yönetim değişiklik akışı denetim satırının takımını çözerken yalnız
+     * okunan satırlardaki kişilerin takımını okur (eskiden {@code findAll()} — her kişi tam varlık). Sütunlar
+     * {@code [id, teamId]}; ad / e-posta / webhook DÖNMEZ, alıcı çözümünde kullanılmaz (takım süzgeci bilinçli yok — kişiler
+     * kimlikle seçilir; kişi kaydı döndürmediği için {@code EscalationContactScopeTest}'in kişi sorgusu kapısı kapsamında
+     * değil). Çağıran kimlikleri öbekler.
+     */
+    @org.springframework.data.jpa.repository.Query("SELECT c.id, c.teamId FROM EscalationContact c WHERE c.id IN :ids")
+    List<Object[]> findTeamIdsByIdIn(@org.springframework.data.repository.query.Param("ids") java.util.Collection<Long> ids);
 
     // ── Toplu işlem hedefli yazımları (2026-11-13) ─────────────────────────────────────────────
     // Bayat bir okumadan TÜM varlık yazılmaz: aynı anda yapılan tekil düzenleme (ad, e-posta, webhook, gecikme) asla

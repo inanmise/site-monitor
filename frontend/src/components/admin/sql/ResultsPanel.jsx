@@ -129,14 +129,34 @@ function ErrorView({ result, onRevealError, t }) {
  * sayfalama (usePagination + PaginationBar). Satıra tıklama / Enter → satır ayrıntısı (önceki/sonraki gezintisiyle);
  * Ctrl/⌘+C odaklı satırı TSV kopyalar. Telefonda tablo yerine satır kartları (ilk 3 alan + "N alan daha").
  */
+/**
+ * Çalışan sorgunun geçen süresi — kendi zamanlayıcısıyla sayan yaprak bileşen. Sayfa her 100 ms'de yeniden çizilmez
+ * (eskiden süre sayfa durumundaydı: editör, şema gezgini ve sonuç tablosu saniyede 10 kez çiziliyordu).
+ */
+export function RunningElapsed({ startedAt, render }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (startedAt == null) return undefined
+    setNow(Date.now())
+    const id = setInterval(() => setNow(Date.now()), ELAPSED_TICK_MS)
+    return () => clearInterval(id)
+  }, [startedAt])
+  return render(startedAt == null ? 0 : Math.max(0, now - startedAt))
+}
+const ELAPSED_TICK_MS = 100
+
 export default function ResultsPanel({
-  result, running, elapsedMs, phone = false, samples, onPickSample, onRevealError, className,
+  result, running, elapsedMs, startedAt = null, phone = false, samples, onPickSample, onRevealError, className,
   resultView = 'table', onViewChange, chartSlot = null, planSlot = null, compareSlot = null,
   onServerExport = null, serverExport = null, onCancelExport, onStop, stopping = false,
 }) {
   const t = useT()
   const locale = useDateLocale()
   const toast = useToast()
+  // startedAt verilirse süre yaprak bileşende sayılır; verilmezse eski elapsedMs değeri gösterilir.
+  const elapsedText = (render) => (startedAt != null
+    ? <RunningElapsed startedAt={startedAt} render={render} />
+    : render(elapsedMs))
   const rows = useMemo(() => (result && !result.error && !result.cancelled && Array.isArray(result.rows) ? result.rows : []), [result])
   const cols = useMemo(() => resultColumns(rows), [rows])
   const types = useMemo(() => columnTypes(rows, cols), [rows, cols])
@@ -207,7 +227,7 @@ export default function ResultsPanel({
   const cutCells = Number.isFinite(Number(result?.truncated_cells)) && Number(result.truncated_cells) > 0 ? Number(result.truncated_cells) : 0
   const status = running ? (
     <span className="inline-flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground tabular-nums" aria-live="polite">
-      <Timer aria-hidden="true" className="size-3.5" />{t('sql.res.running', formatDuration(elapsedMs))}
+      <Timer aria-hidden="true" className="size-3.5" />{elapsedText((ms) => t('sql.res.running', formatDuration(ms)))}
       {onStop && (
         <Button type="button" variant="outline" size="sm" onClick={onStop} disabled={stopping} data-slot="sql-stop-inline"
           className="h-7 text-destructive pointer-coarse:h-10">
@@ -312,7 +332,7 @@ export default function ResultsPanel({
   } else if (resultView === 'compare' && !running) {
     body = compareSlot
   } else if (running) {
-    body = <LoadingBlock label={t('sql.res.running', formatDuration(elapsedMs))} size={20} />
+    body = elapsedText((ms) => <LoadingBlock label={t('sql.res.running', formatDuration(ms))} size={20} />)
   } else if (result?.cancelled) {
     body = (
       <div data-slot="sql-result-cancelled">

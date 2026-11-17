@@ -160,26 +160,41 @@ public class TeamAdminService {
      */
     public Map<Long, Map<String, Object>> stats() {
         // [members, domains, monitors, open_alerts, contacts, groups, members_inactive, ug_domains]
+        // 2026-11-17 perf: Takımlar sayfası ve yönetim özeti yoklar — tam varlıklar (kullanıcı fotoğrafı, izleme / alarm
+        // TEXT kolonları) yerine dar izdüşümler ve takım başına gruplu sayımlar; anlam birebir aynı (aktif = TRUE, grup
+        // için NULL da etkin, takımsız satır sayılmaz).
         Map<Long, int[]> c = new LinkedHashMap<>();
         Map<Long, String> teamEmails = new HashMap<>();
         for (var t : teamRepo.findAll()) { c.put(t.getId(), new int[8]); teamEmails.put(t.getId(), t.getEmail()); }
-        for (AppUser u : userRepo.findAll()) {
-            LinkedHashSet<Long> ids = new LinkedHashSet<>();
-            if (u.getTeamId() != null) ids.add(u.getTeamId());
-            if (u.getTeamIds() != null) ids.addAll(u.getTeamIds());
-            boolean inactive = !Boolean.TRUE.equals(u.getActive());
-            for (Long id : ids) { bump(c, id, 0); if (inactive) bump(c, id, 6); }
+        // Üyelik: birincil takım + ek takımlar (aynı takım bir kez) — eski {teamId} ∪ teamIds kümesi.
+        Map<Long, LinkedHashSet<Long>> memberships = new LinkedHashMap<>();
+        Map<Long, Boolean> inactiveById = new HashMap<>();
+        for (Object[] r : userRepo.findCounterRows()) {
+            if (r == null || !(r[0] instanceof Number id)) continue;
+            LinkedHashSet<Long> ids = memberships.computeIfAbsent(id.longValue(), k -> new LinkedHashSet<>());
+            if (r[1] instanceof Number t) ids.add(t.longValue());
+            inactiveById.put(id.longValue(), !Boolean.TRUE.equals(r[2]));
         }
-        for (CertificateInventory i : inventoryRepo.findByActiveTrueOrderByDomainAsc()) {
-            bump(c, i.getTeamId(), 1);
-            if (i.getUgTeamId() != null && !i.getUgTeamId().equals(i.getTeamId())) bump(c, i.getUgTeamId(), 7);
+        for (Object[] r : userRepo.findAllTeamMembershipPairs()) {
+            if (r == null || r.length < 2 || !(r[0] instanceof Number id) || !(r[1] instanceof Number t)) continue;
+            LinkedHashSet<Long> ids = memberships.get(id.longValue());
+            if (ids != null) ids.add(t.longValue());
         }
-        for (var e : monitorRepos().entrySet()) {
-            for (MonitorSchedule m : e.getValue().findAll()) if (Boolean.TRUE.equals(m.getActive())) bump(c, m.getTeamId(), 2);
+        for (var e : memberships.entrySet()) {
+            boolean inactive = Boolean.TRUE.equals(inactiveById.get(e.getKey()));
+            for (Long id : e.getValue()) { bump(c, id, 0); if (inactive) bump(c, id, 6); }
         }
-        for (AlertEvent a : alertEventRepo.findAllOpenOrderBySeverity()) bump(c, a.getTeamId(), 3);
-        for (EscalationContact ec : contactRepo.findAll()) if (Boolean.TRUE.equals(ec.getActive())) bump(c, ec.getTeamId(), 4);
-        for (NotificationGroup g : groupRepo.findAll()) if (!Boolean.FALSE.equals(g.getActive())) bump(c, g.getTeamId(), 5);
+        for (Object[] r : inventoryRepo.findActiveDomainTeams()) {
+            if (r == null || r.length < 2) continue;
+            Long team = r[1] instanceof Number n ? n.longValue() : null;
+            Long ug = r.length > 2 && r[2] instanceof Number n ? n.longValue() : null;
+            bump(c, team, 1);
+            if (ug != null && !ug.equals(team)) bump(c, ug, 7);
+        }
+        for (java.util.function.Supplier<List<Object[]>> counts : monitorCounters()) addCounts(c, counts.get(), 2);
+        addCounts(c, alertEventRepo.countOpenByTeam(), 3);
+        addCounts(c, contactRepo.countActiveByTeam(), 4);
+        addCounts(c, groupRepo.countActiveByTeam(), 5);
         Map<Long, Map<String, Object>> out = new LinkedHashMap<>();
         for (var e : c.entrySet()) {
             int[] v = e.getValue();
@@ -210,6 +225,26 @@ public class TeamAdminService {
             return passive == null ? null : passive.size() >= parts.size();
         } catch (RuntimeException ex) {
             return null;
+        }
+    }
+
+    /** Takım başına aktif izleme sayımları — {@link #monitorRepos()} ile aynı on tür (sorgu tam varlık okumaz). */
+    private List<java.util.function.Supplier<List<Object[]>>> monitorCounters() {
+        List<java.util.function.Supplier<List<Object[]>>> out = new ArrayList<>(List.of(
+                httpRepo::countActiveByTeam, portRepo::countActiveByTeam, pingRepo::countActiveByTeam,
+                dnsRepo::countActiveByTeam, keywordRepo::countActiveByTeam, pageRepo::countActiveByTeam,
+                pageSpeedRepo::countActiveByTeam, scriptedRepo::countActiveByTeam, domainRepo::countActiveByTeam));
+        if (dbQueryRepo != null) out.add(dbQueryRepo::countActiveByTeam);
+        return out;
+    }
+
+    /** Gruplu sayım satırları {@code [teamId, count]} → sayaç; bilinmeyen takım (silinmiş) yok sayılır ({@link #bump} kuralı). */
+    private static void addCounts(Map<Long, int[]> c, List<Object[]> rows, int idx) {
+        if (rows == null) return;
+        for (Object[] r : rows) {
+            if (r == null || r.length < 2 || !(r[0] instanceof Number t) || !(r[1] instanceof Number n)) continue;
+            int[] v = c.get(t.longValue());
+            if (v != null) v[idx] += (int) n.longValue();
         }
     }
 

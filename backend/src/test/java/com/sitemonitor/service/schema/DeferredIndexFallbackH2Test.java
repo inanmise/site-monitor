@@ -69,7 +69,7 @@ class DeferredIndexFallbackH2Test {
                 "coalesce", "and", "in", "or");   // işlev / anahtar sözcük — kolon değil
         List<String> out = new ArrayList<>();
         // Tırnaklı sabitler (ör. kısmi indeksin 'TEST' / tarih kesimi) kolon değil — taranmadan çıkarılır (2026-10-21)
-        Matcher m = Pattern.compile("[a-z_]+").matcher(tail.replaceAll("'[^']*'", " ").toLowerCase(Locale.ROOT));
+        Matcher m = Pattern.compile("[a-z_][a-z0-9_]*").matcher(tail.replaceAll("'[^']*'", " ").toLowerCase(Locale.ROOT));
         while (m.find()) if (!keywords.contains(m.group())) out.add(m.group());
         return out;
     }
@@ -98,7 +98,7 @@ class DeferredIndexFallbackH2Test {
             portable++;
             assertThat(indexColumns(s.name())).as("%s kolonları", s.name()).containsExactlyElementsOf(keyColumns(s.fallbackDdl()));
         }
-        assertThat(portable).isEqualTo(16);   // 2026-10-18: + idx_nl_te_channel (H2'de kısmisiz); 2026-10-23: + idx_lir_ip_reported (MP-33); 2026-10-31: + idx_dbqc_checked_at (veritabanı sorgu izlemesi); 2026-11-05: + idx_act_alert (aktivite alarm bağı) + idx_act_team_status_time (aktivite süzgeçleri); 2026-11-06: + idx_ae_domain_id (alan başına son alarm)
+        assertThat(portable).isEqualTo(17);   // 2026-10-18: + idx_nl_te_channel (H2'de kısmisiz); 2026-10-23: + idx_lir_ip_reported (MP-33); 2026-10-31: + idx_dbqc_checked_at (veritabanı sorgu izlemesi); 2026-11-05: + idx_act_alert (aktivite alarm bağı) + idx_act_team_status_time (aktivite süzgeçleri); 2026-11-06: + idx_ae_domain_id (alan başına son alarm); 2026-11-17: + idx_psr_monitor_reason_checked (Sayfa Hızı ihlal anları)
         assertThat(builder.startInBackground()).as("H2'de arka plan kurulumu yok").isNull();
     }
 

@@ -1,4 +1,5 @@
 import { useId } from 'react'
+import { useStickyBottomBar } from '../../hooks/useStickyBottomBar.js'
 import { Check, Save, Undo2 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import HelpTip from '../ui/HelpTip.jsx'
@@ -124,9 +125,10 @@ export function SettingsSaveBar({
   const t = useT()
   const tracked = typeof dirty === 'boolean'
   const stuck = tracked && dirty
+  const stickyBarRef = useStickyBottomBar(null, stuck)
   const unsavedText = dirtyLabel || t('settings.unsaved')
   return (
-    <div data-slot="settings-save-bar" data-dirty={dirty ? 'true' : undefined}
+    <div ref={stickyBarRef} data-slot="settings-save-bar" data-dirty={dirty ? 'true' : undefined}
       role={tracked ? 'region' : undefined}
       aria-label={tracked ? (dirty ? unsavedText : t('settings.allSaved')) : undefined}
       className={cn('flex flex-wrap items-center gap-2.5 rounded-xl border bg-card px-4 py-3 shadow-xs',

@@ -97,6 +97,7 @@ class IdentityMaskGateTest {
     @BeforeEach
     void setUp() {
         service = new UserActivityService(auditLogRepo, userRepo, teamRepo, userService, pageUsage, jdbc, appSettings);
+        com.sitemonitor.service.UserActivityRows.mirrorFindAll(userRepo);   // 2026-11-17 perf: dar satır, fikstür aynı
         Team t = new Team(); t.setId(5L); t.setName("Takım A");
         when(teamRepo.findAll()).thenReturn(List.of(t));
         when(appSettings.getInt(eq("site.monitor.ui.inactivity-minutes"), anyInt())).thenReturn(30);

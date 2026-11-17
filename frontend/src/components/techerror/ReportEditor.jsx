@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, ChevronLeft, ChevronRight, CircleAlert, Download, Eye, History, LayoutTemplate, MailWarning, RefreshCw, Save, Send,
   Trash2, Undo2, ShieldCheck } from 'lucide-react'
@@ -44,8 +44,10 @@ import {
 import { storageOwner } from '../../utils/personalStorage.js'
 import { errorInfoOf } from '../../utils/errorMessages.js'
 import { useElementHeight } from '../../hooks/useElementHeight.js'
+import { useStickyBottomBar } from '../../hooks/useStickyBottomBar.js'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
 import { cn } from '@/lib/utils'
+import { useLatestCallback } from '../../hooks/useLatestCallback.js'
 
 // Kişisel kayıt: çıkışta ve kullanıcı değişince silinir (utils/personalStorage PERSONAL_PREFIXES)
 export const BACKUP_PREFIX = 'sm.te.draft.'
@@ -81,6 +83,9 @@ const withUnit = (units, key, exp) => {
   return out
 }
 const NO_ISSUES = Object.freeze([])
+const NO_SIDS = Object.freeze([])
+/** Yazarken anında çizilen bölüm sayısı: son düzenlenen ve ondan önceki (odak bölüm değiştirince eskisi bayat görünmesin). */
+const HOT_SECTIONS = 2
 /** Anomali denetimindeki alanın görünen adı (durum satırı): anahtar → i18n; Kesinti ID şablonun etiketi. */
 const ISSUE_FIELD_LABEL = Object.freeze({ date: 'te.iss.date', start: 'te.iss.start', end: 'te.iss.end' })
 
@@ -170,6 +175,12 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   const [base, setBase] = useState({ json: null, version: null })
   const [gen, setGen] = useState(0)                       // taslak bütünüyle değişince girişler yeniden kurulur
   const [images, setImages] = useState([])
+  // Son düzenlenen bölümler (yazarken anında çizilir; ötekiler ertelenmiş taslakla — aşağıda viewDraft)
+  const [hotSids, setHotSids] = useState(NO_SIDS)
+  const blockOfFieldRef = useRef(new Map())
+  const markHot = useCallback((sid) => {
+    if (sid) setHotSids((h) => (h[0] === sid ? h : [sid, ...h.filter((x) => x !== sid)].slice(0, HOT_SECTIONS)))
+  }, [])
   const [clientErrors, setClientErrors] = useState({})    // istemcinin alan denetimi (kaydı kilitler)
   const [serverErrors, setServerErrors] = useState({})    // sunucunun alan hataları (gösterilir; alan düzenlenince kalkar)
   const [conflict, setConflict] = useState(false)
@@ -229,6 +240,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   // A4 (2026-10-17): yapışkan eylem çubuğunun GERÇEK yüksekliği → kabın alt boşluğu (sabit pb-24 üç satıra sarılan
   // çubukta son bölüm kartını örtüyordu); ölçüm yokken (jsdom / ilk boyama) pb-24 taban kalır
   const [actionsRef, actionsHeight] = useElementHeight()
+  const actionsBarRef = useStickyBottomBar(actionsRef)
   const historyBtnRef = useRef(null)
   const titleRef = useRef(null)
   const seq = useRef(0)
@@ -480,11 +492,17 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     return out
   })
   // Konu adedinin kısaltma üssü SABİT geri çağrı (anomali kartları memo — her tuşta yeniden kurulmasın)
-  const setUnit = useCallback((key, exp) => setDraft((d) => {
-    const units = withUnit(d.units, key, exp)
-    return units === d.units ? d : { ...d, units }
-  }), [])
+  const setUnit = useCallback((key, exp) => {
+    // Anahtar: alan kimliği, issues.<bölüm>.<konu>.<alan> ya da tables.<bölüm>.<satır>.<kolon>
+    const parts = String(key).split('.')
+    markHot(parts[0] === 'issues' || parts[0] === 'tables' ? parts[1] : blockOfFieldRef.current.get(key))
+    setDraft((d) => {
+      const units = withUnit(d.units, key, exp)
+      return units === d.units ? d : { ...d, units }
+    })
+  }, [markHot])
   const setField = (id, v, exp = null) => {
+    markHot(blockOfFieldRef.current.get(id))
     setDraft((d) => {
       const units = withUnit(d.units, id, v == null ? null : exp)
       return { ...d, fields: { ...d.fields, [id]: v }, ...(units === d.units ? {} : { units }) }
@@ -500,6 +518,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   }
   /** Raporun o aya özel hedefi (2026-10-17, 4b): boş = şablon hedefi (anahtar silinir, kayda gitmez). */
   const setTarget = (id, v) => {
+    markHot(blockOfFieldRef.current.get(id))
     setDraft((d) => {
       const targets = { ...(d.targets || {}) }
       if (v == null || v === '') delete targets[id]
@@ -511,6 +530,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   // Konu güncellemesi SABİT ve işlevsel (inceleme 2026-10-18): kartlar memo — geri çağrı her tuşta yeniden kurulmasın, güncelleme
   // en son taslak üzerinde yapılsın (kapanıştaki eski liste başka kartın değişikliğini ezmesin)
   const updateIssues = useCallback((sid, fn) => {
+    markHot(sid)
     setDraft((d) => ({ ...d, issues: { ...d.issues, [sid]: fn(d.issues?.[sid] || []) } }))
     setServerErrors((e) => {
       const keys = Object.keys(e).filter((k) => k === 'values' || k.startsWith(`issues.${sid}.`))
@@ -519,13 +539,15 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       for (const k of keys) delete out[k]
       return out
     })
-  }, [])
+  }, [markHot])
   const setText = (sid, v) => {
+    markHot(sid)
     setDraft((d) => ({ ...d, texts: { ...d.texts, [sid]: v } }))
     clearServer((k) => k === `text.${sid}`)
   }
   /** Elle düzenlenmiş özeti kaldırır (anahtar silinir — "boş metin" bölümü basmamak demektir, "yok" ise otomatik). */
   const clearText = (sid) => {
+    markHot(sid)
     setDraft((d) => {
       if (!(sid in (d.texts || {}))) return d
       const texts = { ...d.texts }
@@ -535,6 +557,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     clearServer((k) => k === `text.${sid}`)
   }
   const setCell = (sid, rid, cid, v, exp = null) => {
+    markHot(sid)
     setDraft((d) => {
       const tables = { ...(d.tables || {}) }
       const rows = { ...(tables[sid] || {}) }
@@ -1251,7 +1274,16 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   const firstImagesId = sections.find((s) => s.kind === 'images')?.id
   // Kesinti cevabı konularla çelişiyor mu (2026-10-18): "Dönemde kesinti oldu mu?" Hayır + kesinti kaynaklı konu → alanın yanında
   // ve özet kartında bilgi bandı (kayıt engellenmez; rapor ikisini de yazıldığı gibi basar)
+  // Yazma maliyeti (2026-11-17 performans): her tuş taslağı değiştirir. Yalnız DÜZENLENEN bölüm (ve bir öncekisi) güncel
+  // taslakla anında çizilir; öteki bölümler ERTELENMİŞ taslakla (useDeferredValue) — React o çizimi böler, uzun görev
+  // üretmez (canlı e2e: 390 px'te 10 tuşta 8 uzun görev vardı). Bölüm bileşenleri memo'lu; ertelenmiş değerler bu çizimde
+  // değişmediği için anında çizimde atlanırlar. Denetimli metin girişleri düzenlenen bölümde olduğu için yazı geri sarılmaz.
+  // Yeni yükleme (gen) ya da ilk çizim: ertelenmiş değer eski raporun / boş taslağın olabilir — o zaman güncel taslak
+  const draftOfGen = useMemo(() => ({ draft, gen }), [draft, gen])
+  const deferredOfGen = useDeferredValue(draftOfGen)
+  const viewDraft = deferredOfGen.gen === gen && deferredOfGen.draft != null ? deferredOfGen.draft : draft
   const outageConflict = outageAnswerConflict(tpl, draft)
+  const viewOutageConflict = useMemo(() => outageAnswerConflict(tpl, viewDraft), [tpl, viewDraft])
   // Ekrandan görsel alma: paylaşımın kendiliğinden kapandığını söyleyen TEK bildirim ilk görsel bölümünde; rapor yalnız anomali
   // konusu görseli taşıyorsa ilk görsel alan konu bölümünde (yoksa hiç söylenmezdi)
   const firstIssueImagesId = firstImagesId ? null
@@ -1266,6 +1298,35 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
     [tpl, draft?.fields, prevFields, calc, draftTargets])
   const shownValues = useMemo(() => (draft && shownFields !== draft.fields ? { ...draft, fields: shownFields } : draft),
     [draft, shownFields])
+  const viewTargets = viewDraft?.targets
+  const viewCalc = useMemo(() => calcResults(tpl, viewDraft?.fields, prevFields, viewTargets), [tpl, viewDraft?.fields, prevFields, viewTargets])
+  const viewShownFields = useMemo(() => applyCalc(tpl, viewDraft?.fields, prevFields, viewCalc, viewTargets),
+    [tpl, viewDraft?.fields, prevFields, viewCalc, viewTargets])
+  const viewShownValues = useMemo(() => (viewDraft && viewShownFields !== viewDraft.fields ? { ...viewDraft, fields: viewShownFields } : viewDraft),
+    [viewDraft, viewShownFields])
+  // Bölüm memo'su için SABİT props: şablon alan listesi, gömülü bölümler, alan → çizilen bölüm eşlemesi
+  const tplFields = useMemo(() => allFields(tpl), [tpl])
+  const embeddedBySid = useMemo(() => {
+    const m = new Map()
+    for (const s of tpl?.sections || []) if (s.kind === 'summary') m.set(s.id, embeddedSections(tpl, s.id))
+    return m
+  }, [tpl])
+  // Gömülü gösterge bölümünün alanları sunucu kartında (özet) çizilir: alan → çizen bölüm
+  const blockOfField = useMemo(() => {
+    const m = new Map()
+    for (const s of tpl?.sections || []) {
+      if (s.kind !== 'metrics') continue
+      const block = hostOf(tpl, s)?.id || s.id
+      for (const f of s.fields || []) m.set(f.id, block)
+    }
+    return m
+  }, [tpl])
+  blockOfFieldRef.current = blockOfField
+  const fieldOnChange = useLatestCallback(setField)
+  const targetOnChange = useLatestCallback(setTarget)
+  const textOnChange = useLatestCallback(setText)
+  const textOnClear = useLatestCallback(clearText)
+  const cellOnChange = useLatestCallback(setCell)
 
   // Katlanır bölümler (2026-10-16): açılanlar bu rapor için hatırlanır; hatalı alan sayısı yalnız hata KÜMESİ değişince
   // yeni Map olur (her tuşta değil — görsel bölümleri yazarken yeniden çizilmesin)
@@ -1576,39 +1637,42 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
         const key = `${s.id}:${gen}`
         // Özet kartına gömülü bölüm o kartın içinde çizilir (aşağıda SummaryBlock)
         if (hostOf(tpl, s)) return null
+        // Düzenlenen bölüm güncel taslakla, ötekiler ertelenmiş taslakla (yukarıda viewDraft)
+        const hot = hotSids.includes(s.id)
+        const vals = hot ? draft : viewDraft
         if (s.kind === 'metrics') {
-          return <MetricsBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} previous={data.previous}
-            readOnly={readOnly} errors={fieldErrors} onField={setField} onFieldError={setFieldError} templateFields={allFields(tpl)}
-            calc={calc} onTarget={setTarget} outageConflict={outageConflict} />
+          return <MetricsBlock key={key} section={s} values={vals} resolve={resolve} uiLang={uiLang} previous={data.previous}
+            readOnly={readOnly} errors={fieldErrors} onField={fieldOnChange} onFieldError={setFieldError} templateFields={tplFields}
+            calc={hot ? calc : viewCalc} onTarget={targetOnChange} outageConflict={hot ? outageConflict : viewOutageConflict} />
         }
         if (s.kind === 'issues') {
-          return <IssuesBlock key={key} section={s} template={tpl} list={draft.issues?.[s.id] || NO_ISSUES} units={draft.units}
-            shownFields={shownFields} resolve={resolve} uiLang={uiLang} readOnly={readOnly} errors={fieldErrors}
+          return <IssuesBlock key={key} section={s} template={tpl} list={vals.issues?.[s.id] || NO_ISSUES} units={vals.units}
+            shownFields={hot ? shownFields : viewShownFields} resolve={resolve} uiLang={uiLang} readOnly={readOnly} errors={fieldErrors}
             onIssuesUpdate={updateIssues} onFieldError={setFieldError} onUnit={setUnit} reportId={reportId} images={images}
             onImagesChange={onImagesChange} period={issuePeriod}
             beforeIssueUpload={beforeIssueUpload} captureNotice={s.id === firstIssueImagesId} />
         }
         if (s.kind === 'summary') {
-          return <SummaryBlock key={key} section={s} template={tpl} values={shownValues} channelName={channel?.name} year={report?.year}
-            month={report?.month} resolve={resolve} readOnly={readOnly} errors={fieldErrors} onText={setText} onClearText={clearText}
-            embedded={embeddedSections(tpl, s.id)} fieldValues={draft} uiLang={uiLang} previous={data.previous}
-            onField={setField} onFieldError={setFieldError} templateFields={allFields(tpl)} calc={calc} onTarget={setTarget}
-            outageConflict={outageConflict} />
+          return <SummaryBlock key={key} section={s} template={tpl} values={hot ? shownValues : viewShownValues} channelName={channel?.name} year={report?.year}
+            month={report?.month} resolve={resolve} readOnly={readOnly} errors={fieldErrors} onText={textOnChange} onClearText={textOnClear}
+            embedded={embeddedBySid.get(s.id) || NO_ISSUES} fieldValues={vals} uiLang={uiLang} previous={data.previous}
+            onField={fieldOnChange} onFieldError={setFieldError} templateFields={tplFields} calc={hot ? calc : viewCalc} onTarget={targetOnChange}
+            outageConflict={hot ? outageConflict : viewOutageConflict} />
         }
         if (s.kind === 'table') {
-          return <TableBlock key={key} section={s} values={draft} resolve={resolve} uiLang={uiLang} tplLang={tpl?.lang} readOnly={readOnly}
-            errors={fieldErrors} onCell={setCell} onFieldError={setFieldError} />
+          return <TableBlock key={key} section={s} values={vals} resolve={resolve} uiLang={uiLang} tplLang={tpl?.lang} readOnly={readOnly}
+            errors={fieldErrors} onCell={cellOnChange} onFieldError={setFieldError} />
         }
         if (s.kind === 'trend') {
-          return <TrendBlock key={key} section={s} template={tpl} trend={data.trend} draftFields={shownFields} resolve={resolve}
+          return <TrendBlock key={key} section={s} template={tpl} trend={data.trend} draftFields={viewShownFields} resolve={resolve}
             tplLang={tpl?.lang} />
         }
         if (s.kind === 'images') {
           return <ImagesBlock key={s.id} section={s} reportId={reportId} images={images} resolve={resolve} uiLang={uiLang}
             showTotals={s.id === firstImagesId} readOnly={readOnly} onImagesChange={onImagesChange} />
         }
-        return <TextBlock key={key} section={s} values={draft} resolve={resolve} resolveText={resolveText} readOnly={readOnly}
-          errors={fieldErrors} onText={setText} />
+        return <TextBlock key={key} section={s} values={vals} resolve={resolve} resolveText={resolveText} readOnly={readOnly}
+          errors={fieldErrors} onText={textOnChange} />
       })}
       </PendingInputContext.Provider>
       </TopicOpenContext.Provider>
@@ -1637,7 +1701,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
       <ReportHistorySheet reportId={reportId} open={historyOpen} onClose={() => setHistoryOpen(false)} uiLang={uiLang}
         returnFocusRef={historyBtnRef} />
 
-      <div ref={actionsRef}
+      <div ref={actionsBarRef}
         className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-2 rounded-t-xl border-t bg-background/95 px-1 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur"
         data-slot="te-report-actions">
         <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]" aria-live="polite" data-slot="te-save-status"

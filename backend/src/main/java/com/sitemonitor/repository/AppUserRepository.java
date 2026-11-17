@@ -191,6 +191,37 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
     @Query("SELECT u.id, u.active FROM AppUser u WHERE u.id IN :ids")
     List<Object[]> findActiveFlagsByIds(@Param("ids") Collection<Long> ids);
 
+    /**
+     * Takım sayaçları ({@code /api/admin/teams/stats}) ve yönetim özet şeridi ({@code /api/admin/overview}) — 2026-11-17 perf:
+     * {@code findAll()} yalnız saymak için her kullanıcının AD fotoğrafını (base64 TEXT) ve takım koleksiyonunu yüklüyordu.
+     * Ek takımlar {@link #findAllTeamMembershipPairs()} ile. Satır: {@code [Long id, Long teamId, Boolean active,
+     * String systemRole, Boolean permanentLock, String lastLoginAt]}.
+     */
+    @Query("SELECT u.id, u.teamId, u.active, u.systemRole, u.permanentLock, u.lastLoginAt FROM AppUser u")
+    List<Object[]> findCounterRows();
+
+    /**
+     * Nöbet çizelgesi görünümü ve şu anki nöbetçi ({@code /api/oncall/current}, Kişisel Panom dakikada bir okur) — 2026-11-17
+     * perf: fotoğraf / takım koleksiyonu yüklenmez. Satır: {@code [Long id, String username, String displayName,
+     * String email, Boolean active]}. Çağıran boş koleksiyonla çağırmaz.
+     */
+    @Query("SELECT u.id, u.username, u.displayName, u.email, u.active FROM AppUser u WHERE u.id IN :ids")
+    List<Object[]> findOnCallPersonRows(@Param("ids") Collection<Long> ids);
+
+    /**
+     * Kullanıcı etkinliği ({@code /api/admin/system/user-activity}, Sistem Sağlığı 30 sn'de bir okur) — 2026-11-17 perf:
+     * {@code findAll()} her kullanıcının fotoğrafını yüklüyordu; yalnız VAR MI bayrağı gerekir ({@code has_photo},
+     * {@link #findTeamMemberDirectoryRows} ile aynı kural). Ek takımlar {@link #findAllTeamMembershipPairs()} ile.
+     * Satır sırası {@code UserActivityService.ACTIVITY_COLUMNS} ile aynı.
+     */
+    @Query("SELECT u.id, u.username, u.displayName, u.firstName, u.lastName, u.email, u.active, u.teamId, u.systemRole, "
+         + "u.orgRole, u.authSource, u.createdAt, u.lastLoginAt, u.lastLoginIp, u.lastLoginMethod, u.lastSeenAt, "
+         + "u.prevLoginAt, u.prevLoginIp, u.failedBeforeLogin, u.failedSinceLogin, u.lastFailedLoginAt, u.lastFailedLoginIp, "
+         + "u.lastFailedLoginReason, u.permanentLock, u.department, u.employeeId, u.title, u.tourState, u.activeSessionId, "
+         + "CASE WHEN u.photoBase64 IS NOT NULL AND LENGTH(TRIM(u.photoBase64)) > 0 THEN true ELSE false END "
+         + "FROM AppUser u")
+    List<Object[]> findActivityRows();
+
     /** Takım silme guard'ı: takıma üye (birincil veya ek) kullanıcı var mı. */
     @Query("SELECT COUNT(u) > 0 FROM AppUser u JOIN u.teamIds tid WHERE tid = :teamId")
     boolean existsByMembershipTeamId(@Param("teamId") Long teamId);

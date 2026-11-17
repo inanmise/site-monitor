@@ -30,7 +30,7 @@ const FETCHERS = {
   renewal: () => api.getRenewalTimeliness(),
   overview: (fresh) => api.monitoring.getOverview(24, fresh),
   noise: () => api.admin.getAlertNoise(30),
-  teamAlerts: () => api.admin.getAlertTeamStats(),
+  teamAlerts: (fresh) => api.admin.getAlertTeamStats(fresh),
   dq: (fresh) => api.dataQuality.summary(fresh),
 }
 

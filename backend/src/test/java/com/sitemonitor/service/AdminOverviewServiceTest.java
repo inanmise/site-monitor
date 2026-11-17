@@ -56,12 +56,25 @@ class AdminOverviewServiceTest {
         u.setLastLoginAt(lastLogin); u.setPermanentLock(locked); return u;
     }
 
+    /** Varlık listesi + sayaçların dar izdüşümleri (aynı veriden; 2026-11-17 perf — servis yalnız izdüşümü okur). */
+    private void users(List<AppUser> list) {
+        when(userRepo.findAll()).thenReturn(list);
+        List<Object[]> rows = new java.util.ArrayList<>();
+        List<Object[]> pairs = new java.util.ArrayList<>();
+        for (AppUser u : list) {
+            rows.add(new Object[] { u.getId(), u.getTeamId(), u.getActive(), u.getSystemRole(), u.getPermanentLock(), u.getLastLoginAt() });
+            if (u.getTeamIds() != null) for (Long t : u.getTeamIds()) pairs.add(new Object[] { u.getId(), t });
+        }
+        when(userRepo.findCounterRows()).thenReturn(rows);
+        when(userRepo.findAllTeamMembershipPairs()).thenReturn(pairs);
+    }
+
     @BeforeEach
     void setUp() {
         String recent = ISO.format(Instant.now().minus(1, ChronoUnit.DAYS));
         String old = ISO.format(Instant.now().minus(120, ChronoUnit.DAYS));
         when(teamRepo.findAll()).thenReturn(List.of(team(7, 1L, "a@example.com"), team(9, null, "")));
-        when(userRepo.findAll()).thenReturn(List.of(
+        users(List.of(
                 user(1, "ADMIN", null, recent, false), user(2, "USER", 7L, old, false),
                 user(3, "USER", 9L, null, true), user(4, "TEAM_ADMIN", 9L, recent, false)));
         EscalationContact c1 = new EscalationContact(); c1.setId(1L); c1.setTeamId(7L); c1.setActive(true); c1.setWebhookUrl("https://x.example.com/h");
@@ -99,5 +112,20 @@ class AdminOverviewServiceTest {
         assertThat(c).doesNotContainKey("threshold_tiers");
         List<Map<String, Object>> w = (List<Map<String, Object>>) r.get("warnings");
         assertThat(w).extracting(m -> m.get("code")).containsExactly("USER_DORMANT");
+    }
+
+    @Test
+    @DisplayName("2026-11-17 perf: kullanıcılar dar satırlardan sayılır (fotoğraf / takım koleksiyonu yüklenmez); ek takım üyeliği kapsamda sayılır")
+    @SuppressWarnings("unchecked")
+    void usersFromNarrowRows_extraMembership() {
+        String recent = ISO.format(Instant.now().minus(1, ChronoUnit.DAYS));
+        AppUser extra = user(5, "USER", 9L, recent, false);
+        extra.setTeamIds(new LinkedHashSet<>(List.of(9L, 7L)));          // birincil 9, ek takım 7
+        users(List.of(user(2, "USER", 7L, recent, false), extra, user(6, "USER", null, recent, false)));
+        Map<String, Object> scoped = (Map<String, Object>) service.overview(List.of(7L)).get("counts");
+        assertThat(scoped).containsEntry("users", 2).containsEntry("users_active", 2);
+        Map<String, Object> global = (Map<String, Object>) service.overview(null).get("counts");
+        assertThat(global).containsEntry("users", 3);
+        org.mockito.Mockito.verify(userRepo, org.mockito.Mockito.never()).findAll();
     }
 }

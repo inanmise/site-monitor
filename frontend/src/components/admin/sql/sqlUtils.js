@@ -224,11 +224,28 @@ export function wordAt(text, offset) {
   return [a, b]
 }
 
+// Intl biçimleyicileri yerel ayara göre bir kez kurulur: şema gezgini her tabloda iki biçimleyici kuruyordu
+// (180 tablo × her yeniden çizim). Önbellek küçük ve sınırlı (yerel ayar sayısı kadar, en çok FMT_CACHE_MAX).
+const FMT_CACHE_MAX = 16
+const compactFmts = new Map()
+const relFmts = new Map()
+function cachedFormat(cache, locale, make) {
+  const key = String(locale ?? '')
+  let f = cache.get(key)
+  if (!f) {
+    f = make()
+    if (cache.size >= FMT_CACHE_MAX) cache.delete(cache.keys().next().value)
+    cache.set(key, f)
+  }
+  return f
+}
+
 /** Kısa sayı: 1234 → "1.2K" (yerel biçim). */
 export function formatCompact(n, locale) {
   if (n == null || Number.isNaN(Number(n))) return null
   try {
-    return new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 1 }).format(Number(n))
+    return cachedFormat(compactFmts, locale,
+      () => new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 1 })).format(Number(n))
   } catch { return String(n) }
 }
 
@@ -241,7 +258,10 @@ export function relativeFrom(iso, locale, now = Date.now()) {
   if (Number.isNaN(ms)) return null
   const diff = Math.round((ms - now) / 1000)
   const abs = Math.abs(diff)
-  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'short' })
+  let rtf
+  try {
+    rtf = cachedFormat(relFmts, locale, () => new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'short' }))
+  } catch { return null }
   if (abs < 60) return rtf.format(diff, 'second')
   if (abs < 3600) return rtf.format(Math.round(diff / 60), 'minute')
   if (abs < 86400) return rtf.format(Math.round(diff / 3600), 'hour')

@@ -77,6 +77,27 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     List<AlertEvent> findAllOpenOrderBySeverity();
 
     /**
+     * Takım başına AÇIK alarm sayısı (takım damgasına göre; takım sayaçları {@code /api/admin/teams/stats}, 2026-11-17 perf) —
+     * {@link #findAllOpenOrderBySeverity()} tam varlıkları ({@code context_json} dahil) yalnız saymak için okuyordu.
+     * Satır: {@code [Long teamId, Long count]}; damgasız alarm sayılmaz.
+     */
+    @Query("SELECT e.teamId, COUNT(e) FROM AlertEvent e WHERE e.resolved = false AND e.teamId IS NOT NULL GROUP BY e.teamId")
+    List<Object[]> countOpenByTeam();
+
+    /**
+     * Alan adı listesi rozeti (2026-11-17 perf): yalnız VERİLEN alan adlarının verilen türlerdeki AÇIK alarmları, dar satır
+     * {@code [String domain, String alertLevel, Boolean acknowledged]} — sıra {@link #findAllOpenOrderBySeverity()} ile AYNI
+     * (alan adı başına ilk satır = en şiddetli, aynı seviyede en yeni). Liste ucu her yoklamada BÜTÜN açık alarm varlıklarını
+     * okuyordu. Çağıran boş koleksiyonla çağırmaz ve alan adlarını parçalar (≤ 500).
+     */
+    @Query("SELECT e.domain, e.alertLevel, e.acknowledged FROM AlertEvent e"
+         + " WHERE e.resolved = false AND e.alertType IN :types AND e.domain IN :domains ORDER BY "
+         + "CASE UPPER(e.alertLevel) WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'WARNING' THEN 2 "
+         + "WHEN 'LOW' THEN 3 WHEN 'INFO' THEN 4 ELSE 5 END, e.createdAt DESC")
+    List<Object[]> findOpenBadgeRowsByDomainIn(@Param("types") Collection<String> types,
+                                               @Param("domains") Collection<String> domains);
+
+    /**
      * İstatistik sayfası yönetici özeti (2026-11-13, performans): AÇIK alarmların dar izdüşümü — tam varlık ({@code context_json}
      * dahil) okunmaz. Sütunlar: {@code [teamId, domain, alertLevel]}.
      */
@@ -89,6 +110,15 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
      */
     @Query("SELECT e.teamId, e.domain, e.createdAt FROM AlertEvent e WHERE e.createdAt >= :since")
     List<Object[]> findCreatedStatRowsSince(@Param("since") String since);
+
+    /**
+     * "Son N günde ne değişti" çözülen alarm sayacı (2026-11-17, performans): {@code since}'ten bu yana ÇÖZÜLEN, sessiz
+     * kapanmayan alarmların dar izdüşümü — tam entity ({@code context_json} dahil) okunmaz. Koşul eski Java süzgeciyle aynı:
+     * {@code resolved = true} ve {@code resolved_silently} NULL ya da false. Sütunlar: {@code [teamId, domain]}.
+     */
+    @Query("SELECT e.teamId, e.domain FROM AlertEvent e WHERE e.resolvedAt >= :since AND e.resolved = true "
+         + "AND (e.resolvedSilently IS NULL OR e.resolvedSilently = false)")
+    List<Object[]> findResolvedStatRowsSince(@Param("since") String since);
 
     /**
      * Kişisel Panom "Alarm eğilimi" (2026-11-14): {@code since}'ten beri AÇILAN alarmlar — sahip (damgalı takım + hedef) ve UTC

@@ -62,7 +62,7 @@ export default function HelpDrawer({ tab }) {
           onClick={() => { setSection(null); setOpen(true) }}
           // z-40 (2026-09-27): Sheet/Dialog katmanları z-50 — eskiden z-[900] ile açık panellerin ÜSTÜNDE kalıp sağ alttaki
           // Kaydet/Uygula düğmelerini örtüyordu. Yapışkan alt eylem çubuğu varken yukarı kalkması App.css'te
-          // (`body:has(.app-main .sticky.bottom-0) [data-tour="help-fab"]`).
+          // (`body[data-sticky-bar] [data-tour="help-fab"]`; işareti hooks/useStickyBottomBar koyar).
           className="fixed right-[18px] bottom-[calc(18px+env(safe-area-inset-bottom))] z-40 size-[42px] rounded-full shadow-lg print:hidden">
           <HelpCircle aria-hidden="true" className="size-5" />
         </Button>

@@ -10,6 +10,14 @@ import java.util.Optional;
 
 public interface NotificationGroupRepository extends JpaRepository<NotificationGroup, Long> {
 
+    /**
+     * Takım başına etkin grup sayısı (takım sayaçları, 2026-11-17 perf): {@code active} NULL da etkin sayılır (eski satır —
+     * {@code !Boolean.FALSE.equals(active)} kuralı). Tam varlık okunmaz. Satır: {@code [Long teamId, Long count]}.
+     */
+    @Query("SELECT g.teamId, COUNT(g) FROM NotificationGroup g"
+            + " WHERE (g.active IS NULL OR g.active = true) AND g.teamId IS NOT NULL GROUP BY g.teamId")
+    List<Object[]> countActiveByTeam();
+
     /** Yönetim ekranı: bir takımın grupları (pasifler dahil — "silinmiş" rozetiyle gösterilir). */
     List<NotificationGroup> findByTeamIdOrderByNameAsc(Long teamId);
 
@@ -57,6 +65,14 @@ public interface NotificationGroupRepository extends JpaRepository<NotificationG
     @Query("SELECT g FROM NotificationGroup g WHERE g.teamId IN :teamIds "
          + "AND g.isDefault = true AND g.active = true")
     List<NotificationGroup> findDefaultsForTeams(@Param("teamIds") java.util.Collection<Long> teamIds);
+
+    /**
+     * TÜM takımların aktif varsayılan grupları — takım süzgeçsiz tek sorgu (performans 2026-11-17,
+     * {@code NotificationGroupService.resolver}: alarm akışı / iletim görüntüsü takım sayısından bağımsız okur). Satır sayısı
+     * en çok takım sayısı kadardır (takım başına bir varsayılan); küçük tablo.
+     */
+    @Query("SELECT g FROM NotificationGroup g WHERE g.isDefault = true AND g.active = true")
+    List<NotificationGroup> findAllActiveDefaults();
 
     /** Bir takımın diğer varsayılanlarını indirir — "en fazla bir varsayılan" kısıtının uygulaması. */
     @org.springframework.transaction.annotation.Transactional

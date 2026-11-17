@@ -591,6 +591,55 @@ export function countsBy(items, filters, dim) {
   return out
 }
 
+/** Çip sayacı tutulan süzgeç boyutları (`countsBy` ile aynı). */
+const COUNT_DIMS = ['types', 'buckets', 'findings', 'scope', 'status']
+
+function addCount(out, dim, it) {
+  const o = out[dim]
+  if (dim === 'findings') { for (const c of it?.findings || []) o[c] = (o[c] || 0) + 1; return }
+  if (dim === 'scope') { for (const s of SCOPES) if (matchesScope(it, s)) o[s] = (o[s] || 0) + 1; return }
+  if (dim === 'status') { for (const s of STATUS_FILTERS) if (matchesStatus(it, s)) o[s] = (o[s] || 0) + 1; return }
+  const k = dim === 'types' ? it?.category : sizeBucket(itemBytes(it))
+  if (k == null) return
+  o[k] = (o[k] || 0) + 1
+}
+
+/**
+ * `filterItems` + beş `countsBy` çağrısının TEK geçişte hesabı (performans 2026-11-17): eskiden arama kutusunda her tuş
+ * vuruşu 5000'e kadar nesne üzerinde altı ayrı geçiş yapıyor, her biri adres aramasını (Türkçe katlama) yeniden
+ * değerlendiriyordu. Her nesnenin her süzgeci EN ÇOK bir kez sınanır; hiç tutmayan süzgeci olmayan nesne listeye ve
+ * bütün sayaçlara, yalnız tek bir sayaç boyutunda tutmayan nesne o boyutun sayacına girer (`countsBy`'nin "kendi boyutu
+ * hariç" kuralı). Pahalı arama en sona bırakılır; iki süzgeç tutmuyorsa hiç çalışmaz. Sonuç `filterItems` / `countsBy`
+ * ile birebir aynıdır (sıra korunur).
+ *
+ * @returns {{ filtered: object[], counts: { types: object, buckets: object, findings: object, scope: object, status: object } }}
+ */
+export function filterWithCounts(items, filters = DEFAULT_FILTERS) {
+  const f = { ...DEFAULT_FILTERS, ...(filters || {}) }
+  const filtered = []
+  const counts = { types: {}, buckets: {}, findings: {}, scope: {}, status: {} }
+  const q = f.q
+  for (const item of Array.isArray(items) ? items : []) {
+    let miss = 0
+    let missDim = null
+    const fail = (dim) => { miss += 1; missDim = dim }
+    if (f.types?.length && !f.types.includes(item?.category)) fail('types')
+    if (f.buckets?.length && !f.buckets.includes(sizeBucket(itemBytes(item)))) fail('buckets')
+    if (miss < 2 && f.findings?.length && !(item?.findings || []).some((c) => f.findings.includes(c))) fail('findings')
+    if (miss < 2 && !matchesScope(item, f.scope)) fail('scope')
+    if (miss < 2 && !matchesStatus(item, f.status)) fail('status')
+    if (miss < 2 && f.urls?.length && !f.urls.includes(item?.url)) fail('urls')
+    if (miss < 2 && !matchesSearchText(q, [item?.url, item?.content_type, item?.error, item?.host])) fail('q')
+    if (miss === 0) {
+      filtered.push(item)
+      for (const dim of COUNT_DIMS) addCount(counts, dim, item)
+    } else if (miss === 1 && COUNT_DIMS.includes(missDim)) {
+      addCount(counts, missDim, item)
+    }
+  }
+  return { filtered, counts }
+}
+
 /** Etkin süzgeç sayısı (sıralama ve varsayılan kapsam sayılmaz). */
 export function activeFilterCount(filters) {
   const f = { ...DEFAULT_FILTERS, ...(filters || {}) }

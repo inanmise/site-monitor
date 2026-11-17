@@ -63,6 +63,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/shadcn/dropdown-menu'
 import { cn } from '@/lib/utils'
+import { useStickyBottomBar } from '../hooks/useStickyBottomBar.js'
 
 /** Oturum kesintisi yedekleri için localStorage anahtar öneki. */
 const DRAFT_BACKUP_PREFIX = 'wr.draft.'
@@ -88,6 +89,7 @@ const DRAFT_BACKUP_PREFIX = 'wr.draft.'
  */
 export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetNonce, globalAdmin }) {
   const t = useT()
+  const stickyBarRef = useStickyBottomBar()
   const { lang } = useLanguage()
   const toast = useToast()
   const { showConfirm } = useDialog()
@@ -1541,7 +1543,7 @@ export default function WeeklyReportsPage({ systemRole, teamId, teamName, resetN
           {/* ── YAPIŞKAN eylem çubuğu: kayıt durumu + kontrol listesi · Diğer · Önizleme · Kaydet · birincil eylem ── */}
           {/* Sağda yardım düğmesi (sabit, sağ alt) için pay (pr-14): düğmeler onun altında kalmasın. Telefonda durum satırı
               üstte tam genişlik, eylemler altta. */}
-          <div data-slot="wr-actions" role="toolbar" aria-label={t('wr.actions')}
+          <div ref={stickyBarRef} data-slot="wr-actions" role="toolbar" aria-label={t('wr.actions')}
             className="sticky bottom-0 z-20 flex min-w-0 flex-col gap-2 border-t bg-card/95 py-2.5 pr-14 pb-[max(0.625rem,env(safe-area-inset-bottom))] backdrop-blur supports-[backdrop-filter]:bg-card/85 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 print:hidden">
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 sm:flex-1">
               <SaveState editable={editable} dirty={dirty} busy={busy} lastAutoSave={lastAutoSave} conflict={conflict} compact={phone} />

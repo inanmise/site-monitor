@@ -55,7 +55,7 @@ const EMPTY = Object.freeze([])
  * kullanıcı da açıp kapatabilir. Açık durum kartlara DEĞER olarak (`open`, `invalid`) ve sabit `onToggle` ile verilir: bir
  * konuyu açmak ya da yazmak öbür kartları çizdirmez.
  */
-export function IssuesBlock({ section, template, list = EMPTY, units = null, shownFields, resolve, uiLang, readOnly, errors, onIssuesUpdate,
+function IssuesBlockImpl({ section, template, list = EMPTY, units = null, shownFields, resolve, uiLang, readOnly, errors, onIssuesUpdate,
   onFieldError, onUnit = null, reportId, images = EMPTY, onImagesChange, period, beforeIssueUpload, captureNotice = false }) {
   const t = useT()
   const sid = section.id
@@ -777,3 +777,6 @@ const IssueCard = memo(function IssueCard({ section, template, opts, legacy, iss
     </Collapsible>
   )
 }, sameCardProps)
+
+// Rapor düzenleyici her tuşta yeniden çizilir; bölüm yalnız kendi props'u değişince çizilir (2026-11-17 performans).
+export const IssuesBlock = memo(IssuesBlockImpl)

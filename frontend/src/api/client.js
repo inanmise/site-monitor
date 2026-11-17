@@ -109,18 +109,23 @@ async function fetchResourceScanImage(id, scanId, url, signal = null, timeoutMs 
   }
 }
 
-/** Sayfa Hızı → görsel aracı köprüsü (2026-11-15): kaynak analizi görseliyle aynı okuma (süre sınırı, hata gövdesi, başlıklar). */
-async function fetchPageSpeedImage(id, url, signal = null, timeoutMs = IMAGE_FETCH_TIMEOUT_MS) {
+/**
+ * Sayfa Hızı → görsel aracı köprüsü (2026-11-15): kaynak analizi görseliyle aynı okuma (süre sınırı, hata gövdesi, başlıklar).
+ * `checkId` (2026-11-17, performans): gösterilen ölçümün kimliği — sunucu adresi yalnız o ölçümün saklanan görselleri arasında
+ * arar (izlemenin tüm satırlarını taramaz). Yoksa / geçersizse gönderilmez (eski davranış; eski pod alanı yok sayar).
+ */
+async function fetchPageSpeedImage(id, url, signal = null, timeoutMs = IMAGE_FETCH_TIMEOUT_MS, checkId = null) {
   const path = `/monitoring/pagespeed/${encodeURIComponent(id)}/image`
   const dl = deadlineSignal(signal, timeoutMs)
+  const extra = Number.isSafeInteger(checkId) && checkId > 0 ? { check_id: checkId } : null
   try {
-    return await readResourceScanImage(path, url, signal, dl.signal)
+    return await readResourceScanImage(path, url, signal, dl.signal, extra)
   } finally {
     dl.done()
   }
 }
 
-async function readResourceScanImage(path, url, signal, sig) {
+async function readResourceScanImage(path, url, signal, sig, extra = null) {
   // Çağıranın iptali mi, süre mi: sinyal kesildiyse çağıranınki kesik değilse süre dolmuştur
   const ended = () => (signal?.aborted ? { success: false, status: 0, aborted: true, error: null } : { ...noResponsePayload('timeout'), timedOut: true })
   let res
@@ -128,7 +133,7 @@ async function readResourceScanImage(path, url, signal, sig) {
     // Yarış (2026-11-15): sinyali dinlemeyen taşıyıcı da son tarihte bırakılır
     res = await raceSignal(fetch(`${BASE}${path}`, {
       method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-Lang': uiLang() },
-      body: JSON.stringify({ url }), ...(sig ? { signal: sig } : {}),
+      body: JSON.stringify(extra ? { url, ...extra } : { url }), ...(sig ? { signal: sig } : {}),
     }), sig)
   } catch (e) {
     if (e?.name === 'AbortError' || e?.name === 'TimeoutError' || sig?.aborted) return ended()
@@ -2448,7 +2453,8 @@ export const api = {
     getAlertNoise: (days = 7, teamId) => request(`/admin/alerts/noise?days=${days}${teamId ? `&team=${encodeURIComponent(teamId)}` : ''}`),
     // Isı haritası hücresi (gün × saat, İstanbul) ayrıntısı — 2026-10-01
     getAlertNoiseSlot: (days, dow, hour, teamId) => request(`/admin/alerts/noise/slot?days=${encodeURIComponent(days)}&dow=${encodeURIComponent(dow)}&hour=${encodeURIComponent(hour)}${teamId ? `&team=${encodeURIComponent(teamId)}` : ''}`),   // gürültü analizi (2026-09-12, #18); takım süzgeci (2026-10-01)
-    getAlertTeamStats: () => request('/admin/alerts/team-stats'),               // takım kırılımı (2026-09-16)
+    // takım kırılımı (2026-09-16); fresh (2026-11-17): Yenile / panel açılışı sunucu belleğini atlar (en çok 5 sn'de bir okur)
+    getAlertTeamStats: (fresh = false) => request(fresh === true ? '/admin/alerts/team-stats?fresh=1' : '/admin/alerts/team-stats'),
     getAlertPushDeliveries: (id) => request(`/admin/alerts/${id}/push-deliveries`),
     /** Alarmı KAPSAYAN toplu fırtına push'ları + alıcı durumları + "henüz gitmedi" (2026-10-04, fırtına push'u ↔ alarm bağı). */
     getAlertStormPush: (id) => request(`/admin/alerts/${encodeURIComponent(id)}/storm-push`),
@@ -2997,7 +3003,7 @@ export const api = {
       `/monitoring/pagespeed/${encodeURIComponent(id)}/waterfall${checkId != null ? `?checkId=${encodeURIComponent(checkId)}` : ''}`),
     // Sayfa Hızı → görsel aracı köprüsü: ölçümün SAKLADIĞI görselin özgün baytları (kaynak analizi görseliyle aynı yanıt biçimi,
     // aynı süre sınırı ve hata kodları). Adres saklı değilse 404 RESOURCE_IMAGE_NOT_FOUND.
-    pageSpeedImage: (id, url, { signal, timeoutMs } = {}) => fetchPageSpeedImage(id, url, signal, timeoutMs),
+    pageSpeedImage: (id, url, { signal, timeoutMs, checkId } = {}) => fetchPageSpeedImage(id, url, signal, timeoutMs, checkId),
     // Seçili ölçümün TÜM kaynakları CSV (sunucu akıtır) — tavan: ölçümün kaynak tavanı.
     downloadPageSpeedResourcesCsv: (id, { checkId, type, party, failed } = {}) => {
       const q = new URLSearchParams(

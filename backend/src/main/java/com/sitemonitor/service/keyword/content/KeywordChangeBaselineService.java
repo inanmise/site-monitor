@@ -76,18 +76,77 @@ public class KeywordChangeBaselineService {
         return repo.findById(monitorId);
     }
 
-    /** Birden çok izlemenin temelleri (tek okuma) — liste ucu. */
+    /**
+     * Temel satırının METİNSİZ hâli ({@code text} null — kalıcılık bağlamına bağlı olmayan, yazılmayan nesne): liste satırı
+     * ve tek satır özeti ({@code change_baseline} — {@link #toApi(KeywordChangeBaseline, boolean)} metinsiz) bunu kullanır;
+     * ≤ 64 000 karakterlik metin okunmaz (performans 2026-11-17).
+     */
+    public Optional<KeywordChangeBaseline> findSummary(Long monitorId) {
+        if (monitorId == null) return Optional.empty();
+        return Optional.ofNullable(byMonitorIds(java.util.List.of(monitorId)).get(monitorId));
+    }
+
+    /** Liste satırı okumasında tek ifadedeki en çok kimlik ({@code IN} listesi). */
+    static final int SUMMARY_CHUNK = 500;
+
+    /**
+     * Birden çok izlemenin temelleri METİNSİZ ({@code text} null; {@link #findSummary}) — liste ucu. Satır başına sorgu yok:
+     * {@value #SUMMARY_CHUNK} kimlik başına tek okuma.
+     */
     public java.util.Map<Long, KeywordChangeBaseline> byMonitorIds(java.util.Collection<Long> ids) {
         java.util.Map<Long, KeywordChangeBaseline> out = new java.util.HashMap<>();
         if (ids == null || ids.isEmpty()) return out;
-        for (KeywordChangeBaseline b : repo.findAllById(ids)) if (b != null && b.getMonitorId() != null) out.put(b.getMonitorId(), b);
+        java.util.List<Long> list = new java.util.ArrayList<>(new java.util.LinkedHashSet<>(ids));
+        list.removeIf(java.util.Objects::isNull);
+        for (int i = 0; i < list.size(); i += SUMMARY_CHUNK) {
+            java.util.List<Object[]> rows = repo.findSummaries(list.subList(i, Math.min(list.size(), i + SUMMARY_CHUNK)));
+            if (rows == null) continue;
+            for (Object[] r : rows) {
+                KeywordChangeBaseline b = summaryOf(r);
+                if (b != null) out.put(b.getMonitorId(), b);
+            }
+        }
         return out;
     }
 
-    /** Karşılaştırma görünümü; temel yoksa {@code null}. */
+    /** {@code findSummaries} satırı → metinsiz temel nesnesi. */
+    private static KeywordChangeBaseline summaryOf(Object[] r) {
+        if (r == null || r.length < 10 || !(r[0] instanceof Number id)) return null;
+        KeywordChangeBaseline b = new KeywordChangeBaseline();
+        b.setMonitorId(id.longValue());
+        b.setFingerprint((String) r[1]);
+        b.setSpecHash((String) r[2]);
+        b.setTextTruncated((Boolean) r[3]);
+        b.setTakenAt((String) r[4]);
+        b.setTakenBy((String) r[5]);
+        b.setTakenByName((String) r[6]);
+        b.setSource((String) r[7]);
+        b.setBytes(r[8] instanceof Number n ? n.longValue() : null);
+        b.setVersion(r[9] instanceof Number v ? v.longValue() : null);
+        return b;
+    }
+
+    /**
+     * Karşılaştırma görünümü; temel yoksa {@code null}. Metin TEMBEL (performans 2026-11-17): her değişim ölçümünde yalnız
+     * metinsiz özet okunur; temel metni yalnız parmak izleri farklıyken (fark özeti) ve satır hâlâ aynı parmak iziyle
+     * duruyorsa okunur — aynı parmak izi = aynı saklı metin, sonuç eskisiyle aynı. Satır bu arada başka içerikle yeniden
+     * alınmış / silinmişse okuma istisna verir: değişim bu kontrolde değerlendirilmez (çağıranın genel kuralı).
+     */
     public KeywordChangeDetector.BaselineView view(Long monitorId) {
-        return find(monitorId).map(b -> new KeywordChangeDetector.BaselineView(b.getFingerprint(), b.getSpecHash(),
-                b.getText(), Boolean.TRUE.equals(b.getTextTruncated()), b.getTakenAt(), b.getSource())).orElse(null);
+        return findSummary(monitorId).map(b -> new KeywordChangeDetector.BaselineView(b.getFingerprint(), b.getSpecHash(),
+                null, Boolean.TRUE.equals(b.getTextTruncated()), b.getTakenAt(), b.getSource(),
+                new KeywordChangeDetector.LazyText(() -> textOf(b.getMonitorId(), b.getFingerprint())))).orElse(null);
+    }
+
+    /** Temel metni — satır hâlâ aynı parmak iziyle duruyorsa; değilse istisna (yeniden alınmış / silinmiş temel). */
+    private String textOf(Long monitorId, String fingerprint) {
+        if (fingerprint == null) throw new IllegalStateException("temel parmak izi yok: " + monitorId);
+        java.util.List<Object[]> rows = repo.findTextIfFingerprint(monitorId, fingerprint);
+        if (rows == null || rows.isEmpty()) {
+            throw new IllegalStateException("içerik temeli okuma sırasında değişti ya da silindi: " + monitorId);
+        }
+        Object[] r = rows.get(0);
+        return r == null || r.length < 2 ? null : (String) r[1];
     }
 
     /**

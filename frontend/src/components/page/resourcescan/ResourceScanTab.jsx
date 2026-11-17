@@ -10,6 +10,7 @@ import { useUrlQuerySync } from '../../../hooks/useUrlQuerySync.js'
 import { clientFailure } from '../../../utils/errorMessages.js'
 import { DOWNLOAD_FAILED } from '../../../utils/exportInventory.js'
 import { applyTabView } from '../../../utils/navigate.js'
+import { replaceEqualDeep } from '../../../utils/replaceEqualDeep.js'
 import { useToast } from '../../ui/Toast.jsx'
 import { useDialog } from '../../ui/Dialog.jsx'
 import { useCopyLink } from '../../ui/CopyLinkButton.jsx'
@@ -305,7 +306,10 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     tt.info(<ToastWithAction text={text} action={tr('prs.toast.open')} onAction={show} />, 15_000)
   }
 
-  // Süren koşunun ilerlemesi — setTimeout zinciri (çakışmaz), sıra korumalı, sınırlı.
+  // Süren koşunun ilerlemesi — setTimeout zinciri (çakışmaz), sıra korumalı, sınırlı. Tarayıcı sekmesi GİZLİYKEN yoklanmaz
+  // (performans 2026-11-17): gizlenince zincir durur, görünür olunca beklemeden bir tur; tavan değişmez (izlemeye başlama
+  // anından ölçülür — gizli geçen süre de sayılır). Değişmeyen özet eski başvurusunu korur (replaceEqualDeep) → geçmiş
+  // listesi, pano ve nesneler 1,5 sn'de bir boşuna yeniden çizilmez.
   const runningId = running?.id ?? null
   const limits = hist.data?.limits
   const limitsRef = useRef(null)
@@ -320,7 +324,11 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     // Site koşusu kendi süre bütçesiyle (site_max_seconds) izlenir
     const cap = pollCap ?? pollCapMs(limits, running)
     const pollStartedAt = monoNow()
+    const docHidden = () => typeof document !== 'undefined' && document.hidden === true
+    let waitingVisible = false
     const tick = async () => {
+      if (stop || !alive.current) return
+      if (docHidden()) { waitingVisible = true; return }              // görünür olunca onVisible sürdürür
       let res = null
       try { res = await api.monitoring.resourceScan(monitorId, runningId) } catch { res = null }
       // İptal / bitiş yanıtı bu okuma sürerken uygulandıysa okunan (eski) RUNNING özeti kartı geri getirmez
@@ -334,8 +342,19 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       }
       failures = 0
       if (isRunning(scan)) {
-        setRunning(scan)
-        setHist((h) => (h.data ? { ...h, data: { ...h.data, running: scan, items: h.data.items.map((s) => (s.id === scan.id ? scan : s)) } } : h))
+        setRunning((prev) => replaceEqualDeep(prev, scan))
+        setHist((h) => {
+          if (!h.data) return h
+          const nextRunning = replaceEqualDeep(h.data.running, scan)
+          let changed = nextRunning !== h.data.running
+          const nextItems = h.data.items.map((s) => {
+            if (s.id !== scan.id) return s
+            const v = replaceEqualDeep(s, scan)
+            if (v !== s) changed = true
+            return v
+          })
+          return changed ? { ...h, data: { ...h.data, running: nextRunning, items: nextItems } } : h
+        })
         if (pollCapReached(pollStartedAt, monoNow(), cap)) { setPollState('capped'); return }
         timer = setTimeout(tick, pollMs)
         return
@@ -343,8 +362,18 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
       // Bitti (DONE / FAILED / INTERRUPTED): sonucu göster, geçmişi tazele (grafik + liste).
       applyFinished(scan, res.data)
     }
+    const onVisible = () => {
+      if (stop || docHidden() || !waitingVisible) return
+      waitingVisible = false
+      clearTimeout(timer)
+      tick()
+    }
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible)
     timer = setTimeout(tick, pollMs)
-    return () => { stop = true; clearTimeout(timer) }
+    return () => {
+      stop = true; clearTimeout(timer)
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monitorId, runningId, pollState, pollNonce, pollMs, pollCap])
 

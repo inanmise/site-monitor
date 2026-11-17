@@ -11,6 +11,13 @@ import java.util.Optional;
 
 public interface PageSpeedMonitorRepository extends JpaRepository<PageSpeedMonitor, Long> {
 
+    /**
+     * Takım başına AKTİF izleme sayısı (takım sayaçları {@code /api/admin/teams/stats}, 2026-11-17 perf): tam varlık
+     * okunmaz. Satır: {@code [Long teamId, Long count]}; takımsız satırlar sayılmaz.
+     */
+    @Query("SELECT m.teamId, COUNT(m) FROM PageSpeedMonitor m WHERE m.active = true AND m.teamId IS NOT NULL GROUP BY m.teamId")
+    List<Object[]> countActiveByTeam();
+
     List<PageSpeedMonitor> findByActiveTrue();
 
     /** Öksüz alarm temizliğinin kimlik kümesi (2026-11-06, performans PF3 #3): TÜM izlemelerin URL'leri (aktif + pasif) — tam varlık

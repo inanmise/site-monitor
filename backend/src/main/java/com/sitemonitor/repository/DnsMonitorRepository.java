@@ -10,6 +10,14 @@ import java.util.List;
 import java.util.Optional;
 
 public interface DnsMonitorRepository extends JpaRepository<DnsMonitor, Long> {
+
+    /**
+     * Takım başına AKTİF izleme sayısı (takım sayaçları {@code /api/admin/teams/stats}, 2026-11-17 perf): tam varlık
+     * okunmaz. Satır: {@code [Long teamId, Long count]}; takımsız satırlar sayılmaz.
+     */
+    @Query("SELECT m.teamId, COUNT(m) FROM DnsMonitor m WHERE m.active = true AND m.teamId IS NOT NULL GROUP BY m.teamId")
+    List<Object[]> countActiveByTeam();
+
     List<DnsMonitor> findByActiveTrue();
 
     /** Çok pod Sürüm 3-3 (paket B): dağıtık kontrol gönderiminin HAFİF okuması — aktif izlemelerin [id, aralık (sn), bağımsız, alan adı] (betik /
