@@ -5,7 +5,7 @@
 # To update an image: choose the new exact tag, read its index digest with
 #   docker buildx imagetools inspect <image>:<tag> --format '{{json .Manifest.Digest}}'
 # (or `crane digest <image>:<tag>`), and replace tag AND digest together on the same line.
-# Keep the Node major in step with CI (.github/workflows/ci.yml, node-version "24").
+# Keep the Node major in step with CI (.github/workflows/ci.yml, node-version "26").
 
 # k6 binary (Senaryo İzleme / 10. tür) — sürüm-sabitli GitHub sürüm tarball'ı, sabit SHA-256 (k6-v<sürüm>-checksums.txt
 # ile aynı). Docker imajı DEĞİL: tarball go1.26.8 ile derlenmiş, Go 1.27'de kaldırılan TLS kaçışları (GODEBUG tlsrsakex /
@@ -85,8 +85,8 @@ COPY VERSION /app/VERSION
 FROM ${PREVIOUS_IMAGE:-previous-release-none} AS previous-release
 
 # ── Stage 1: React build ─────────────────────────────
-# Node 24 LTS = the CI version (Node 20 reached end-of-life on 2026-04-30).
-FROM node:24.21.0-alpine3.24@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS frontend-build
+# Node 26 LTS = the CI version (since 2026-11-17; Node 20 reached end-of-life on 2026-04-30).
+FROM node:26.13.1-alpine3.24@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS frontend-build
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci

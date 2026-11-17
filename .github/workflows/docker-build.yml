@@ -162,11 +162,11 @@ jobs:
             echo '```' >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Set up Node 24
+      - name: Set up Node 26
         if: ${{ !cancelled() && steps.trivy.outcome != 'skipped' }}
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: "26"
 
       # Bulgu → "düzeltmesi olan HIGH/CRITICAL bulgu" + tablo; Trivy'nin kendi hatası → "tarama çalışamadı (bulgu değil)".
       # İkisi de işi kırmızı yapar; temizse geçer.

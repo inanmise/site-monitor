@@ -15,6 +15,10 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Changed
+- **Node 24 → 26** (ön yüz derleme imajı `node:26.13.1-alpine3.24` ve CI). Çalışan imaja Node girmez (çalışma zamanı
+  Temurin 25 JRE); değişen yalnız ön yüzün derlendiği ortam. Uygulamanın davranışı değişmez.
+
 ## [20.213.1] — 2026-11-17
 
 ### Changed

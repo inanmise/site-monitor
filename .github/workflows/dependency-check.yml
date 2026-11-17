@@ -53,10 +53,10 @@ jobs:
           cache: maven
 
       # Sınıflandırma / kapı betiği (scripts/depcheck-classify.mjs) için.
-      - name: Set up Node 24
+      - name: Set up Node 26
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: "26"
 
       # Anahtar her koşuda yeni (run_id): önbellek değişmez, en yenisi restore-keys önekiyle bulunur.
       - name: Restore NVD database
