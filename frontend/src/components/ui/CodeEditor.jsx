@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import Editor from 'react-simple-code-editor'
+import EditorModule from 'react-simple-code-editor'
 import { highlight, languages } from 'prismjs/components/prism-core'
 import 'prismjs/components/prism-clike'
 import 'prismjs/components/prism-javascript'
 import 'prismjs/themes/prism.css'
+
+// react-simple-code-editor yalnız CommonJS yayınlıyor (`exports.default = Editor`, `__esModule`). Vite 5 (esbuild) varsayılan
+// içe aktarmayı bileşene çözüyordu; Vite 8'in Rolldown ön paketlemesi geliştirme sunucusunda modül nesnesini veriyor ve
+// React "Element type is invalid: got object" ile çöküyordu (2026-11-16). İki biçimi de kabul et.
+const Editor = EditorModule?.default ?? EditorModule
 
 /** Kod yüzeyi ölçüleri — CSS'teki `--code-*` değişkenleriyle AYNI olmak zorunda. */
 const PAD = 12

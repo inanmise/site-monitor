@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { restoreRealTimers } from './helpers/fakeTimers.js'
 import { render, screen, fireEvent, waitFor, act, within } from './test-utils.jsx'
 import Login from '../pages/Login.jsx'
 import { sanitizeOtp } from '../components/login/OtpCodeInput.jsx'
@@ -54,7 +55,7 @@ describe('Login — kodla giriş', () => {
     api.getLoginMethods.mockResolvedValue(METHODS)
     api.loginOtp.request.mockResolvedValue(CHALLENGE)
   })
-  afterEach(() => { vi.useRealTimers() })
+  afterEach(() => { restoreRealTimers() })   // jsdom 31: sahte saatte kurulan odak / kare döngüsü temizlensin (helpers/fakeTimers.js)
 
   it('yöntemler kapalıyken düğme YOK; ana form aynen duruyor', async () => {
     api.getLoginMethods.mockResolvedValue({ ...METHODS, otp_push: false, otp_email: false })
@@ -255,7 +256,7 @@ describe('Login — kodla giriş: kişi bilgisi', () => {
     api.getLoginMethods.mockResolvedValue(FLAGS)
     api.loginOtp.request.mockResolvedValue(CHALLENGE)
   })
-  afterEach(() => { vi.useRealTimers() })
+  afterEach(() => { restoreRealTimers() })   // jsdom 31: sahte saatte kurulan odak / kare döngüsü temizlensin (helpers/fakeTimers.js)
 
   it('push: kullanıcı adının altında "Kayıtlı cep telefonu" (tel, autocomplete tel) + yardım metni; e-posta alanı YOK', async () => {
     await openFlow()

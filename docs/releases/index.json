@@ -1,9 +1,72 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-16T23:50:13Z",
+  "generatedAt": "2026-11-17T00:33:24Z",
   "repo": "inanmise/site-monitor",
-  "count": 853,
+  "count": 854,
   "releases": [
+    {
+      "version": "20.213.1",
+      "tag": "v20.213.1",
+      "releasedAt": "2026-11-17T00:33:15Z",
+      "commit": "70ba25f101e4668494f29ef85bf8966de3881791",
+      "prevVersion": "20.213.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 6
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "2af61abd",
+          "subject": "WeeklyMdField ve API istemcisi testleri; kapsam tabanı test yardımcılarını saymaz"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "a3855897",
+          "subject": "ActivityLog gün grupları testi saati öğlene sabitler (İstanbul gece yarısı titrekliği)"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "18bfc76a",
+          "subject": "formatIncidentTime saat beklentisi saat diliminden bağımsız"
+        },
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "e2c9aeb9",
+          "subject": "formatIncidentTime için doğrudan test (Vitest 5 AST kapsamı catch dalını sayıyor)"
+        },
+        {
+          "type": "build",
+          "scope": "deps",
+          "breaking": false,
+          "sha": "7738c5bd",
+          "subject": "Vitest 5 blob yolu, jsdom 31 sahte saat dönüşü, Vite 8 CJS içe aktarma"
+        },
+        {
+          "type": "build",
+          "scope": "deps",
+          "breaking": false,
+          "sha": "2578299f",
+          "subject": "Vite 8, Vitest 5, plugin-react 6, coverage-v8 5, jsdom 31, jest-dom 7"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.213.0",
       "tag": "v20.213.0",

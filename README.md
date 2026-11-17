@@ -68,7 +68,7 @@ Kurumunuzdaki SSL/TLS sertifikalarını, TCP/TLS port erişilebilirliğini, HTTP
 | Veritabanı | PostgreSQL |
 | Sertifika | BouncyCastle (OCSP, CRL, zincir doğrulama) |
 | DNS | dnsjava (çok-resolver sorgu, SOA/NS) |
-| Frontend | React 18.3, Vite 5, recharts, react-markdown, lucide-react |
+| Frontend | React 18.3, Vite 8, recharts, react-markdown, lucide-react |
 | Test | JUnit 5 + Mockito (backend), Vitest + Testing Library (frontend) |
 | Konteyner | Docker çok-aşamalı (Node 24 → Maven 3.9/Temurin 25 → **Temurin 25 JRE** Alpine, non-root UID 1000; taban imajlar tag + digest ile sabit) |
 | K8s | Helm chart (sürüm `VERSION` dosyasından) |

@@ -48,8 +48,9 @@ describe('kopyalama zamanlayıcısı — unmount temizliği', () => {
     expect(vi.getTimerCount()).toBeGreaterThan(baseline)
 
     unmount()
-    // Radix FocusScope unmount'ta 0 ms'lik odak-iade zamanlayıcısı kurar — onu çalıştır (1 ms < rozetin 1200 ms'i).
-    vi.advanceTimersByTime(1)
+    // Radix FocusScope unmount'ta odak-iade zamanlayıcısı kurar; Vitest 5 + jsdom 31'de bu bir animasyon karesi (≤ 16 ms)
+    // olarak sayılıyor — bir kare ilerlet (16 ms < rozetin 1200 ms'i: rozet zamanlayıcısı temizlenmemişse sayım 1 kalır).
+    vi.advanceTimersByTime(16)
 
     expect(vi.getTimerCount()).toBe(0)
   })
