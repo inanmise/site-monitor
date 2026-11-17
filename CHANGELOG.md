@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.213.1] — 2026-11-17
+
 ### Changed
 - **React 18 → 19.3.1** (react, react-dom). Uygulamanın davranışı değişmez; React 19'da kaldırılan API'ler
   (işlev bileşeninde `defaultProps`, `react-dom/test-utils`, `findDOMNode`, dize ref) kodda yoktu. shadcn bileşenlerindeki
@@ -3505,7 +3507,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.213.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.213.1...HEAD
+[20.213.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.1
 [20.213.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.0
 [20.212.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.3
 [20.212.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.212.2
