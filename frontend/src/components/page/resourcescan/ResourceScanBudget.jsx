@@ -238,6 +238,9 @@ export function BudgetDialog({ open, onClose, monitorId, budget, onSaved }) {
   }
 
   const status = budget.status
+  // Test / e2e kancası: "ok" = pencerenin KENDİ okuması bitti ve alanlar çizildi. Paylaşılan bütçe durumu bant için
+  // önceden "ok" olabilir; pencere açılınca yeniden okur (`base` null) — o arada "loading" (React 19 zamanlaması, 2026-11-17)
+  const dialogState = base === null && (status === 'ok' || status === 'refreshing') ? 'loading' : status
   const footer = (
     <div className="flex w-full flex-wrap items-center justify-end gap-2">
       {editable && budgetDefinedCount(parsed.values) > 0 && (
@@ -261,7 +264,7 @@ export function BudgetDialog({ open, onClose, monitorId, budget, onSaved }) {
   return (
     <ModalShell open={open} onClose={onClose} title={t('prs.budget.dialogTitle')} icon={Target} size="md" busy={saving}
       dismissOnBackdrop={false} scrollBody footer={footer}>
-      <div data-slot="prs-budget-dialog" data-state={status} data-editable={editable ? 'true' : 'false'} className="flex min-w-0 flex-col gap-3">
+      <div data-slot="prs-budget-dialog" data-state={dialogState} data-editable={editable ? 'true' : 'false'} className="flex min-w-0 flex-col gap-3">
         <p className={cn('m-0 text-sm text-muted-foreground', WRAP)}>{t('prs.budget.dialogIntro')}</p>
         {base === null && status !== 'unsupported' && status !== 'error' && <LoadingBlock label={t('prs.budget.loading')} className="py-6" />}
         {status === 'unsupported' && (

@@ -1,4 +1,3 @@
-import { StrictMode } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, within, fireEvent, waitFor, act } from './test-utils.jsx'
 import { reportResponse, openAllSections } from './helpers/techErrorFixtures.js'
@@ -57,9 +56,15 @@ async function openEditor(reportExtra = {}) {
   await screen.findByRole('heading', { name: 'Mobil Kanalı Teknik Hata Mesajları - Eylül 2026' })
 }
 
-async function openPreview() {
+/**
+ * Önizleme penceresini açar ve (varsayılan) hazırlığın BİTMESİNİ bekler — pencere hemen açılır, içerik ayrı bir istekle
+ * gelir; yalnız pencereyi beklemek eşzamanlı sorguları istekle yarıştırırdı (React 19 zamanlamasında titriyordu).
+ * Yoldaki isteği bilerek askıda bırakan testler `{ pending: true }` verir.
+ */
+async function openPreview({ pending = false } = {}) {
   fireEvent.click(screen.getByRole('button', { name: 'E-postayı önizle' }))
   const dlg = await screen.findByRole('dialog', { name: 'E-posta önizlemesi' })
+  if (!pending) await waitFor(() => expect(dlg.querySelector('[data-slot="te-mail-body"] > [role="status"]')).toBeNull())
   return dlg
 }
 
@@ -196,7 +201,7 @@ describe('e-posta önizlemesi — pencere', () => {
     await openEditor()
     let releaseOld
     te().mailPreview.mockImplementationOnce(() => new Promise((r) => { releaseOld = r }))
-    let dlg = await openPreview()
+    let dlg = await openPreview({ pending: true })
     await waitFor(() => expect(releaseOld).toBeTypeOf('function'))
     fireEvent.click(within(dlg).getByRole('button', { name: 'Kapat' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'E-posta önizlemesi' })).toBeNull())
@@ -218,7 +223,7 @@ describe('e-posta önizlemesi — pencere', () => {
     await openEditor({ images: [{ id: 501, slot_id: 'monthly-tx', file_name: 'aylik.png', width: 800, height: 400, size_bytes: 2048 }] })
     let releaseOld
     te().mailPreview.mockImplementationOnce(() => new Promise((r) => { releaseOld = r }))
-    let dlg = await openPreview()
+    let dlg = await openPreview({ pending: true })
     await waitFor(() => expect(releaseOld).toBeTypeOf('function'))
     fireEvent.click(within(dlg).getByRole('button', { name: 'Kapat' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'E-posta önizlemesi' })).toBeNull())
@@ -472,7 +477,7 @@ describe('e-posta önizlemesi — çift açılış (inceleme 2026-10-18, 3. tur)
 
   it('StrictMode (efekt iki kez koşar): TEK istek gider, ilk okumanın sonucu pencereye ulaşır — "okunamadı" yok', async () => {
     const gate = serverWithPerUserMarker()
-    render(<StrictMode><MailPreviewDialog reportId="100" open onClose={() => {}} uiLang="tr" /></StrictMode>)
+    render(<MailPreviewDialog reportId="100" open onClose={() => {}} uiLang="tr" />, { reactStrictMode: true })
     const dlg = await screen.findByRole('dialog', { name: 'E-posta önizlemesi' })
     await waitFor(() => expect(gate.release).toBeTypeOf('function'))
     expect(te().mailPreview).toHaveBeenCalledTimes(1)

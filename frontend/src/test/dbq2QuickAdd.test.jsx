@@ -99,10 +99,15 @@ afterEach(() => window.history.replaceState({}, '', '/'))
 
 async function openWizard(props = userProps) {
   render(<DbQueryMonitorPage {...props} />)
-  // Boş liste: boş durumda da "Hızlı ekle" var
-  const emptyBtn = await screen.findByRole('button', { name: 'Hızlı ekle' }, { timeout: 3000 })
-  expect(document.querySelector('[data-slot="dbq-quick-add-empty"]')).not.toBeNull()
-  fireEvent.click(emptyBtn.closest('[data-slot="dbq-quick-add-empty"]') ? emptyBtn : document.querySelector('[data-slot="dbq-quick-add"]'))
+  // Boş liste: boş durumda da "Hızlı ekle" var. Başlıktaki düğme liste okunmadan da çizilir — boş durumun KENDİSİ
+  // beklenir (yalnız düğmeyi beklemek liste yanıtıyla yarışıyordu; CI'da yük altında titriyordu)
+  const empty = await waitFor(() => {
+    const el = document.querySelector('[data-slot="dbq-quick-add-empty"]')
+    expect(el).not.toBeNull()
+    return el
+  }, { timeout: 3000 })
+  expect(empty).toHaveAccessibleName('Hızlı ekle')
+  fireEvent.click(empty)
   await waitFor(() => expect(wiz()).not.toBeNull(), { timeout: 3000 })
 }
 
