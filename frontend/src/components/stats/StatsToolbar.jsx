@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import { ArrowUpDown, CalendarClock, Download, Landmark, Search, X } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import FacetedFilter from '../ui/FacetedFilter.jsx'
@@ -11,33 +12,53 @@ import { KPI_KEYS, SORT_KEYS } from './statsModel.js'
 
 /** Radix radyo değeri boş dize olamaz — "Tümü" seçeneğinin iç değeri. */
 const ALL = '__all__'
+/** Yazılan aramanın sayfaya işlenmeden önceki bekleme süresi (ms). */
+export const SEARCH_DEBOUNCE_MS = 250
 
 /**
  * Sertifika tablosunun süzgeç çubuğu (2026-09-28): gecikmeli arama (alan adı · sağlayıcı · takım · hata; Esc temizler) +
  * Kalan süre (KPI kutucuklarıyla AYNI durum, radyo menüsü) + Sağlayıcı (faset: çoklu seçim + sayılar) + sıralama menüsü
  * + CSV. Altında etkin süzgeç çipleri (tek tek kaldırılır), "Temizle" ve "X / Y" sayacı.
  *
- * Mobil-önce: arama telefonda tam satır, kontroller sarar, dokunmatikte 40 px. Saf sunum — durum StatsView'da.
+ * Mobil-önce: arama telefonda tam satır, kontroller sarar, dokunmatikte 40 px. Süzgeç durumu StatsView'da; yalnız yazılmakta
+ * olan arama TASLAĞI burada tutulur (performans 2026-11-17): her tuş vuruşu yalnız bu çubuğu çizer, sayfa (grafikler,
+ * tablolar) `SEARCH_DEBOUNCE_MS` sessizlikten sonra `onQ` ile tek kez çizilir. Esc ve × hemen işler. Dışarıdan gelen
+ * değişiklik (çip kaldırma, "Temizle") `q` ya da `resetKey` ile taslağa yansır.
  * Test kancaları: `data-slot="stats-toolbar" | "stats-window" | "stats-sort" | "stats-chip" | "stats-count" | "stats-export"`.
  */
 export default function StatsToolbar({
-  q, onQ, kpi, onKpi, issuerOpts, issuers, onIssuers, sort, onSort, chips, onClearAll, shown, total, onExport,
+  q, onQ, resetKey = 0, kpi, onKpi, issuerOpts, issuers, onIssuers, sort, onSort, chips, onClearAll, shown, total, onExport,
 }) {
   const t = useT()
+  // Arama taslağı: sayfaya işlenen `q`'dan ayrı. `q` / `resetKey` dışarıdan değişince taslak ona eşitlenir — kendi
+  // işlediğimiz değer geri döndüğünde (sonradan yazılan harfler silinmesin diye) dokunulmaz.
+  const [draft, setDraft] = useState(q)
+  const [seen, setSeen] = useState({ q, resetKey })
+  const committed = useRef(q)
+  if (seen.q !== q || seen.resetKey !== resetKey) {
+    setSeen({ q, resetKey })
+    if (seen.resetKey !== resetKey || q !== committed.current) { committed.current = q; setDraft(q) }
+  }
+  useEffect(() => {
+    if (draft === q) return undefined
+    const id = setTimeout(() => { committed.current = draft; onQ(draft) }, SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(id)
+  }, [draft, q, onQ])
+  const commitNow = (v) => { setDraft(v); committed.current = v; onQ(v) }
   const sortKey = SORT_KEYS.includes(sort) ? sort : SORT_KEYS[0]
   const sortLabel = (k) => t(`stv.sort.${k.replace('|', '_')}`)
   return (
     <div data-slot="stats-toolbar" className="flex min-w-0 flex-col gap-2 print:hidden">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <InputGroup className="w-full max-sm:h-10 sm:w-72 pointer-coarse:h-10">
-          <InputGroupInput type="search" value={q} placeholder={t('stv.searchPh')} aria-label={t('stv.searchPh')}
+          <InputGroupInput type="search" value={draft} placeholder={t('stv.searchPh')} aria-label={t('stv.searchPh')}
             className="h-full [&::-webkit-search-cancel-button]:hidden"
-            onChange={(e) => onQ(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Escape' && q) { e.preventDefault(); e.stopPropagation(); onQ('') } }} />
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape' && draft) { e.preventDefault(); e.stopPropagation(); commitNow('') } }} />
           <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>
-          {q && (
+          {draft && (
             <InputGroupAddon align="inline-end">
-              <InputGroupButton size="icon-xs" onClick={() => onQ('')} aria-label={t('stv.clearSearch')} title={t('stv.clearSearch')}
+              <InputGroupButton size="icon-xs" onClick={() => commitNow('')} aria-label={t('stv.clearSearch')} title={t('stv.clearSearch')}
                 className="pointer-coarse:size-10">
                 <X aria-hidden="true" />
               </InputGroupButton>

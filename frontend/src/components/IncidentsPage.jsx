@@ -13,6 +13,8 @@ import { useServerPagination } from '../hooks/useServerPagination.js'
 import { useUrlQuerySync, readUrlParam } from '../hooks/useUrlQuerySync.js'
 import { useVisibleInterval } from '../hooks/useVisibleInterval.js'
 import { useDelayedFlag } from '../hooks/useDelayedFlag.js'
+import { useLatestCallback } from '../hooks/useLatestCallback.js'
+import { replaceEqualDeep } from '../utils/replaceEqualDeep.js'
 import { VIEW_SPECS } from '../hooks/userPrefsModel.js'
 import { navigateTo } from '../utils/navigate.js'
 import { downloadBlob } from '../utils/csvExport.js'
@@ -174,7 +176,8 @@ export default function IncidentsPage({ systemRole, teamId }) {
         }
         const keepMax = prev.key === key && prev.maxId != null ? Math.max(prev.maxId, maxNow ?? prev.maxId) : maxNow
         prevIdsRef.current = { key, maxId: keepMax }
-        setRows(data); sp.bind(res); setTypeCounts(res.type_counts ?? {}); setError(null)
+        // Değişmeyen satır eski başvurusunu korur (performans 2026-11-17): sessiz yenilemede memo satırlar yeniden çizilmez
+        setRows((cur) => replaceEqualDeep(cur, data)); sp.bind(res); setTypeCounts(res.type_counts ?? {}); setError(null)
         setServerFacets(res.server_facets === true)
         setLoaded((l) => ({ ...l, key }))
         setScopeCounts(res.scope_counts && typeof res.scope_counts === 'object' ? res.scope_counts : null)
@@ -340,6 +343,12 @@ export default function IncidentsPage({ systemRole, teamId }) {
     refreshAll()
   }
   const onCommentDelta = (delta) => { if (selected) patchRow(selected.id, { comment_count: Math.max(0, (selected.comment_count ?? 0) + delta) }) }
+
+  // Liste satırlarına / kartlara verilen KARARLI işleyiciler (performans 2026-11-17): satır bileşenleri memo — her çizimde
+  // yeni fonksiyon memo'yu boşa çıkarıyordu. Çağrıldıklarında son çizimin ack / resolve / del'ini çalıştırırlar.
+  const ackStable = useLatestCallback(ack)
+  const resolveStable = useLatestCallback(resolve)
+  const delStable = useLatestCallback(del)
 
   // ── Toplu onayla / çöz (liste görünümü; yalnız işlem yapılabilen açık satırlar) ──
   const selection = useMemo(() => ({
@@ -538,7 +547,7 @@ export default function IncidentsPage({ systemRole, teamId }) {
   const paged = total > visibleRows.length
   const cardProps = useCallback((inc) => ({
     isNew: newIds.has(String(inc.id)),
-    ...(phone ? { quickActions: true, onAck: ack, onResolve: resolve } : {}),
+    ...(phone ? { quickActions: true, onAck: ackStable, onResolve: resolveStable } : {}),
   }), [newIds, phone]) // eslint-disable-line react-hooks/exhaustive-deps
   const bulkMode = view === 'list' && !phone
 
@@ -714,7 +723,7 @@ export default function IncidentsPage({ systemRole, teamId }) {
                 ? <IncidentBoard rows={visibleRows} onOpen={openDetail} selectedId={selectedId} phone={phone} paged={paged} cardProps={cardProps} />
                 : (
                   <IncidentsTable rows={visibleRows} sort={sort} onSort={toggleSort} onOpen={openDetail} selectedId={selectedId}
-                    phone={phone} isAdmin={isAdmin} onAck={ack} onResolve={resolve} onDelete={del}
+                    phone={phone} isAdmin={isAdmin} onAck={ackStable} onResolve={resolveStable} onDelete={delStable}
                     newIds={newIds} selection={bulkMode ? selection : null} />
                 )}
               {/* Standart sayfalama çubuğu — pano da yüklenen sayfayı dağıtır */}

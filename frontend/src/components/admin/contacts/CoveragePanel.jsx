@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Check, Minus, ShieldAlert, ShieldCheck, ShieldX, UserPlus, Users } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import { useElementWidth } from '../../../hooks/useElementWidth.js'
@@ -21,8 +21,11 @@ import {
  * Yalnız OKUR — veri EscalationContacts'ta yüklü (contacts/all + users → pasif + teams/stats). Ton kuralı sunucuyla
  * hizalı (contactsCoverageModel ↔ EscalationContactScope). Test kancaları: data-slot="contacts-coverage|cov-toggle|
  * cov-row|cov-cell|cov-quickadd", data-team, data-tone, data-level.
+ *
+ * <p>memo (performans 2026-11-17): kişi listesindeki arama / süzgeç / seçim değişiklikleri matrisi yeniden çizmez — yalnız
+ * kendi verisi değişince çizilir. `onQuickAdd` çağıran tarafta KARARLI verilmelidir.
  */
-export default function CoveragePanel({ contacts = [], teams = [], inactiveIds, knownIds = null, stats = {}, canManage = false, onQuickAdd }) {
+function CoveragePanel({ contacts = [], teams = [], inactiveIds, knownIds = null, stats = {}, canManage = false, onQuickAdd }) {
   const t = useT()
   const [listRef, listWidth] = useElementWidth()
   const [filter, setFilter] = useState('all')
@@ -218,3 +221,5 @@ function CoverageCard({ row, t, canManage, onQuickAdd }) {
     </li>
   )
 }
+
+export default memo(CoveragePanel)

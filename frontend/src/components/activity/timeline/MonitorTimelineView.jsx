@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft, RefreshCw, ExternalLink, ListFilter, ChevronLeft, ChevronRight, BellRing, FileSearch, Activity, XCircle,
   SearchX, Clock, Percent, Timer, Hourglass, ListChecks, CalendarX,
@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import StatusBlock from '../../ui/StatusBlock.jsx'
 import SegmentedControl from '../../ui/SegmentedControl.jsx'
+import { useLatestCallback } from '../../../hooks/useLatestCallback.js'
 import DateTimeField from '../../ui/DateTimeField.jsx'
 import TeamBadge from '../../ui/TeamBadge.jsx'
 import PaginationBar from '../../ui/PaginationBar.jsx'
@@ -320,13 +321,17 @@ function AvailabilityStrip({ periods, from, to, t, merged = false }) {
     setSel(next)
     if (focus) requestAnimationFrame(() => refs.current.get(next)?.focus())
   }
-  const onKey = (e) => {
+  // Bölüm işleyicileri KARARLI (performans 2026-11-17): bölümler memo — ok tuşuyla seçim değişince yalnız eski ve yeni
+  // seçili bölüm yeniden çizilir (eskiden 500'e kadar bölümün hepsi her tuşta)
+  const onKey = useLatestCallback((e) => {
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); move(1, true) }
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); move(-1, true) }
     else if (e.key === 'Home') { e.preventDefault(); move(-order.length, true) }
     else if (e.key === 'End') { e.preventDefault(); move(order.length, true) }
-  }
-  const periodLabel = (x) => `${t('act.tl.mon.state.' + (x?.state || 'unknown'))} · ${formatDateSec(x?.from)} – ${x?.to ? formatDateSec(x.to) : t('act.tl.mon.ongoing')}`
+  })
+  const onSelect = useCallback((index) => setSel(index), [])
+  const registerRef = useCallback((index, el) => { if (el) refs.current.set(index, el); else refs.current.delete(index) }, [])
+  const tabStop = sel ?? order[0]
 
   return (
     <Card className="min-w-0 gap-3 py-4 shadow-xs">
@@ -344,13 +349,8 @@ function AvailabilityStrip({ periods, from, to, t, merged = false }) {
             <div data-slot="act-tl-strip" role="group" aria-label={t('act.tl.mon.strip')}
               className="relative h-10 w-full overflow-hidden rounded-md bg-muted pointer-coarse:h-12">
               {segs.map((s) => (
-                <Button key={s.index} type="button" variant="ghost" data-slot="act-tl-seg" data-state={s.state} data-index={s.index}
-                  ref={(el) => { if (el) refs.current.set(s.index, el); else refs.current.delete(s.index) }}
-                  tabIndex={s.index === (sel ?? order[0]) ? 0 : -1} aria-pressed={s.index === sel}
-                  aria-label={periodLabel(periods[s.index])} onKeyDown={onKey} onClick={() => setSel(s.index)}
-                  className={cn('absolute top-0 h-full min-w-0 rounded-none border-0 p-0 shadow-none focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
-                    STATE_BG[s.state], s.index === sel && 'outline-2 outline-offset-[-2px] outline-foreground')}
-                  style={{ left: `${s.left}%`, width: `max(3px, ${s.width}%)`, zIndex: s.index === sel ? 6 : s.z + 1 }} />
+                <StripSegment key={s.index} seg={s} period={periods[s.index]} t={t} selected={s.index === sel}
+                  tabbable={s.index === tabStop} onKey={onKey} onSelect={onSelect} registerRef={registerRef} />
               ))}
             </div>
             <ul className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 text-xs text-muted-foreground" aria-label={t('act.tl.mon.legend')}>
@@ -390,6 +390,20 @@ function AvailabilityStrip({ periods, from, to, t, merged = false }) {
     </Card>
   )
 }
+
+/** Şeridin tek bölümü — memo: yalnız kendi seçimi / sekme durağı değişince yeniden çizilir. */
+const StripSegment = memo(function StripSegment({ seg: s, period, t, selected, tabbable, onKey, onSelect, registerRef }) {
+  const label = `${t('act.tl.mon.state.' + (period?.state || 'unknown'))} · ${formatDateSec(period?.from)} – ${period?.to ? formatDateSec(period.to) : t('act.tl.mon.ongoing')}`
+  return (
+    <Button type="button" variant="ghost" data-slot="act-tl-seg" data-state={s.state} data-index={s.index}
+      ref={(el) => registerRef(s.index, el)}
+      tabIndex={tabbable ? 0 : -1} aria-pressed={selected}
+      aria-label={label} onKeyDown={onKey} onClick={() => onSelect(s.index)}
+      className={cn('absolute top-0 h-full min-w-0 rounded-none border-0 p-0 shadow-none focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
+        STATE_BG[s.state], selected && 'outline-2 outline-offset-[-2px] outline-foreground')}
+      style={{ left: `${s.left}%`, width: `max(3px, ${s.width}%)`, zIndex: selected ? 6 : s.z + 1 }} />
+  )
+})
 
 /** Kesinti listesi — en yeni üstte; süre + kontrol sayısı + neden; ilk aktiviteye / alarma git. */
 function OutageList({ outages, t, onOpenActivity, measured = true }) {

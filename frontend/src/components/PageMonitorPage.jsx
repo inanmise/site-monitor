@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense, Fragment } from 'react'
 import { sortMonitorsDefault } from '../utils/monitorSort.js'
 import { freshestRow, mergeSavedRow, reloadAndSyncDetail, withRowFlags } from '../utils/monitorDetailSync.js'
+import { detailCheckKey } from '../utils/detailCheckKey.js'
 import { api, formatDateSec } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useRunningChecks } from '../hooks/useRunningChecks.js'
@@ -201,6 +202,11 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   selectedIdRef.current = selected?.id ?? null
   const issueFilterRef = useRef(issueFilter)
   issueFilterRef.current = issueFilter
+  const selectedRowRef = useRef(null)
+  selectedRowRef.current = selected
+  // Sorun listesinin hangi ölçüm için okunduğu — `detailCheckKey`; null = bilinmiyor / son okuma başarısız → "Sorunlar"
+  // sekmesi görünürken sonraki tazelemede yeniden okunur (performans 2026-11-17). Okuma BAŞLARKEN yazılır.
+  const issuesKeyRef = useRef(null)
   const [modal, setModal] = useState(null)
   const fe = useFormErrors(modal)   // doğrulama hataları alanın altında + ilk hatalıya kaydırma (2026-09-30)
   // Opsiyonel "değişiklik nedeni" — form nesnesine DEĞİL ayrı tutulur: taslak/kirlilik
@@ -223,6 +229,8 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   const [deleting, setDeleting] = useState(null)   // satir bazli cift-tik korumasi
   const [testResult, setTestResult] = useState(null)
   const [detailTab, setDetailTab] = useState('issues')
+  const detailTabRef = useRef(detailTab)
+  detailTabRef.current = detailTab
   // Kaynak analizi sekmesinin bir kez açıldığı izleme (r177 H10) — o izlemede sekme gizlense de bağlı kalır
   const [resVisited, setResVisited] = useState(null)
   // Bu sayfada izleme penceresi en az bir kez açıldı mı (r177 O-4): açılmadan önce (derin bağlantıda liste yüklenirken)
@@ -334,8 +342,9 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   // taşıyor — desen buraya da taşındı (yalnız EN SON isteğin yanıtı ekrana yazılır).
   const issuesSeq = useRef(0)
   const confSeq = useRef(0)
-  async function loadIssues(id, filter = issueFilter, silent = false) {
+  async function loadIssues(id, filter = issueFilter, silent = false, forRow = null) {
     const seq = ++issuesSeq.current
+    issuesKeyRef.current = detailCheckKey(forRow ?? selectedRowRef.current, id)
     if (!silent) setIssuesLoading(true)                              // silent: 30sn oto-yenilemede spinner flaşlamasın
     const issueType = (filter === 'all' || filter === 'firstParty') ? null : filter
     // try/finally YOKTU: istek reject olursa setIssuesLoading(false) hic calismiyor ve
@@ -347,6 +356,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
       if (seq !== issuesSeq.current) return        // daha yeni bir istek var → bu yanıtı AT
       if (!res?.success) {
         // Okunamadı: sessiz yenilemede eldeki liste KALIR (hata şeridiyle), ilk okumada boş liste + hata bloğu
+        issuesKeyRef.current = null              // sekme görünürken sonraki tazelemede yeniden denenir
         setIssuesError(res?.error || t('page.issuesLoadFailed'))
         if (!silent) setIssues([])
         return
@@ -358,6 +368,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
       setIssuesError(null)
     } catch (e) {
       if (seq === issuesSeq.current) {
+        issuesKeyRef.current = null
         setIssuesError(e?.message || t('page.issuesLoadFailed'))
         if (!silent) setIssues([])
       }
@@ -390,7 +401,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
     checkIssuesGen.current++; setCheckIssues({})
     setSelected(m); setIssues([]); setHistIssues([]); setIssuesError(null); setConfirmations([]); setIssueFilter('all'); setDetailTab(deepLinkTab())
     setPageDx((cur) => (cur && cur.monitorId === m?.id ? cur : null))   // derin bağlantının kayıtlı çalıştırması yalnız KENDİ izlemesinde
-    loadIssues(m.id, 'all'); loadConfirmations(m.url)
+    loadIssues(m.id, 'all', false, m); loadConfirmations(m.url)
   }
   // Kaynak analizinde toplu görsel indirme / ZIP sürüyorsa pencere kapanınca iş İPTAL OLMAZ (arka planda sürer, ZIP iner) —
   // kullanıcıya söylenir (inceleme 2026-11-14: uygulama içi gezinme işi sessizce kesiyordu)
@@ -403,19 +414,36 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
 
   // Modal 30sn oto-yenileme (sessiz): sorunlar + canlı teyit durumu + kart metrikleri.
   // (Kontrol Geçmişi kendi 30sn canlı yenilemesini CheckHistoryTab içinde yapar.)
+  /**
+   * Sorun listesini yalnız GEREKİRSE tazele (performans 2026-11-17): "Sorunlar" sekmesi görünür ve izlemenin son ölçümü
+   * listenin okunduğu ölçümden farklı (ya da son okuma başarısız). Eskiden 30 sn'de bir sekme kapalıyken bile okunuyordu.
+   * Geçmiş satırının sorunları kendi kontrol kimliğiyle okunur (loadCheckIssues) — bu listeye bağlı değil.
+   */
+  function refreshIssuesIfStale(row) {
+    if (!row || detailTabRef.current !== 'issues') return
+    if (issuesKeyRef.current != null && issuesKeyRef.current === detailCheckKey(row)) return
+    loadIssues(row.id, issueFilterRef.current, true, row)
+  }
+
   async function refreshModal() {
     if (!selected) return
     const { id, url } = selected
+    let row = selectedRowRef.current
     // Liste son 30 sn içinde yoklamayla yüklendiyse yeniden çekilmez — kopya o yanıttan tazelendi. Aksi hâlde SIRA
     // KORUMALI load()'dan geçer (2026-10-22, UIM-19) ve kopya aynı yanıttan tazelenir (loadAndSync).
-    if (Date.now() - listSyncedAtRef.current >= DETAIL_REFRESH_MS - LIST_FRESH_SLACK_MS) await loadAndSync()
+    if (Date.now() - listSyncedAtRef.current >= DETAIL_REFRESH_MS - LIST_FRESH_SLACK_MS) {
+      const rows = await loadAndSync()
+      if (Array.isArray(rows)) row = rows.find((x) => x.id === id) ?? row
+    }
     // (Eskiden doğrudan çağrı vardı — yavaş bir yenileme yanıtı kaydetmeden SONRA dönünce kaydedilmiş satırı eski
     // değerlerle eziyor, ikinci "Düzenle" ilk düzenlemeyi sessizce geri alıyordu.)
     // Pencere o arada kapandı / başka izlemeye geçildi → A'nın sorunları B'nin penceresine yüklenmesin.
     if (selectedIdRef.current !== id) return
-    loadIssues(id, issueFilterRef.current, true)
+    refreshIssuesIfStale(row)
     loadConfirmations(url)
   }
+  // Sekmeye dönüldüğünde (yeni ölçüm geldiyse) hemen tazelenir — 30 sn beklenmez
+  useEffect(() => { refreshIssuesIfStale(selectedRowRef.current) }, [detailTab]) // eslint-disable-line react-hooks/exhaustive-deps
   useVisibleInterval(() => { if (selected) refreshModal() }, selected ? DETAIL_REFRESH_MS : 0, false)
 
   /** Uçuşan form testini geçersiz kılar (form açılışı / kapanışı): geç yanıt yeni forma düşmez, düğme kilitli kalmaz. */
@@ -636,7 +664,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
         // Bayat kapanış YOK: `selected`/`issueFilter` isteğin başladığı andaki değerlerdir. Yanıt gelene kadar
         // pencere kapanmış ya da başka izlemeye geçilmiş olabilir → yalnız HÂLÂ açık olan aynı kayıt tazelenir.
         setSelected(prev => (prev?.id === m.id ? withRowFlags(prev, res.data) : prev))
-        if (selectedIdRef.current === m.id) loadIssues(m.id, issueFilterRef.current)
+        if (selectedIdRef.current === m.id) loadIssues(m.id, issueFilterRef.current, false, res.data)
         setHistReload(k => k + 1)
         return { ok: true, data: res.data }
       }

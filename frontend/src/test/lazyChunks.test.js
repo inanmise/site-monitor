@@ -308,6 +308,23 @@ describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme gra
     }
   })
 
+  it('Eksikler penceresi (2026-11-17, performans): App içindeki kabuk yalnız hafif modülleri alır; denetleyici yalnız import() ile', () => {
+    // Kabuk her oturumda açılış paketindedir — eksikler modelleri / kaynak yükleyicisi / toplu düzeltme ve alarm iletimi
+    // modelleri ona statik GİRMEMELİ (eskiden ~120 KB kaynak açılış paketindeydi)
+    const shell = 'components/gaps/GapsPrompt.jsx'
+    const heavy = /(^|\/)(GapsPromptCore|GapsDialog|GapsFix)(\.jsx)?$|(^|\/)(gapsModel|gapsSources|gapsProfile|gapsExtra|gapsLinks|gapsText|gapsExport)(\.js)?$|bulkModel|alertForwardModel/
+    expect(staticImports(read(shell)).filter((x) => heavy.test(x))).toEqual([])
+    expect(hasDynamic(shell, /(^|\/)GapsPromptCore\.jsx$/)).toBe(true)
+    expect(read(shell)).toMatch(/importWithDeadline\(\(\) => import\('\.\/GapsPromptCore\.jsx'\)\)/)
+    // Denetleyicinin ağır modülleri yalnız eksikler klasöründen (o da tembel) içe aktarılır
+    const outside = FILES.filter(({ rel: r }) => !r.startsWith('components/gaps/'))
+      .filter(({ src }) => staticImports(src).some((x) => /(^|\/)gaps\/(GapsPromptCore|GapsDialog|GapsFix|gapsModel|gapsSources|gapsProfile|gapsExtra)/.test(x)))
+      .map((x) => x.rel)
+    expect(outside).toEqual([])
+    const coreUsers = FILES.filter(({ src }) => staticImports(src).some((x) => /(^|\/)GapsPromptCore(\.jsx)?$/.test(x))).map((x) => x.rel)
+    expect(coreUsers).toEqual([])
+  })
+
   it('SQL Playground (2026-11-13): sonuç grafiği (recharts) ve Excel yazıcısı yalnız import() ile', () => {
     const pg = 'components/admin/SqlPlayground.jsx'
     expect(hasStatic(pg, staticPathRe('sql/ResultChart'))).toBe(false)

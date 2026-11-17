@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { importWithDeadline } from '../utils/importWithDeadline.js'
 import { CalendarPlus, Grid3x3, Inbox, Info, Plus, RefreshCw, SearchX } from 'lucide-react'
 import { useT } from '../i18n/index.jsx'
@@ -56,7 +56,6 @@ import { Skeleton } from '@/components/shadcn/skeleton'
  * (`cardActions`, `canPlan`, `onPlanRenewal`, `cardExtras`). Sertifikası olmayan kullanıcı da alarm / SLA / izleme özetini
  * görür (eskiden sayfa boş kutuyla bitiyordu).
  */
-const SEARCH_DEBOUNCE_MS = 250
 const NARROW_PX = 640
 
 function StatsSkeleton({ label }) {
@@ -92,8 +91,10 @@ export default function StatsView({
   // ── Süzgeç durumu (URL `st_*`) ──────────────────────────────────────────────────────────────────
   const [init] = useState(() => stateFromUrl(readUrlParam))
   const [kpi, setKpi] = useState(init.kpi)
-  const [qInput, setQInput] = useState(init.q)
+  // Yazılmakta olan arama taslağı StatsToolbar'da (performans 2026-11-17: her tuş vuruşu bütün grafik / tablo bölümlerini
+  // yeniden çiziyordu); buraya yalnız gecikmeli işlenen değer gelir. `searchReset` = "aramayı temizle" sinyali.
   const [q, setQ] = useState(init.q)
+  const [searchReset, setSearchReset] = useState(0)
   const [issuers, setIssuers] = useState(init.issuers)
   const [teamId, setTeamId] = useState(init.team)
   const [tier, setTier] = useState(init.tier)
@@ -103,11 +104,6 @@ export default function StatsView({
   const [sort, setSort] = useState(init.sort)
   const [matrixOpen, setMatrixOpen] = useState(init.matrixOpen)
   const [allTiers, setAllTiers] = useState(init.allTiers)
-  useEffect(() => {
-    if (qInput === q) return undefined
-    const id = setTimeout(() => setQ(qInput), SEARCH_DEBOUNCE_MS)
-    return () => clearTimeout(id)
-  }, [qInput, q])
   useUrlQuerySync(toUrlMapping({ kpi, q, issuers, team: teamId, tier, level, sort, matrixOpen, allTiers, sec, week }))
 
   // ── Sayfanın kendi kaynakları (izne bağlı) ───────────────────────────────────────────────────────
@@ -203,7 +199,7 @@ export default function StatsView({
   const onIssuerFilter = (list) => { setIssuers(list); if (list.length) reveal() }
   const onTierFilter = (v) => { setTier(v); if (v != null) reveal() }
   const onShowUpcoming = () => { setKpi('d30'); setSort('days_remaining|asc'); reveal() }
-  const clearSearch = () => { setQInput(''); setQ('') }
+  const clearSearch = () => { setQ(''); setSearchReset((n) => n + 1) }
   const clearAll = () => { setKpi(null); clearSearch(); setIssuers([]); clearWidget(); setSec(null); setWeek(null) }
   const exportCsv = () => { if (downloadCsv(stampedName('certificate-statistics'), statsCsv(filtered, t, dtm)) === false) toast.error(t('inv.downloadFailed')) }
 
@@ -344,7 +340,7 @@ export default function StatsView({
               </div>
               {addDomain}
             </div>
-            <StatsToolbar q={qInput} onQ={setQInput} kpi={kpi} onKpi={setKpi} issuerOpts={issuerOpts} issuers={issuers} onIssuers={setIssuers}
+            <StatsToolbar q={q} onQ={setQ} resetKey={searchReset} kpi={kpi} onKpi={setKpi} issuerOpts={issuerOpts} issuers={issuers} onIssuers={setIssuers}
               sort={sort} onSort={setSort} chips={chips} onClearAll={clearAll} shown={filtered.length} total={certs.length} onExport={exportCsv} />
             {filtered.length === 0 ? (
               <StatusBlock tone="neutral" icon={SearchX} title={t('stv.noResults')} description={t('stv.noResultsHint')}

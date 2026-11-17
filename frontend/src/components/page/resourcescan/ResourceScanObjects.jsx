@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, Suspense, useDeferredValue, useMemo, useState } from 'react'
 import { Boxes, ChevronDown, ListFilter, PanelRightOpen, Search, X } from 'lucide-react'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import { usePagination } from '../../../hooks/usePagination.js'
@@ -11,7 +11,7 @@ import StatusBlock from '../../ui/StatusBlock.jsx'
 import { LoadingBlock } from '../../ui/Progress.jsx'
 import {
   BUCKET_KEYS, CATEGORIES, DEFAULT_FILTERS, FINDING_CODES, FINDING_TONE, OBJECTS_TABLE_MIN_PX, SCOPES, SORTS, STATUS_FILTERS,
-  CACHE_FINDINGS, activeFilterCount, cacheState, cacheText, categoryLabel, countsBy, dimensionsText, filterItems, findingLabel, formatBytesExact,
+  CACHE_FINDINGS, activeFilterCount, cacheState, cacheText, categoryLabel, dimensionsText, filterWithCounts, findingLabel, formatBytesExact,
   formatMs, formatNumber, isPageLoad, itemBytes, itemSizeText, plural, problemText, recTextKey, recommendationArgs, sizeBucket, sortItems,
   statusText, thirdPartyCategoryKey, verdictOf, verdictText, verdictTone, waterfallBar, waterfallTotal,
 } from './resourceScanModel.js'
@@ -51,21 +51,15 @@ export default function ResourceScanObjects({
   const f = { ...DEFAULT_FILTERS, ...(filters || {}) }
   const set = (patch) => onFiltersChange?.({ ...f, ...patch })
   const list = useMemo(() => (Array.isArray(items) ? items : []), [items])
-  const fKey = JSON.stringify([f.q, f.types, f.buckets, f.findings, f.scope, f.status, f.urls])
-
-  const filtered = useMemo(() => sortItems(filterItems(list, f), f.sort, locale),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [list, fKey, f.sort, locale])
+  // Arama ERTELENİR (performans 2026-11-17): kutu her tuşta anında güncellenir; 5000'e kadar nesnenin süzülmesi ve sayaçlar
+  // React'in kesilebilir arka plan çiziminde, tek geçişte (`filterWithCounts`) hesaplanır — eskiden her tuş vuruşu altı
+  // ayrı tam geçiş yapıyordu.
+  const qDeferred = useDeferredValue(f.q)
+  const fKey = JSON.stringify([qDeferred, f.types, f.buckets, f.findings, f.scope, f.status, f.urls])
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const typeCounts = useMemo(() => countsBy(list, f, 'types'), [list, fKey])
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const bucketCounts = useMemo(() => countsBy(list, f, 'buckets'), [list, fKey])
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const findingCounts = useMemo(() => countsBy(list, f, 'findings'), [list, fKey])
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const scopeCounts = useMemo(() => countsBy(list, f, 'scope'), [list, fKey])
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const statusCounts = useMemo(() => countsBy(list, f, 'status'), [list, fKey])
+  const facets = useMemo(() => filterWithCounts(list, { ...f, q: qDeferred }), [list, fKey])
+  const filtered = useMemo(() => sortItems(facets.filtered, f.sort, locale), [facets, f.sort, locale])
+  const { types: typeCounts, buckets: bucketCounts, findings: findingCounts, scope: scopeCounts, status: statusCounts } = facets.counts
   const presentTypes = useMemo(() => {
     const seen = new Set(list.map((it) => it?.category))
     return [...CATEGORIES.filter((c) => seen.has(c)), ...[...seen].filter((c) => c && !CATEGORIES.includes(c))]

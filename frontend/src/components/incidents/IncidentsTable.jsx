@@ -1,3 +1,4 @@
+import { memo, useCallback, useRef } from 'react'
 import { ArrowUp, ArrowDown, ArrowUpDown, MessageSquare, Eye, ExternalLink, UserCheck, CheckCircle2, Trash2 } from 'lucide-react'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import { formatIncidentTime } from '../../utils/incidentMeta.js'
@@ -43,16 +44,17 @@ export default function IncidentsTable({
   newIds = null, selection = null,
 }) {
   const t = useT()
-  const dateLocale = useDateLocale()
+  // Satır onay kutusunun KARARLI işleyicisi — seçim kümesi değişince yalnız değişen satırlar yeniden çizilir (memo)
+  const selectionRef = useRef(selection)
+  selectionRef.current = selection
+  const onCheck = useCallback((id, on) => selectionRef.current?.setMany([String(id)], on === true), [])
 
   if (phone) {
     return (
       <ul data-slot="incident-list" className="m-0 flex list-none flex-col gap-2 p-0">
         {rows.map((inc) => (
-          <li key={inc.id} className="min-w-0">
-            <IncidentCard inc={inc} showStatus onOpen={() => onOpen(inc)} selected={String(selectedId) === String(inc.id)}
-              isNew={Boolean(newIds?.has(String(inc.id)))} quickActions onAck={onAck} onResolve={onResolve} />
-          </li>
+          <PhoneRow key={inc.id} inc={inc} selected={String(selectedId) === String(inc.id)} isNew={Boolean(newIds?.has(String(inc.id)))}
+            onOpen={onOpen} onAck={onAck} onResolve={onResolve} />
         ))}
       </ul>
     )
@@ -70,28 +72,6 @@ export default function IncidentsTable({
       </Button>
     </TableHead>
   )
-
-  /** ↑/↓ satırlar arasında odak gezdirir; Enter/Space satırı açar (yalnız satırın kendisinde — hücredeki düğmeler kendi işini yapar). */
-  const onRowKey = (e, inc) => {
-    if (e.target !== e.currentTarget) return
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(inc); return }
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault()
-      const sib = e.key === 'ArrowDown' ? e.currentTarget.nextElementSibling : e.currentTarget.previousElementSibling
-      if (sib && typeof sib.focus === 'function') sib.focus()
-    }
-  }
-
-  const menuItems = (inc) => {
-    const act = canActOn(inc)
-    return [
-      { label: t('incov.openDetail'), icon: <Eye aria-hidden="true" />, onClick: () => onOpen(inc) },
-      { label: t('incov.openMonitor'), icon: <ExternalLink aria-hidden="true" />, onClick: () => window.location.assign(incidentHref(inc)), hidden: isForeign(inc) },
-      { label: t('incov.ack'), icon: <UserCheck aria-hidden="true" />, onClick: () => onAck?.(inc), hidden: !act || !isOpen(inc) || isAcked(inc) || !onAck },
-      { label: t('incov.resolve'), icon: <CheckCircle2 aria-hidden="true" />, onClick: () => onResolve?.(inc), hidden: !act || !isOpen(inc) || !onResolve },
-      { label: t('incov.delete'), icon: <Trash2 aria-hidden="true" />, onClick: () => onDelete?.(inc), danger: true, hidden: !canDeleteIncident(inc, isAdmin) || !onDelete },
-    ]
-  }
 
   const selectable = selection ? rows.filter(isSelectable) : []
   const allOn = selectable.length > 0 && selectable.every((r) => selection.ids.has(String(r.id)))
@@ -121,83 +101,124 @@ export default function IncidentsTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map((inc) => {
-            const selected = String(selectedId) === String(inc.id)
-            const name = inc.monitor?.name || inc.domain || '—'
-            const open = isOpen(inc)
-            const fresh = Boolean(newIds?.has(String(inc.id)))
-            return (
-              <TableRow key={inc.id} data-status={inc.status} data-incident-id={inc.id} data-state={selected ? 'selected' : undefined}
-                data-foreign={isForeign(inc) || undefined} data-new={fresh || undefined}
-                tabIndex={0} title={t('incov.openDetail')}
-                className={cn('cursor-pointer outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary',
-                  open && !selected && !fresh && 'bg-destructive/[0.04]',
-                  fresh && !selected && 'bg-primary/[0.07]',
-                  selected && 'bg-primary/10 outline outline-2 -outline-offset-2 outline-primary/60 hover:bg-primary/15')}
-                onClick={() => onOpen(inc)}
-                onKeyDown={(e) => onRowKey(e, inc)}>
-                {selection && (
-                  <TableCell className="w-10 pr-0" onClick={(e) => e.stopPropagation()}>
-                    {isSelectable(inc) && (
-                      <Checkbox data-slot="incidents-select-row" className="pointer-coarse:after:-inset-3.5" aria-label={t('incov.bulk.selectRow', rowName(inc, dateLocale))}
-                        checked={selection.ids.has(String(inc.id))}
-                        onCheckedChange={(on) => selection.setMany([String(inc.id)], on === true)} />
-                    )}
-                  </TableCell>
-                )}
-                <TableCell><SeverityBadge level={inc.alert_level} /></TableCell>
-                <TableCell className="min-w-[14rem] max-w-[32rem] whitespace-normal">
-                  <div className="flex min-w-0 items-start gap-2">
-                    <MonitorTypeIcon type={inc.monitor?.type} />
-                    <div className="min-w-0">
-                      <div className="font-semibold [overflow-wrap:anywhere]">{name}</div>
-                      <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                        <RootCauseChip rc={inc.root_cause} />
-                        {isForeign(inc) && <ReadOnlyBadge compact />}
-                        {fresh && <NewBadge />}
-                        <RecurrenceBadge count={inc.recurrence_7d} />
-                        {inc.message && <span className="min-w-0 [overflow-wrap:anywhere]">{inc.message}</span>}
-                      </div>
-                    </div>
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <span className="flex flex-wrap gap-1">
-                    <IncidentStatusBadge status={inc.status} />
-                    {open && isAcked(inc) && <AckBadge />}
-                  </span>
-                </TableCell>
-                {/* Takım rozeti kendi tıklamasını durdurur (üye penceresi); hücrenin BOŞ alanı satır gibi detayı açar —
-                    eski hücre-düzeyi stopPropagation satırın ortasına tıklayanı sessizce yutuyordu (1440 ölçümü) */}
-                <TableCell data-slot="incident-team-cell" className="hidden min-w-[9rem] max-w-[14rem] whitespace-normal lg:table-cell">
-                  {(inc.team_name || inc.team_id != null)
-                    ? <TeamBadge wrap teamId={inc.team_id} teamName={inc.team_name} />
-                    : <span className="text-muted-foreground">—</span>}
-                </TableCell>
-                {/* Başlangıç sarar (2026-11-13): seçim sütunuyla 1280 + açık kenar çubuğunda tablo kabı taşıyordu */}
-                <TableCell className="min-w-[7rem] text-[0.92em] whitespace-normal text-muted-foreground" title={inc.started_at}>{formatIncidentTime(inc.started_at, dateLocale)}</TableCell>
-                <TableCell className="min-w-[6.5rem] text-[0.95em] whitespace-normal">
-                  {/* Süre kendi saatiyle tazelenir (yaprak) — tablo saniyede bir yeniden çizilmez (2026-10-09) */}
-                  <LiveDuration since={inc.started_at} until={inc.resolved_at} live={open} className="whitespace-nowrap" />
-                  {/* Çözülme anı sarar (2026-11-13): tek satırda tabloyu 1280'de taşırıyordu */}
-                  {!open && inc.resolved_at && (
-                    <span className="block text-[0.82em] text-muted-foreground" title={inc.resolved_at}>
-                      {t('incov.resolvedAt')} {formatIncidentTime(inc.resolved_at, dateLocale)}
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell className="hidden text-center text-muted-foreground tabular-nums 2xl:table-cell">
-                  {inc.comment_count ?? 0}
-                  <span className="sr-only"> {(inc.comment_count ?? 0) === 1 ? t('incov.commentOne') : t('incov.comments', inc.comment_count ?? 0)}</span>
-                </TableCell>
-                <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                  <KebabMenu items={menuItems(inc)} label={t('incov.colActions')} rowLabel={rowName(inc, dateLocale)} />
-                </TableCell>
-              </TableRow>
-            )
-          })}
+          {rows.map((inc) => (
+            <IncidentRow key={inc.id} inc={inc} selected={String(selectedId) === String(inc.id)} fresh={Boolean(newIds?.has(String(inc.id)))}
+              withSelection={!!selection} checked={!!selection?.ids.has(String(inc.id))} onCheck={onCheck}
+              isAdmin={isAdmin} onOpen={onOpen} onAck={onAck} onResolve={onResolve} onDelete={onDelete} />
+          ))}
         </TableBody>
       </Table>
     </div>
   )
 }
+
+/** Telefon kartı (memo) — yalnız kendi olayı / seçimi / "Yeni" işareti değişince yeniden çizilir. */
+const PhoneRow = memo(function PhoneRow({ inc, selected, isNew, onOpen, onAck, onResolve }) {
+  return (
+    <li className="min-w-0">
+      <IncidentCard inc={inc} showStatus onOpen={() => onOpen(inc)} selected={selected}
+        isNew={isNew} quickActions onAck={onAck} onResolve={onResolve} />
+    </li>
+  )
+})
+
+/** ↑/↓ satırlar arasında odak gezdirir; Enter/Space satırı açar (yalnız satırın kendisinde — hücredeki düğmeler kendi işini yapar). */
+function onRowKey(e, inc, onOpen) {
+  if (e.target !== e.currentTarget) return
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(inc); return }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault()
+    const sib = e.key === 'ArrowDown' ? e.currentTarget.nextElementSibling : e.currentTarget.previousElementSibling
+    if (sib && typeof sib.focus === 'function') sib.focus()
+  }
+}
+
+/**
+ * Tek tablo satırı — memo (performans 2026-11-17): seçim, imleç (j / k), "Yeni" vurgusu ya da tek satırın yaması yalnız O
+ * satırı yeniden çizer. İşleyiciler (açma, onay, çözüm, silme, onay kutusu) çağıran tarafta KARARLI verilmelidir.
+ */
+const IncidentRow = memo(function IncidentRow({
+  inc, selected, fresh, withSelection, checked, onCheck, isAdmin, onOpen, onAck, onResolve, onDelete,
+}) {
+  const t = useT()
+  const dateLocale = useDateLocale()
+  const name = inc.monitor?.name || inc.domain || '—'
+  const open = isOpen(inc)
+  const act = canActOn(inc)
+  const menuItems = [
+    { label: t('incov.openDetail'), icon: <Eye aria-hidden="true" />, onClick: () => onOpen(inc) },
+    { label: t('incov.openMonitor'), icon: <ExternalLink aria-hidden="true" />, onClick: () => window.location.assign(incidentHref(inc)), hidden: isForeign(inc) },
+    { label: t('incov.ack'), icon: <UserCheck aria-hidden="true" />, onClick: () => onAck?.(inc), hidden: !act || !isOpen(inc) || isAcked(inc) || !onAck },
+    { label: t('incov.resolve'), icon: <CheckCircle2 aria-hidden="true" />, onClick: () => onResolve?.(inc), hidden: !act || !isOpen(inc) || !onResolve },
+    { label: t('incov.delete'), icon: <Trash2 aria-hidden="true" />, onClick: () => onDelete?.(inc), danger: true, hidden: !canDeleteIncident(inc, isAdmin) || !onDelete },
+  ]
+  return (
+    <TableRow data-status={inc.status} data-incident-id={inc.id} data-state={selected ? 'selected' : undefined}
+      data-foreign={isForeign(inc) || undefined} data-new={fresh || undefined}
+      tabIndex={0} title={t('incov.openDetail')}
+      className={cn('cursor-pointer outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary',
+        open && !selected && !fresh && 'bg-destructive/[0.04]',
+        fresh && !selected && 'bg-primary/[0.07]',
+        selected && 'bg-primary/10 outline outline-2 -outline-offset-2 outline-primary/60 hover:bg-primary/15')}
+      onClick={() => onOpen(inc)}
+      onKeyDown={(e) => onRowKey(e, inc, onOpen)}>
+      {withSelection && (
+        <TableCell className="w-10 pr-0" onClick={(e) => e.stopPropagation()}>
+          {isSelectable(inc) && (
+            <Checkbox data-slot="incidents-select-row" className="pointer-coarse:after:-inset-3.5" aria-label={t('incov.bulk.selectRow', rowName(inc, dateLocale))}
+              checked={checked}
+              onCheckedChange={(on) => onCheck(inc.id, on)} />
+          )}
+        </TableCell>
+      )}
+      <TableCell><SeverityBadge level={inc.alert_level} /></TableCell>
+      <TableCell className="min-w-[14rem] max-w-[32rem] whitespace-normal">
+        <div className="flex min-w-0 items-start gap-2">
+          <MonitorTypeIcon type={inc.monitor?.type} />
+          <div className="min-w-0">
+            <div className="font-semibold [overflow-wrap:anywhere]">{name}</div>
+            <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+              <RootCauseChip rc={inc.root_cause} />
+              {isForeign(inc) && <ReadOnlyBadge compact />}
+              {fresh && <NewBadge />}
+              <RecurrenceBadge count={inc.recurrence_7d} />
+              {inc.message && <span className="min-w-0 [overflow-wrap:anywhere]">{inc.message}</span>}
+            </div>
+          </div>
+        </div>
+      </TableCell>
+      <TableCell>
+        <span className="flex flex-wrap gap-1">
+          <IncidentStatusBadge status={inc.status} />
+          {open && isAcked(inc) && <AckBadge />}
+        </span>
+      </TableCell>
+      {/* Takım rozeti kendi tıklamasını durdurur (üye penceresi); hücrenin BOŞ alanı satır gibi detayı açar —
+          eski hücre-düzeyi stopPropagation satırın ortasına tıklayanı sessizce yutuyordu (1440 ölçümü) */}
+      <TableCell data-slot="incident-team-cell" className="hidden min-w-[9rem] max-w-[14rem] whitespace-normal lg:table-cell">
+        {(inc.team_name || inc.team_id != null)
+          ? <TeamBadge wrap teamId={inc.team_id} teamName={inc.team_name} />
+          : <span className="text-muted-foreground">—</span>}
+      </TableCell>
+      {/* Başlangıç sarar (2026-11-13): seçim sütunuyla 1280 + açık kenar çubuğunda tablo kabı taşıyordu */}
+      <TableCell className="min-w-[7rem] text-[0.92em] whitespace-normal text-muted-foreground" title={inc.started_at}>{formatIncidentTime(inc.started_at, dateLocale)}</TableCell>
+      <TableCell className="min-w-[6.5rem] text-[0.95em] whitespace-normal">
+        {/* Süre kendi yaprağında, ortak saniye saatiyle tazelenir — tablo saniyede bir yeniden çizilmez (2026-10-09) */}
+        <LiveDuration since={inc.started_at} until={inc.resolved_at} live={open} className="whitespace-nowrap" />
+        {/* Çözülme anı sarar (2026-11-13): tek satırda tabloyu 1280'de taşırıyordu */}
+        {!open && inc.resolved_at && (
+          <span className="block text-[0.82em] text-muted-foreground" title={inc.resolved_at}>
+            {t('incov.resolvedAt')} {formatIncidentTime(inc.resolved_at, dateLocale)}
+          </span>
+        )}
+      </TableCell>
+      <TableCell className="hidden text-center text-muted-foreground tabular-nums 2xl:table-cell">
+        {inc.comment_count ?? 0}
+        <span className="sr-only"> {(inc.comment_count ?? 0) === 1 ? t('incov.commentOne') : t('incov.comments', inc.comment_count ?? 0)}</span>
+      </TableCell>
+      <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+        <KebabMenu items={menuItems} label={t('incov.colActions')} rowLabel={rowName(inc, dateLocale)} />
+      </TableCell>
+    </TableRow>
+  )
+})
