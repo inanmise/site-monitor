@@ -63,7 +63,7 @@ Kurallar:
 
 | Paket | Sürüm | Not |
 |---|---|---|
-| react / react-dom | ^18.3.1 | **React 18** — shadcn CLI React 19 kalıbı üretir (§3.1) |
+| react / react-dom | ^19.3.1 | **React 19** (2026-11-17'den beri) — React 18 için eklenen `forwardRef`'ler kalır, çalışır (§3.1) |
 | tailwindcss / @tailwindcss/vite | ^4.3.3 | Tailwind v4, Vite eklentisiyle |
 | radix-ui | ^1.6.7 | Birleşik Radix paketi (`import { Dialog as DialogPrimitive } from "radix-ui"`) |
 | @base-ui/react | ^1.8.0 | Yalnız `shadcn/combobox.jsx` kullanıyor — o dosya bilinçli olarak kullanılmıyor (§4) |
@@ -185,7 +185,8 @@ TagInput `ui/TagInput.jsx:126`, VersionChip `components/VersionChip.jsx:60`) ya 
 shadcn CLI 4.x bileşenleri **React 19 kalıbıyla** üretir (işlev bileşeni, `ref` düz prop, `forwardRef` yok).
 React 18 işlev bileşenine verilen `ref`'i **düşürür**. Radix `asChild` (Slot) çocuğuna ref bağlar (konum,
 odak, Presence) → asChild çocuğu olan ya da ekranın ref verdiği her sarmalayıcı `React.forwardRef` olmalı.
-`forwardRef` React 19'da da çalışır (ileri uyumlu).
+`forwardRef` React 19'da da çalışır (ileri uyumlu). **2026-11-17: proje React 19.3.1'e geçti** — mevcut `forwardRef`'leri
+sökmeyin (işe yarar, zararsız); yeni bileşen React 19 kalıbıyla (`ref` düz prop) eklenebilir.
 
 forwardRef'e çevrilmiş dosyalar (yerel dosyada doğrulandı):
 

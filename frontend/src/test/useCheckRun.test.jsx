@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from 'vitest'
-import { StrictMode } from 'react'
 import { render, screen, fireEvent, waitFor, act } from './test-utils.jsx'
 import { useCheckRun } from '../hooks/useCheckRun.js'
 
@@ -157,7 +156,7 @@ describe('useCheckRun', () => {
     // çünkü testing-library varsayılanı StrictMode kullanmıyor.
     const items = [{ id: 1, name: 'a' }, { id: 2, name: 'b' }]
     const runOne = vi.fn(async () => ok())
-    render(<StrictMode><Harness items={items} runOne={runOne} /></StrictMode>)
+    render(<Harness items={items} runOne={runOne} />, { reactStrictMode: true })
 
     fireEvent.click(screen.getByText('start'))
     await waitFor(() => expect(screen.getByTestId('done')).toHaveTextContent('true'))

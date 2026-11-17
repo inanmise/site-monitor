@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest'
-import { StrictMode } from 'react'
 import { render, screen, waitFor, fireEvent, within, act } from './test-utils'
 
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
@@ -234,7 +233,7 @@ describe('ResponseTimeChart', () => {
 
   it('StrictMode (kur → temizle → kur) altında da veri yazılır — yaşam bayrağı kalıcı "ölü" kalmaz', async () => {
     api.monitoring.getScriptedResponseSeries.mockResolvedValue(envelope([bucket(3, 140)]))
-    render(<StrictMode><ResponseTimeChart monitorId={7} kind="scripted" /></StrictMode>)
+    render(<ResponseTimeChart monitorId={7} kind="scripted" />, { reactStrictMode: true })
     await waitFor(() => expect(tileValue('avg')).toBe('140 ms'))
     expect(document.querySelector('[data-slot="chart-skeleton"]')).toBeNull()
   })

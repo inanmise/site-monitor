@@ -94,6 +94,9 @@ export function revealInScroller(el, pad = 8) {
   return true
 }
 
+/** finishedRef tavanı: bir sekmede bitmiş olarak görülen koşu kimliği sayısı (en eskisi düşer). */
+const FINISHED_MAX = 100
+
 export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, active = true, onShow }) {
   const t = useT()
   const locale = useDateLocale()
@@ -110,6 +113,10 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
   const [selectedId, setSelectedId] = useState(null)
   const [detail, setDetail] = useState({ state: 'idle', id: null, data: null, error: null })
   const [running, setRunning] = useState(null)          // izlenen RUNNING koşu (özet)
+  // Bitmiş olarak uygulanan koşu kimlikleri (eşzamanlı, render beklemez): iptal / bitiş yanıtından SONRA dönen eski bir
+  // ilerleme okuması (hâlâ RUNNING) koşu kartını geri getirmesin. Durumlar tek yönlüdür (RUNNING → DONE / FAILED /
+  // INTERRUPTED; sürdürme YENİ kimlik açar), bu yüzden bir kimlik bir kez bitince bir daha izlenmez. Tavanlı (FINISHED_MAX).
+  const finishedRef = useRef(new Set())
   const [sighting, setSighting] = useState(null)        // { id, base, mono } — geçen süre tabanı (sunucu saati)
   const [pollState, setPollState] = useState('ok')      // ok | lost | capped
   const [pollNonce, setPollNonce] = useState(0)
@@ -215,7 +222,7 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
 
   /** Bir koşuyu izlemeye al (başlatma yanıtı, 409, ya da geçmişteki `running`). `serverTs` = yanıtın sunucu damgası. */
   const follow = useCallback((scan, serverTs) => {
-    if (!scan || scan.id == null) return
+    if (!scan || scan.id == null || finishedRef.current.has(scan.id)) return
     takeBack(monitorId, scan.id)                         // arka plan izlemesi varsa sekme devralır (çift sorgu yok)
     setRunning(scan)
     setSighting((s) => (s?.id === scan.id ? s : { id: scan.id, base: elapsedAtSighting(scan, serverTs), mono: monoNow() }))
@@ -265,6 +272,9 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
    * başka (tamamlanmış) bir analize bakıyorsa seçimi DEĞİŞTİRMEZ — iptal edenin elindeki sonuç ekrandan gitmesin.
    */
   const applyFinished = useCallback((scan, data) => {
+    const done = finishedRef.current
+    done.add(scan.id)
+    if (done.size > FINISHED_MAX) done.delete(done.values().next().value)
     setRunning(null)
     setCancelRequested(null)
     setHist((h) => (h.data ? { ...h, data: { ...h.data, running: null, items: h.data.items.map((s) => (s.id === scan.id ? scan : s)) } } : h))
@@ -313,7 +323,8 @@ export default function ResourceScanTab({ monitor, pollMs = POLL_MS, pollCap, ac
     const tick = async () => {
       let res = null
       try { res = await api.monitoring.resourceScan(monitorId, runningId) } catch { res = null }
-      if (stop || !alive.current) return
+      // İptal / bitiş yanıtı bu okuma sürerken uygulandıysa okunan (eski) RUNNING özeti kartı geri getirmez
+      if (stop || !alive.current || finishedRef.current.has(runningId)) return
       const scan = res?.success ? res.data?.scan : null
       if (!scan) {
         failures += 1

@@ -1,9 +1,72 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-17T00:33:24Z",
+  "generatedAt": "2026-11-17T02:27:00Z",
   "repo": "inanmise/site-monitor",
-  "count": 854,
+  "count": 855,
   "releases": [
+    {
+      "version": "20.213.2",
+      "tag": "v20.213.2",
+      "releasedAt": "2026-11-17T02:26:53Z",
+      "commit": "0617065cc02a2496397a23a90cc44de4f07dd71f",
+      "prevVersion": "20.213.1",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 3
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": "frontend",
+          "breaking": false,
+          "sha": "0617065c",
+          "subject": "kaynak analizi testlerinde zamana bağlı iki kırılganlık"
+        },
+        {
+          "type": "test",
+          "scope": "frontend",
+          "breaking": false,
+          "sha": "671704f3",
+          "subject": "waitFor / findBy sonrası React zamanlayıcısının bekleyen işi boşaltılır"
+        },
+        {
+          "type": "fix",
+          "scope": "frontend",
+          "breaking": false,
+          "sha": "384924d3",
+          "subject": "sertifika hiyerarşisinde açılışın ardından yapılan seçim geri dönmez"
+        },
+        {
+          "type": "docs",
+          "scope": "changelog",
+          "breaking": false,
+          "sha": "4d9f0e6a",
+          "subject": "React 19 maddesi Yayınlanmamış bölümünde"
+        },
+        {
+          "type": "fix",
+          "scope": "frontend",
+          "breaking": false,
+          "sha": "ba442b82",
+          "subject": "React 19 geçişinde bulunan yarışlar ve StrictMode testleri"
+        },
+        {
+          "type": "build",
+          "scope": "deps",
+          "breaking": false,
+          "sha": "5b65f441",
+          "subject": "React 18 → 19.3.1"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.213.1",
       "tag": "v20.213.1",
