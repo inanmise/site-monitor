@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.213.4] — 2026-11-17
+
 ### Fixed
 - **Açılır pencere, kapanan seçici yüzünden kendiliğinden kapanmaz.** Bir seçicide (ör. Tüm Sertifikalar → Güven süzgeci)
   seçim yapıp hemen başka bir açılır pencereyi açınca (ör. güven rozetinin "neden" penceresi), kapanmakta olan seçici
@@ -3534,7 +3536,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.213.3...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.213.4...HEAD
+[20.213.4]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.4
 [20.213.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.3
 [20.213.2]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.2
 [20.213.1]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.1

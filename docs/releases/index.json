@@ -1,9 +1,65 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-17T03:15:33Z",
+  "generatedAt": "2026-11-17T08:51:21Z",
   "repo": "inanmise/site-monitor",
-  "count": 856,
+  "count": 857,
   "releases": [
+    {
+      "version": "20.213.4",
+      "tag": "v20.213.4",
+      "releasedAt": "2026-11-17T08:51:11Z",
+      "commit": "ab321e38c199459af33be3f258cc070d474bab78",
+      "prevVersion": "20.213.3",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 3
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": "e2e",
+          "breaking": false,
+          "sha": "ab321e38",
+          "subject": "inceleme düzeltmeleri — yarışın kurulduğu doğrulanır, bölücü aralığı beklenir"
+        },
+        {
+          "type": "fix",
+          "scope": "e2e,ui",
+          "breaking": false,
+          "sha": "ab2a2c40",
+          "subject": "titrek e2e testleri kalıcı düzeltmeler; derin bağlantı yavaş ağda kartı kaçırmaz"
+        },
+        {
+          "type": "fix",
+          "scope": "ui",
+          "breaking": false,
+          "sha": "954d4247",
+          "subject": "kapanan açılır pencere odağı yeni açılan pencereden çalmaz (cert-trust-filter titrek e2e kök nedeni)"
+        },
+        {
+          "type": "test",
+          "scope": "e2e",
+          "breaking": false,
+          "sha": "ce051a4d",
+          "subject": "cert-trust-filter tanısı (yeniden yükleme / sayfa hatası / odak) + geçici iş parça 1/4 bağlamında"
+        },
+        {
+          "type": "ci",
+          "scope": null,
+          "breaking": false,
+          "sha": "9b07ec36",
+          "subject": "e2e düşüşlerinde test-results (iz + sayfa anlık görüntüsü) yüklenir; cert-trust tekrar işi (geçici)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.213.3",
       "tag": "v20.213.3",
