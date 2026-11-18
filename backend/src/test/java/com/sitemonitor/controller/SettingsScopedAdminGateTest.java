@@ -77,6 +77,7 @@ class SettingsScopedAdminGateTest {
                 "site.monitor.monitoring.allow-internal-targets",
                 "site.monitor.monitoring.allow-loopback-targets",
                 "site.monitor.dns.resolvers",
+                "site.monitor.dns.cdn-rotation",
                 "site.monitor.trust.ca-bundle-pem",
                 "site.monitor.trust.auto-pin.enabled",
                 "site.monitor.scripted.k6-bin",

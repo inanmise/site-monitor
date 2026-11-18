@@ -34,6 +34,7 @@ import { ChevronDown, Info, Network, AlertTriangle, FlaskConical, Check, Pause, 
 import { duplicateName } from '../utils/duplicateName.js'
 import DnsDetailModal from './DnsDetailModal.jsx'
 import DnsMonitorCard from './dns/DnsMonitorCard.jsx'
+import { expectedValueProblem, expectedValueProblemText } from './dns/ipRanges.js'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { formTeamSelect, routingLockOf, useMonitorTeamPick, withRoutingDefaults } from '../hooks/useMonitorTeamPick.js'
@@ -53,7 +54,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Card } from '@/components/shadcn/card'
 import { Checkbox } from '@/components/shadcn/checkbox'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
-import { Field as ShadcnField, FieldDescription, FieldLabel } from '@/components/shadcn/field'
+import { Field as ShadcnField, FieldDescription, FieldError, FieldLabel } from '@/components/shadcn/field'
 import { Input } from '@/components/shadcn/input'
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/shadcn/input-group'
 import { Textarea } from '@/components/shadcn/textarea'
@@ -167,6 +168,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   const [changeNote, setChangeNote] = useState('')
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
+  // A / AAAA kayıtlarında beklenen değere ağ aralığı (CIDR) da yazılabilir — ipucu yalnız orada
+  const rangeHint = ['A', 'AAAA'].includes(String(form.recordType || '').trim().toUpperCase())
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
   const [saving, setSaving] = useState(false)
@@ -329,6 +332,16 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   }
   function closeEditModal() { cancelTest(); setModal(null); setTestResult(null); setDupSource(null); setChangeNote('') }
 
+  // Beklenen-değer listesi ya da kayıt tipi değişti mi (2026-11-18)? Değişmediyse kayıtlı liste yeniden doğrulanmaz —
+  // sunucuyla aynı kural (eski kayıt, sonradan sıkılaşan kurala takılmadan düzenlenebilir kalır).
+  function expectedChanged() {
+    if (!modal || modal === 'new') return true
+    const next = (form.expectedValue || '').trim() || null
+    const prev = (modal.expected_value || '').trim() || null
+    return next !== prev
+      || String(form.recordType || '').trim().toUpperCase() !== String(modal.record_type || '').trim().toUpperCase()
+  }
+
   async function save() {
     // Takım alanı yalnız yeni/standalone'da görünür ve zorunlu; envanter-türevi düzenlemede takım envanterden gelir.
     // Doğrulama hataları ALANIN ALTINDA + ilk hatalıya kaydırma (2026-09-30) — tost yok, kullanıcı hatayı aramaz.
@@ -337,6 +350,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
       teamId: (modal === 'new' || modal?.standalone) && (form.teamId === '' || form.teamId == null) && t('mon.teamRequired'),
       groupName: !form.groupName?.trim() && t('mon.groupRequired'),   // grup + etiket zorunlu (2026-09-18)
       tags: !form.tags?.trim() && t('mon.tagsRequired'),
+      // Beklenen-değer ağ aralığı satırları (2026-11-18) — sunucuyla aynı kural; kayıtlı liste ve tip değişmediyse denetlenmez
+      expectedValue: expectedChanged() && expectedValueProblemText(expectedValueProblem(form.expectedValue, form.recordType), t),
     })) return
     // Kayıtta 7/24 onayı (2026-11-15): 7/24 bildirimi kapalıysa sorulur; Vazgeç → form açık kalır.
     const noc = await nocConfirm.ask({ type: 'DNS', monitorId: modal === 'new' ? null : modal?.id,
@@ -378,6 +393,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
         res = await api.monitoring.updateDnsMonitor(modal.id, payload)
       }
       await load()
+      // Sunucunun alan hatası (ör. beklenen-değer aralığı) alanın altında gösterilir, tost değil
+      if (!res?.success && res?.field === 'expectedValue' && res?.error) { fe.check({ expectedValue: res.error }); return }
       if (!res?.success) { toast.error(res?.error || 'Error'); return }
       noc.done(res.data?.id)
       // Açık detayın kopyası da sunucu satırıyla tazelenir (2026-10-09): aynı pencereden ikinci "Düzenle" bayat kopyadan
@@ -449,6 +466,9 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   // Canlı DNS testi — kaydetmeden formdaki domain/kayıt-tipi ile bir kez çözer; URL girilse host ayıklanır.
   async function runTest() {
     if (!form.domain.trim()) return
+    // Geçersiz ağ aralığı satırı: istek yok, hata alanın altında (sunucu da aynı kuralla 400 döner)
+    const problem = expectedValueProblem(form.expectedValue, form.recordType)
+    if (problem && fe.check({ expectedValue: expectedValueProblemText(problem, t) })) return
     const my = ++testSeq.current   // bu formun testi — form kapanır / başka forma geçilirse yanıtı yok sayılır
     setTesting(true); setTestResult(null)
     try {
@@ -458,6 +478,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
         slowThresholdMs: form.slowThresholdMs === '' ? null : Number(form.slowThresholdMs),
       })
       if (my !== testSeq.current) return   // geç yanıt: başka formun (ya da kapanmış formun) sonucu DEĞİL
+      // Sunucunun beklenen-değer alan hatası test paneline değil alanın altına (kayıttaki gibi)
+      if (!res?.success && res?.field === 'expectedValue' && res?.error) { fe.check({ expectedValue: res.error }); return }
       setTestResult(res?.success ? res.data : { error: res?.error || t('dns.testError') })
     } finally {
       if (my === testSeq.current) setTesting(false)
@@ -707,7 +729,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
           onChange={patch => setForm(f => ({ ...f, ...patch }))} />
         <FormField label={t('dns.recordType')} required>
           {({ id }) => (
-            <SearchableSelect id={id} value={form.recordType} onChange={v => setForm(f => ({ ...f, recordType: v }))}
+            <SearchableSelect id={id} value={form.recordType} onChange={v => { setForm(f => ({ ...f, recordType: v })); fe.clear('expectedValue') }}
               options={RECORD_TYPES.map(rt => ({ value: rt, label: rt }))} />
           )}
         </FormField>
@@ -744,35 +766,50 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
         </FormField>
         {/* Beklenen değer(ler) — etiket satırının sağında "şu anki değer" kısayolları (yalnız düzenlemede,
             çözümlenmiş bir değer varken). Düğmeler etiketin DIŞINDA: eskiden <label>'ın içindeydi. */}
-        <ShadcnField role={undefined} className="min-w-0 gap-1.5 sm:col-span-2">
+        <ShadcnField role={undefined} className="min-w-0 gap-1.5 sm:col-span-2" data-field="expectedValue"
+          data-invalid={fe.errors.expectedValue ? true : undefined}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <FieldLabel htmlFor={expectedId} className="font-semibold">{t('dns.expectedValue')}</FieldLabel>
             {modal !== 'new' && modal.value && (
               <span className="inline-flex flex-wrap gap-1.5">
                 <Button type="button" variant="outline" size="sm"
-                  onClick={() => setForm(f => ({ ...f, expectedValue: modal.value }))}>
+                  onClick={() => { setForm(f => ({ ...f, expectedValue: modal.value })); fe.clear('expectedValue') }}>
                   {t('dns.pinCurrent')}
                 </Button>
                 <SimpleTooltip content={t('dns.addCurrentHint')}>
                   <Button type="button" variant="outline" size="sm"
-                    onClick={() => setForm(f => {
+                    onClick={() => { fe.clear('expectedValue'); setForm(f => {
                       // Mevcut değer(ler)i listeye EKLE (replace değil) — dedupe'lu; iki bilinen IP birden sabitlenebilir.
                       const existing = (f.expectedValue || '').split('\n').map(s => s.trim()).filter(Boolean)
                       const incoming = (modal.value || '').split('\n').map(s => s.trim()).filter(Boolean)
                       const merged = [...existing, ...incoming.filter(v => !existing.includes(v))]
                       return { ...f, expectedValue: merged.join('\n') }
-                    })}>
+                    }) }}>
                     {t('dns.addCurrent')}
                   </Button>
                 </SimpleTooltip>
               </span>
             )}
           </div>
-          <Textarea id={expectedId} rows={3} aria-describedby={`${expectedId}-h`}
+          <Textarea id={expectedId} rows={3}
+            aria-describedby={[fe.errors.expectedValue && `${expectedId}-e`, `${expectedId}-h`,
+              rangeHint && `${expectedId}-r`].filter(Boolean).join(' ')}
+            aria-invalid={fe.errors.expectedValue ? true : undefined}
             value={form.expectedValue}
-            onChange={e => setForm(f => ({ ...f, expectedValue: e.target.value }))}
+            onChange={e => { setForm(f => ({ ...f, expectedValue: e.target.value })); fe.clear('expectedValue') }}
             placeholder={t('dns.expectedPlaceholder')} />
+          {fe.errors.expectedValue && (
+            <FieldError id={`${expectedId}-e`} data-slot="dns-expected-error" className="text-xs [overflow-wrap:anywhere]">
+              {fe.errors.expectedValue}
+            </FieldError>
+          )}
           <FieldDescription id={`${expectedId}-h`} className="text-xs">{t('dns.expectedHint')}</FieldDescription>
+          {/* Ağ aralığı (2026-11-18) yalnız A / AAAA kayıtlarında anlamlı — ipucu yalnız onlarda */}
+          {rangeHint && (
+            <FieldDescription id={`${expectedId}-r`} data-slot="dns-expected-range-hint" className="text-xs">
+              {t('dns.expectedRangeHint')}
+            </FieldDescription>
+          )}
         </ShadcnField>
         <CheckField full checked={form.dnsChangeAlertEnabled}
           onCheckedChange={v => setForm(f => ({ ...f, dnsChangeAlertEnabled: v }))}

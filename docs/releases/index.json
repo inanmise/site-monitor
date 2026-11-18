@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-17T18:39:42Z",
+  "generatedAt": "2026-11-18T20:28:50Z",
   "repo": "inanmise/site-monitor",
-  "count": 858,
+  "count": 859,
   "releases": [
+    {
+      "version": "20.214.0",
+      "tag": "v20.214.0",
+      "releasedAt": "2026-11-18T20:28:40Z",
+      "commit": "782c41fa12c45a76f1a96ec63a3f4a03b39cefaf",
+      "prevVersion": "20.213.5",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "782c41fa",
+          "subject": "DNS aralık/CDN inceleme düzeltmeleri — görünmez karakter kuralı iki tarafta aynı, tanılamada aynı CDN bilgi olur, geri yükleme aralığı denetler"
+        },
+        {
+          "type": "feat",
+          "scope": "dns",
+          "breaking": false,
+          "sha": "98e4658a",
+          "subject": "beklenen değerde ağ aralığı (CIDR) + CDN rotasyonu değişiklik sayılmaz"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.213.5",
       "tag": "v20.213.5",

@@ -7,20 +7,43 @@
  * metin sunucunun döndürdüğü ham değerdir (beklenen-değer kilidine aynen yapıştırılabilsin).
  */
 
-/** `"\n"` ile birleştirilmiş değer → kırpılmış, boş olmayan satırlar (backend `splitLines` aynası). */
+import { cleanText, ipAddress, parseRange, rangeContains } from './ipRanges.js'
+
+/**
+ * `"\n"` ile birleştirilmiş değer → kırpılmış, boş olmayan satırlar (backend `DnsCheckerService.expectedLines` aynası —
+ * kırpma kümesi iki tarafta aynı: `ipRanges.cleanText`).
+ */
 export function splitValues(joined) {
   if (joined == null) return []
-  return String(joined).split('\n').map((s) => s.trim()).filter(Boolean)
+  return String(joined).split('\n').map(cleanText).filter(Boolean)
 }
 
 /**
  * Canlı değerlerden beklenen listede OLMAYANLAR (backend `unexpectedValues` aynası). Beklenen boşsa kilit kapalıdır →
  * boş liste. Rotasyon (canlı = beklenenin alt kümesi) sapma SAYILMAZ; yalnız listeye girmeyen değer döner.
+ * 2026-11-18: `188.114.96.0/20` gibi bir ağ aralığı satırı aralıktaki her IP'yi, tek adres satırı aynı adresin başka
+ * yazımını da kabul eder (sunucuyla aynı kural — `ipRanges.js`).
  */
 export function unexpectedValues(expectedJoined, values) {
-  const expected = new Set(splitValues(expectedJoined))
+  const lines = splitValues(expectedJoined)
+  const expected = new Set(lines)
   if (expected.size === 0 || !values?.length) return []
-  return values.filter((v) => !expected.has(v))
+  const ranges = []
+  const addresses = []
+  for (const e of lines) {
+    if (e.indexOf('/') >= 0) { const r = parseRange(e); if (r) ranges.push(r) }
+    else { const a = ipAddress(e); if (a) addresses.push(a) }
+  }
+  return values.filter((v) => {
+    const t = cleanText(v)
+    if (!t || expected.has(t)) return false
+    if (ranges.length || addresses.length) {
+      const a = ipAddress(t)
+      if (a && (ranges.some((r) => rangeContains(r, a))
+        || addresses.some((x) => x.length === a.length && x.every((b, i) => b === a[i])))) return false
+    }
+    return true
+  })
 }
 
 /** MX değeri "10 mx1.example.com." → { priority: '10', host: 'mx1.example.com.' }; başka biçimde null. */

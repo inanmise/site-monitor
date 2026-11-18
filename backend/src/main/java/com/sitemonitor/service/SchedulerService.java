@@ -12230,8 +12230,9 @@ public class SchedulerService {
                 ? dnsRecordRepo.findLatestScheduledSuccessful(m.getId()).orElse(null)
                 : null;
         String prevValue = prevOk != null ? prevOk.getValue() : null;
+        // CDN rotasyonu (2026-11-18): eski + yeni değerlerin tamamı aynı CDN'in yayımlanmış aralığındaysa ROTATED (alarm yok).
         DnsCheckerService.ChangeKind kind = success
-                ? DnsCheckerService.detectChange(prevValue, valueStr)
+                ? DnsCheckerService.detectChange(prevValue, valueStr, dnsCheckerService.cdnRotationEnabled())
                 : DnsCheckerService.ChangeKind.NONE;
         boolean changed = kind == DnsCheckerService.ChangeKind.CHANGED;
         boolean rotated = kind == DnsCheckerService.ChangeKind.ROTATED;
@@ -12446,7 +12447,7 @@ public class SchedulerService {
         @SuppressWarnings("unchecked")
         List<String> values = (List<String>) r.getOrDefault("values", List.of());
         boolean stillChanged = success
-                && DnsCheckerService.detectChange(baseline, String.join("\n", values))
+                && DnsCheckerService.detectChange(baseline, String.join("\n", values), dnsCheckerService.cdnRotationEnabled())
                    == DnsCheckerService.ChangeKind.CHANGED;
         Map<String, Object> out = new LinkedHashMap<>();
         // D-c1 (2026-09-29): değişiklik BAŞARILI bir sorguyla gözlemlendi; teyitte ad ÇÖZÜLEMEMESİ geri dönüş kanıtı değildir

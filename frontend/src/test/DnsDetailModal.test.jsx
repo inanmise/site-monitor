@@ -181,4 +181,21 @@ describe('DnsDetailModal — başarısız sorgu teşhisi', () => {
     expect(screen.getByRole('button', { name: /failed lookups|başarısız sorgu/i })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: /değişenler|changed/i })).toHaveAttribute('aria-pressed', 'false')
   })
+
+  it('CDN rotasyonu (2026-11-18): geçmiş satırı sağlayıcıyı adlandırır; düz rotasyon eski rozetle kalır', async () => {
+    api.monitoring.getCheckHistory.mockResolvedValue(envelope([
+      { id: 11, monitor_id: 7, record_type: 'A', value: '188.114.96.5\n188.114.97.5', changed: false, rotated: true,
+        rotation_cdn: 'Cloudflare', previous_value: '188.114.96.3\n188.114.97.3', checked_at: '2026-11-18T09:00:00' },
+      { id: 12, monitor_id: 7, record_type: 'A', value: '5.6.7.8\n9.9.9.9', changed: false, rotated: true,
+        previous_value: '1.2.3.4\n5.6.7.8', checked_at: '2026-11-18T08:00:00' },
+    ]))
+    render(<DnsDetailModal monitor={monitor} onClose={() => {}} />)
+    const cdn = await screen.findByText(/CDN (rotasyonu|rotation) · Cloudflare/)
+    expect(cdn).toHaveAttribute('data-cdn', 'Cloudflare')
+    expect(cdn.className).toMatch(/whitespace-normal/)
+    const all = [...document.querySelectorAll('[data-change="rotated"]')]
+    expect(all).toHaveLength(2)
+    expect(all[1].getAttribute('data-cdn')).toBeNull()
+    expect(all[1].textContent).not.toMatch(/CDN/)
+  })
 })

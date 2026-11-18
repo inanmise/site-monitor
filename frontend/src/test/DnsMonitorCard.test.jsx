@@ -167,6 +167,17 @@ describe('DnsMonitorCard', () => {
     expect(slot(card, 'dns-changed')).toBeNull()
   })
 
+  it('CDN rotasyonu (2026-11-18): çip sağlayıcıyı adlandırır, açıklaması alarm açılmadığını söyler', () => {
+    const { card } = renderCard({ rotated: true, rotation_cdn: 'Cloudflare', value: '188.114.96.5\n188.114.97.5' })
+    const chip = slot(card, 'dns-rotation')
+    expect(chip.textContent).toBe('CDN rotation · Cloudflare')
+    expect(chip).toHaveAttribute('data-cdn', 'Cloudflare')
+    expect(chip.className).toMatch(/whitespace-normal/)
+    fireEvent.click(chip.closest('button'))
+    expect(screen.getByRole('tooltip').textContent).toBe(EN['dns.rotationCdnTitle'].replace('{0}', 'Cloudflare'))
+    expect(slot(card, 'dns-changed')).toBeNull()
+  })
+
   it('beklenmeyen değer: kilit doluyken listede olmayan değer yıkıcı satır + işaretli değer; beklenen liste dokun-gör', () => {
     const { card } = renderCard({ value: '198.51.100.66\n203.0.113.40', expected_value: '203.0.113.40\n203.0.113.41' })
     expect(slot(card, 'dns-mismatch').textContent).toBe('Not in the expected list: 198.51.100.66')
