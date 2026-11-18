@@ -752,6 +752,15 @@ public class AdminController {
                     oldDomain, newDomain, lc, cc, ae, nt);
         }
 
+        // Türev Port / DNS izlemeleri YENİ ada / porta taşınır (2026-11-19, kullanıcı onayı): eskiden eski adla kalıp
+        // taramanın atladığı "envanter dışı" kalıntıya dönüşüyorlardı (İzleme Panosu "Duraklatılmış" sayısını şişiriyordu).
+        Integer portBefore = existing.getPort();
+        Integer portAfter = item.getPort() != null ? item.getPort() : 443;
+        if (permanentDeletion != null && oldDomain != null && newDomain != null
+                && (!oldDomain.equals(newDomain) || (portBefore != null ? portBefore : 443) != portAfter)) {
+            permanentDeletion.retargetDerivedMonitors(oldDomain, portBefore, newDomain, portAfter);
+        }
+
         existing.setDomain(item.getDomain());
         existing.setPort(item.getPort() != null ? item.getPort() : 443);
         existing.setDescription(item.getDescription());

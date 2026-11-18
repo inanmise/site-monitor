@@ -155,7 +155,8 @@ public class MonitoringOverviewService {
                                  Function<C, String> error,
                                  StatsQuery stats,
                                  Function<M, Boolean> unmonitored,
-                                 Function<M, Boolean> standalone) {
+                                 Function<M, Boolean> standalone,
+                                 Function<M, Boolean> orphan) {
         TypeSpec(String type, java.util.function.Supplier<List<M>> monitors,
                  Function<M, Long> id, Function<M, String> name, Function<M, String> target,
                  Function<M, Long> team, Function<M, Boolean> active, Function<M, Boolean> deleted,
@@ -164,7 +165,7 @@ public class MonitoringOverviewService {
                  Function<C, Boolean> ok, Function<C, String> checkedAt, Function<C, Object> responseMs,
                  Function<C, String> error, StatsQuery stats) {
             this(type, monitors, id, name, target, team, active, deleted, interval, latest, checkMonitorId, ok, checkedAt,
-                 responseMs, error, stats, m -> false, m -> null);
+                 responseMs, error, stats, m -> false, m -> null, m -> false);
         }
     }
 
@@ -190,6 +191,28 @@ public class MonitoringOverviewService {
     static boolean inventoryInactive(java.util.Set<String> activeHosts, Boolean standalone, String host) {
         if (activeHosts == null || Boolean.TRUE.equals(standalone)) return false;
         return host == null || !activeHosts.contains(host);
+    }
+
+    /**
+     * Envanterdeki tüm ağ kayıtlarının alan adları (etkin + duraklatılmış; MANUAL hariç) — HAM. Okunamazsa null = "bilinmiyor":
+     * hiçbir satır kalıntı sayılmaz (bugünkü "duraklatılmış · envanter dışı" görünümü korunur).
+     */
+    private java.util.Set<String> networkInventoryHosts() {
+        if (inventoryRepo == null) return null;
+        try {
+            return new java.util.HashSet<>(inventoryRepo.findNetworkDomains());
+        } catch (Exception e) { log.debug("envanter ağ kayıtları okunamadı: {}", e.toString()); return null; }
+    }
+
+    /**
+     * Sahipsiz kalıntı (2026-11-19, kullanıcı onayı): envanter türevi satır (standalone değil) ve host'u envanterde HİÇBİR
+     * ağ kaydında (etkin ya da duraklatılmış) yok — envanter yeniden adlandırılmış, silinmiş ya da harf farkıyla kalmış.
+     * Böyle satır "duraklatılmış" SAYILMAZ, toplamlara girmez; pano ayrı listeler (sayfada açılacak bir izleme yoktur).
+     * Bilinmiyorsa (envanter okunamadı) false.
+     */
+    static boolean orphanDerived(java.util.Set<String> networkHosts, Boolean standalone, String host) {
+        if (networkHosts == null || Boolean.TRUE.equals(standalone)) return false;
+        return host == null || !networkHosts.contains(host);
     }
 
     @FunctionalInterface
@@ -344,8 +367,11 @@ public class MonitoringOverviewService {
         types.add(summarize(httpSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
         types.add(summarize(pingSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
         java.util.Set<String> activeHosts = activeInventoryHosts();
-        types.add(summarize(portSpec(activeHosts), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
-        types.add(summarize(dnsSpec(activeHosts), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
+        // Sahipsiz kalıntı ayrımı (2026-11-19): yalnız envanter dışı satır varsa gerekir, ama tek sütunluk okuma ucuz.
+        java.util.Set<String> networkHosts = activeHosts == null ? null : networkInventoryHosts();
+        List<Map<String, Object>> orphans = new ArrayList<>();
+        types.add(summarize(portSpec(activeHosts, networkHosts), canViewTeam, teamNames, openByKey, from, now, nowI, rows, orphans));
+        types.add(summarize(dnsSpec(activeHosts, networkHosts), canViewTeam, teamNames, openByKey, from, now, nowI, rows, orphans));
         types.add(summarize(domainSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
         types.add(summarize(keywordSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
         types.add(summarize(pageSpec(), canViewTeam, teamNames, openByKey, from, now, nowI, rows));
@@ -374,8 +400,8 @@ public class MonitoringOverviewService {
         linkStandaloneTwins(rows);
 
         Map<String, Object> totals = new LinkedHashMap<>();
-        for (String k : List.of("total", "active", "paused", "inventory_inactive", "deleted", "down", "stale", "unknown", "checks_window",
-                "failed_window", "open_alerts", "open_critical", "resolved_window")) {
+        for (String k : List.of("total", "active", "paused", "inventory_inactive", "orphans", "deleted", "down", "stale", "unknown",
+                "checks_window", "failed_window", "open_alerts", "open_critical", "resolved_window")) {
             long sum = 0;
             for (Map<String, Object> t : types) sum += ((Number) t.getOrDefault(k, 0L)).longValue();
             totals.put(k, sum);
@@ -395,6 +421,8 @@ public class MonitoringOverviewService {
         out.put("totals", totals);
         out.put("types", types);
         out.put("monitors", rows);
+        // Envanter kaydı olmayan türev Port / DNS kalıntıları (2026-11-19) — sayılara girmez; pano ayrı gösterir.
+        out.put("orphans", orphans);
         // Okuma hatası işareti (2026-10-18, Grafana aktarıcısı): açık alarmlar okunamadıysa durumlar alarmsız hesaplandı —
         // "düşük" bir izleme "sağlıklı" görünebilir. Alan YALNIZ hata varken yazılır (normal yanıt bayt bayt aynı);
         // MonitoringMetricsExporter bu durumda izleme durumlarını dışa vermez (sahte "up" yok).
@@ -405,10 +433,17 @@ public class MonitoringOverviewService {
     private <M, C> Map<String, Object> summarize(TypeSpec<M, C> spec, Predicate<Long> canViewTeam, Map<Long, String> teamNames,
                                                  Map<String, List<AlertEvent>> openByKey, String from, String now, Instant nowI,
                                                  List<Map<String, Object>> rows) {
+        return summarize(spec, canViewTeam, teamNames, openByKey, from, now, nowI, rows, null);
+    }
+
+    /** {@code orphans}: sahipsiz kalıntı satırlarının toplandığı liste (yalnız Port / DNS); null → toplanmaz, yalnız sayılır. */
+    private <M, C> Map<String, Object> summarize(TypeSpec<M, C> spec, Predicate<Long> canViewTeam, Map<Long, String> teamNames,
+                                                 Map<String, List<AlertEvent>> openByKey, String from, String now, Instant nowI,
+                                                 List<Map<String, Object>> rows, List<Map<String, Object>> orphans) {
         Map<String, Object> t = new LinkedHashMap<>();
         t.put("type", spec.type());
         long total = 0, active = 0, paused = 0, deleted = 0, down = 0, stale = 0, unknown = 0, openAlerts = 0, openCritical = 0;
-        long checks = 0, failed = 0, inventoryInactive = 0;
+        long checks = 0, failed = 0, inventoryInactive = 0, orphanCount = 0;
         String lastChecked = null;
 
         List<M> monitors;
@@ -452,6 +487,24 @@ public class MonitoringOverviewService {
             Long id = spec.id().apply(m);
             boolean isDeleted = Boolean.TRUE.equals(spec.deleted().apply(m));
             boolean unmonitored = Boolean.TRUE.equals(spec.unmonitored().apply(m));   // envanter pasif → tarama atlar
+            // Sahipsiz kalıntı (envanterde kaydı hiç yok): sayılmaz, satırlara girmez — ayrı listede (2026-11-19)
+            if (unmonitored && !isDeleted && Boolean.TRUE.equals(spec.orphan().apply(m))) {
+                orphanCount++;
+                if (orphans != null) {
+                    Map<String, Object> o = new LinkedHashMap<>();
+                    o.put("type", spec.type());
+                    o.put("id", id);
+                    o.put("name", spec.name().apply(m));
+                    o.put("target", spec.target().apply(m));
+                    Long oTeam = spec.team().apply(m);
+                    o.put("team_id", oTeam);
+                    o.put("team_name", oTeam != null ? teamNames.get(oTeam) : null);
+                    C oc = latest.get(id);
+                    o.put("last_checked_at", oc != null ? spec.checkedAt().apply(oc) : null);
+                    orphans.add(o);
+                }
+                continue;
+            }
             boolean isActive = Boolean.TRUE.equals(spec.active().apply(m)) && !unmonitored;
             String target = spec.target().apply(m);
             C c = latest.get(id);
@@ -553,6 +606,8 @@ public class MonitoringOverviewService {
         // paused'un alt kümesi: envanterden çıkmış (taramanın atladığı) eski envanter-türevi satırlar — tür sayfası
         // bunları listelemez; kart "aktif + duraklatılmış" sayısını sayfayla eşlemek için bunu düşer.
         t.put("inventory_inactive", inventoryInactive);
+        // Sahipsiz kalıntı (2026-11-19): total / paused'a DAHİL DEĞİL; yalnız bilgi.
+        t.put("orphans", orphanCount);
         t.put("down", down); t.put("stale", stale); t.put("unknown", unknown);
         t.put("checks_window", checks); t.put("failed_window", failed);
         t.put("success_rate_window", successRate(checks, failed));
@@ -762,17 +817,18 @@ public class MonitoringOverviewService {
                 pingCheckRepo::weeklyStatsByMonitor);
     }
 
-    private TypeSpec<PortMonitor, PortCheck> portSpec(java.util.Set<String> activeHosts) {
+    private TypeSpec<PortMonitor, PortCheck> portSpec(java.util.Set<String> activeHosts, java.util.Set<String> networkHosts) {
         return new TypeSpec<>("port", portMonitorRepo::findAllByOrderByNameAsc,
                 PortMonitor::getId, m -> nz(m.getName(), m.getHost() + ":" + m.getPort()), PortMonitor::getHost, PortMonitor::getTeamId,
                 PortMonitor::getActive, m -> m.getDeletedAt() != null, PortMonitor::getIntervalSeconds,
                 portCheckRepo::findLatestPerMonitor, PortCheck::getMonitorId,
                 c -> Boolean.TRUE.equals(c.getOpen()), PortCheck::getCheckedAt, PortCheck::getResponseMs, PortCheck::getError,
                 portCheckRepo::weeklyStatsByMonitor,
-                m -> inventoryInactive(activeHosts, m.getStandalone(), m.getHost()), m -> Boolean.TRUE.equals(m.getStandalone()));
+                m -> inventoryInactive(activeHosts, m.getStandalone(), m.getHost()), m -> Boolean.TRUE.equals(m.getStandalone()),
+                m -> orphanDerived(networkHosts, m.getStandalone(), m.getHost()));
     }
 
-    private TypeSpec<DnsMonitor, com.sitemonitor.model.DnsRecord> dnsSpec(java.util.Set<String> activeHosts) {
+    private TypeSpec<DnsMonitor, com.sitemonitor.model.DnsRecord> dnsSpec(java.util.Set<String> activeHosts, java.util.Set<String> networkHosts) {
         return new TypeSpec<>("dns", dnsMonitorRepo::findAllByOrderByNameAsc,
                 DnsMonitor::getId, m -> nz(m.getName(), m.getDomain()), DnsMonitor::getDomain, DnsMonitor::getTeamId,
                 DnsMonitor::getActive, m -> m.getDeletedAt() != null, DnsMonitor::getIntervalSeconds,
@@ -780,7 +836,8 @@ public class MonitoringOverviewService {
                 c -> c.getValue() != null && !c.getValue().isBlank(), com.sitemonitor.model.DnsRecord::getCheckedAt,
                 com.sitemonitor.model.DnsRecord::getResponseMs, c -> null,
                 dnsRecordRepo::weeklyStatsByMonitor,
-                m -> inventoryInactive(activeHosts, m.getStandalone(), m.getDomain()), m -> Boolean.TRUE.equals(m.getStandalone()));
+                m -> inventoryInactive(activeHosts, m.getStandalone(), m.getDomain()), m -> Boolean.TRUE.equals(m.getStandalone()),
+                m -> orphanDerived(networkHosts, m.getStandalone(), m.getDomain()));
     }
 
     private TypeSpec<DomainMonitor, DomainCheck> domainSpec() {

@@ -183,6 +183,7 @@ const SPECIAL = {
   DOMAIN_SOFT_DELETE: 'audit.ev.DOMAIN_SOFT_DELETE',   // eski (çöp kutusu) — 2026-10-07'den beri yazılmaz
   DOMAIN_DELETE_CHECK: 'audit.ev.DOMAIN_DELETE_CHECK',
   SYSTEM_DELETED_RECORDS_PURGE: 'audit.ev.SYSTEM_DELETED_RECORDS_PURGE',   // eski çöp kutusunun tek seferlik kalıcı temizliği
+  SYSTEM_DERIVED_ORPHAN_CLEANUP: 'audit.ev.SYSTEM_DERIVED_ORPHAN_CLEANUP',   // envanter kaydı olmayan türev Port/DNS kalıntıları
   USER_PASSWORD_AUTO_RESET: 'audit.ev.USER_PASSWORD_AUTO_RESET',
   USER_PUSH_OPT_OUT: 'audit.ev.USER_PUSH_OPT_OUT',
   USER_PUSH_QUIET_HOURS: 'audit.ev.USER_PUSH_QUIET_HOURS',

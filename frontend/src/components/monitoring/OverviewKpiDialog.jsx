@@ -75,7 +75,7 @@ function BarList({ title, icon: Icon, items, renderLabel, slot }) {
   )
 }
 
-export default function OverviewKpiDialog({ kind, rows, totals = {}, nowMs, onClose, onFilter }) {
+export default function OverviewKpiDialog({ kind, rows, orphans = [], totals = {}, nowMs, onClose, onFilter }) {
   const t = useT()
   const open = KPI_DIALOG_KINDS.includes(kind)
 
@@ -90,12 +90,15 @@ export default function OverviewKpiDialog({ kind, rows, totals = {}, nowMs, onCl
     }
     if (kind === 'alerts') return { list: alertRows(all), levels: alertLevelCounts(all) }
     const paused = all.filter((r) => r.status === 'paused')
-    return { list: paused.filter((r) => !r.inventory_inactive), orphans: paused.filter((r) => r.inventory_inactive) }
-  }, [open, kind, rows, nowMs])
+    // invPaused: envanter kaydı DURAKLATILMIŞ türev Port / DNS (sayılır); residue: envanterde kaydı HİÇ olmayan kalıntı
+    // (sunucu sayılara katmaz, ayrı `orphans` listesinde gönderir — 2026-11-19)
+    return { list: paused.filter((r) => !r.inventory_inactive), invPaused: paused.filter((r) => r.inventory_inactive),
+      residue: Array.isArray(orphans) ? orphans : [] }
+  }, [open, kind, rows, orphans, nowMs])
 
   if (!open || !model) return null
 
-  const every = kind === 'paused' ? [...model.list, ...model.orphans] : model.list
+  const every = kind === 'paused' ? [...model.list, ...model.invPaused] : model.list
   const byType = breakdown(every, (r) => r.type)
   const byTeam = breakdown(every, teamKey)
   const teamName = (key) => {
@@ -146,7 +149,7 @@ export default function OverviewKpiDialog({ kind, rows, totals = {}, nowMs, onCl
   } else {
     tiles = [
       { key: 'n', label: t('mo.dlg.paused.count'), value: model.list.length },
-      { key: 'inv', label: t('mo.dlg.paused.orphans'), value: model.orphans.length, tone: model.orphans.length ? 'warn' : undefined },
+      { key: 'inv', label: t('mo.dlg.paused.orphans'), value: model.invPaused.length },
       { key: 'types', label: t('mo.dlg.typesAffected'), value: byType.length },
       { key: 'teams', label: t('mo.dlg.teamsAffected'), value: teamCount },
     ]
@@ -189,7 +192,7 @@ export default function OverviewKpiDialog({ kind, rows, totals = {}, nowMs, onCl
   )
 
   const shown = model.list.slice(0, DIALOG_ROW_LIMIT)
-  const empty = every.length === 0
+  const empty = every.length === 0 && !(kind === 'paused' && model.residue.length > 0)
 
   return (
     <ModalShell open onClose={onClose} title={TITLE.title} icon={TITLE.Icon} size="lg" scrollBody closeOnNavigate
@@ -228,12 +231,12 @@ export default function OverviewKpiDialog({ kind, rows, totals = {}, nowMs, onCl
               </section>
             )}
 
-            {kind === 'paused' && model.orphans.length > 0 && (
-              <section aria-label={t('mo.dlg.paused.orphanTitle', model.orphans.length)} data-slot="mo-dlg-orphans" className="flex min-w-0 flex-col gap-2">
-                <h4 className="m-0 text-sm font-semibold">{t('mo.dlg.paused.orphanTitle', model.orphans.length)}</h4>
-                <AlertBanner tone="warning" title={t('mo.invInactive')}>{t('mo.dlg.paused.orphanNote')}</AlertBanner>
+            {kind === 'paused' && model.invPaused.length > 0 && (
+              <section aria-label={t('mo.dlg.paused.orphanTitle', model.invPaused.length)} data-slot="mo-dlg-orphans" className="flex min-w-0 flex-col gap-2">
+                <h4 className="m-0 text-sm font-semibold">{t('mo.dlg.paused.orphanTitle', model.invPaused.length)}</h4>
+                <AlertBanner tone="info" title={t('mo.invInactive')}>{t('mo.dlg.paused.orphanNote')}</AlertBanner>
                 <div className="flex min-w-0 flex-col gap-2">
-                  {model.orphans.slice(0, DIALOG_ROW_LIMIT).map((r) => {
+                  {model.invPaused.slice(0, DIALOG_ROW_LIMIT).map((r) => {
                     const twin = r.standalone_twin
                     const meta = TYPE_META[r.type]
                     return (
@@ -255,6 +258,24 @@ export default function OverviewKpiDialog({ kind, rows, totals = {}, nowMs, onCl
                     )
                   })}
                 </div>
+              </section>
+            )}
+
+            {kind === 'paused' && model.residue.length > 0 && (
+              <section aria-label={t('mo.dlg.paused.residueTitle', model.residue.length)} data-slot="mo-dlg-residue" className="flex min-w-0 flex-col gap-2">
+                <h4 className="m-0 text-sm font-semibold">{t('mo.dlg.paused.residueTitle', model.residue.length)}</h4>
+                <AlertBanner tone="info" title={t('mo.dlg.paused.residueBadge')}>{t('mo.dlg.paused.residueNote')}</AlertBanner>
+                <div className="flex min-w-0 flex-col gap-2">
+                  {model.residue.slice(0, DIALOG_ROW_LIMIT).map((r) => (
+                    <OverviewMonitorItem key={`${r.type}-${r.id}`} row={{ ...r, status: 'paused' }} nowMs={nowMs} slot="mo-dlg-residue-item"
+                      showStatus={false}
+                      badges={<Badge variant="outline" data-slot="mo-residue" className="text-[10px]">{t('mo.dlg.paused.residueBadge')}</Badge>}
+                      detail={t('mo.dlg.paused.residueDetail')} actions={false} />
+                  ))}
+                </div>
+                {model.residue.length > DIALOG_ROW_LIMIT && (
+                  <p className="m-0 text-xs text-muted-foreground">{t('mo.dlg.more', model.residue.length - DIALOG_ROW_LIMIT)}</p>
+                )}
               </section>
             )}
             </div>

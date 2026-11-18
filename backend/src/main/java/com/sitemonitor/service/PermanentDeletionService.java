@@ -53,6 +53,16 @@ public class PermanentDeletionService {
 
     /** Silme kaynaklı sessiz kapanışın çözen etiketi — diğer yedi izleme türünün silme yoluyla AYNI metin. */
     static final String RESOLVED_BY_DELETE = "Sistem (izleme silindi)";
+    /** Envanter kaydı olmayan türev izleme kalıntısı temizlendi (2026-11-19). */
+    static final String RESOLVED_BY_ORPHAN = "Sistem (envanter kaydı yok — kalıntı temizlendi)";
+
+    /**
+     * Envanterde bu alan adı için AĞ kaydı (etkin ya da duraklatılmış) var mı — türev Port / DNS satırının bağlandığı kayıt;
+     * yoksa satır sahipsiz kalıntıdır (İzleme Panosu ile aynı kural). Elle yüklenen sertifika (MANUAL) ağ hedefi değildir.
+     * Port bilerek bakılmaz: türev Port satırının portunu yönetici düzenleyebilir — o satır taranmaya devam eder.
+     */
+    static final String SQL_INV_HAS_DOMAIN = "SELECT COUNT(*) FROM certificate_inventory WHERE domain = ? "
+            + "AND (cert_source IS NULL OR cert_source <> 'MANUAL') AND deleted_at IS NULL";
 
     private final JdbcTemplate jdbc;
     private final CertificateInventoryRepository inventoryRepo;
@@ -126,6 +136,106 @@ public class PermanentDeletionService {
         purgeDnsMonitors(List.of(m.getId()), new LinkedHashMap<>());
     }
 
+    /**
+     * Envanter kaydı yeniden adlandırıldı / portu değişti (2026-11-19, kullanıcı onayı): o kayıttan türeyen Port ve DNS
+     * izlemeleri YENİ ada / porta TAŞINIR (ayarları ve Port kontrol geçmişi korunur). Eskiden eski adla kalıyor, taramanın
+     * atladığı "envanter dışı" kalıntıya dönüşüyor, yeni ad için de sayfa açılınca sıfırdan izleme oluşuyordu. DNS kaydının
+     * değişiklik tabanı başka alan adına ait olduğu için ilk taramada kıyaslanmaz ({@code dns_records.checked_domain}) —
+     * sahte DNS_CHANGED açılmaz. Hedefte BAYAT bir türev satır (eski bir yeniden adlandırmanın kalıntısı) varsa önce o
+     * kalıcı silinir (açık alarmları sessizce kapanır) — benzersizlik ({@code uq_pm_host_port}, {@code uq_dnsm_domain})
+     * yalnız türev satırlarda. Çağıran envanter kaydını henüz kaydetmemiştir (aynı işlem). Bağımsız satırlara dokunulmaz.
+     *
+     * @return taşınan satır sayısı
+     */
+    @Transactional
+    public int retargetDerivedMonitors(String oldDomain, Integer oldPort, String newDomain, Integer newPort) {
+        if (oldDomain == null || newDomain == null || oldDomain.isBlank() || newDomain.isBlank()) return 0;
+        int op = oldPort != null ? oldPort : 443, np = newPort != null ? newPort : 443;
+        boolean hostChanged = !oldDomain.equals(newDomain);
+        if (!hostChanged && op == np) return 0;
+        String now = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+                .withZone(java.time.ZoneOffset.UTC).format(java.time.Instant.now());
+        int moved = 0;
+        Map<String, Integer> rows = new LinkedHashMap<>();
+        List<Long> ports = jdbc.queryForList("SELECT id FROM port_monitors WHERE LOWER(host) = LOWER(?) AND port = ? "
+                + "AND (standalone IS NULL OR standalone = FALSE) ORDER BY id", Long.class, oldDomain, op);
+        if (!ports.isEmpty()) {
+            Long keep = ports.get(0);
+            List<Long> stale = new ArrayList<>(jdbc.queryForList("SELECT id FROM port_monitors WHERE host = ? AND port = ? "
+                    + "AND (standalone IS NULL OR standalone = FALSE) AND id <> ?", Long.class, newDomain, np, keep));
+            stale.addAll(ports.subList(1, ports.size()));   // harf farkıyla çift kalmış eski satır (benzersizlik yalnız birebir)
+            for (Long id : stale) closeDerivedAlarms(id, newDomain, PORT_ALERT_TYPES);
+            purgePortMonitors(stale, rows);
+            moved += jdbc.update("UPDATE port_monitors SET host = ?, port = ?, name = CASE WHEN name = ? THEN ? ELSE name END, "
+                    + "updated_at = ? WHERE id = ?", newDomain, np, oldDomain, newDomain, now, keep);
+        }
+        if (hostChanged) {
+            List<Long> dns = jdbc.queryForList("SELECT id FROM dns_monitors WHERE LOWER(domain) = LOWER(?) "
+                    + "AND (standalone IS NULL OR standalone = FALSE) ORDER BY id", Long.class, oldDomain);
+            if (!dns.isEmpty()) {
+                Long keep = dns.get(0);
+                List<Long> stale = new ArrayList<>(jdbc.queryForList("SELECT id FROM dns_monitors WHERE domain = ? "
+                        + "AND (standalone IS NULL OR standalone = FALSE) AND id <> ?", Long.class, newDomain, keep));
+                stale.addAll(dns.subList(1, dns.size()));
+                for (Long id : stale) closeDerivedAlarms(id, newDomain, DNS_ALERT_TYPES);
+                purgeDnsMonitors(stale, rows);
+                moved += jdbc.update("UPDATE dns_monitors SET domain = ?, name = CASE WHEN name = ? THEN ? ELSE name END, "
+                        + "updated_at = ? WHERE id = ?", newDomain, oldDomain, newDomain, now, keep);
+            }
+        }
+        if (moved > 0 || !rows.isEmpty()) {
+            log.info("Envanter yeniden adlandırma / port değişimi: {}:{} → {}:{} — {} türev izleme taşındı (bayat satır silindi: {})",
+                    oldDomain, op, newDomain, np, moved, rows);
+        }
+        return moved;
+    }
+
+    /**
+     * Envanter kaydı OLMAYAN türev Port satırını kalıcı siler (tek seferlik kalıntı temizliği, 2026-11-19). Koşul İŞLEM
+     * İÇİNDE yeniden okunur: satır hâlâ türev mi ve envanterde bu alan adı için ağ kaydı hâlâ yok mu — arada
+     * envantere eklenen ad silinmez. Açık alarmları (yalnız BU izlemenin) sessizce kapanır.
+     *
+     * @return silindiyse {@code true}
+     */
+    @Transactional
+    public boolean deleteOrphanDerivedPort(long id) {
+        List<Map<String, Object>> r = jdbc.queryForList("SELECT host FROM port_monitors WHERE id = ? "
+                + "AND (standalone IS NULL OR standalone = FALSE)", id);
+        if (r.isEmpty()) return false;
+        String host = (String) r.get(0).get("host");
+        if (host != null) {
+            Integer has = jdbc.queryForObject(SQL_INV_HAS_DOMAIN, Integer.class, host);
+            if (has != null && has > 0) return false;
+        }
+        closeDerivedAlarms(id, host, PORT_ALERT_TYPES);
+        purgePortMonitors(List.of(id), new LinkedHashMap<>());
+        return true;
+    }
+
+    /** {@link #deleteOrphanDerivedPort} DNS ikizi (envanterde bu alan adı için ağ kaydı yoksa). */
+    @Transactional
+    public boolean deleteOrphanDerivedDns(long id) {
+        List<Map<String, Object>> r = jdbc.queryForList("SELECT domain FROM dns_monitors WHERE id = ? "
+                + "AND (standalone IS NULL OR standalone = FALSE)", id);
+        if (r.isEmpty()) return false;
+        String domain = (String) r.get(0).get("domain");
+        if (domain != null) {
+            Integer has = jdbc.queryForObject(SQL_INV_HAS_DOMAIN, Integer.class, domain);
+            if (has != null && has > 0) return false;
+        }
+        closeDerivedAlarms(id, domain, DNS_ALERT_TYPES);
+        purgeDnsMonitors(List.of(id), new LinkedHashMap<>());
+        return true;
+    }
+
+    /** Türev izlemenin YALNIZ kendi açık alarmları — sahip bağlamı {@code MonitoringController.ownerCtxDual}'ın türev dalı. */
+    private void closeDerivedAlarms(Long id, String key, Set<String> types) {
+        if (id == null || key == null) return;
+        Map<String, Object> c = new HashMap<>();
+        c.put("monitor_id", id);
+        escalationService.resolveOpenAlertsSilently(key, types, RESOLVED_BY_ORPHAN, c);
+    }
+
     /** Bağımsız izlemenin sahiplik bağlamı — MonitoringController.ownerCtxDual'ın standalone dalıyla AYNI anahtarlar. */
     static Map<String, Object> ownerCtx(Long monitorId, Long teamId) {
         Map<String, Object> c = new HashMap<>();
@@ -145,9 +255,12 @@ public class PermanentDeletionService {
         if (domain != null) {
             // Envanter türevi Port/DNS: standalone OLMAYAN satırlar, anahtar = envanter alan adı (birebir; envanterde UNIQUE).
             List<Long> ports = jdbc.queryForList(
-                    "SELECT id FROM port_monitors WHERE host = ? AND (standalone IS NULL OR standalone = FALSE)", Long.class, domain);
+                    "SELECT id FROM port_monitors WHERE LOWER(host) = LOWER(?) AND (standalone IS NULL OR standalone = FALSE)",
+                    Long.class, domain);
+            // Büyük/küçük harf duyarsız (2026-11-19): harf farkıyla kalmış eski türev satır da envanterle gider
             List<Long> dns = jdbc.queryForList(
-                    "SELECT id FROM dns_monitors WHERE domain = ? AND (standalone IS NULL OR standalone = FALSE)", Long.class, domain);
+                    "SELECT id FROM dns_monitors WHERE LOWER(domain) = LOWER(?) AND (standalone IS NULL OR standalone = FALSE)",
+                    Long.class, domain);
             purgePortMonitors(ports, rows);
             purgeDnsMonitors(dns, rows);
             derived = ports.size() + dns.size();

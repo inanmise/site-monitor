@@ -5,6 +5,19 @@ import {
   PauseCircle, CircleAlert, Clock, HelpCircle, CheckCircle2, Trash2,
 } from 'lucide-react'
 
+/**
+ * Satırın "Aç" hedefi (2026-11-19, "çalışan düğmeler"): envanter kaydı DURAKLATILMIŞ türev Port / DNS satırını tür sayfası
+ * listelemez (tarama da atlar) — "Aç" oraya gitse boş sayfa açardı. Böyle satır envanter kaydına götürür (kayıt
+ * sürdürülünce izleme de sürer); diğerleri tür sayfasına, hedefle aranmış olarak.
+ * @returns {{ tab: string, params: object, inventory: boolean }}
+ */
+export function overviewRowTarget(row) {
+  if (row?.inventory_inactive && row?.target) {
+    return { tab: 'domains', params: { domain: row.target, i_scope: 'all' }, inventory: true }
+  }
+  return { tab: TYPE_META[row?.type]?.tab || 'http', params: { q: row?.target }, inventory: false }
+}
+
 /** Tür → ikon, menü etiketi, izleme sayfası sekmesi. Sıra = Monitoring menüsü (MonitorTypeCatalog). */
 export const TYPE_META = {
   http:      { Icon: Globe,         labelKey: 'nav.http',      tab: 'http' },

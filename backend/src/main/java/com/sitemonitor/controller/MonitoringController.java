@@ -3501,6 +3501,8 @@ public class MonitoringController {
             DnsRecord prev = dnsOk
                     ? dnsRecordRepo.findTopByMonitorIdAndValueNotOrderByCheckedAtDesc(m.getId(), "").orElse(null)
                     : null;
+            // Taban başka alan adının / kayıt tipinin kaydıysa kıyas yok (2026-11-19, zamanlanmış turla aynı kural)
+            if (prev != null && !SchedulerService.sameDnsTarget(prev, m)) prev = null;
             String prevValue = prev != null ? prev.getValue() : null;
             DnsCheckerService.ChangeKind kind = dnsOk
                     ? DnsCheckerService.detectChange(prevValue, valueStr, dnsChecker.cdnRotationEnabled())
@@ -3509,6 +3511,7 @@ public class MonitoringController {
             DnsRecord record = new DnsRecord();
             record.setMonitorId(m.getId());
             record.setRecordType(m.getRecordType());
+            record.setCheckedDomain(m.getDomain());
             record.setValue(valueStr);
             // ELLE kayıt DEĞİŞİKLİK OLAYI SAYILMAZ (2026-09-29, D-9): değişiklik olayı (ve DNS_CHANGED alarmı) zamanlanmış
             // turun işidir — elle kayıt changed/rotated işaretleseydi aynı değişiklik geçmişte, "Sadece Değişenler"

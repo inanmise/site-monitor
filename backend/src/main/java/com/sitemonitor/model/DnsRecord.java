@@ -100,6 +100,17 @@ public class DnsRecord {
     private String changeState;
 
     /**
+     * Kaydın SORGULADIĞI alan adı (2026-11-19). İzlemenin alan adı düzenlenince (bağımsız DNS güncellemesi / geri yükleme,
+     * envanter yeniden adlandırmasında taşınan türev satır) sonraki zamanlanmış tur değişiklik tabanı olarak ESKİ alan adının
+     * kaydını okuyor ve yeni adın farklı değerlerini sahte DNS_CHANGED olarak alarmlıyordu. Taban başka bir alan adının
+     * (ya da başka bir kayıt tipinin) kaydıysa karşılaştırma yapılmaz ({@code SchedulerService.persistDnsRecord}) — Alan Adı
+     * izlemesinin {@code domain_checks.checked_domain} kuralıyla aynı. NULL = eski satır (bugünkü kural). API'ye çıkmaz.
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Column(name = "checked_domain")
+    private String checkedDomain;
+
+    /**
      * Satır CDN kuralıyla rotasyon sayıldıysa sağlayıcı adı (ör. "Cloudflare"); değilse null (2026-11-18). CDN kuralı
      * yalnız AYRIK kümelerde karar verir — ortak değer taşıyan rotasyonu eski kural verdi, ona sağlayıcı adı yazılmaz.
      * Okuma anında hesaplanır, SAKLANMAZ (alan erişimli varlık — getter eşlenmez); API'ye {@code rotation_cdn} olarak çıkar.

@@ -10,7 +10,7 @@ import TeamBadge from '../ui/TeamBadge.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from '@/components/shadcn/item'
 import { cn } from '@/lib/utils'
-import { TYPE_META } from './overviewMeta.js'
+import { TYPE_META, overviewRowTarget } from './overviewMeta.js'
 import { LastCheck, StatusBadge, TypeLabel } from './OverviewParts.jsx'
 
 const MEDIA_TONE = {
@@ -22,7 +22,7 @@ const MEDIA_TONE = {
 /** Kısa eylemler: açık alarm varsa Alarm Geçmişi (türe + hedefe süzülü) · izleme sayfasında aç. */
 export function ItemRowActions({ row, extra = null }) {
   const t = useT()
-  const meta = TYPE_META[row.type]
+  const target = overviewRowTarget(row)
   return (
     <>
       {extra}
@@ -34,9 +34,11 @@ export function ItemRowActions({ row, extra = null }) {
         </Button>
       )}
       <Button type="button" variant="outline" size="sm" className="flex-1 @md/item:flex-none pointer-coarse:h-10"
-        aria-label={t('mo.att.open', row.name)} title={t('mo.att.open', row.name)}
-        onClick={() => navigateTo(meta?.tab || 'http', { q: row.target })}>
-        <ExternalLink aria-hidden="true" />{t('mo.row.openShort')}
+        data-slot={target.inventory ? 'mo-open-inventory' : undefined}
+        aria-label={target.inventory ? t('mo.row.openInventory', row.name) : t('mo.att.open', row.name)}
+        title={target.inventory ? t('mo.row.openInventory', row.name) : t('mo.att.open', row.name)}
+        onClick={() => navigateTo(target.tab, target.params)}>
+        <ExternalLink aria-hidden="true" />{target.inventory ? t('mo.row.openInventoryShort') : t('mo.row.openShort')}
       </Button>
     </>
   )
@@ -46,7 +48,7 @@ export function ItemRowActions({ row, extra = null }) {
  * @param slot      test kancası (`mo-attention-item` / `mo-dlg-item`)
  * @param badges    ad yanındaki ek rozetler (alarm seviyesi, sahiplenildi…)
  * @param detail    neden satırı (son hata, beklenen aralık, açık kalma süresi…)
- * @param actions   eylem düğmeleri — verilmezse `ItemRowActions`
+ * @param actions   eylem düğmeleri — verilmezse `ItemRowActions`; `false` → eylem yok (ör. sahipsiz kalıntı)
  */
 export default function OverviewMonitorItem({ row, nowMs, slot, badges = null, detail = null, actions, showStatus = true, className }) {
   const meta = TYPE_META[row.type]
@@ -75,9 +77,11 @@ export default function OverviewMonitorItem({ row, nowMs, slot, badges = null, d
           <LastCheck row={row} nowMs={nowMs} />
         </div>
       </ItemContent>
-      <ItemActions className="w-full gap-1.5 @md/item:w-auto">
-        {actions ?? <ItemRowActions row={row} />}
-      </ItemActions>
+      {actions !== false && (
+        <ItemActions className="w-full gap-1.5 @md/item:w-auto">
+          {actions ?? <ItemRowActions row={row} />}
+        </ItemActions>
+      )}
     </Item>
   )
 }
