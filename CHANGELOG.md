@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.214.0] — 2026-11-18
+
 ### Added
 - **DNS: beklenen değerde ağ aralığı (CIDR).** A ve AAAA kayıtlarında beklenen-değer listesine `188.114.96.0/20` ya da
   `2a06:98c0::/29` gibi bir aralık yazılabilir; aralıktaki her adres beklenen sayılır (DNS_UNEXPECTED açılmaz, değişiklik
@@ -3619,7 +3621,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.213.5...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.214.0...HEAD
+[20.214.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.214.0
 [20.213.5]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.5
 [20.213.4]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.4
 [20.213.3]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.3
