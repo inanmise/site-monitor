@@ -285,6 +285,21 @@ describe('SystemHealth — derin bağlantı ve aynı sekme param olayı', () => 
 })
 
 describe('SystemHealth — Entegrasyonlar', () => {
+  it('Alan Adı Süre Kaynağı DEGRADED: turuncu uyarı + ardışık sayı, kesinti bandı YOK (2026-11-19)', async () => {
+    api.admin.getSystemHealth.mockResolvedValue({ success: true, data: { ...HEALTH,
+      domain_expiry: { source: 'DEGRADED', alarm: false, consecutive_failures: 1, outage_after: 3, last_success: '2026-09-27T03:00:00',
+        reason: 'connect timed out', scope: 'cluster' } } })
+    window.history.replaceState(null, '', '/?sec=integrations')
+    await renderLoaded()
+    const card = document.querySelector('[data-integration="domain"]').closest('[data-slot="sys-card"]')
+    expect(document.querySelector('[data-integration="domain"]').getAttribute('data-level')).toBe('warn')
+    const warn = card.querySelector('[data-slot="dom-degraded"]')
+    expect(warn).not.toBeNull()
+    expect(warn.textContent).toMatch(/\(1 in a row\)|\(art arda 1\)/)
+    expect(card.textContent).toMatch(/Last lookup failed|Son sorgu başarısız/)
+    expect(card.textContent).not.toMatch(/RDAP lookups failing|RDAP sorguları başarısız/)
+  })
+
   it('her karta seviye rozeti; push oranı YÜZDE (98.8%) — eski 0.98…% hatası yok; LDAP kartı yapılandırma sağlığından', async () => {
     api.admin.getSystemHealth.mockResolvedValue({ success: true, data: { ...HEALTH,
       smtp: { ...HEALTH.smtp, periods: { ...HEALTH.smtp.periods, '7d': { total: 310, attempted: 310, sent: 290, rate: 93.5, alarm: true } } },

@@ -121,12 +121,21 @@ export default function IntegrationsSection({
       )
       case 'domain': {
         const src = d.source || 'IDLE'
-        const label = src === 'RDAP' ? t('health.domSrcRdap') : src === 'FALLBACK' ? t('health.domSrcFallback') : src === 'NONE' ? t('health.domSrcNone') : t('health.domSrcIdle')
+        const label = src === 'RDAP' ? t('health.domSrcRdap') : src === 'FALLBACK' ? t('health.domSrcFallback') : src === 'NONE' ? t('health.domSrcNone')
+          : src === 'DEGRADED' ? t('health.domSrcDegraded') : t('health.domSrcIdle')
         // Çok pod (2026-10-23, R2b, N4): kümedeki EN YENİ gözlem + gözlemleyen pod; tablo okunamadıysa yalnız bu pod (`local`)
         return (
           <>
             {d.scope === 'local' ? <PodChip t={t} pod={health?.served_by_pod || health?.served_by} /> : d.scope && <PodChip t={t} scope="cluster" />}
             {d.alarm && <AlertBanner tone="danger" className="mb-0">{t('health.domAlarm')}</AlertBanner>}
+            {/* Tek / iki başarısız sorgu kesinti değil (2026-11-19, prod: tek bir .tr sorgusu kartı kırmızıya çeviriyordu) */}
+            {!d.alarm && src === 'DEGRADED' && (
+              <div data-slot="dom-degraded">
+                <AlertBanner tone="warning" className="mb-0">
+                  {t('health.domDegraded', d.consecutive_failures ?? 1, d.outage_after ?? 3)}
+                </AlertBanner>
+              </div>
+            )}
             <KvList>
               <dt>{t('health.domSource')}</dt><dd className={LEVEL_T[it.level]}>{label}</dd>
               <dt>{t('health.domLastOk')}</dt><dd>{d.last_success ? formatDate(d.last_success) : t('sys.never')}</dd>
