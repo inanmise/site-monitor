@@ -169,6 +169,8 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.monitoring.allow-loopback-targets", "monitoring", Type.BOOL),
         new Setting("site.monitor.dns.alert-enabled",            "monitoring", Type.BOOL),
         new Setting("site.monitor.dns.resolvers",                "monitoring", Type.CSV),
+        // DNS CDN rotasyonu (2026-11-18): eski + yeni adreslerin tamamı aynı CDN'in yayımlanmış aralığındaysa değişiklik değil
+        new Setting("site.monitor.dns.cdn-rotation",             "monitoring", Type.BOOL),
         new Setting("site.monitor.keyword.alert-enabled",        "monitoring", Type.BOOL),
         new Setting("site.monitor.ping.alert-enabled",           "monitoring", Type.BOOL),
         new Setting("site.monitor.http.alert-enabled",           "monitoring", Type.BOOL),
@@ -726,6 +728,8 @@ public final class AppSettingsCatalog {
         "site.monitor.monitoring.allow-internal-targets",
         "site.monitor.monitoring.allow-loopback-targets",
         "site.monitor.dns.resolvers",
+        // DNS CDN rotasyonu (2026-11-18): bütün takımların DNS_CHANGED / DNS_INCONSISTENT kararını etkiler — kurum geneli
+        "site.monitor.dns.cdn-rotation",
         "site.monitor.trust.ca-bundle-pem",
         "site.monitor.trust.auto-pin.enabled",
         "site.monitor.http.rdap-base-url",

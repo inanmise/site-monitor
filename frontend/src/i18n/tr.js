@@ -2942,6 +2942,7 @@ export const TR = {
   'general.lbl.site.monitor.cert-inventory-report.enabled': 'Sertifika envanter raporu açık',
   'general.lbl.site.monitor.cert-inventory-report.recipients': 'Sertifika envanter raporu alıcıları',
   'general.lbl.site.monitor.dns.resolvers': 'DNS çözümleyicileri',
+  'general.lbl.site.monitor.dns.cdn-rotation': 'DNS CDN rotasyonu',
   'general.lbl.site.monitor.domain.alert-enabled': 'Alan adı alarmları açık',
   'general.lbl.site.monitor.domain.default-critical-days': 'Alan adı kritik eşiği (gün)',
   'general.lbl.site.monitor.domain.default-interval-seconds': 'Alan adı kontrol sıklığı (sn)',
@@ -19115,7 +19116,12 @@ export const TR = {
   'dns.standaloneHint':   'Sertifikadan bağımsız, DNS sayfasından eklenen izleme',
   'dns.expectedValue':    'Beklenen değer (kilit)',
   'dns.pinCurrent':       'Şu anki değeri sabitle',
-  'dns.expectedPlaceholder': 'Beklenen değer(ler), her satıra bir tane (boş = kilit kapalı)',
+  'dns.expectedPlaceholder': 'Beklenen değer(ler) ya da ağ aralığı (ör. 188.114.96.0/20), her satıra bir tane (boş = kilit kapalı)',
+  'dns.expectedRangeHint': 'A ve AAAA kayıtlarında bir satıra ağ aralığı da yazabilirsiniz (ör. 188.114.96.0/20 ya da 2a06:98c0::/29): aralıktaki her adres beklenen sayılır. Adresi sürekli değişen CDN arkasındaki alan adları için kullanışlıdır.',
+  'dns.cidrInvalid':      '"{0}" geçerli bir ağ aralığı değil. Biçim adres/önek olmalı, örneğin 188.114.96.0/20 ya da 2a06:98c0::/29.',
+  'dns.cidrFamily':       '"{0}" aralığı kayıt tipine uymuyor: A kaydında IPv4, AAAA kaydında IPv6 aralığı yazın.',
+  'dns.cidrTooBroad':     '"{0}" aralığı çok geniş; kilit anlamsızlaşır. IPv4\'te en az /{1}, IPv6\'da en az /{2} kullanın (ör. 188.114.96.0/20).',
+  'dns.cidrRecordType':   '"{0}" bir ağ aralığı; aralıklar yalnız A ve AAAA kayıtlarında kullanılabilir. Bu kayıt tipinde beklenen değeri tam olarak yazın.',
   'dns.expectedHint':     'Sabitlenen değerde OLMAYAN bir değer çözümlenirse "DNS Beklenmeyen Değer" alarmı (olası hijack/yanlış yönlendirme). Rotasyon (beklenenin alt kümesi) tolere edilir; değer beklenene dönünce alarm otomatik kapanır. AYRICA: değişiklik alarmı açıkken yeni değerlerin TAMAMI bu listedeyse "DNS Değişikliği" alarmı üretilmez (iç/dış IP gidip-gelmesi gibi bilinen geçişler sessiz kalır) — liste dışına çıkan değer yine alarm üretir.',
   'dns.propagationCheck': 'Propagation kontrolü (çoklu-resolver)',
   'dns.propagationHint':  'Domain birden çok public resolver\'a (8.8.8.8/1.1.1.1/9.9.9.9) sorulup cevaplar karşılaştırılır; resolver\'lar arası tutarsızlıkta "DNS Tutarsızlığı" alarmı (propagation gecikmesi / split-DNS / poisoning). CDN/GeoDNS domainlerinde gürültülü olabilir — yalnız tutarlı-cevap beklenen domainlerde açın.',
@@ -19196,6 +19202,8 @@ export const TR = {
   'dns.lineDiff':         'Satır Farkları',
   'dns.rotated':          '🔄 Rotasyon',
   'dns.rotationTitle':    'DNS round-robin / GeoDNS rotasyonu — IP set\'leri kesişiyor, gerçek değişiklik değil.',
+  'dns.rotationCdn':      'CDN rotasyonu · {0}',
+  'dns.rotationCdnTitle': 'Önceki ve yeni adreslerin tamamı aynı CDN sağlayıcısının ({0}) yayımlanmış adres aralığında: sağlayıcı soran DNS sunucusuna ve zamana göre farklı adres veriyor. Bu bir kayıt değişikliği değildir; "DNS Değişikliği" alarmı açılmaz.',
   'dns.responseTrend':    'Yanıt Süresi Trendi',
   'dns.noTrendData':      'Trend için yeterli veri yok (en az 2 sorgu gerekir).',
   'dns.domainReadonly':   'Domain bu ekranda değiştirilemez.',
@@ -19228,6 +19236,7 @@ export const TR = {
   'dns.cardWas':            'Önceki değer',
   'dns.cardCompareHint':    'Önceki değerle farkı görmek için kartı açın.',
   'dns.cardRotation':       'Rotasyon — kesinti değil',
+  'dns.cardRotationCdn':    'CDN rotasyonu · {0}',
   'dns.cardMismatch':       'Beklenen listede yok: {0}',
   'dns.cardExpectedList':   'Beklenen değerler: {0}',
   'dns.cardExpectedOk':     'Beklenenle eşleşiyor',
@@ -19399,6 +19408,8 @@ export const TR = {
     'Ne işe yarar: Yeni bir DNS monitörü oluşturulurken forma gelen varsayılan kontrol aralığı (saniye); mevcut monitörler değişmez.\nFaydası: Herkes aynı sıklıkla başlar, tek tek ayar yapılmaz ve yük öngörülebilir kalır.\nÖnerilen değer: 300 saniye (varsayılan). Yayılma (propagation) izliyorsanız geçici olarak 60\'a indirin.',
   'help.set.site.monitor.dns.query-timeout-ms':
     'Ne işe yarar: Tek bir DNS sorgusunun yanıt bekleme süresi; aşılırsa sorgu başarısız sayılır.\nFaydası: Yanıtsız bir çözümleyici kontrol turunu geciktirmez.\nÖnerilen değer: 2000 ms (varsayılan) — yavaşlık eşiğinin üstünde olmalı, aksi hâlde yavaş yanıtlar hiç ölçülemez.',
+  'help.set.site.monitor.dns.cdn-rotation':
+    'Ne işe yarar: A / AAAA kaydının eski ve yeni adreslerinin TAMAMI aynı CDN sağlayıcısının (Cloudflare, Fastly) yayımlanmış adres aralığındaysa bunu kayıt değişikliği değil "CDN rotasyonu" sayar: "DNS Değişikliği" alarmı açılmaz, çözümleyiciler arası fark "DNS Tutarsızlığı" sayılmaz.\nFaydası: CDN arkasındaki alan adları (sağlayıcı her sorguda farklı adres verir) sahte değişiklik alarmı üretmez; aralık dışına çıkan ya da sağlayıcı değiştiren adres yine alarm üretir.\nÖnerilen değer: true (varsayılan). Kapatırsanız her adres değişikliği eskisi gibi alarm adayı olur.',
   'help.set.site.monitor.dns.resolvers':
     'Ne işe yarar: DNS kontrollerinde sorgulanacak çözümleyici sunucuların listesi (virgülle).\nFaydası: Birden çok çözümleyici, tek bir sunucunun bayat önbelleğini yayılma sorunu sanmayı önler.\nÖnerilen değer: En az iki bağımsız çözümleyici (varsayılan 8.8.8.8,1.1.1.1,9.9.9.9). İç bölgeleri izliyorsanız kurum çözümleyicinizi de ekleyin.',
   'help.set.site.monitor.dns.slow-confirm-attempts':

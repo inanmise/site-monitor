@@ -2023,6 +2023,41 @@ public class MonitoringController {
             EscalationService.TYPE_DNS_UNEXPECTED, EscalationService.TYPE_DNS_INCONSISTENT);
 
     /**
+     * DNS beklenen-değer listesindeki ağ aralığı (CIDR) satırları (2026-11-18, {@link com.sitemonitor.service.dns.DnsExpectedValues}):
+     * geçersiz aralık, kayıt tipine uymayan aile, çok geniş aralık ya da A / AAAA dışı kayıtta aralık → 400
+     * {@code VALIDATION_FAILED}, alan {@code expectedValue}. Değer satırları eskisi gibi doğrulanmaz.
+     */
+    static void requireValidDnsExpected(String joined, String recordType) {
+        com.sitemonitor.service.dns.DnsExpectedValues.Problem p =
+                com.sitemonitor.service.dns.DnsExpectedValues.check(joined, recordType);
+        if (p == null) return;
+        String line = p.line().length() > 80 ? p.line().substring(0, 80) + "…" : p.line();
+        int v4 = com.sitemonitor.service.dns.DnsExpectedValues.MIN_PREFIX_V4;
+        int v6 = com.sitemonitor.service.dns.DnsExpectedValues.MIN_PREFIX_V6;
+        String msg = switch (p.code()) {
+            case com.sitemonitor.service.dns.DnsExpectedValues.CODE_FAMILY -> com.sitemonitor.util.Msg.t(
+                    "\"" + line + "\" aralığı kayıt tipine uymuyor: A kaydında IPv4, AAAA kaydında IPv6 aralığı yazın.",
+                    "The range \"" + line + "\" does not match the record type: use an IPv4 range for A and an IPv6 range for AAAA.");
+            case com.sitemonitor.service.dns.DnsExpectedValues.CODE_TOO_BROAD -> com.sitemonitor.util.Msg.t(
+                    "\"" + line + "\" aralığı çok geniş; kilit anlamsızlaşır. IPv4'te en az /" + v4 + ", IPv6'da en az /" + v6
+                            + " kullanın (ör. 188.114.96.0/20).",
+                    "The range \"" + line + "\" is too broad and would make the lock meaningless. Use at least /" + v4
+                            + " for IPv4 and /" + v6 + " for IPv6 (e.g. 188.114.96.0/20).");
+            case com.sitemonitor.service.dns.DnsExpectedValues.CODE_RECORD_TYPE -> com.sitemonitor.util.Msg.t(
+                    "\"" + line + "\" bir ağ aralığı; aralıklar yalnız A ve AAAA kayıtlarında kullanılabilir. Bu kayıt tipinde"
+                            + " beklenen değeri tam olarak yazın.",
+                    "\"" + line + "\" is a network range; ranges work only for A and AAAA records. For this record type,"
+                            + " write the exact expected value.");
+            default -> com.sitemonitor.util.Msg.t(
+                    "\"" + line + "\" geçerli bir ağ aralığı değil. Biçim adres/önek olmalı, örneğin 188.114.96.0/20 ya da"
+                            + " 2a06:98c0::/29.",
+                    "\"" + line + "\" is not a valid network range. Use address/prefix, for example 188.114.96.0/20 or"
+                            + " 2a06:98c0::/29.");
+        };
+        throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("expectedValue", msg);
+    }
+
+    /**
      * ALERTS-9 (2026-10-22): DNS beklenen-değer kilidi ya da yayılım (çoklu resolver) denetimi AÇIK → KAPALI olunca o denetimin
      * açık alarmı (DNS_UNEXPECTED / DNS_INCONSISTENT) sessizce kapanır — kapalı denetim sweep kalemi üretmez, kurtarma yolu onu
      * hiç kapatamazdı (HTTP_SLOW kapatılınca aynı kural). Yalnız BU izlemenin olayı (D-b1).
@@ -3181,6 +3216,7 @@ public class MonitoringController {
         guardSharedNotificationFields(session, teamId, body, new com.sitemonitor.model.DnsMonitor());
         m.setTeamId(teamId);   // alarm yönlendirme + liste kapsamı için takım
         Object ev = body.get("expectedValue");          // beklenen-değer kilidi (opsiyonel)
+        requireValidDnsExpected(ev == null ? null : ev.toString(), recordType);   // ağ aralığı satırları (2026-11-18)
         m.setExpectedValue(ev != null && !ev.toString().isBlank() ? ev.toString().trim() : null);
         m.setPropagationCheck(Boolean.TRUE.equals(body.get("propagationCheck")));   // çoklu-resolver tutarlılık (opt-in)
         m.setSlowThresholdMs(clampSlow(body.get("slowThresholdMs")));               // per-monitor yavaş eşiği (boş=global)
@@ -3249,6 +3285,17 @@ public class MonitoringController {
                             "Geçersiz DNS kayıt tipi: '" + shown + "'. Şunlardan birini seçin: A, AAAA, CNAME, MX, TXT, NS.",
                             "Invalid DNS record type: '" + shown + "'. Choose one of: A, AAAA, CNAME, MX, TXT, NS."));
                 }
+            }
+            // Beklenen-değer ağ aralığı satırları (2026-11-18) — yan etkilerden ÖNCE. Liste ve kayıt tipi kayıtlı hâliyle
+            // AYNIYSA yeniden doğrulanmaz (eski kayıt düzenlenebilir kalır); biri değiştiyse etkin hâliyle doğrulanır.
+            {
+                String nextType = body.get("recordType") != null
+                        ? body.get("recordType").toString().trim().toUpperCase(java.util.Locale.ROOT) : m.getRecordType();
+                Object rawExpected = body.containsKey("expectedValue") ? body.get("expectedValue") : m.getExpectedValue();
+                String nextExpected = rawExpected != null && !rawExpected.toString().isBlank() ? rawExpected.toString().trim() : null;
+                boolean expectedChanged = !java.util.Objects.equals(nextExpected, m.getExpectedValue());
+                boolean typeChanged = !String.valueOf(nextType).trim().equalsIgnoreCase(String.valueOf(m.getRecordType()).trim());
+                if (expectedChanged || typeChanged) requireValidDnsExpected(nextExpected, nextType);
             }
             final String _prevDomain = m.getDomain();
             if (body.get("name")            != null) m.setName((String) body.get("name"));
@@ -3445,7 +3492,7 @@ public class MonitoringController {
                     : null;
             String prevValue = prev != null ? prev.getValue() : null;
             DnsCheckerService.ChangeKind kind = dnsOk
-                    ? DnsCheckerService.detectChange(prevValue, valueStr)
+                    ? DnsCheckerService.detectChange(prevValue, valueStr, dnsChecker.cdnRotationEnabled())
                     : DnsCheckerService.ChangeKind.NONE;
 
             DnsRecord record = new DnsRecord();
@@ -3566,6 +3613,8 @@ public class MonitoringController {
             item.put("previous_value", latest.getPreviousValue());
             item.put("changed",      latest.getChanged());
             item.put("rotated",      Boolean.TRUE.equals(latest.getRotated()));
+            String rotationCdn = latest.getRotationCdn();   // 2026-11-18: rotasyon bir CDN'in aralığındaysa sağlayıcı adı
+            if (rotationCdn != null) item.put("rotation_cdn", rotationCdn);
             item.put("checked_at",   latest.getCheckedAt());
             item.put("ttl",          latest.getTtl());
             item.put("response_ms",  latest.getResponseMs());
@@ -4047,6 +4096,8 @@ public class MonitoringController {
         String domain = body.get("domain").toString().trim();
         String recordType = body.get("recordType") != null ? body.get("recordType").toString().trim().toUpperCase() : "A";
         if (!DNS_RECORD_TYPES.contains(recordType)) return badRequest("Geçersiz DNS kayıt tipi: " + recordType);
+        Object evCheck = body.get("expectedValue");
+        requireValidDnsExpected(evCheck == null ? null : evCheck.toString(), recordType);   // ağ aralığı satırları (2026-11-18)
         auditService.recordAction("MONITOR_TEST", session, "DNS_MONITOR", "test",
                 AuditDetail.of("domain", domain, "record_type", recordType), null);
         Map<String, Object> r = dnsChecker.check(domain, recordType);

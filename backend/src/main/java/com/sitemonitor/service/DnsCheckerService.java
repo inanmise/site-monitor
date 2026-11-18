@@ -16,6 +16,9 @@ import org.xbill.DNS.SOARecord;
 import org.xbill.DNS.Section;
 import org.xbill.DNS.Type;
 
+import com.sitemonitor.service.dns.CdnRanges;
+import com.sitemonitor.service.dns.IpRanges;
+
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -200,6 +203,7 @@ public class DnsCheckerService {
         Map<String, Object> out = new LinkedHashMap<>();
         Map<String, String> perResolver = new LinkedHashMap<>();
         Set<String> distinctSets = new HashSet<>();
+        Set<String> allValues = new LinkedHashSet<>();
         int okCount = 0;
         for (String ip : resolverIps) {
             Map<String, Object> r = checkVia(domain, recordType, ip);
@@ -208,12 +212,18 @@ public class DnsCheckerService {
                 List<String> v = (List<String>) r.get("values");
                 perResolver.put(ip, String.join(", ", v));
                 distinctSets.add(String.join("\n", v));
+                if (allValues.size() <= CdnRanges.MAX_VALUES) allValues.addAll(v);
                 okCount++;
             } else {
                 perResolver.put(ip, "HATA: " + r.getOrDefault("error", "?"));
             }
         }
-        out.put("inconsistent", okCount >= 2 && distinctSets.size() > 1);
+        boolean differs = okCount >= 2 && distinctSets.size() > 1;
+        // CDN (2026-11-18): Cloudflare her çözümleyiciye kendi havuzundan farklı adres çifti verir (ölçüm: 1.1.1.1 .3,
+        // 8.8.8.8 .7 / .12, 9.9.9.9 .8) — farklı kümeler TEK sağlayıcının aralığındaysa bu tutarsızlık değildir.
+        String cdn = differs && cdnRotationEnabled() ? CdnRanges.sameProvider(allValues) : null;
+        out.put("inconsistent", differs && cdn == null);
+        if (cdn != null) out.put("cdn", cdn);
         out.put("per_resolver", perResolver);
         out.put("ok_count", okCount);
         return out;
@@ -368,8 +378,21 @@ public class DnsCheckerService {
      *       subset of edge IPs).</li>
      *   <li>sets disjoint → real change.</li>
      * </ul>
+     *
+     * <p>Bu iki argümanlı biçim CDN kuralını UYGULAMAZ (eski katı davranış; testler ve ayar kapalı yol). Üretim yolları
+     * {@link #detectChange(String, String, boolean)} ile {@link #cdnRotationEnabled()} değerini geçirir.
      */
     public static ChangeKind detectChange(String prev, String current) {
+        return detectChange(prev, current, false);
+    }
+
+    /**
+     * {@link #detectChange(String, String)} + CDN rotasyonu (2026-11-18): kümeler ayrık ama eski ve yeni değerlerin
+     * TAMAMI aynı CDN sağlayıcısının yayımlanmış aralığındaysa ({@link CdnRanges}) sonuç {@link ChangeKind#ROTATED}
+     * — Cloudflare / Fastly vekili soran çözümleyiciye göre havuzundan farklı adres çifti verir; bu kayıt değişikliği
+     * değildir. Değerlerden biri bile aralık dışındaysa ya da sağlayıcı değiştiyse eskisi gibi {@link ChangeKind#CHANGED}.
+     */
+    public static ChangeKind detectChange(String prev, String current, boolean cdnAware) {
         if (prev == null) return ChangeKind.NONE;
         if (prev.equals(current)) return ChangeKind.NONE;
 
@@ -384,7 +407,21 @@ public class DnsCheckerService {
 
         Set<String> intersect = new HashSet<>(prevSet);
         intersect.retainAll(nextSet);
-        return intersect.isEmpty() ? ChangeKind.CHANGED : ChangeKind.ROTATED;
+        if (!intersect.isEmpty()) return ChangeKind.ROTATED;
+        if (cdnAware) {
+            Set<String> union = new LinkedHashSet<>(prevSet);
+            union.addAll(nextSet);
+            if (CdnRanges.sameProvider(union) != null) return ChangeKind.ROTATED;
+        }
+        return ChangeKind.CHANGED;
+    }
+
+    /** Ayar anahtarı: CDN rotasyonu kuralı (varsayılan açık; kapalı = eski katı tespit). */
+    public static final String CDN_ROTATION_KEY = "site.monitor.dns.cdn-rotation";
+
+    /** CDN rotasyonu kuralı açık mı (canlı ayar; okunamazsa açık)? */
+    public boolean cdnRotationEnabled() {
+        return appSettings == null || appSettings.getBoolean(CDN_ROTATION_KEY, true);
     }
 
     public enum ChangeKind { NONE, ROTATED, CHANGED }
@@ -407,14 +444,42 @@ public class DnsCheckerService {
 
     public static List<String> unexpectedValues(String expectedJoined, List<String> live) {
         if (live == null || live.isEmpty()) return List.of();
-        Set<String> expected = new HashSet<>(splitLines(expectedJoined));
+        Set<String> expected = new LinkedHashSet<>(splitLines(expectedJoined));
         if (expected.isEmpty()) return List.of();
+        // Ağ aralığı satırları (2026-11-18): "188.114.96.0/20" gibi bir satır, aralığın içindeki her IP değerini kabul eder;
+        // tek adres satırı aynı adresin başka yazımını da kabul eder (IPv6 sıkıştırma). Bir kez ayrıştırılır.
+        List<IpRanges.Range> ranges = new ArrayList<>();
+        List<byte[]> addresses = new ArrayList<>();
+        for (String e : expected) {
+            if (e.indexOf('/') >= 0) {
+                IpRanges.Range r = IpRanges.parse(e);
+                if (r != null) ranges.add(r);
+            } else {
+                byte[] a = IpRanges.address(e);
+                if (a != null) addresses.add(a);
+            }
+        }
         List<String> unexpected = new ArrayList<>();
         for (String v : live) {
             String t = v == null ? "" : v.trim();
-            if (!t.isEmpty() && !expected.contains(t)) unexpected.add(t);
+            if (t.isEmpty() || expected.contains(t)) continue;
+            if (!ranges.isEmpty() || !addresses.isEmpty()) {
+                byte[] a = IpRanges.address(t);
+                if (a != null && (inAny(ranges, a) || sameAsAny(addresses, a))) continue;
+            }
+            unexpected.add(t);
         }
         return unexpected;
+    }
+
+    private static boolean inAny(List<IpRanges.Range> ranges, byte[] a) {
+        for (IpRanges.Range r : ranges) if (r.contains(a)) return true;
+        return false;
+    }
+
+    private static boolean sameAsAny(List<byte[]> addresses, byte[] a) {
+        for (byte[] x : addresses) if (Arrays.equals(x, a)) return true;
+        return false;
     }
 
     /**

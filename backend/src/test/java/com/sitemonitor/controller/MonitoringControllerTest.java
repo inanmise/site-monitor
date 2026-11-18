@@ -6671,6 +6671,109 @@ class MonitoringControllerTest {
                 eq(java.util.Set.of(com.sitemonitor.service.EscalationService.TYPE_DNS_INCONSISTENT)), anyString(), any());
     }
 
+    // ── DNS beklenen değerde ağ aralığı (CIDR, 2026-11-18) ───────────────────────────────────────────────────────
+
+    private org.springframework.test.web.servlet.ResultActions postDns(String json) throws Exception {
+        org.mockito.Mockito.doReturn(Optional.empty()).when(dnsMonitorRepo)
+                .findFirstByDomainAndRecordTypeAndStandaloneTrueAndDeletedAtIsNull(anyString(), anyString());
+        org.mockito.Mockito.doAnswer(inv -> {   // doAnswer: döngüde yeniden kurulurken önceki cevap null ile çağrılmaz
+            com.sitemonitor.model.DnsMonitor d = inv.getArgument(0);
+            if (d.getId() == null) d.setId(97L);
+            return d;
+        }).when(dnsMonitorRepo).save(any());
+        // grup + etiket zorunlu (2026-09-18) — aralık kuralını sınamak için gövdeye eklenir
+        String body = "{\"groupName\":\"Grup A\",\"tags\":\"t1\"," + json.substring(1);
+        return mvc.perform(post("/api/monitoring/dns").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(body));
+    }
+
+    @Test
+    @DisplayName("CIDR: A kaydında aralık + tek adres karışık liste kaydedilir")
+    void createDns_cidrExpected_saved() throws Exception {
+        postDns("{\"domain\":\"cdn.example.com\",\"recordType\":\"A\",\"teamId\":3,"
+                + "\"expectedValue\":\"188.114.96.0/20\\n203.0.113.9\"}")
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<com.sitemonitor.model.DnsMonitor> cap =
+                org.mockito.ArgumentCaptor.forClass(com.sitemonitor.model.DnsMonitor.class);
+        verify(dnsMonitorRepo).save(cap.capture());
+        assertThat(cap.getValue().getExpectedValue()).isEqualTo("188.114.96.0/20\n203.0.113.9");
+    }
+
+    @Test
+    @DisplayName("CIDR: yanlış aile, çok geniş aralık, adres dışı kayıt tipi, bozuk aralık → 400 expectedValue, kayıt yok")
+    void createDns_invalidCidr_rejectedUnderField() throws Exception {
+        String[][] cases = {
+                { "AAAA", "188.114.96.0/20", "IPv6" },
+                { "A", "10.0.0.0/4", "/8" },
+                { "MX", "10.0.0.0/8", "A ve AAAA" },
+                { "A", "188.114.96/20", "188.114.96/20" },
+        };
+        for (String[] c : cases) {
+            postDns("{\"domain\":\"cdn.example.com\",\"recordType\":\"" + c[0] + "\",\"teamId\":3,"
+                    + "\"expectedValue\":\"" + c[1] + "\"}")
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.field").value("expectedValue"))
+                    .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString(c[2])));
+        }
+        verify(dnsMonitorRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("CIDR: TXT değerindeki eğik çizgi aralık sayılmaz (değer satırları doğrulanmaz)")
+    void createDns_txtValueWithSlash_allowed() throws Exception {
+        postDns("{\"domain\":\"spf.example.com\",\"recordType\":\"TXT\",\"teamId\":3,"
+                + "\"expectedValue\":\"v=spf1 ip4:10.0.0.0/8 -all\"}")
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("CIDR güncelleme: değişmeyen eski liste yeniden doğrulanmaz; tip değişince aralık yeni tiple doğrulanır")
+    void updateDns_cidrValidatedOnlyWhenChanged() throws Exception {
+        com.sitemonitor.model.DnsMonitor legacy = standaloneDns(49L);
+        legacy.setExpectedValue("10.0.0.0/4");                                     // eski sürümde kaydedilmiş geniş aralık
+        when(dnsMonitorRepo.findById(49L)).thenReturn(Optional.of(legacy));
+        when(dnsMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        mvc.perform(put("/api/monitoring/dns/49").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"Yeni ad\",\"expectedValue\":\"10.0.0.0/4\"}"))
+                .andExpect(status().isOk());
+
+        com.sitemonitor.model.DnsMonitor cdn = standaloneDns(50L);
+        cdn.setExpectedValue("188.114.96.0/20");
+        when(dnsMonitorRepo.findById(50L)).thenReturn(Optional.of(cdn));
+        mvc.perform(put("/api/monitoring/dns/50").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"recordType\":\"AAAA\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("expectedValue"));
+        mvc.perform(put("/api/monitoring/dns/50").session(session("ADMIN"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"expectedValue\":\"188.114.96.0/20\\n2a06:98c0::/29\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("2a06:98c0::/29")));
+        assertThat(cdn.getExpectedValue()).as("reddedilen istek kaydı değiştirmez").isEqualTo("188.114.96.0/20");
+    }
+
+    @Test
+    @DisplayName("CIDR test: bozuk aralık sorgu yapmadan 400; geçerli aralık içindeki adres beklenmeyen sayılmaz")
+    void testDns_cidr() throws Exception {
+        mvc.perform(post("/api/monitoring/dns/test").session(session("USER"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"x.com\",\"recordType\":\"A\",\"expectedValue\":\"1.2.3.4/40\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("expectedValue"));
+        verify(dnsChecker, never()).check(anyString(), anyString());
+
+        when(dnsChecker.check(eq("x.com"), eq("A"))).thenReturn(
+                java.util.Map.of("success", true, "values", List.of("188.114.96.5", "188.114.97.5"), "response_ms", 20L));
+        mvc.perform(post("/api/monitoring/dns/test").session(session("USER"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"domain\":\"x.com\",\"recordType\":\"A\",\"expectedValue\":\"188.114.96.0/20\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.unexpected").isEmpty());
+    }
+
     @Test
     @DisplayName("SOFT-DELETE: duraklatılmış standalone SÜRDÜRÜLÜR (PUT active=true); SİLİNMİŞ satır 404 — sürdürülemez, çalıştırılamaz, silinemez")
     void pausedResumes_deletedIsNotFoundEverywhere() throws Exception {

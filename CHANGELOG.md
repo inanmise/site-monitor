@@ -15,6 +15,25 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+### Added
+- **DNS: beklenen değerde ağ aralığı (CIDR).** A ve AAAA kayıtlarında beklenen-değer listesine `188.114.96.0/20` ya da
+  `2a06:98c0::/29` gibi bir aralık yazılabilir; aralıktaki her adres beklenen sayılır (DNS_UNEXPECTED açılmaz, değişiklik
+  alarmı "beklenen değerler arasında" bastırılır). Aynı adresin başka yazımı da (IPv6 sıkıştırma) eşleşir. Kural: aralık
+  yalnız A / AAAA'da, kayıt tipinin ailesinde (A → IPv4, AAAA → IPv6), en az /8 (IPv4) ve /16 (IPv6); hatalı satır kayıtta
+  alanın altında söylenir (400 `VALIDATION_FAILED`, alan `expectedValue`). Değer satırları eskisi gibi doğrulanmaz;
+  kayıtlı liste ve tip değişmeden düzenleme yeniden denetlenmez.
+
+### Changed
+- **⚠ Davranış — DNS: CDN rotasyonu artık "değişti" sayılmaz.** Eski ve yeni adreslerin TAMAMI aynı CDN sağlayıcısının
+  yayımlanmış aralığındaysa (Cloudflare, Fastly — listeler sağlayıcıların kendi yayınından, 2026-11-18) kayıt ROTATED
+  yazılır, DNS_CHANGED alarmı açılmaz; değişiklik teyidinde de aynı kural geçerli. Kök neden: Cloudflare soran DNS
+  sunucusuna ve zamana göre havuzundan farklı adres çifti döndürür (ör. 188.114.96.3/97.3 → 96.5/97.5); kümeler ayrık
+  olduğu için her seferinde alarm açılıyordu. CDN'e giriş / çıkış, sağlayıcı değişimi ve CDN dışı adresler eskisi gibi
+  "değişti". Yayılım denetimi (DNS_INCONSISTENT) çözümleyicilerin aynı CDN'in farklı adreslerini vermesini tutarsızlık
+  saymaz. Geçmiş satırında ve kartta rozet sağlayıcıyı adlandırır ("CDN rotasyonu · Cloudflare").
+  **Yeni yapılandırma:** `site.monitor.dns.cdn-rotation` (env `DNS_CDN_ROTATION`, varsayılan `true`, yalnız küresel
+  yönetici) — kapalıyken eski davranış. Açık bir DNS_CHANGED alarmı kendiliğinden kapanmaz (tasarım gereği elle kapatılır).
+
 ## [20.213.5] — 2026-11-17
 
 ### Changed

@@ -22,6 +22,7 @@ import { Badge } from '@/components/shadcn/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/shadcn/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
 import { cn } from '@/lib/utils'
+import { splitValues, unexpectedValues } from './dns/dnsValue.js'
 // Süre grafiği artık paylaşımlı ResponseTimeChart (ping/keyword/port ile aynı: 90g/özel aralık + avg/min-max/p95).
 const ResponseTimeChart = lazy(() => import('./ResponseTimeChart.jsx'))
 const ChangeHistoryTab = lazy(() => import('./history/ChangeHistoryTab.jsx'))
@@ -47,11 +48,11 @@ function computeDiff(prev, next) {
 
 // Beklenen-set flip'i (backend withinExpected aynası): satırın TÜM değerleri monitörün beklenen listesindeyse
 // true — "beklenen değerler arasında" rozetiyle gösterilir. Not: geçmiş satırlar GÜNCEL beklenen sete göre değerlendirilir.
+// 2026-11-18: ağ aralığı satırları da sayılır (kart ve sunucuyla aynı kural — dns/dnsValue.unexpectedValues).
 function withinExpected(expectedJoined, valueJoined) {
-  const expected = new Set((expectedJoined || '').split('\n').map(s => s.trim()).filter(Boolean))
-  if (expected.size === 0) return false
-  const values = (valueJoined || '').split('\n').map(s => s.trim()).filter(Boolean)
-  return values.length > 0 && values.every(v => expected.has(v))
+  if (splitValues(expectedJoined).length === 0) return false
+  const values = splitValues(valueJoined)
+  return values.length > 0 && unexpectedValues(expectedJoined, values).length === 0
 }
 
 /**
@@ -60,7 +61,7 @@ function withinExpected(expectedJoined, valueJoined) {
  * konuşsun diye tek yerde. `kind`: changed | rotated | expected | none. Açıklamalı olanların
  * ipucu shadcn Tooltip'tir (eski `title`). Test kancası: `data-change`.
  */
-export function DnsChangeBadge({ kind, className }) {
+export function DnsChangeBadge({ kind, cdn, className }) {
   const t = useT()
   if (kind === 'changed') {
     return (
@@ -71,9 +72,11 @@ export function DnsChangeBadge({ kind, className }) {
     )
   }
   if (kind === 'rotated') {
+    // CDN rotasyonu (2026-11-18): sunucu önceki + yeni değerlerin tamamı tek bir CDN'in aralığındaysa sağlayıcı adını yollar
     return (
-      <SimpleTooltip content={t('dns.rotationTitle')}>
-        <Badge variant="warning" data-change="rotated" className={cn('cursor-help', className)}>{t('dns.rotated')}</Badge>
+      <SimpleTooltip content={cdn ? t('dns.rotationCdnTitle', cdn) : t('dns.rotationTitle')}>
+        <Badge variant="warning" data-change="rotated" data-cdn={cdn || undefined}
+          className={cn('cursor-help whitespace-normal', className)}>{cdn ? t('dns.rotationCdn', cdn) : t('dns.rotated')}</Badge>
       </SimpleTooltip>
     )
   }
@@ -411,7 +414,7 @@ export default function DnsDetailModal({ monitor, onClose, teamNames = {}, canMa
                         <span className="flex flex-wrap items-center gap-1.5">
                           {isChanged && <DnsChangeBadge kind="changed" />}
                           {isExpectedFlip && <DnsChangeBadge kind="expected" />}
-                          {isRotated && <DnsChangeBadge kind="rotated" />}
+                          {isRotated && <DnsChangeBadge kind="rotated" cdn={h.rotation_cdn} />}
                           {!isChanged && !isRotated && <DnsChangeBadge kind="none" />}
                         </span>
                       )}

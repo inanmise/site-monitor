@@ -98,4 +98,14 @@ public class DnsRecord {
     @com.fasterxml.jackson.annotation.JsonIgnore
     @Column(name = "change_state", length = 16)
     private String changeState;
+
+    /**
+     * Rotasyon satırında önceki + yeni değerlerin TAMAMI tek bir CDN sağlayıcısının yayımlanmış aralığındaysa sağlayıcı adı
+     * (ör. "Cloudflare"); değilse null (2026-11-18). Okuma anında hesaplanır, SAKLANMAZ (alan erişimli varlık — getter
+     * eşlenmez); API'ye {@code rotation_cdn} olarak çıkar (null alan Jackson kuralıyla yine yazılır).
+     */
+    public String getRotationCdn() {
+        if (!Boolean.TRUE.equals(rotated)) return null;
+        return com.sitemonitor.service.dns.CdnRanges.sameProviderOfLines(previousValue, value);
+    }
 }

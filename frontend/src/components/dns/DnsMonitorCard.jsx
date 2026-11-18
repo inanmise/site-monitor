@@ -263,9 +263,12 @@ function ValuePanel({ m, values, expected, unexpected }) {
         {(rotated || lockHolds) && (
           <span className="flex flex-wrap items-center gap-1">
             {rotated && (
-              <HintPopover content={t('dns.rotationTitle')} align="end" triggerClassName={CHIP_TRIGGER}>
-                <Badge variant="outline" data-slot="dns-rotation" className="rounded-sm px-1.5 text-[10.5px] font-semibold text-muted-foreground">
-                  <Repeat aria-hidden="true" />{t('dns.cardRotation')}
+              // CDN rotasyonu (2026-11-18): değerler tek bir CDN'in yayımlanmış aralığında dönüyorsa sağlayıcı adı
+              <HintPopover content={m.rotation_cdn ? t('dns.rotationCdnTitle', m.rotation_cdn) : t('dns.rotationTitle')}
+                align="end" triggerClassName={CHIP_TRIGGER}>
+                <Badge variant="outline" data-slot="dns-rotation" data-cdn={m.rotation_cdn || undefined}
+                  className="rounded-sm px-1.5 text-[10.5px] font-semibold whitespace-normal text-muted-foreground">
+                  <Repeat aria-hidden="true" />{m.rotation_cdn ? t('dns.cardRotationCdn', m.rotation_cdn) : t('dns.cardRotation')}
                 </Badge>
               </HintPopover>
             )}

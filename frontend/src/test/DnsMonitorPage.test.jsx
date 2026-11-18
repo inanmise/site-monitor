@@ -223,6 +223,75 @@ describe('DnsMonitorPage', () => {
     expect(textarea.value).toBe('217.169.196.197\n192.168.1.10')
   })
 
+  // ── Beklenen değerde ağ aralığı (CIDR, 2026-11-18) ──────────────────────────────────────────────────────────
+  const errorEl = () => document.querySelector('[data-slot="dns-expected-error"]')
+  async function openEdit(patch = {}) {
+    api.monitoring.getDnsMonitors.mockResolvedValue({ success: true, data: [{ ...monitor, ...patch }] })
+    render(<DnsMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('www.example.com')
+    fireEvent.click(screen.getByRole('button', { name: /düzenle|edit/i }))
+    return screen.getByPlaceholderText(/beklenen değer|expected value/i)
+  }
+
+  it('aralık: çok geniş aralık alanın ALTINDA hata verir, kayıt gitmez; düzeltince hata kalkar ve aralık kaydedilir', async () => {
+    api.monitoring.updateDnsMonitor.mockResolvedValue({ success: true, data: {} })
+    const textarea = await openEdit()
+    fireEvent.change(textarea, { target: { value: ['188.114.96.3', '10.0.0.0/4'].join('\n') } })
+    fireEvent.click(screen.getByRole('button', { name: /kaydet|save/i }))
+    await waitFor(() => expect(errorEl()).not.toBeNull())
+    expect(errorEl().textContent).toMatch(/10\.0\.0\.0\/4/)
+    expect(errorEl().textContent).toMatch(/\/8/)
+    expect(textarea).toHaveAttribute('aria-invalid', 'true')
+    expect(textarea.getAttribute('aria-describedby')).toContain(errorEl().id)
+    expect(textarea.closest('[data-field="expectedValue"]')).not.toBeNull()
+    expect(api.monitoring.updateDnsMonitor).not.toHaveBeenCalled()
+
+    fireEvent.change(textarea, { target: { value: '188.114.96.0/20' } })
+    expect(errorEl()).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /kaydet|save/i }))
+    await waitFor(() => expect(api.monitoring.updateDnsMonitor).toHaveBeenCalled())
+    expect(api.monitoring.updateDnsMonitor.mock.calls[0][1].expectedValue).toBe('188.114.96.0/20')
+  })
+
+  it('aralık: sunucunun expectedValue alan hatası bildirim yerine alanın altında gösterilir', async () => {
+    api.monitoring.updateDnsMonitor.mockResolvedValue({
+      success: false, code: 'VALIDATION_FAILED', field: 'expectedValue', error: 'Sunucu: bu aralık kabul edilmedi.',
+    })
+    const textarea = await openEdit()
+    fireEvent.change(textarea, { target: { value: '188.114.96.0/20' } })
+    fireEvent.click(screen.getByRole('button', { name: /kaydet|save/i }))
+    await waitFor(() => expect(errorEl()?.textContent).toBe('Sunucu: bu aralık kabul edilmedi.'))
+    expect(document.querySelector('[data-slot="duplicate-badge"]')).toBeNull()
+    expect(screen.getByPlaceholderText(/beklenen değer|expected value/i)).toBeInTheDocument()   // form açık kaldı
+  })
+
+  it('aralık: eski kayıtta değişmeyen liste yeniden denetlenmez (düzenlenebilir kalır)', async () => {
+    api.monitoring.updateDnsMonitor.mockResolvedValue({ success: true, data: {} })
+    await openEdit({ expected_value: '10.0.0.0/4' })
+    fireEvent.click(screen.getByRole('button', { name: /kaydet|save/i }))
+    await waitFor(() => expect(api.monitoring.updateDnsMonitor).toHaveBeenCalled())
+    expect(errorEl()).toBeNull()
+  })
+
+  it('aralık: Test düğmesi bozuk aralıkta sorgu yapmadan alanın altında hata verir', async () => {
+    const textarea = await openEdit()
+    fireEvent.change(textarea, { target: { value: '1.2.3.4/40' } })
+    fireEvent.click(screen.getByRole('button', { name: /^test$|test et/i }))
+    await waitFor(() => expect(errorEl()).not.toBeNull())
+    expect(errorEl().textContent).toMatch(/1\.2\.3\.4\/40/)
+    expect(api.monitoring.testDnsMonitor).not.toHaveBeenCalled()
+  })
+
+  it('aralık ipucu yalnız A / AAAA kayıtlarında görünür', async () => {
+    await openEdit()
+    expect(document.querySelector('[data-slot="dns-expected-range-hint"]')).not.toBeNull()
+  })
+
+  it('aralık ipucu MX kaydında görünmez', async () => {
+    await openEdit({ record_type: 'MX', value: '10 mx1.example.com.' })
+    expect(document.querySelector('[data-slot="dns-expected-range-hint"]')).toBeNull()
+  })
+
   // shadcn geçişi (2026-09-25): detay penceresi ortak kabukta (ModalShell); ondan açılan düzenleme formu
   // detayın İÇİNDE çizilir → iç içe derinlik React ağacından okunur, form detayın ÜSTÜNDE katmanlanır.
   it('detay penceresinden Düzenle: form ikinci dialog olarak detayın üstünde açılır', async () => {

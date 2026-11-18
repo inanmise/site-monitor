@@ -56,6 +56,7 @@ class DnsChangeDurabilityTest {
     EscalationService escalation;
     DnsCheckerService checker;
     AtomicReference<String> liveValue = new AtomicReference<>("2.2.2.2");
+    DnsRecord base;
 
     @BeforeEach
     void setUp() {
@@ -74,7 +75,7 @@ class DnsChangeDurabilityTest {
                     r.getPreviousValue(), r.getCheckedAt(), r.getManual(), r.getChangeState());
             return r;
         });
-        DnsRecord base = new DnsRecord();
+        base = new DnsRecord();
         base.setMonitorId(5L);
         base.setValue("1.1.1.1");
         when(records.findLatestScheduledSuccessful(5L)).thenReturn(Optional.of(base));
@@ -401,6 +402,54 @@ class DnsChangeDurabilityTest {
                 DOMAIN, "A", false, "changed", Map.of("monitor_id", 20L, "changed_at", at), null);
         assertThat(a.mos().changePending(legacy)).as("eski pod'un satırı: bugünkü gibi işlenir").isEqualTo(
                 MonitoringOutageService.ChangePending.YES);
+    }
+
+    boolean[] lastRow(long monitorId) {
+        Map<String, Object> row = mp.jdbc().queryForMap("SELECT changed, rotated FROM dns_records WHERE monitor_id = ? "
+                + "ORDER BY id DESC LIMIT 1", monitorId);
+        return new boolean[]{Boolean.TRUE.equals(row.get("CHANGED")), Boolean.TRUE.equals(row.get("ROTATED"))};
+    }
+
+    @Test
+    @DisplayName("CDN rotasyonu (2026-11-18): Cloudflare çifti tamamen değişti → satır ROTATED, değişiklik alarmı yok; "
+            + "ayar kapalıyken eskisi gibi CHANGED + PENDING")
+    void cdnPairSwap_isRotationNotChange() {
+        base.setValue("188.114.96.3");
+        liveValue.set("188.114.96.5");
+        when(checker.cdnRotationEnabled()).thenReturn(true);
+        MonitoringMultiPodKit.PodWithMos a = MonitoringMultiPodKit.podWithMos(mp, 1);
+        MonitoringMultiPodKit.Manual ex = new MonitoringMultiPodKit.Manual();
+        ReflectionTestUtils.setField(a.mos(), "confirmExecutor", ex);
+        a.scheduler().runDnsChecks();
+        assertThat(lastRow(5L)).containsExactly(false, true);
+        assertThat(state(5L)).isNull();
+        assertThat(ex.pending()).as("teyit zinciri başlamadı").isZero();
+        assertThat(dnsChangedAlarms()).isZero();
+
+        when(checker.cdnRotationEnabled()).thenReturn(false);
+        mp.advance(600_000);
+        a.scheduler().runDnsChecks();
+        assertThat(lastRow(5L)).as("ayar kapalı: eski davranış").containsExactly(true, false);
+        assertThat(state(5L)).isEqualTo(ChangeStates.PENDING);
+    }
+
+    @Test
+    @DisplayName("CDN rotasyonu teyitte de geçerli: CDN dışına çıkış görüldü, teyitte yine aynı CDN'in başka adresi → "
+            + "TRANSIENT (alarm yok); ayar kapalıyken alarm")
+    void cdnRecheck_backInsideSameCdn_isTransient() {
+        base.setValue("188.114.96.3");
+        liveValue.set("52.216.8.1");                                          // gerçek değişiklik: CDN dışı adres
+        when(checker.cdnRotationEnabled()).thenReturn(true);
+        MonitoringMultiPodKit.PodWithMos a = MonitoringMultiPodKit.podWithMos(mp, 1);
+        MonitoringMultiPodKit.Manual ex = new MonitoringMultiPodKit.Manual();
+        ReflectionTestUtils.setField(a.mos(), "confirmExecutor", ex);
+        a.scheduler().runDnsChecks();
+        assertThat(lastRow(5L)).containsExactly(true, false);
+        assertThat(state(5L)).isEqualTo(ChangeStates.PENDING);
+        liveValue.set("188.114.97.5");                                        // teyitte tabanın CDN'ine döndü
+        ex.drain();
+        assertThat(state(5L)).isEqualTo(ChangeStates.TRANSIENT);
+        assertThat(dnsChangedAlarms()).isZero();
     }
 
     void insertPending(long monitorId, String type, String prev, String value, String at) {
