@@ -48,6 +48,12 @@ class IpRangesTest {
             { "1:2:3:4:5:6:7:8:9", "none" },
             { "12345::1", "none" },
             { " 188.114.96.3 ", "address" },
+            { "188.114.96.3\u00A0", "address" },
+            { "\uFEFF188.114.96.0/20", "range" },
+            { "188.114.96.0/20\u001F", "range" },
+            { "\u2007188.114.96.3\u202F", "address" },
+            { "1.2.3.4\u0085", "address" },
+            { "188.114.96\u00A0.3", "none" },
             { "::1.2.3.4", "address" },
             { "1.2.3.4::", "none" },
             { "1::2::3", "none" },
@@ -110,6 +116,8 @@ class IpRangesTest {
             { "", "A", null },
             { "\n  \n", "A", null },
             { "188.114.96.3", "a", null },
+            { "188.114.96.0/20\u00A0", "A", null },
+            { "\uFEFF10.0.0.0/4", "A", "CIDR_TOO_BROAD" },
     };
 
     /** { beklenen liste, canlı değerler (\n), beklenmeyenler (\n) } — {@link DnsCheckerService#unexpectedValues}. */
@@ -124,6 +132,9 @@ class IpRangesTest {
             { "", "188.114.96.3", "" },
             { "188.114.96.0/20", "", "" },
             { "bozuk/aralik", "188.114.96.3", "188.114.96.3" },
+            { "188.114.96.3\u00A0", "188.114.96.3", "" },
+            { "\u00A0", "188.114.96.3", "" },
+            { "188.114.96.0/20", "\uFEFF188.114.96.9", "" },
     };
 
     private static List<String> lines(String joined) {
@@ -173,6 +184,7 @@ class IpRangesTest {
         assertThat(DnsCheckerService.withinExpected("188.114.96.0/20", List.of("188.114.96.5", "188.114.97.5"))).isTrue();
         assertThat(DnsCheckerService.withinExpected("188.114.96.0/20", List.of("188.114.96.5", "203.0.113.9"))).isFalse();
         assertThat(DnsCheckerService.withinExpected("188.114.96.3", List.of("188.114.96.5"))).isFalse();
+        assertThat(DnsCheckerService.withinExpected("\u00A0", List.of("188.114.96.5"))).as("yalnız görünmez karakterli liste = kilit kapalı").isFalse();
     }
 
     @Test

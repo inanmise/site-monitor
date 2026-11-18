@@ -7,12 +7,15 @@
  * metin sunucunun döndürdüğü ham değerdir (beklenen-değer kilidine aynen yapıştırılabilsin).
  */
 
-import { ipAddress, parseRange, rangeContains } from './ipRanges.js'
+import { cleanText, ipAddress, parseRange, rangeContains } from './ipRanges.js'
 
-/** `"\n"` ile birleştirilmiş değer → kırpılmış, boş olmayan satırlar (backend `splitLines` aynası). */
+/**
+ * `"\n"` ile birleştirilmiş değer → kırpılmış, boş olmayan satırlar (backend `DnsCheckerService.expectedLines` aynası —
+ * kırpma kümesi iki tarafta aynı: `ipRanges.cleanText`).
+ */
 export function splitValues(joined) {
   if (joined == null) return []
-  return String(joined).split('\n').map((s) => s.trim()).filter(Boolean)
+  return String(joined).split('\n').map(cleanText).filter(Boolean)
 }
 
 /**
@@ -32,7 +35,7 @@ export function unexpectedValues(expectedJoined, values) {
     else { const a = ipAddress(e); if (a) addresses.push(a) }
   }
   return values.filter((v) => {
-    const t = String(v ?? '').trim()
+    const t = cleanText(v)
     if (!t || expected.has(t)) return false
     if (ranges.length || addresses.length) {
       const a = ipAddress(t)

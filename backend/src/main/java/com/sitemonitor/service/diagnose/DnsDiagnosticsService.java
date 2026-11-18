@@ -309,16 +309,25 @@ public class DnsDiagnosticsService {
         }
         Map<String, Set<String>> sets = new LinkedHashMap<>();
         for (Row r : resolved) if (r.answered()) sets.put(r.server, new TreeSet<>(r.values));
+        // CDN (2026-11-18): farklı kümelerin TÜM adresleri tek CDN sağlayıcısındaysa bu bir uyuşmazlık değil, sağlayıcının
+        // havuzu — izleme de bunu tutarsızlık saymaz (DnsCheckerService.checkPropagation); tanı aynı dili konuşur (bilgi).
+        // Ayar yalnız gerçek bir farklılık varken okunur (sağlıklı yanıtta denetleyiciye ek çağrı yok)
+        java.util.function.BooleanSupplier cdnRule = () -> dnsChecker != null && dnsChecker.cdnRotationEnabled();
+        String setsCdn = new LinkedHashSet<>(sets.values()).size() > 1 && cdnRule.getAsBoolean() ? cdnOf(sets.values()) : null;
         if (new LinkedHashSet<>(sets.values()).size() > 1) {
             List<String> parts = new ArrayList<>();
             sets.forEach((k, v) -> parts.add(k + ": " + join(new ArrayList<>(v))));
-            run.finding(NetDiagFindings.RESOLVERS_DISAGREE, WARN, params("sets", String.join(" | ", parts), "count", sets.size()));
+            run.finding(NetDiagFindings.RESOLVERS_DISAGREE, setsCdn != null ? INFO : WARN, params("sets", String.join(" | ", parts),
+                    "count", sets.size(), "cdn", setsCdn, "reason", setsCdn != null ? "cdn" : null));
         }
         Row authAns = authRows.stream().filter(r -> r.answered() && r.aa).findFirst().orElse(null);
+        String authCdn = null;
         if (diagOk && authAns != null && !new TreeSet<>(authAns.values).equals(new TreeSet<>(primaryValues))) {
-            run.finding(NetDiagFindings.AUTH_RESOLVER_MISMATCH, WARN, params("resolver_values", join(primaryValues),
+            authCdn = cdnRule.getAsBoolean() ? cdnOf(List.of(authAns.values, primaryValues)) : null;
+            run.finding(NetDiagFindings.AUTH_RESOLVER_MISMATCH, authCdn != null ? INFO : WARN, params("resolver_values", join(primaryValues),
                     "auth_values", join(authAns.values), "ttl_remaining", primary == null ? null : primary.ttl,
-                    "server", primary == null ? null : primary.server, "ns", authAns.ns));
+                    "server", primary == null ? null : primary.server, "ns", authAns.ns,
+                    "cdn", authCdn, "reason", authCdn != null ? "cdn" : null));
         }
         List<String> lame = new ArrayList<>();
         List<String> unreachable = new ArrayList<>();
@@ -354,14 +363,20 @@ public class DnsDiagnosticsService {
         boolean resolversAgree = new LinkedHashSet<>(sets.values()).size() <= 1;
         Set<Set<String>> authSets = new LinkedHashSet<>();
         for (Row r : authRows) if (r.answered() && r.aa) authSets.add(new TreeSet<>(r.values));
+        String authSetsCdn = authSets.size() > 1 && cdnRule.getAsBoolean() ? cdnOf(authSets) : null;
+        String stepCdn = setsCdn != null ? setsCdn : authCdn != null ? authCdn : authSetsCdn;
         cs.put("resolvers_agree", resolversAgree)
                 .put("authoritative_agree", authSets.size() <= 1)
                 .put("auth_vs_resolver", !diagOk || authAns == null ? "n/a"
                         : new TreeSet<>(authAns.values).equals(new TreeSet<>(primaryValues)) ? "same" : "differs")
                 .put("expected", expected.isEmpty() ? null : expected)
                 .put("unexpected", unexpected.isEmpty() ? null : unexpected);
+        if (stepCdn != null) cs.put("cdn", stepCdn);   // ek alan: farklılık tek CDN'in havuzundan
+        boolean resolversDiffer = !resolversAgree && setsCdn == null;
+        boolean authDiffer = authSets.size() > 1 && authSetsCdn == null;
+        boolean authVsResolverDiffer = "differs".equals(cs.detail().get("auth_vs_resolver")) && authCdn == null;
         if (!unexpected.isEmpty()) cs.fail("unexpected values");
-        else if (!resolversAgree || authSets.size() > 1 || "differs".equals(cs.detail().get("auth_vs_resolver"))) cs.warn();
+        else if (resolversDiffer || authDiffer || authVsResolverDiffer) cs.warn();
         else cs.ok();
 
         // ── client_check ──
@@ -673,6 +688,16 @@ public class DnsDiagnosticsService {
         List<String> out = new ArrayList<>();
         for (Row r : rows) out.add(r.server);
         return String.join(", ", out);
+    }
+
+    /** Kümelerin birleşimi TEK CDN sağlayıcısının yayımlanmış aralığındaysa adı (CdnRanges sınırları geçerli), değilse null. */
+    static String cdnOf(java.util.Collection<? extends java.util.Collection<String>> groups) {
+        Set<String> union = new LinkedHashSet<>();
+        for (java.util.Collection<String> g : groups) {
+            if (g != null) union.addAll(g);
+            if (union.size() > com.sitemonitor.service.dns.CdnRanges.MAX_VALUES) return null;
+        }
+        return com.sitemonitor.service.dns.CdnRanges.sameProvider(union);
     }
 
     static String join(List<String> values) {

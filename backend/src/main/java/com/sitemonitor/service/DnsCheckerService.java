@@ -444,7 +444,7 @@ public class DnsCheckerService {
 
     public static List<String> unexpectedValues(String expectedJoined, List<String> live) {
         if (live == null || live.isEmpty()) return List.of();
-        Set<String> expected = new LinkedHashSet<>(splitLines(expectedJoined));
+        Set<String> expected = new LinkedHashSet<>(expectedLines(expectedJoined));
         if (expected.isEmpty()) return List.of();
         // Ağ aralığı satırları (2026-11-18): "188.114.96.0/20" gibi bir satır, aralığın içindeki her IP değerini kabul eder;
         // tek adres satırı aynı adresin başka yazımını da kabul eder (IPv6 sıkıştırma). Bir kez ayrıştırılır.
@@ -461,7 +461,7 @@ public class DnsCheckerService {
         }
         List<String> unexpected = new ArrayList<>();
         for (String v : live) {
-            String t = v == null ? "" : v.trim();
+            String t = v == null ? "" : IpRanges.clean(v);
             if (t.isEmpty() || expected.contains(t)) continue;
             if (!ranges.isEmpty() || !addresses.isEmpty()) {
                 byte[] a = IpRanges.address(t);
@@ -488,10 +488,25 @@ public class DnsCheckerService {
      * beklenen liste boşsa kilit kapalı sayılır → false (mevcut alarm davranışı değişmez).
      */
     public static boolean withinExpected(String expectedJoined, List<String> live) {
-        if (splitLines(expectedJoined).isEmpty()) return false;
+        if (expectedLines(expectedJoined).isEmpty()) return false;
         if (live == null || live.isEmpty()) return false;
-        boolean anyNonEmpty = live.stream().anyMatch(v -> v != null && !v.isBlank());
+        boolean anyNonEmpty = live.stream().anyMatch(v -> v != null && !IpRanges.clean(v).isEmpty());
         return anyNonEmpty && unexpectedValues(expectedJoined, live).isEmpty();
+    }
+
+    /**
+     * Beklenen-değer listesinin satırları, JS ikiziyle ({@code dnsValue.unexpectedValues}) AYNI kırpmayla
+     * ({@link IpRanges#clean} — bölünmez boşluk, BOM dahil); boş satırlar atlanır. Yalnız görünmez karakterlerden oluşan
+     * liste boş sayılır (kilit kapalı), ekrandaki kartla aynı.
+     */
+    static List<String> expectedLines(String joined) {
+        if (joined == null) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String s : joined.split("\n")) {
+            String t = IpRanges.clean(s);
+            if (!t.isEmpty()) out.add(t);
+        }
+        return out;
     }
 
     /**

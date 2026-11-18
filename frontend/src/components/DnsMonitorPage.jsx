@@ -168,6 +168,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
   const [changeNote, setChangeNote] = useState('')
   const [dupSource, setDupSource] = useState(null)  // Kopyala akışında kaynak monitör (rozet/ipucu için)
   const [form, setForm] = useState(emptyForm)
+  // A / AAAA kayıtlarında beklenen değere ağ aralığı (CIDR) da yazılabilir — ipucu yalnız orada
+  const rangeHint = ['A', 'AAAA'].includes(String(form.recordType || '').trim().toUpperCase())
   const [teamGroups, setTeamGroups] = useState([])   // form takımı+türüne göre grup önerileri (sızıntısız, server-scoped)
   const [teamTags, setTeamTags] = useState([])   // takımın kullanımdaki etiketleri → TagInput önerileri (2026-09-22)
   const [saving, setSaving] = useState(false)
@@ -476,6 +478,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
         slowThresholdMs: form.slowThresholdMs === '' ? null : Number(form.slowThresholdMs),
       })
       if (my !== testSeq.current) return   // geç yanıt: başka formun (ya da kapanmış formun) sonucu DEĞİL
+      // Sunucunun beklenen-değer alan hatası test paneline değil alanın altına (kayıttaki gibi)
+      if (!res?.success && res?.field === 'expectedValue' && res?.error) { fe.check({ expectedValue: res.error }); return }
       setTestResult(res?.success ? res.data : { error: res?.error || t('dns.testError') })
     } finally {
       if (my === testSeq.current) setTesting(false)
@@ -788,7 +792,8 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
             )}
           </div>
           <Textarea id={expectedId} rows={3}
-            aria-describedby={fe.errors.expectedValue ? `${expectedId}-e ${expectedId}-h` : `${expectedId}-h`}
+            aria-describedby={[fe.errors.expectedValue && `${expectedId}-e`, `${expectedId}-h`,
+              rangeHint && `${expectedId}-r`].filter(Boolean).join(' ')}
             aria-invalid={fe.errors.expectedValue ? true : undefined}
             value={form.expectedValue}
             onChange={e => { setForm(f => ({ ...f, expectedValue: e.target.value })); fe.clear('expectedValue') }}
@@ -800,8 +805,10 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
           )}
           <FieldDescription id={`${expectedId}-h`} className="text-xs">{t('dns.expectedHint')}</FieldDescription>
           {/* Ağ aralığı (2026-11-18) yalnız A / AAAA kayıtlarında anlamlı — ipucu yalnız onlarda */}
-          {['A', 'AAAA'].includes(String(form.recordType || '').toUpperCase()) && (
-            <FieldDescription data-slot="dns-expected-range-hint" className="text-xs">{t('dns.expectedRangeHint')}</FieldDescription>
+          {rangeHint && (
+            <FieldDescription id={`${expectedId}-r`} data-slot="dns-expected-range-hint" className="text-xs">
+              {t('dns.expectedRangeHint')}
+            </FieldDescription>
           )}
         </ShadcnField>
         <CheckField full checked={form.dnsChangeAlertEnabled}

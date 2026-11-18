@@ -42,10 +42,31 @@ public final class IpRanges {
         }
     }
 
+    /**
+     * Kırpılan görünmez karakter mi? Java {@code strip()} ile JS {@code trim()} AYNI kümeyi kırpmaz (JS bölünmez boşluğu ve
+     * BOM'u kırpar, Java kırpmaz; Java U+001F'yi kırpar, JS kırpmaz) — web / Excel'den yapıştırılan satırda iki taraf ayrışıyordu.
+     * Tek küme, iki tarafta aynı ({@code ipRanges.js isTrimCode}): C0 denetim + boşluk (≤ 0x20), NEL, bölünmez boşluk, Unicode
+     * boşluk ayırıcıları (Zs / Zl / Zp), BOM.
+     */
+    public static boolean isTrimChar(char c) {
+        return c <= 0x20 || c == 0x85 || c == 0xA0 || c == 0x1680 || (c >= 0x2000 && c <= 0x200A)
+                || c == 0x2028 || c == 0x2029 || c == 0x202F || c == 0x205F || c == 0x3000 || c == 0xFEFF;
+    }
+
+    /** Baştaki / sondaki {@link #isTrimChar} karakterlerini kırpar (null → null). */
+    public static String clean(String s) {
+        if (s == null) return null;
+        int a = 0;
+        int b = s.length();
+        while (a < b && isTrimChar(s.charAt(a))) a++;
+        while (b > a && isTrimChar(s.charAt(b - 1))) b--;
+        return s.substring(a, b);
+    }
+
     /** Sayısal adres → baytlar (IPv4 4, IPv6 16; IPv4'e eşlenmiş IPv6 → 4 bayt). Geçersiz / ad / kapsamlı → null. */
     public static byte[] address(String s) {
         if (s == null) return null;
-        String t = s.strip();
+        String t = clean(s);
         if (t.isEmpty() || t.length() > MAX_TEXT) return null;
         if (t.startsWith("[") && t.endsWith("]")) t = t.substring(1, t.length() - 1);
         if (t.isEmpty()) return null;
@@ -67,7 +88,7 @@ public final class IpRanges {
     /** {@code adres/önek} → aralık; önek yoksa ya da geçersizse null (tek adres için {@link #address}). */
     public static Range parse(String s) {
         if (s == null) return null;
-        String t = s.strip();
+        String t = clean(s);
         if (t.isEmpty() || t.length() > MAX_TEXT) return null;
         int slash = t.indexOf('/');
         if (slash <= 0 || slash != t.lastIndexOf('/')) return null;

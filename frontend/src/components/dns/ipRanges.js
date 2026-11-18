@@ -19,6 +19,27 @@ export const CODE_RECORD_TYPE = 'CIDR_RECORD_TYPE'
 
 const HEX = /^[0-9a-fA-F]{1,4}$/
 
+/**
+ * Kırpılan görünmez karakter mi (Java `IpRanges.isTrimChar` ile AYNI küme)? JS `trim()` ile Java `strip()` farklı kırpar —
+ * yapıştırılan satırdaki bölünmez boşluk / BOM bir tarafta kabul, öbüründe red demekti. C0 denetim + boşluk (≤ 0x20), NEL,
+ * bölünmez boşluk, Unicode boşluk ayırıcıları (Zs / Zl / Zp), BOM.
+ */
+export function isTrimCode(c) {
+  return c <= 0x20 || c === 0x85 || c === 0xa0 || c === 0x1680 || (c >= 0x2000 && c <= 0x200a)
+    || c === 0x2028 || c === 0x2029 || c === 0x202f || c === 0x205f || c === 0x3000 || c === 0xfeff
+}
+
+/** Baştaki / sondaki {@link isTrimCode} karakterlerini kırpar (Java `IpRanges.clean`). */
+export function cleanText(s) {
+  if (s == null) return ''
+  const t = String(s)
+  let a = 0
+  let b = t.length
+  while (a < b && isTrimCode(t.charCodeAt(a))) a++
+  while (b > a && isTrimCode(t.charCodeAt(b - 1))) b--
+  return t.slice(a, b)
+}
+
 /** Dört bölümlü ondalık IPv4 → 4 bayt; değilse null. */
 function v4Bytes(t) {
   const parts = t.split('.')
@@ -74,7 +95,7 @@ function v6Bytes(t) {
 /** Sayısal adres → bayt dizisi (IPv4 4, IPv6 16; IPv4'e eşlenmiş IPv6 → 4). Geçersiz / ad → null. */
 export function ipAddress(s) {
   if (s == null) return null
-  let t = String(s).trim()
+  let t = cleanText(s)
   if (!t || t.length > MAX_TEXT) return null
   if (t.startsWith('[') && t.endsWith(']')) t = t.slice(1, -1)
   if (!/^[0-9a-fA-F.:]+$/.test(t)) return null
@@ -88,7 +109,7 @@ export function ipAddress(s) {
 /** `adres/önek` → { network, prefix }; önek yoksa ya da geçersizse null. */
 export function parseRange(s) {
   if (s == null) return null
-  const t = String(s).trim()
+  const t = cleanText(s)
   if (!t || t.length > MAX_TEXT) return null
   const slash = t.indexOf('/')
   if (slash <= 0 || slash !== t.lastIndexOf('/')) return null
@@ -139,7 +160,7 @@ export function expectedValueProblem(joined, recordType) {
   const type = String(recordType || '').trim().toUpperCase()
   const address = addressType(type)
   for (const raw of String(joined).split('\n')) {
-    const line = raw.trim()
+    const line = cleanText(raw)
     if (!line) continue
     if (!address) {
       if (parseRange(line)) return { code: CODE_RECORD_TYPE, line }

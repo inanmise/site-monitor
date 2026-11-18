@@ -92,6 +92,12 @@ class CdnRangesTest {
         r.setPreviousValue("1.2.3.4\n5.6.7.8");
         r.setValue("5.6.7.8\n9.9.9.9");
         assertThat(r.getRotationCdn()).as("kesişen küme rotasyonu, CDN değil").isNull();
+        r.setPreviousValue("188.114.96.3\n188.114.97.3");
+        r.setValue("188.114.96.3\n188.114.97.5");
+        assertThat(r.getRotationCdn()).as("Cloudflare adresleri ama ortak değer var: eski kural karar verdi, rozet CDN demez")
+                .isNull();
+        r.setValue(null);
+        assertThat(r.getRotationCdn()).isNull();
     }
 
     // ── DnsCheckerService.detectChange(prev, cur, cdnAware) ──────────────────────────────────────────────────────

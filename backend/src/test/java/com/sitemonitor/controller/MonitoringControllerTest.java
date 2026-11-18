@@ -4311,6 +4311,32 @@ class MonitoringControllerTest {
         }
 
         @Test
+        @DisplayName("CIDR (2026-11-18, inceleme): geri yükleme kayıt tipini AAAA'ya döndürürken liste IPv4 aralığı taşıyorsa 400 "
+                + "expectedValue, hiçbir şey yazılmaz; uyumlu geri yükleme geçer")
+        void restore_dnsRangeFamilyMismatch_isRejected() throws Exception {
+            com.sitemonitor.model.DnsMonitor dns = new com.sitemonitor.model.DnsMonitor();
+            dns.setId(8L); dns.setDomain("b.example.com"); dns.setRecordType("A"); dns.setTeamId(5L); dns.setStandalone(true);
+            dns.setActive(true); dns.setExpectedValue("188.114.96.0/20");
+            when(dnsMonitorRepo.findById(8L)).thenReturn(Optional.of(dns));
+            stubRestore("DNS", 8L, "{\"recordType\":\"AAAA\"}");
+
+            mvc.perform(post("/api/monitoring/changes/dns/8/0/restore").session(managerOf(5L)))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.field").value("expectedValue"))
+                    .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("188.114.96.0/20")));
+            verify(dnsMonitorRepo, never()).save(any(com.sitemonitor.model.DnsMonitor.class));
+
+            com.sitemonitor.model.DnsMonitor ok = new com.sitemonitor.model.DnsMonitor();
+            ok.setId(9L); ok.setDomain("c.example.com"); ok.setRecordType("A"); ok.setTeamId(5L); ok.setStandalone(true);
+            ok.setActive(true); ok.setExpectedValue("1.2.3.4");
+            when(dnsMonitorRepo.findById(9L)).thenReturn(Optional.of(ok));
+            when(dnsMonitorRepo.save(any(com.sitemonitor.model.DnsMonitor.class))).thenAnswer(i -> i.getArgument(0));
+            stubRestore("DNS", 9L, "{\"expectedValue\":\"188.114.96.0/20\"}");
+            mvc.perform(post("/api/monitoring/changes/dns/9/0/restore").session(managerOf(5L))).andExpect(status().isOk());
+            assertThat(ok.getExpectedValue()).isEqualTo("188.114.96.0/20");
+        }
+
+        @Test
         @DisplayName("Sayfa Hızı (inceleme B8): geri yükleme asgari > azami boyut bırakacaksa 400 minPageKb, HİÇBİR ŞEY kaydedilmez")
         void restore_pageSpeedMinAboveMax_isRejected() throws Exception {
             com.sitemonitor.model.PageSpeedMonitor ps = new com.sitemonitor.model.PageSpeedMonitor();

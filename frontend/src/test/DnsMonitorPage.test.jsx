@@ -282,9 +282,25 @@ describe('DnsMonitorPage', () => {
     expect(api.monitoring.testDnsMonitor).not.toHaveBeenCalled()
   })
 
-  it('aralık ipucu yalnız A / AAAA kayıtlarında görünür', async () => {
-    await openEdit()
-    expect(document.querySelector('[data-slot="dns-expected-range-hint"]')).not.toBeNull()
+  it('aralık: Test düğmesine gelen sunucu alan hatası test paneline değil alanın altına yazılır', async () => {
+    api.monitoring.testDnsMonitor.mockResolvedValue({
+      success: false, code: 'VALIDATION_FAILED', field: 'expectedValue', error: 'Sunucu: aralık AAAA ile uyuşmuyor.',
+    })
+    const textarea = await openEdit()
+    fireEvent.change(textarea, { target: { value: '188.114.96.0/20' } })
+    fireEvent.click(screen.getByRole('button', { name: /^test$|test et/i }))
+    await waitFor(() => expect(errorEl()?.textContent).toBe('Sunucu: aralık AAAA ile uyuşmuyor.'))
+    expect(textarea).toHaveAttribute('aria-invalid', 'true')
+    // test sonucu paneli bu hatayı ikinci kez göstermez
+    expect(screen.getAllByText('Sunucu: aralık AAAA ile uyuşmuyor.')).toHaveLength(1)
+  })
+
+  it('aralık ipucu yalnız A / AAAA kayıtlarında görünür ve metin kutusuna bağlıdır', async () => {
+    const textarea = await openEdit()
+    const hint = document.querySelector('[data-slot="dns-expected-range-hint"]')
+    expect(hint).not.toBeNull()
+    expect(hint.id).toBeTruthy()
+    expect(textarea.getAttribute('aria-describedby').split(' ')).toContain(hint.id)
   })
 
   it('aralık ipucu MX kaydında görünmez', async () => {

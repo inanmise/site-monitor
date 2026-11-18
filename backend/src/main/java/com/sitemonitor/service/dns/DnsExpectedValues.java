@@ -46,7 +46,7 @@ public final class DnsExpectedValues {
         String type = recordType == null ? "" : recordType.strip().toUpperCase(Locale.ROOT);
         boolean address = addressType(type);
         for (String raw : joined.split("\n")) {
-            String line = raw.strip();
+            String line = IpRanges.clean(raw);   // iki tarafta aynı kırpma (bölünmez boşluk, BOM dahil)
             if (line.isEmpty()) continue;
             if (!address) {
                 if (IpRanges.parse(line) != null) return new Problem(CODE_RECORD_TYPE, line);

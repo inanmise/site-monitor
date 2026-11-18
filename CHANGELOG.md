@@ -33,6 +33,14 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
   saymaz. Geçmiş satırında ve kartta rozet sağlayıcıyı adlandırır ("CDN rotasyonu · Cloudflare").
   **Yeni yapılandırma:** `site.monitor.dns.cdn-rotation` (env `DNS_CDN_ROTATION`, varsayılan `true`, yalnız küresel
   yönetici) — kapalıyken eski davranış. Açık bir DNS_CHANGED alarmı kendiliğinden kapanmaz (tasarım gereği elle kapatılır).
+  **Bilinen ödünleşim:** alan adı aynı sağlayıcıda başka bir hesaba taşınırsa adresler aynı aralıkta kalır ve bu da alarm
+  üretmez; bu risk kabul edilemiyorsa ayar kapatılır.
+- **DNS tanılama:** çözümleyicilerin (ya da yetkili sunucu ile çözümleyicinin) farklı yanıtları aynı CDN'in adresleriyse
+  bulgu uyarı değil bilgi olur ("aynı CDN'in farklı adresleri") ve karşılaştırma adımı başarılı sayılır.
+- **DNS:** beklenen değer satırlarının başındaki / sonundaki görünmez karakterler (bölünmez boşluk, BOM, sıfır genişlikli
+  boşluk vb.) Java ve tarayıcıda aynı kuralla atılır; değişiklik geçmişinden geri yüklenen bir beklenen-değer listesi de
+  aynı aralık kuralıyla denetlenir (geçersizse 400, kayıt değişmez). Test düğmesine gelen sunucu alan hatası alanın altına
+  yazılır; aralık ipucu ekran okuyucuya bağlandı.
 
 ## [20.213.5] — 2026-11-17
 

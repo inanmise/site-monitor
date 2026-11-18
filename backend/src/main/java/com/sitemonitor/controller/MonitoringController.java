@@ -934,6 +934,17 @@ public class MonitoringController {
                                     + "Edit the minimum size first, then try again."));
         }
 
+        // DNS beklenen-değer ağ aralığı (2026-11-18, inceleme): geri yükleme güncellemeyle AYNI kurala uyar — liste ya da kayıt
+        // tipi geri dönüyorsa sonuç doğrulanır (ör. tip AAAA'ya dönerken liste IPv4 aralığı taşıyorsa her değer DNS_UNEXPECTED
+        // açardı); 400 field=expectedValue, HİÇBİR ŞEY yazılmaz (varlık ayrık).
+        if (entity instanceof DnsMonitor dnsr && (applied.contains("expectedValue") || applied.contains("recordType"))) {
+            try {
+                requireValidDnsExpected(dnsr.getExpectedValue(), dnsr.getRecordType());
+            } catch (com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException e) {
+                throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("expectedValue",
+                        com.sitemonitor.util.Msg.t("Bu kayda geri dönülemez: ", "This entry can't be restored: ") + e.getMessage());
+            }
+        }
         // Sentetik izlemede alarm ANAHTARI izleme ADIDIR (2026-10-16, inceleme): geri yükleme güncellemeyle aynı kuralları
         // uygular — ad takım içinde tekil, ad değişirse açık alarm yeni ada taşınır, duraklatmaya dönülürse açık alarm kapanır.
         // Aksi halde eski adla "hayalet" alarm kalıyordu (paylaşımla geri yükleme de bu yolu kullanır).

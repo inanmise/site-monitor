@@ -304,6 +304,39 @@ class DnsDiagnosticsServiceTest {
     }
 
     @Test
+    @DisplayName("CDN (2026-11-18): farklı yanıtların hepsi tek CDN'de → aynı bulgular BİLGİ (reason=cdn), karşılaştırma adımı ok; "
+            + "ayar kapalıyken eskisi gibi uyarı")
+    void disagreements_sameCdnIsInfo() {
+        DnsMonitor m = monitor("A");
+        m.setPropagationCheck(true);
+        resolverAnswer = (q, s, tcp) -> standardResolver(q, a("188.114.96.3"));
+        propAnswer = (q, s, tcp) -> standardResolver(q, a("188.114.97.5"));
+        ns1Answer = (q, s, tcp) -> authoritative(q, true, a("188.114.96.7"));
+        ns2Answer = ns1Answer;
+        when(checker.check(anyString(), anyString())).thenReturn(success(true, "188.114.96.3"));
+        when(checker.cdnRotationEnabled()).thenReturn(true);
+        Map<String, Object> d = svc.diagnose(m);
+        for (String code : List.of("RESOLVERS_DISAGREE", "AUTH_RESOLVER_MISMATCH")) {
+            Map<String, Object> f = findings(d).stream().filter(x -> code.equals(x.get("code"))).findFirst().orElseThrow();
+            assertThat(f).as(code).containsEntry("severity", "info");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> p = (Map<String, Object>) f.get("params");
+            assertThat(p).as(code).containsEntry("cdn", "Cloudflare").containsEntry("reason", "cdn");
+        }
+        assertThat(step(d, "compare")).containsEntry("status", "ok");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> cmp = (Map<String, Object>) step(d, "compare").get("detail");
+        assertThat(cmp).containsEntry("cdn", "Cloudflare");
+        assertThat(verdict(d)).containsEntry("code", "DNS_OK");
+
+        when(checker.cdnRotationEnabled()).thenReturn(false);
+        Map<String, Object> off = svc.diagnose(m);
+        assertThat(step(off, "compare")).containsEntry("status", "warn");
+        Map<String, Object> f = findings(off).stream().filter(x -> "RESOLVERS_DISAGREE".equals(x.get("code"))).findFirst().orElseThrow();
+        assertThat(f).containsEntry("severity", "warn");
+    }
+
+    @Test
     @DisplayName("topal yetki (AA yok) → LAME_DELEGATION; politika gereği sorulmayan NS → AUTH_UNREACHABLE (reason=policy), çöküş yok")
     void lameAndUnreachable() {
         ns2Answer = (q, s, tcp) -> authoritative(q, false, a("192.0.2.10"));

@@ -100,12 +100,18 @@ public class DnsRecord {
     private String changeState;
 
     /**
-     * Rotasyon satırında önceki + yeni değerlerin TAMAMI tek bir CDN sağlayıcısının yayımlanmış aralığındaysa sağlayıcı adı
-     * (ör. "Cloudflare"); değilse null (2026-11-18). Okuma anında hesaplanır, SAKLANMAZ (alan erişimli varlık — getter
-     * eşlenmez); API'ye {@code rotation_cdn} olarak çıkar (null alan Jackson kuralıyla yine yazılır).
+     * Satır CDN kuralıyla rotasyon sayıldıysa sağlayıcı adı (ör. "Cloudflare"); değilse null (2026-11-18). CDN kuralı
+     * yalnız AYRIK kümelerde karar verir — ortak değer taşıyan rotasyonu eski kural verdi, ona sağlayıcı adı yazılmaz.
+     * Okuma anında hesaplanır, SAKLANMAZ (alan erişimli varlık — getter eşlenmez); API'ye {@code rotation_cdn} olarak çıkar.
      */
     public String getRotationCdn() {
-        if (!Boolean.TRUE.equals(rotated)) return null;
+        if (!Boolean.TRUE.equals(rotated) || previousValue == null || value == null) return null;
+        // Kümeler DnsCheckerService.detectChange ile aynı kurulur (ham satırlar, boş satır yok sayılır)
+        java.util.Set<String> prev = new java.util.HashSet<>(java.util.Arrays.asList(previousValue.split("\n")));
+        prev.remove("");
+        for (String s : value.split("\n")) {
+            if (!s.isEmpty() && prev.contains(s)) return null;   // ortak değer → eski "kesişen küme" kuralı
+        }
         return com.sitemonitor.service.dns.CdnRanges.sameProviderOfLines(previousValue, value);
     }
 }
