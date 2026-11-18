@@ -11445,6 +11445,9 @@ public class MonitoringController {
             item.put("status",            latest.getStatus());
             item.put("source",            latest.getSource());
             item.put("whois_provider",    latest.getWhoisProvider());
+            // SiteMonitor'ün sorguladığı adres (2026-11-19): kart bağlantısı (http(s)) / port-43 sunucusu (metin)
+            item.put("query_url",         com.sitemonitor.service.DomainCheckerService.safeQueryUrl(latest.getQueryUrl()));
+            item.put("query_server",      latest.getQueryServer());
             item.put("days_remaining",    latest.getDaysRemaining());
             item.put("expiry_date",       latest.getExpiryDate());
             item.put("registration_date", latest.getRegistrationDate());

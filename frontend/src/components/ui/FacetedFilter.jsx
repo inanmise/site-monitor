@@ -21,7 +21,7 @@ import { useT } from '../../i18n/index.jsx'
  * (2026-11-15 yayın öncesi e2e kapısı; fare görünümü 32 px kalır).
  */
 export default function FacetedFilter({
-  title, icon: Icon = ListFilter, options = [], value = [], onChange, searchPlaceholder, tooltip, className,
+  title, icon: Icon = ListFilter, options = [], value = [], onChange, searchPlaceholder, tooltip, className, wrapLabels = false,
 }) {
   const t = useT()
   const [open, setOpen] = useState(false)
@@ -55,7 +55,7 @@ export default function FacetedFilter({
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="z-(--z-menu) w-64 p-0">
+      <PopoverContent align="start" className={cn('z-(--z-menu) p-0', wrapLabels ? 'w-80 max-w-[calc(100vw-2rem)]' : 'w-64')}>
         <Command shouldFilter={false} loop>
           <CommandInput placeholder={searchPlaceholder || title} value={query} onValueChange={setQuery} />
           <CommandList aria-multiselectable="true">
@@ -79,7 +79,8 @@ export default function FacetedFilter({
                     >
                       {/* Görsel işaret: satırın kendisi seçenek; kutu ayrıca odak/tık almaz (MultiTeamSelect ile aynı). */}
                       <Checkbox checked={checked} tabIndex={-1} aria-hidden="true" className="pointer-events-none" />
-                      <span className="min-w-0 flex-1 truncate">{o.label}</span>
+                      {/* wrapLabels: uzun ad (registrar, takım) SARAR — kesilmez (kalıcı kural); dokunmatikte `title` açılmaz */}
+                      <span className={cn('min-w-0 flex-1', wrapLabels ? 'whitespace-normal [overflow-wrap:anywhere]' : 'truncate')}>{o.label}</span>
                       {o.count != null && (
                         <span className="ml-auto pl-2 font-mono text-xs tabular-nums text-muted-foreground" data-slot="facet-count">{o.count}</span>
                       )}

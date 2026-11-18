@@ -1,5 +1,5 @@
 import {
-  Activity, Ban, Building2, CalendarClock, CalendarPlus, CircleHelp, Info, ListX, Lock, LockOpen, Server, ServerCrash,
+  Activity, Ban, Building2, CalendarClock, CalendarPlus, CircleHelp, ExternalLink, Info, ListX, Lock, LockOpen, Server, ServerCrash,
   ShieldCheck, ShieldOff, ShieldQuestion,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
@@ -13,7 +13,7 @@ import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 import {
   WHOIS_PROVIDER_LABEL, blacklistOf, cardSourceTag, daysTone, dnssecOf, eppChips, expiryKey, fmtExpiry, lockOf, nsOf,
-  sourceFamily, unknownReasonOf,
+  queryRefOf, sourceFamily, unknownReasonOf,
 } from './domainCardModel.js'
 
 /**
@@ -103,6 +103,36 @@ export function DomainRegistrarLine({ monitor: m }) {
       <span className="sr-only">{t('dom.registrar')}: </span>
       {/* Ad KESİLMEZ (2026-11-15, kalıcı kural): dokunmatikte `title` açılmaz — uzun registrar adı sarar. */}
       <span className="min-w-0 [overflow-wrap:anywhere]" title={title}>{m.registrar}</span>
+    </p>
+  )
+}
+
+/**
+ * "Sorgulanan sayfa" satırı (2026-11-19, kullanıcı isteği): SiteMonitor'ün son kontrolde sorguladığı RDAP / web-whois
+ * adresi yeni sekmede açılır — çevrimiçi bir sorguyla karşılaştırmak için. Port-43 WHOIS sunucusu bağlantı değildir
+ * (tarayıcı açamaz), metin olarak yazılır. Eski satır / bilinmiyor → hiçbir şey çizilmez.
+ */
+export function DomainQueryLink({ monitor: m }) {
+  const t = useT()
+  const ref = queryRefOf(m)
+  if (!ref) return null
+  if (ref.kind === 'server') {
+    return (
+      <p data-slot="domain-query" data-kind="server" title={t('domcard.query.serverTip')}
+        className={cn(CARD_LAYER, 'mt-1 flex w-fit max-w-full min-w-0 items-center gap-1 text-xs text-muted-foreground')}>
+        <Server aria-hidden="true" className="size-3.5 shrink-0 opacity-70" />
+        <span className="min-w-0 [overflow-wrap:anywhere]">{t('domcard.query.server', ref.server)}</span>
+      </p>
+    )
+  }
+  return (
+    <p data-slot="domain-query" data-kind="url" className={cn(CARD_LAYER, 'mt-1 flex w-fit max-w-full min-w-0 items-center text-xs')}>
+      <a href={ref.url} target="_blank" rel="noopener noreferrer" data-slot="domain-query-link"
+        aria-label={t('domcard.query.open', m.domain, ref.host)} title={ref.url}
+        className="inline-flex min-w-0 items-center gap-1 rounded-sm text-primary underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none pointer-coarse:min-h-10">
+        <ExternalLink aria-hidden="true" className="size-3.5 shrink-0" />
+        <span className="min-w-0 [overflow-wrap:anywhere]">{t('domcard.query.label', ref.host)}</span>
+      </a>
     </p>
   )
 }

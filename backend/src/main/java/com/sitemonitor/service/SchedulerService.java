@@ -1461,6 +1461,9 @@ public class SchedulerService {
         patch("ALTER TABLE domain_checks ADD COLUMN failure_detail TEXT");
         // Alan adı düzenlenince eski alan adının satırı değişiklik tabanı olmasın (2026-11-15, DomainCheck.checkedDomain).
         patch("ALTER TABLE domain_checks ADD COLUMN checked_domain VARCHAR(255)");
+        // Sorgulanan adres / port-43 sunucusu (2026-11-19, alan adı kartı bağlantısı)
+        patch("ALTER TABLE domain_checks ADD COLUMN query_url VARCHAR(500)");
+        patch("ALTER TABLE domain_checks ADD COLUMN query_server VARCHAR(255)");
         patch("ALTER TABLE dns_records ADD COLUMN checked_domain VARCHAR(255)");
         // Sertifika geçmişi: checker'ın hesaplayıp attığı aşama + çözümlenen IP'ler (yalnız hatalı kontrolde dolu).
         patch("ALTER TABLE certificate_checks ADD COLUMN error_stage VARCHAR(32)");

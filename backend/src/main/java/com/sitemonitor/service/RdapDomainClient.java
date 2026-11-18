@@ -80,6 +80,11 @@ public class RdapDomainClient {
     /** Sonuç haritasında RDAP HTTP durum kodu (200 dışı) — yalnız iç sınıflandırma için. */
     static final String HTTP_STATUS_KEY = "rdap_http_status";
     /** IANA listesinde RDAP sunucusu olmayan TLD'nin hata metni (+ TLD) — CheckFailureClassifier rdap_registry=false ile sınıflar. */
+    /**
+     * Sonuçta SiteMonitor'ün sorguladığı RDAP adresi (2026-11-19, kullanıcı isteği: kart bağlantısıyla çevrimiçi sorguyla
+     * karşılaştırma). Yalnız üst veri — karar yolu okumaz.
+     */
+    static final String QUERY_URL_KEY = "query_url";
     static final String NO_PUBLIC_RDAP = "no public rdap for .";
     private final java.util.concurrent.atomic.AtomicInteger sourceFailureStreak = new java.util.concurrent.atomic.AtomicInteger();
     private volatile Instant lastSuccessAt;
@@ -373,9 +378,12 @@ public class RdapDomainClient {
                 if (sc != 200) {
                     Map<String, Object> out = err("rdap http " + sc);
                     out.put(HTTP_STATUS_KEY, sc);   // 404 = alan bulunamadı (kaynak sağlam) ile kaynak hatasını ayırır
+                    out.put(QUERY_URL_KEY, url);
                     return out;
                 }
-                return parse(resp.body(), domain);
+                Map<String, Object> parsed = parse(resp.body(), domain);
+                parsed.put(QUERY_URL_KEY, url);
+                return parsed;
             } catch (Exception e) {
                 if (attempts < 1) { attempts++; sleep(backoff); backoff *= 2; continue; }
                 log.debug("RDAP {} başarısız: {}", domain, e.getMessage());

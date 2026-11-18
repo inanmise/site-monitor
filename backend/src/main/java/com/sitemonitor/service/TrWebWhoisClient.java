@@ -98,6 +98,32 @@ public class TrWebWhoisClient {
         return appSettings.getBoolean("site.monitor.domain.tr-web-whois-enabled", true);
     }
 
+    /**
+     * Sağlayıcının kullanıcıya gösterilecek sorgu adresi (2026-11-19): isimtescil = sorgunun kendisi (düz GET, tarayıcıda
+     * açılır), trabis = form sayfası (sorgu POST ile — adres tek başına sonucu açmaz), trabis43 = port-43 sunucusu (bağlantı
+     * değil, metin). Hiçbir alan bilinmiyorsa iki alan da null.
+     */
+    public record QueryRef(String url, String server) {}
+
+    public QueryRef queryRef(String provider, String domain) {
+        if (provider == null || domain == null) return new QueryRef(null, null);
+        try {
+            return switch (provider) {
+                case "isimtescil" -> {
+                    String base = appSettings.getString("site.monitor.domain.isimtescil-whois-url", "https://www.isimtescil.net/whois");
+                    yield new QueryRef(base + (base.contains("?") ? "&" : "?") + "domainname=" + enc(domain), null);
+                }
+                case "trabis" -> new QueryRef(trimTrailingSlash(appSettings.getString("site.monitor.domain.trabis-whois-url",
+                        "https://www.trabis.gov.tr")) + "/whois", null);
+                case "trabis43" -> new QueryRef(null, appSettings.getString("site.monitor.domain.trabis-whois43-host",
+                        "whois.trabis.gov.tr") + ":43");
+                default -> new QueryRef(null, null);
+            };
+        } catch (RuntimeException e) {
+            return new QueryRef(null, null);
+        }
+    }
+
     /** Ham WHOIS metni + onu döndüren kaynağın anahtarı (isimtescil / trabis / trabis43). */
     public record Fetched(String raw, String provider) {}
 

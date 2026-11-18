@@ -169,4 +169,30 @@ class RdapSourceStatusTest {
         assertThat(s.get("consecutive_failures")).isEqualTo(0);
         assertThat(registryHits.get()).isZero();
     }
+
+    @Test
+    @DisplayName("sonuç SiteMonitor'ün sorguladığı RDAP adresini taşır (başarı ve 404) — kart bağlantısı (2026-11-19)")
+    void resultCarriesQueryUrl() {
+        Map<String, Object> ok = client.lookup("ok.com");
+        assertThat(String.valueOf(ok.get(RdapDomainClient.QUERY_URL_KEY))).endsWith("/reg/domain/ok.com");
+        Map<String, Object> missing = client.lookup("missing.com");
+        assertThat(String.valueOf(missing.get(RdapDomainClient.QUERY_URL_KEY))).endsWith("/reg/domain/missing.com");
+        Map<String, Object> tr = client.lookup("ornek.com.tr");
+        assertThat(tr).doesNotContainKey(RdapDomainClient.QUERY_URL_KEY);   // sorgu yapılmadı
+    }
+
+    @Test
+    @DisplayName("safeQueryUrl: yalnız http(s), bilgi (userinfo) içermeyen ve 500 karakteri aşmayan adres")
+    void safeQueryUrlRules() {
+        assertThat(DomainCheckerService.safeQueryUrl("https://rdap.verisign.com/com/v1/domain/ok.com"))
+                .isEqualTo("https://rdap.verisign.com/com/v1/domain/ok.com");
+        assertThat(DomainCheckerService.safeQueryUrl(" http://x.example/whois?domainname=a.com.tr ")).isEqualTo("http://x.example/whois?domainname=a.com.tr");
+        assertThat(DomainCheckerService.safeQueryUrl("javascript:alert(1)")).isNull();
+        assertThat(DomainCheckerService.safeQueryUrl("ftp://x.example/a")).isNull();
+        assertThat(DomainCheckerService.safeQueryUrl("https://user:pw@x.example/a")).isNull();
+        assertThat(DomainCheckerService.safeQueryUrl("https://x.example/" + "a".repeat(500))).isNull();
+        assertThat(DomainCheckerService.safeQueryUrl("ht tp://bozuk")).isNull();
+        assertThat(DomainCheckerService.safeQueryUrl(null)).isNull();
+        assertThat(DomainCheckerService.safeQueryUrl(42)).isNull();
+    }
 }

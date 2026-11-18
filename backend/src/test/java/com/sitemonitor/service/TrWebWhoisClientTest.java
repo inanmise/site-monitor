@@ -133,4 +133,21 @@ class TrWebWhoisClientTest {
             else System.setProperty(ProxyAuthSupport.TUNNELING_PROP, origProp);
         }
     }
+
+    @Test
+    @org.junit.jupiter.api.DisplayName("sorgu adresi (2026-11-19): isimtescil = sorgunun kendisi, trabis = form sayfası, trabis43 = sunucu metni")
+    void queryRef_perProvider() {
+        AppSettingsService appSettings = org.mockito.Mockito.mock(AppSettingsService.class);
+        org.mockito.Mockito.when(appSettings.getString(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(i -> i.getArgument(1));
+        TrWebWhoisClient c = new TrWebWhoisClient(appSettings, new TrustEvaluator(appSettings),
+                org.mockito.Mockito.mock(CaAutoPinService.class), permissiveGuard());
+        assertThat(c.queryRef("isimtescil", "ornek.com.tr").url()).isEqualTo("https://www.isimtescil.net/whois?domainname=ornek.com.tr");
+        assertThat(c.queryRef("isimtescil", "ornek.com.tr").server()).isNull();
+        assertThat(c.queryRef("trabis", "ornek.com.tr").url()).isEqualTo("https://www.trabis.gov.tr/whois");
+        assertThat(c.queryRef("trabis43", "ornek.com.tr").url()).isNull();
+        assertThat(c.queryRef("trabis43", "ornek.com.tr").server()).isEqualTo("whois.trabis.gov.tr:43");
+        assertThat(c.queryRef("bilinmeyen", "ornek.com.tr")).isEqualTo(new TrWebWhoisClient.QueryRef(null, null));
+        assertThat(c.queryRef(null, "ornek.com.tr")).isEqualTo(new TrWebWhoisClient.QueryRef(null, null));
+    }
 }

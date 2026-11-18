@@ -12,7 +12,7 @@ import TeamBadge from '../ui/TeamBadge.jsx'
 import { PingCheckedAt, PingTags } from '../ping/PingCardParts.jsx'
 import { cn } from '@/lib/utils'
 import {
-  DomainChangedChip, DomainEppChips, DomainHero, DomainPlanChip, DomainProtection, DomainRegistrarLine, DomainSourceTag,
+  DomainChangedChip, DomainEppChips, DomainHero, DomainPlanChip, DomainProtection, DomainQueryLink, DomainRegistrarLine, DomainSourceTag,
 } from './DomainCardParts.jsx'
 import { alarmMatchesStatus, expiryTone, lifeOf, liveRow, planChipOf } from './domainCardModel.js'
 
@@ -94,6 +94,8 @@ export default function DomainMonitorCard({
           {name && name !== m.domain && <p data-slot="domain-name" className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">{name}</p>}
           <DomainRegistrarLine monitor={m} />
         </MonitorCardRich>
+        {/* Sorgulanan sayfa: her iki yoğunlukta (kullanıcı isteği — çevrimiçi sorguyla karşılaştırma) */}
+        <DomainQueryLink monitor={m} />
       </MonitorCardHeader>
       <MonitorCardContent className={cn(compact ? 'mt-2.5' : 'mt-3', !compact && !hasMeta && 'pb-1')}>
         <DomainHero monitor={m} tone={tone} life={life} compact={compact}

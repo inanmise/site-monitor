@@ -27,7 +27,7 @@ import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
-import { Trash2, CalendarClock, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Activity, Inbox, LockOpen, ShieldOff, ServerCrash, Ban, CalendarX, Download, ChevronDown, CalendarPlus, Copy, CalendarRange, FilterX } from 'lucide-react'
+import { Trash2, CalendarClock, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Activity, Inbox, LockOpen, ShieldOff, ServerCrash, Ban, CalendarX, Download, ChevronDown, CalendarPlus, Copy, CalendarRange, FilterX, Building2, Database } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import AlertHistory from './admin/AlertHistory.jsx'
 import { alertTypesFor } from '../utils/monitorAlertTypes.js'
@@ -53,7 +53,11 @@ import RenewalPlanModal from './RenewalPlanModal.jsx'   // yenileme planı (2026
 import ModalShell from './ui/ModalShell.jsx'
 import BulkActionBar from './ui/BulkActionBar.jsx'
 import DomainBulkPlanDialog from './domain/DomainBulkPlanDialog.jsx'
-import { DEFAULT_DOMAIN_FILTERS, NO_REGISTRAR, domainFacets, hasDomainFilters, matchesDomainFilters, normalizeDomainFilters } from './domain/domainFilterModel.js'
+import {
+  DEFAULT_DOMAIN_FILTERS, EXPIRY_FILTERS, NO_REGISTRAR, SOURCE_FILTERS, domainFacets, domainFilterParam, hasDomainFilters,
+  matchesDomainFilters, normalizeDomainFilters,
+} from './domain/domainFilterModel.js'
+import FacetedFilter from './ui/FacetedFilter.jsx'
 import { exportDomainsIcs } from '../utils/exportDomainsIcs.js'
 import NocNotifyField from './noc/forms/NocNotifyField.jsx'
 import { useNocSaveConfirm } from './noc/forms/useNocSaveConfirm.jsx'
@@ -230,7 +234,8 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   // kayıtlı görünümler de saklar (userPrefsModel VIEW_SPECS.monitor).
   const [domFilters, setDomFilters] = useState(() => normalizeDomainFilters({
     registrar: readUrlParam('dr', 'all'), source: readUrlParam('ds', 'all'), expiry: readUrlParam('dx', 'all') }))
-  const setDomFilter = (key, value) => setDomFilters((f) => (f[key] === value ? f : { ...f, [key]: value || 'all' }))
+  // Çoklu seçim (2026-11-19): faset düğmesi seçili değer dizisini verir; boş dizi = hepsi
+  const setDomFilter = (key, values) => setDomFilters((f) => ({ ...f, [key]: normalizeDomainFilters({ [key]: values })[key] }))
   const [bulkPlanRows, setBulkPlanRows] = useState(null)   // toplu yenileme planı penceresi (D1): seçili düzenlenebilir satırlar
   // Etkin bir sayım süzgeci (paylaşılan bağlantı / kayıtlı görünüm / yeniden yükleme) şeritle AÇIK gelir: süzgeç bandı ve
   // "Filtreyi temizle" katlanmış şeridin içinde kalıp liste sessizce süzülmesin (2026-10-22, UIM-20)
@@ -672,11 +677,11 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
   const scoped = useMemo(() => (hasDomainFilters(domFilters) ? baseScoped.filter((m) => matchesDomainFilters(m, domFilters)) : baseScoped),
     [baseScoped, domFilters])
   const facets = useMemo(() => domainFacets(baseScoped, domFilters), [baseScoped, domFilters])
-  const registrarOptions = useMemo(() => [{ value: 'all', label: t('dom.flt.registrarAll', facets.registrarAll) },
-    ...facets.registrars.map((r) => ({ value: r.key, label: `${r.key === NO_REGISTRAR ? t('dom.flt.registrarUnknown') : r.label} (${r.count})` }))],
-    [facets, t])
-  const sourceOptions = useMemo(() => ['all', 'rdap', 'whois', 'unknown'].map((k) => ({ value: k, label: t('dom.flt.source_' + k, facets.source[k]) })), [facets, t])
-  const expiryOptions = useMemo(() => ['all', 'expired', 'valid', 'unknown'].map((k) => ({ value: k, label: t('dom.flt.expiry_' + k, facets.expiry[k]) })), [facets, t])
+  // Faset seçenekleri (2026-11-19): sayı ayrı sütunda (FacetedFilter), "Tümü" seçeneği yok — seçim yoksa hepsi
+  const registrarOptions = useMemo(() => facets.registrars.map((r) => ({
+    value: r.key, label: r.key === NO_REGISTRAR ? t('dom.flt.registrarUnknown') : r.label, count: r.count })), [facets, t])
+  const sourceOptions = useMemo(() => SOURCE_FILTERS.map((k) => ({ value: k, label: t('dom.flt.opt.source_' + k), count: facets.source[k] })), [facets, t])
+  const expiryOptions = useMemo(() => EXPIRY_FILTERS.map((k) => ({ value: k, label: t('dom.flt.opt.expiry_' + k), count: facets.expiry[k] })), [facets, t])
   const anyListFilter = hasDomainFilters(domFilters) || quick !== 'all' || groupFilter !== 'all' || tagFilter !== 'all' || teamFilter !== 'all' || !!search.trim()
   const clearListFilters = () => {
     setDomFilters(DEFAULT_DOMAIN_FILTERS); setQuick('all'); setGroupFilter('all'); setTagFilter('all'); setTeamFilter('all'); setSearch('')
@@ -738,9 +743,9 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     ...monitorUrlState({ teamFilter, groupFilter, tagFilter, search, statFilter, pager }),
     sort: sortBy !== 'days_asc' ? sortBy : null,
     dq: quick !== 'all' ? quick : null,   // hızlı süzgeç (2026-09-22)
-    dr: domFilters.registrar !== 'all' ? domFilters.registrar : null,   // ek süzgeçler (2026-11-15, C1)
-    ds: domFilters.source !== 'all' ? domFilters.source : null,
-    dx: domFilters.expiry !== 'all' ? domFilters.expiry : null,
+    dr: domainFilterParam(domFilters.registrar),   // ek süzgeçler (2026-11-15, C1; 2026-11-19 çoklu seçim — `|` ile)
+    ds: domainFilterParam(domFilters.source),
+    dx: domainFilterParam(domFilters.expiry),
     monitor: selected?.id ?? null,
     mtab: selected && detailTab !== 'control' ? detailTab : null,
     // range/hfrom/hto/hst artık CheckHistoryTab'ın kendi URL senkronunda
@@ -1057,15 +1062,20 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
           {hasGroupOptions && <SearchableSelect value={groupFilter} onChange={setGroupFilter} options={groupFilterOptions} searchThreshold={2} ariaLabel={t('flt.group')} />}
           {hasTagOptions && <SearchableSelect value={tagFilter} onChange={setTagFilter} options={tagFilterOptions} searchThreshold={2} ariaLabel={t('flt.tag')} />}
           {hasTeamOptions && <SearchableSelect value={teamFilter} onChange={setTeamFilter} options={teamOptions} ariaLabel={t('flt.team')} />}
-          {/* Registrar adları uzundur ("Tucows Domains Inc. dba … (12)"): seçenek ve seçili değer SARAR, kırpılmaz (LOW 6) */}
+          {/* Sade faset düğmeleri (2026-11-19, kullanıcı isteği: "Tüm kayıt kuruluşları / tüm kaynaklar / tüm süre durumları"
+              açılır kutuları çok uzun ve büyüktü): kısa etiketli kesikli düğme + seçim sayısı; liste sayılarla, çoklu seçim.
+              Registrar adları uzundur — seçenekler SARAR, kesilmez (LOW 6). */}
           <span data-slot="domain-filter-registrar" className="contents">
-            <SearchableSelect value={domFilters.registrar} onChange={(v) => setDomFilter('registrar', v)} options={registrarOptions} searchThreshold={6} ariaLabel={t('dom.flt.registrar')} wrapLabels />
+            <FacetedFilter title={t('dom.flt.registrar')} icon={Building2} options={registrarOptions} value={domFilters.registrar}
+              onChange={(v) => setDomFilter('registrar', v)} searchPlaceholder={t('dom.flt.registrarSearch')} wrapLabels />
           </span>
           <span data-slot="domain-filter-source" className="contents">
-            <SearchableSelect value={domFilters.source} onChange={(v) => setDomFilter('source', v)} options={sourceOptions} ariaLabel={t('dom.flt.source')} wrapLabels />
+            <FacetedFilter title={t('dom.flt.source')} icon={Database} options={sourceOptions} value={domFilters.source}
+              onChange={(v) => setDomFilter('source', v)} wrapLabels />
           </span>
           <span data-slot="domain-filter-expiry" className="contents">
-            <SearchableSelect value={domFilters.expiry} onChange={(v) => setDomFilter('expiry', v)} options={expiryOptions} ariaLabel={t('dom.flt.expiry')} wrapLabels />
+            <FacetedFilter title={t('dom.flt.expiry')} icon={CalendarClock} options={expiryOptions} value={domFilters.expiry}
+              onChange={(v) => setDomFilter('expiry', v)} wrapLabels />
           </span>
           <Input type="text" className="w-full sm:w-auto sm:max-w-xs sm:min-w-[200px]" placeholder={t('dom.searchPlaceholder')} aria-label={t('dom.searchPlaceholder')}
             value={search} onChange={e => setSearch(e.target.value)} data-page-search="" />

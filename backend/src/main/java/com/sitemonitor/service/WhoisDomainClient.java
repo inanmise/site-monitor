@@ -72,6 +72,9 @@ public class WhoisDomainClient {
             Map<String, Object> info = parsers.get("tr").parse(raw);
             info.put("source", "WHOIS");
             info.put("whois_provider", f.provider());   // hangi kaynak yanıtladı (isimtescil/trabis/trabis43)
+            TrWebWhoisClient.QueryRef ref = trWebWhois.queryRef(f.provider(), registrableDomain);
+            if (ref != null && ref.url() != null) info.put("query_url", ref.url());
+            if (ref != null && ref.server() != null) info.put("query_server", ref.server());
             if (info.get("expiry_date") == null) info.put("error", "tr whois: no expiry parsed");
             info.put("raw", raw.length() > 1500 ? raw.substring(0, 1500) : raw);
             return info;
@@ -89,6 +92,7 @@ public class WhoisDomainClient {
         if (raw == null || raw.isBlank()) return err("empty whois response");
         Map<String, Object> info = parsers.getOrDefault(tld, defaultParser).parse(raw);
         info.put("source", "WHOIS");
+        info.put("query_server", server + ":43");   // port-43 — tarayıcıda açılmaz, metin olarak gösterilir
         if (info.get("expiry_date") == null) info.put("error", "whois: no expiry parsed");
         // Ham özet (kısaltılmış) — denetim/UI için orkestratör kullanabilir.
         info.put("raw", raw.length() > 1500 ? raw.substring(0, 1500) : raw);

@@ -36,7 +36,7 @@ import { CARD_CHECK, MonitorStatusBadge } from '../components/monitoring/Monitor
 import { expectTitleWraps, expectWraps } from './helpers/cardWrap.js'
 import {
   alarmMatchesStatus, blacklistOf, cardSourceTag, eppChips, expiryKey, expiryTone, lifeOf, lockOf, nsOf, planChipOf,
-  statusKey, unknownReasonOf,
+  queryRefOf, statusKey, unknownReasonOf,
 } from '../components/domain/domainCardModel.js'
 
 const DAY = 86_400_000
@@ -128,6 +128,47 @@ describe('domainCardModel — saf yardımcılar', () => {
     const late = new Date(Date.UTC(2027, 2, 15, 23, 59, 59))
     const localKey = `${late.getFullYear()}-${String(late.getMonth() + 1).padStart(2, '0')}-${String(late.getDate()).padStart(2, '0')}`
     expect(expiryKey({ expiry_date: '2027-03-15T23:59:59Z' })).toBe(localKey)   // UTC kesiti DEĞİL, yerel gün
+  })
+})
+
+describe('Alan adı kartı — sorgulanan sayfa bağlantısı (2026-11-19)', () => {
+  beforeEach(() => { localStorage.clear() })
+
+  it('queryRefOf: yalnız http(s) bağlantı olur; userinfo / başka şema / bozuk adres düşer; port-43 sunucusu metin', () => {
+    expect(queryRefOf({ query_url: 'https://rdap.verisign.com/com/v1/domain/example.com' }))
+      .toEqual({ kind: 'url', url: 'https://rdap.verisign.com/com/v1/domain/example.com', host: 'rdap.verisign.com' })
+    expect(queryRefOf({ query_url: 'javascript:alert(1)' })).toBeNull()
+    expect(queryRefOf({ query_url: 'https://u:p@x.example/a' })).toBeNull()
+    expect(queryRefOf({ query_url: 'bozuk adres' })).toBeNull()
+    expect(queryRefOf({ query_url: `https://x.example/${'a'.repeat(500)}` })).toBeNull()
+    expect(queryRefOf({ query_url: 'javascript:x', query_server: 'whois.nic.example:43' })).toEqual({ kind: 'server', server: 'whois.nic.example:43' })
+    expect(queryRefOf({})).toBeNull()
+  })
+
+  it('kart (zengin + kompakt): sorgulanan sayfa yeni sekmede açılır, kartın ayrıntısını açmaz; port-43 metin; adres yoksa satır yok', () => {
+    const url = 'https://rdap.verisign.com/com/v1/domain/example.com'
+    for (const density of ['rich', 'compact']) {
+      const onOpen = vi.fn()
+      const { container, unmount } = renderCard({ query_url: url }, { onOpen, density })
+      const link = container.querySelector('[data-slot="domain-query-link"]')
+      expect(link, density).not.toBeNull()
+      expect(link).toHaveAttribute('href', url)
+      expect(link).toHaveAttribute('target', '_blank')
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+      expect(link.textContent).toMatch(/rdap\.verisign\.com/)
+      expect(link.getAttribute('aria-label')).toMatch(/example\.com/)
+      fireEvent.click(link)
+      expect(onOpen).not.toHaveBeenCalled()
+      unmount()
+    }
+    const server = renderCard({ query_url: null, query_server: 'whois.trabis.gov.tr:43' })
+    const row = server.container.querySelector('[data-slot="domain-query"]')
+    expect(row).toHaveAttribute('data-kind', 'server')
+    expect(row.textContent).toMatch(/whois\.trabis\.gov\.tr:43/)
+    expect(row.querySelector('a')).toBeNull()
+    server.unmount()
+    const none = renderCard({})
+    expect(none.container.querySelector('[data-slot="domain-query"]')).toBeNull()
   })
 })
 
