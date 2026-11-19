@@ -66,9 +66,9 @@ public class AlertEventFieldWriter {
     public static final String[] NOTIFIED = {"notifiedContacts", "lastReAlertAt"};
     /** Sertifika terfisi ({@code EscalationService.EscalationUndo} ile aynı kolonlar — geri alma da bunları yazar). */
     public static final String[] CERT_ESCALATION = {"alertLevel", "message", "acknowledged", "acknowledgedAt",
-            "acknowledgedBy", "lastReAlertAt", "daysRemaining", "notAfter", "notifiedContacts"};
+            "acknowledgedBy", "lastReAlertAt", "daysRemaining", "notAfter", "notifiedContacts", "ackExpiresAt"};
     /** Onay kolonları (izleme terfisi onayı düşürdüğünde). */
-    public static final String[] ACK = {"acknowledged", "acknowledgedBy", "acknowledgedAt"};
+    public static final String[] ACK = {"acknowledged", "acknowledgedBy", "acknowledgedAt", "ackExpiresAt"};
 
     @PersistenceContext
     private EntityManager em;

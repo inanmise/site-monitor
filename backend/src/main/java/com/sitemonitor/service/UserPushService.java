@@ -466,7 +466,7 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
                 PushI18n.ForwardOwner owner = PushI18n.forwardOwnerOf(prior.getMessage());
                 message = messages.computeIfAbsent("fwd|" + lang + "|" + (owner == null ? "" : owner.plural() + "|" + owner.label()),
                         k -> PushText.truncate(PushText.pushSafe(PushI18n.forwardPrefixFor(owner, lang)
-                                + rawMessage(event, trigger, ctx, lang)), maxMessageChars()));
+                                + phaseMessage(event, trigger, ctx, lang)), maxMessageChars()));
                 rowBatch = batchId + "-f" + rowTeam;
             } else {
                 message = messages.computeIfAbsent(lang, l -> buildMessage(event, trigger, ctx, l));
@@ -2442,7 +2442,7 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
                     : new BaseStatus(overCap(capBypass(level), since)).skip(r.username(), r.skipReason()).of(r.username());
             String lang = r.lang();
             String prefix = "en".equals(lang) ? "On call: " : "Nöbetçisiniz: ";
-            String message = PushText.truncate(PushText.pushSafe(prefix + rawMessage(event, trigger, contextOf(event), lang)), maxMessageChars());
+            String message = PushText.truncate(PushText.pushSafe(prefix + phaseMessage(event, trigger, contextOf(event), lang)), maxMessageChars());
             UserPushDelivery d = row(event, trigger, dedupeKey, teamId, family, r.username(), r.displayName(),
                     message, status, ISO.format(Instant.now()), lang);
             d.setSamePersonUsername(chosen);
@@ -2741,7 +2741,7 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
                 String lang = r.lang();
                 String message = messages.computeIfAbsent(t.recipientTeamId() + "|" + lang,
                         k -> PushText.truncate(PushText.pushSafe(PushI18n.forwardPrefix(t.ownerTeamNames(), lang)
-                                + rawMessage(event, trigger, ctx, lang)), maxMessageChars()));
+                                + phaseMessage(event, trigger, ctx, lang)), maxMessageChars()));
                 UserPushDelivery d = row(event, trigger, key, t.recipientTeamId(), family, r.username(), r.displayName(),
                         message, status, now, lang);
                 d.setSamePersonUsername(chosen);
@@ -3277,10 +3277,16 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
     String buildMessage(AlertEvent event, String trigger, Map<String, Object> ctx, String lang) {
         // Kanal ISO-8859-9 tasiyor: tipografik isaretler burada karsiligina cevrilir, aksi halde
         // kullanicinin telefonunda soru isaretine donuyorlar (kirpma isareti "..." dahil).
+        return PushText.truncate(PushText.pushSafe(phaseMessage(event, trigger, ctx, lang)), maxMessageChars());
+    }
+
+    /**
+     * Faz metni: süresi dolan onayda (2026-11-19) alarm metninin önünde "Onay süresi doldu: " — telefonda neden yeniden
+     * geldiği görünsün. Sahip, nöbetçi ve iletim push'ları AYNI metni alır (inceleme 2026-11-19: yalnız sahip push'u taşıyordu).
+     */
+    String phaseMessage(AlertEvent event, String trigger, Map<String, Object> ctx, String lang) {
         String raw = rawMessage(event, trigger, ctx, lang);
-        // Süresi dolan onay (2026-11-19): telefonda neden yeniden geldiği görünsün — alarm metninin önünde kısa önek
-        if ("ACK_EXPIRED".equals(trigger)) raw = PushI18n.ackExpiredPrefix(lang) + raw;
-        return PushText.truncate(PushText.pushSafe(raw), maxMessageChars());
+        return "ACK_EXPIRED".equals(trigger) ? PushI18n.ackExpiredPrefix(lang) + raw : raw;
     }
 
     /** Doldurulmuş şablon — süzme/kırpma ÖNCESİ (eskalasyon adımı önek ekleyip kendisi kırpar). */

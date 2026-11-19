@@ -1267,7 +1267,7 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
      * Koşul PostgreSQL kısmi indeksiyle ({@code idx_ae_ack_expires}, {@code DeferredIndexBuilder}) aynı metin: yalnız süreli
      * onaylı açık alarmları taşır, dakikada bir tarama tabloyu okumaz.
      */
-    @Query(value = "SELECT e.id, e.ack_expires_at FROM alert_events e "
+    @Query(value = "SELECT e.id, e.ack_expires_at, e.last_re_alert_at FROM alert_events e "
          + "WHERE e.ack_expires_at IS NOT NULL AND e.acknowledged = true AND e.resolved = false "
          + "AND e.ack_expires_at <= :now ORDER BY e.ack_expires_at, e.id LIMIT :limit", nativeQuery = true)
     List<Object[]> findDueAckExpiries(@Param("now") String now, @Param("limit") int limit);

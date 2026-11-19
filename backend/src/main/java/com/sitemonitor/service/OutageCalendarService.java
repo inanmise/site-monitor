@@ -92,12 +92,17 @@ public class OutageCalendarService {
 
     /** Takımın ayı — kurum geneli ay verisi (bellekten) takıma süzülür, "şimdi" ile hesaplanır. */
     public TeamMonth forTeam(YearMonth month, long teamId, long nowMs) {
+        return forTeam(month, teamId, nowMs, Long.MIN_VALUE);
+    }
+
+    /** {@code coverFromMs} öncesinde başlayan günler "veri yok" (saklama süresi — {@link OutageCalendar#compute}). */
+    public TeamMonth forTeam(YearMonth month, long teamId, long nowMs, long coverFromMs) {
         MonthData data = monthData(month);
         List<OutageCalendar.Interval> mine = new ArrayList<>();
         for (OwnedInterval oi : data.intervals()) {
             if (oi.owners().contains(teamId)) mine.add(oi.interval());
         }
-        return new TeamMonth(OutageCalendar.compute(month, mine, nowMs), data.truncated());
+        return new TeamMonth(OutageCalendar.compute(month, mine, nowMs, coverFromMs), data.truncated());
     }
 
     /** Kurum geneli ay verisi — {@code cacheMs} boyunca paylaşılır; okuma hatası saklanmaz. */

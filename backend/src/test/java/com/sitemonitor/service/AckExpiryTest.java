@@ -161,7 +161,9 @@ class AckExpiryTest {
         EscalationService self = mock(EscalationService.class);
         EscalationService svc = pod(realRepo, self);
         Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
-        Long id = acked("due.example.com", now.minus(1, ChronoUnit.MINUTES)).getId();
+        AlertEvent due = acked("due.example.com", now.minus(1, ChronoUnit.MINUTES));
+        due.setLastReAlertAt("2026-11-18T09:00:00");
+        Long id = realRepo.save(due).getId();
 
         assertThat(svc.expireDueAcknowledgements(now)).isEqualTo(1);
 
@@ -172,7 +174,8 @@ class AckExpiryTest {
         assertThat(r.getAckExpiresAt()).isNull();
         assertThat(r.getLastReAlertAt()).isEqualTo(iso(now));
         assertThat(r.getResolved()).isFalse();
-        verify(self).ackExpiredReminderAsync(id);
+        // sahiplenme damgası + önceki damga taşınır (hatırlatma gitmezse koşullu geri alınır)
+        verify(self).ackExpiredReminderAsync(id, iso(now), "2026-11-18T09:00:00");
 
         // ikinci tur: düşecek bir şey kalmadı
         assertThat(svc.expireDueAcknowledgements(now.plus(1, ChronoUnit.MINUTES))).isZero();
@@ -200,7 +203,7 @@ class AckExpiryTest {
         assertThat(row(future).getAcknowledged()).isTrue();
         assertThat(row(unlimited).getAcknowledged()).isTrue();
         assertThat(row(closed.getId()).getAcknowledgedBy()).isEqualTo("Ayşe Yılmaz");
-        verify(self, never()).ackExpiredReminderAsync(org.mockito.ArgumentMatchers.any());
+        verify(self, never()).ackExpiredReminderAsync(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test
@@ -222,8 +225,8 @@ class AckExpiryTest {
         assertThat(podA.expireDueAcknowledgements(now)).isEqualTo(1);
         assertThat(podB.expireDueAcknowledgements(now)).isZero();
 
-        verify(selfA).ackExpiredReminderAsync(id);
-        verify(selfB, never()).ackExpiredReminderAsync(org.mockito.ArgumentMatchers.any());
+        verify(selfA).ackExpiredReminderAsync(eq(id), eq(iso(now)), org.mockito.ArgumentMatchers.any());
+        verify(selfB, never()).ackExpiredReminderAsync(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test
@@ -244,7 +247,7 @@ class AckExpiryTest {
         assertThat(r.getAcknowledged()).isTrue();
         assertThat(r.getAcknowledgedBy()).isEqualTo("Mehmet Demir");
         assertThat(r.getAckExpiresAt()).isNotNull();
-        verify(self, never()).ackExpiredReminderAsync(org.mockito.ArgumentMatchers.any());
+        verify(self, never()).ackExpiredReminderAsync(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test
@@ -264,7 +267,7 @@ class AckExpiryTest {
 
         assertThat(row(e.getId()).getResolved()).isTrue();
         assertThat(row(e.getId()).getAcknowledged()).isTrue();
-        verify(self, never()).ackExpiredReminderAsync(org.mockito.ArgumentMatchers.any());
+        verify(self, never()).ackExpiredReminderAsync(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test
@@ -286,7 +289,7 @@ class AckExpiryTest {
     void reminderRejected_stillExpired() {
         EscalationService self = mock(EscalationService.class);
         org.mockito.Mockito.doThrow(new org.springframework.core.task.TaskRejectedException("kapalı"))
-                .when(self).ackExpiredReminderAsync(org.mockito.ArgumentMatchers.any());
+                .when(self).ackExpiredReminderAsync(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
         NotificationLogRepository logs = mock(NotificationLogRepository.class);
         EscalationService svc = pod(realRepo, self);
         ReflectionTestUtils.setField(svc, "notificationLogRepo", logs);
@@ -299,6 +302,6 @@ class AckExpiryTest {
         verify(logs).save(org.mockito.ArgumentMatchers.argThat(n ->
                 EscalationService.TRIGGER_ACK_EXPIRED.equals(n.getTrigger())
                         && n.getEmailStatus().startsWith("FAILED: onay süresi hatırlatması kuyruğa alınamadı")));
-        verify(self).ackExpiredReminderAsync(eq(id));
+        verify(self).ackExpiredReminderAsync(eq(id), eq(iso(now)), org.mockito.ArgumentMatchers.any());
     }
 }

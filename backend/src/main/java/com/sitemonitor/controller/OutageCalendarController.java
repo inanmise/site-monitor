@@ -58,6 +58,13 @@ public class OutageCalendarController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.noc.NocCallLogService nocCallLog;
 
+    /**
+     * Saklama süresi (inceleme 2026-11-19): çözülmüş alarmlar {@code site.monitor.alert.retention-days} sonra silinir — o
+     * günler "kesinti yok" değil "veri yok" gösterilir. Bean yoksa (dilim testi) sınır yok.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.retention.RetentionService retentionService;
+
     /** Test kancası: "şimdi" (epoch ms). */
     LongSupplier clock = System::currentTimeMillis;
 
@@ -74,9 +81,11 @@ public class OutageCalendarController {
         if (!seesAll && !SessionScope.canViewWithGrants(session, teamId)) throw notFound();
         Team t = teamRepo.findById(teamId).orElseThrow(OutageCalendarController::notFound);
 
+        Integer retentionDays = alertRetentionDays();
+        long coverFromMs = retentionDays == null ? Long.MIN_VALUE : now - retentionDays * 86_400_000L;
         OutageCalendarService.TeamMonth tm;
         try {
-            tm = calendarService.forTeam(ym, teamId, now);
+            tm = calendarService.forTeam(ym, teamId, now, coverFromMs);
         } catch (OutageCalendarService.UnavailableException e) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("success", false, "code", "DB_UNAVAILABLE",
                     "error", Msg.t("Kesinti takvimi şu an okunamıyor; veritabanına geçici olarak ulaşılamıyor olabilir. Birkaç saniye sonra yeniden deneyin.",
@@ -90,6 +99,7 @@ public class OutageCalendarController {
             m.put("outage_minutes", d.outageMinutes());
             m.put("alarms", d.alarms());
             m.put("worst_level", d.worstLevel());
+            if (d.noData()) m.put("no_data", true);
             days.add(m);
         }
         Map<String, Object> data = new LinkedHashMap<>();
@@ -99,10 +109,33 @@ public class OutageCalendarController {
         data.put("days", days);
         data.put("total_minutes", tm.result().totalMinutes());
         data.put("truncated", tm.truncated());
+        if (retentionDays != null) {
+            java.time.LocalDate first = coveredFrom(coverFromMs);
+            data.put("retention_days", retentionDays);
+            data.put("covered_from", first.toString());
+            data.put("oldest_month", YearMonth.from(first).toString());
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("success", true);
         body.put("data", data);
         return ResponseEntity.ok(body);
+    }
+
+    /** Çözülmüş alarmların saklama günü (politika {@code alert-events}); okunamazsa null (sınır uygulanmaz, iz yok). */
+    private Integer alertRetentionDays() {
+        if (retentionService == null) return null;
+        try {
+            return com.sitemonitor.service.retention.RetentionCatalog.byId("alert-events")
+                    .map(retentionService::effectiveDays).filter(d -> d > 0).orElse(null);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** Tam kapsanan ilk İstanbul günü: başlangıcı {@code coverFromMs}'ten önce olmayan ilk gün. */
+    static java.time.LocalDate coveredFrom(long coverFromMs) {
+        java.time.LocalDate d = Instant.ofEpochMilli(coverFromMs).atOffset(OutageCalendar.ISTANBUL).toLocalDate();
+        return OutageCalendar.dayStartMs(d) < coverFromMs ? d.plusDays(1) : d;
     }
 
     private static long parseTeam(String raw) {

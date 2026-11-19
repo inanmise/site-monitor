@@ -7,6 +7,8 @@ import com.sitemonitor.service.OutageCalendar;
 import com.sitemonitor.service.OutageCalendarService;
 import com.sitemonitor.service.PermissionService;
 import com.sitemonitor.service.noc.NocCallLogService;
+import com.sitemonitor.service.retention.RetentionPolicy;
+import com.sitemonitor.service.retention.RetentionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -83,7 +85,7 @@ class OutageCalendarControllerTest {
                     : d > 19 ? new OutageCalendar.Day(day, null, 0, null)
                     : new OutageCalendar.Day(day, 0, 0, null));
         }
-        when(calendarService.forTeam(any(), anyLong(), anyLong())).thenReturn(new OutageCalendarService.TeamMonth(
+        when(calendarService.forTeam(any(), anyLong(), anyLong(), anyLong())).thenReturn(new OutageCalendarService.TeamMonth(
                 new OutageCalendar.Result(YearMonth.of(2026, 11), days, 135), false));
     }
 
@@ -112,7 +114,7 @@ class OutageCalendarControllerTest {
                 .andExpect(jsonPath("$.data.days[25].outage_minutes").doesNotExist())
                 .andExpect(jsonPath("$.data.total_minutes").value(135))
                 .andExpect(jsonPath("$.data.truncated").value(false));
-        verify(calendarService).forTeam(YearMonth.of(2026, 11), 5L, NOW);
+        verify(calendarService).forTeam(YearMonth.of(2026, 11), 5L, NOW, Long.MIN_VALUE);   // saklama servisi yok → sınır yok
     }
 
     @Test
@@ -122,7 +124,7 @@ class OutageCalendarControllerTest {
                 .when(permissionService).require(any(jakarta.servlet.http.HttpSession.class), eq("alerts.read"), eq("view"));
         mvc.perform(get("/api/admin/alerts/outage-calendar").param("team", "5").param("month", "2026-11").session(admin))
                 .andExpect(status().isForbidden());
-        verify(calendarService, never()).forTeam(any(), anyLong(), anyLong());
+        verify(calendarService, never()).forTeam(any(), anyLong(), anyLong(), anyLong());
     }
 
     @Test
@@ -135,7 +137,7 @@ class OutageCalendarControllerTest {
         mvc.perform(get("/api/admin/alerts/outage-calendar").param("team", "9").param("month", "2026-11").session(admin))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("TEAM_NOT_FOUND"));
-        verify(calendarService, never()).forTeam(any(), anyLong(), anyLong());
+        verify(calendarService, never()).forTeam(any(), anyLong(), anyLong(), anyLong());
     }
 
     @Test
@@ -177,7 +179,7 @@ class OutageCalendarControllerTest {
         // tam 24 ay geri izinli
         mvc.perform(get("/api/admin/alerts/outage-calendar").param("team", "5").param("month", "2024-11").session(admin))
                 .andExpect(status().isOk());
-        verify(calendarService, never()).forTeam(eq(YearMonth.of(2026, 12)), anyLong(), anyLong());
+        verify(calendarService, never()).forTeam(eq(YearMonth.of(2026, 12)), anyLong(), anyLong(), anyLong());
     }
 
     @Test
@@ -191,11 +193,50 @@ class OutageCalendarControllerTest {
     @Test
     @DisplayName("okuma hatası → 503 DB_UNAVAILABLE (asla 'kesinti yok')")
     void unavailable() throws Exception {
-        when(calendarService.forTeam(any(), anyLong(), anyLong()))
+        when(calendarService.forTeam(any(), anyLong(), anyLong(), anyLong()))
                 .thenThrow(new OutageCalendarService.UnavailableException(new RuntimeException("db")));
         mvc.perform(get("/api/admin/alerts/outage-calendar").param("team", "5").param("month", "2026-11").session(admin))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.code").value("DB_UNAVAILABLE"))
                 .andExpect(jsonPath("$.success").value(false));
+    }
+
+    @Test
+    @DisplayName("saklama süresi: kapsanmayan günler no_data, covered_from / oldest_month / retention_days döner (inceleme 2026-11-19)")
+    void retentionCoverage() throws Exception {
+        OutageCalendarController controller = new OutageCalendarController(calendarService, teamRepo, permissionService);
+        ReflectionTestUtils.setField(controller, "nocCallLog", nocCallLog);
+        RetentionService retention = mock(RetentionService.class);
+        when(retention.effectiveDays(any(RetentionPolicy.class))).thenReturn(365);
+        ReflectionTestUtils.setField(controller, "retentionService", retention);
+        controller.clock = () -> NOW;
+        MockMvc m = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new GlobalExceptionHandler(mock(ObjectProvider.class)))
+                .build();
+        List<OutageCalendar.Day> days = new ArrayList<>();
+        days.add(new OutageCalendar.Day(LocalDate.of(2025, 11, 19), null, 0, null, true));
+        days.add(new OutageCalendar.Day(LocalDate.of(2025, 11, 20), 0, 0, null));
+        when(calendarService.forTeam(any(), anyLong(), anyLong(), anyLong())).thenReturn(new OutageCalendarService.TeamMonth(
+                new OutageCalendar.Result(YearMonth.of(2025, 11), days, 0), false));
+        long coverFrom = NOW - 365L * 86_400_000L;   // 2025-11-19 12:00 İstanbul
+        m.perform(get("/api/admin/alerts/outage-calendar").param("team", "5").param("month", "2025-11").session(admin))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.days[0].no_data").value(true))
+                .andExpect(jsonPath("$.data.days[0].outage_minutes").doesNotExist())
+                .andExpect(jsonPath("$.data.days[1].no_data").doesNotExist())
+                .andExpect(jsonPath("$.data.days[1].outage_minutes").value(0))
+                .andExpect(jsonPath("$.data.retention_days").value(365))
+                .andExpect(jsonPath("$.data.covered_from").value("2025-11-20"))
+                .andExpect(jsonPath("$.data.oldest_month").value("2025-11"));
+        verify(calendarService).forTeam(YearMonth.of(2025, 11), 5L, NOW, coverFrom);
+    }
+
+    @Test
+    @DisplayName("coveredFrom: sınır gün başına denk gelirse o gün, değilse ertesi gün")
+    void coveredFromRule() {
+        long dayStart = OutageCalendar.dayStartMs(LocalDate.of(2026, 1, 10));
+        org.assertj.core.api.Assertions.assertThat(OutageCalendarController.coveredFrom(dayStart)).isEqualTo(LocalDate.of(2026, 1, 10));
+        org.assertj.core.api.Assertions.assertThat(OutageCalendarController.coveredFrom(dayStart + 1)).isEqualTo(LocalDate.of(2026, 1, 11));
+        org.assertj.core.api.Assertions.assertThat(OutageCalendarController.coveredFrom(dayStart - 1)).isEqualTo(LocalDate.of(2026, 1, 10));
     }
 }

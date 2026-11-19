@@ -35,8 +35,16 @@ public final class OutageCalendar {
      */
     public record Interval(long startMs, Long endMs, String level) {}
 
-    /** Bir günün sonucu: {@code outageMinutes} gelecek günde {@code null}; {@code worstLevel} alarm yoksa {@code null}. */
-    public record Day(LocalDate day, Integer outageMinutes, int alarms, String worstLevel) {}
+    /**
+     * Bir günün sonucu: {@code outageMinutes} gelecek günde ve verisi olmayan günde {@code null}; {@code worstLevel} alarm yoksa
+     * {@code null}. {@code noData} = günün çözülmüş alarmları saklama süresi dolduğu için silinmiş olabilir (inceleme
+     * 2026-11-19) — "kesinti yok" DEĞİL, "bilinmiyor".
+     */
+    public record Day(LocalDate day, Integer outageMinutes, int alarms, String worstLevel, boolean noData) {
+        public Day(LocalDate day, Integer outageMinutes, int alarms, String worstLevel) {
+            this(day, outageMinutes, alarms, worstLevel, false);
+        }
+    }
 
     /** Ayın sonucu — {@code totalMinutes} günlerin dakikalarının toplamıdır (hücrelerde görünenle aynı). */
     public record Result(YearMonth month, List<Day> days, long totalMinutes) {}
@@ -58,6 +66,15 @@ public final class OutageCalendar {
      * @param nowMs     şimdiki an — açık alarmların bitişi ve gelecek günlerin sınırı
      */
     public static Result compute(YearMonth month, List<Interval> intervals, long nowMs) {
+        return compute(month, intervals, nowMs, Long.MIN_VALUE);
+    }
+
+    /**
+     * Ayı hesaplar; {@code coverFromMs} öncesinde BAŞLAYAN günler {@code noData} döner (değer yok, 0 değil). Çözülmüş alarm
+     * {@code resolved_at}'e göre saklama süresi dolunca silinir: başlangıcı {@code şimdi − saklama günü}'nden önce olan bir günün
+     * alarmları eksik olabilir; sonraki her günün alarmı (kapanışı o günün başından sonradır) hâlâ tablodadır.
+     */
+    public static Result compute(YearMonth month, List<Interval> intervals, long nowMs, long coverFromMs) {
         List<Interval> list = intervals == null ? List.of() : intervals;
         List<Day> days = new ArrayList<>(month.lengthOfMonth());
         long total = 0;
@@ -66,6 +83,10 @@ public final class OutageCalendar {
             long dayStart = dayStartMs(day);
             if (dayStart >= nowMs) {               // gelecek gün — değer yok
                 days.add(new Day(day, null, 0, null));
+                continue;
+            }
+            if (dayStart < coverFromMs) {          // saklama süresi dolmuş olabilir — bilinmiyor
+                days.add(new Day(day, null, 0, null, true));
                 continue;
             }
             long windowEnd = Math.min(dayStart + DAY_MS, nowMs);

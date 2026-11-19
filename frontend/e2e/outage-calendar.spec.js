@@ -37,7 +37,17 @@ function calendarFor(month, teamId) {
   return { success: true, data: { month, team_id: teamId, team_name: TEAMS.find((x) => x.id === teamId)?.name ?? 'Takım', days, total_minutes: total, truncated: false } }
 }
 
-async function mockCalendar(page) {
+/** Saklama süresi (inceleme 2026-11-19): ayın ilk 14 günü "veri yok", en eski ay bu ay. */
+function partialFor(month, teamId) {
+  const r = calendarFor(month, teamId)
+  r.data.days = r.data.days.map((d) => (Number(d.day.slice(8)) <= 14
+    ? { day: d.day, outage_minutes: null, alarms: 0, worst_level: null, no_data: true } : d))
+  r.data.total_minutes = r.data.days.reduce((s, d) => s + (d.outage_minutes || 0), 0)
+  Object.assign(r.data, { retention_days: 365, covered_from: `${month}-15`, oldest_month: month })
+  return r
+}
+
+async function mockCalendar(page, { partialMonth = null } = {}) {
   const seen = { calendar: [], list: [] }
   await mockApi(page, { role: 'ADMIN', globalAdmin: true, teamIds: [1] })
   await page.route((u) => new URL(u).pathname === '/api/admin/teams', (route) => route.fulfill(json({ success: true, data: TEAMS })))
@@ -48,7 +58,7 @@ async function mockCalendar(page) {
       const team = Number(url.searchParams.get('team'))
       const month = url.searchParams.get('month')
       seen.calendar.push({ team, month })
-      return route.fulfill(json(calendarFor(month, team)))
+      return route.fulfill(json(month === partialMonth ? partialFor(month, team) : calendarFor(month, team)))
     }
     if (p === '/api/admin/alerts' && route.request().method() === 'GET') {
       const params = Object.fromEntries(url.searchParams.entries())
@@ -136,6 +146,33 @@ for (const vp of GATE_VIEWPORTS) {
       expect(param(page, 'view')).toBe('all')
       await expect(page.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true')
       expect(await pageOverflow(page)).toBeLessThanOrEqual(1)
+    })
+
+    test('saklama süresi: veri yok günleri tıklanamaz ve nötr, bilgi bandı sığar, en eski aydan geri gidilmez', async ({ page }) => {
+      test.setTimeout(150_000)
+      const prev = istMonth(-1)
+      const seen = await mockCalendar(page, { partialMonth: prev })
+      await page.goto(`/?tab=alerthistory&cal=1&calm=${prev}`)
+      const cal = page.locator('[data-slot="outage-calendar"]')
+      await expect(cal).toBeVisible({ timeout: 60_000 })
+      await expect.poll(() => seen.calendar.at(-1)).toEqual({ team: 1, month: prev })
+      await expect(page.locator('[data-slot="outage-cal-day"][data-bucket="nodata"]')).toHaveCount(14)
+      await expect(page.locator(`[data-slot="outage-cal-day"][data-day="${prev}-05"]`)).toHaveJSProperty('tagName', 'DIV')
+      const banner = page.locator('[data-slot="outage-cal-partial"]')
+      await expect(banner).toContainText('No data for part of this month')
+      await expect(banner).toContainText('365 days')
+      await expect(page.locator('[data-slot="outage-cal-prev"]')).toBeDisabled()
+      await expect(page.locator('[data-slot="outage-cal-legend"]')).toContainText('No data (retention)')
+      await expect(page.locator('[data-slot="outage-cal-summary"]')).toHaveAttribute('data-partial', 'true')
+      await expectLayout(page, '[data-slot="outage-calendar"]', { touch: vp.touch, label: `takvim veri yok @${vp.name}` })
+      // Veri yok gününe basmak listeye geçmez
+      const before = seen.list.length
+      await page.locator(`[data-slot="outage-cal-day"][data-day="${prev}-05"]`).click({ force: true })
+      await page.waitForTimeout(300)
+      await expect(cal).toBeVisible()
+      expect(seen.list.length).toBe(before)
+      expect(await pageOverflow(page)).toBeLessThanOrEqual(1)
+      await cal.screenshot({ path: `test-results/outage-calendar-partial-${vp.name}.png` })
     })
   })
 }

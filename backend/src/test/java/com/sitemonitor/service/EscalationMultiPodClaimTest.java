@@ -478,6 +478,29 @@ class EscalationMultiPodClaimTest {
     }
 
     @Test
+    @DisplayName("süreli onay (2026-11-19): terfi onayla birlikte süreyi de düşürür; geri alınan terfi süreyi de geri getirir")
+    void monitoringEscalation_timedAck_expiryClearedAndRestoredOnRevert() {
+        String domain = "esc-timed.example.com";
+        AlertEvent e = openMonitoringAlarm(domain, "HIGH");
+        String expires = ISO.format(Instant.now().plus(3, ChronoUnit.HOURS));
+        e.setAckExpiresAt(expires);
+        store.save(e);
+        EscalationService a = pod(1);
+        failEscalatedSaves(1);
+        assertThatThrownBy(() -> a.processConfirmedOutage(domain, EscalationService.TYPE_ACCESSIBILITY, "CRITICAL",
+                new LinkedHashMap<>())).isInstanceOf(org.springframework.dao.QueryTimeoutException.class);
+        AlertEvent reverted = store.byId(e.getId()).orElseThrow();
+        assertThat(reverted.getAcknowledged()).isTrue();
+        assertThat(reverted.getAckExpiresAt()).as("geri alınan terfi süreyi de geri getirir").isEqualTo(expires);
+
+        a.processConfirmedOutage(domain, EscalationService.TYPE_ACCESSIBILITY, "CRITICAL", new LinkedHashMap<>());
+        AlertEvent escalated = store.byId(e.getId()).orElseThrow();
+        assertThat(escalated.getAlertLevel()).isEqualTo("CRITICAL");
+        assertThat(escalated.getAcknowledged()).isFalse();
+        assertThat(escalated.getAckExpiresAt()).as("onay düşünce süresi de düşer").isNull();
+    }
+
+    @Test
     @DisplayName("N1: izleme terfisi — sahiplenmeden sonra ALICI SORGUSU düşerse de geri alınır; sonraki tur gönderir")
     void monitoringEscalation_recipientsFailAfterClaim_revertedAndNextSweepSends() {
         String domain = "esc-rcpt.example.com";

@@ -755,6 +755,7 @@ public class EscalationService {
                             event.setAcknowledged(false);
                             event.setAcknowledgedAt(null);
                             event.setAcknowledgedBy(null);
+                            event.setAckExpiresAt(null);   // süreli onayın süresi de düşer (yeniden onay yeniden süre seçer)
 
                             List<EscalationContact> contacts = recipientsNow(alertLevel, domainTeamId, ugTeamId, event.getId());
                             // Terfi ÖNCE kalıcılaşır, SONRA gönderilir (INITIAL dalıyla aynı sıra). Kişi-webhook tetiği
@@ -1527,6 +1528,7 @@ public class EscalationService {
         for (Object[] r : due) {
             Long id = r != null && r.length > 0 && r[0] instanceof Number n ? n.longValue() : null;
             String seen = r != null && r.length > 1 && r[1] != null ? r[1].toString() : null;
+            String previousReAlert = r != null && r.length > 2 && r[2] != null ? r[2].toString() : null;
             if (id == null || seen == null) continue;
             int won;
             try {
@@ -1544,7 +1546,7 @@ public class EscalationService {
                 log.debug("Onay süresi aktivite satırı atlandı (olay {}): {}", id, e.toString());
             }
             try {
-                (self != null ? self : this).ackExpiredReminderAsync(id);
+                (self != null ? self : this).ackExpiredReminderAsync(id, nowIso, previousReAlert);
             } catch (RuntimeException e) {
                 // Havuz kapanmış (kapanış) ya da dolu: onay düştü, hatırlatma bu kez gitmedi — sessiz değil
                 log.warn("Onay süresi hatırlatması kuyruğa alınamadı (olay {}): {}", id, e.toString());
@@ -1565,7 +1567,17 @@ public class EscalationService {
      * günlüğe karar satırı yazılır. 7/24 (NOC) bu tetikte bildirilmez (açılış tetikleri listesinde yok).
      */
     @Async("notifyExecutor")
-    public void ackExpiredReminderAsync(Long alertEventId) {
+    public void ackExpiredReminderAsync(Long alertEventId, String claimedAt, String previousReAlertAt) {
+        ackExpiredReminder(alertEventId, claimedAt, previousReAlertAt);
+    }
+
+    /**
+     * Hatırlatmanın gövdesi (eşzamansız sarmalayıcı yukarıda; testler doğrudan çağırır). {@code claimedAt} = sahiplenmenin
+     * yazdığı yeniden uyarı damgası, {@code previousReAlertAt} = sahiplenmeden önceki damga. Hatırlatma GİTMEZSE (fırtına üyesi,
+     * bakım penceresi, susturulmuş sistem bakımı) damga KOŞULLU olarak eskisine döner (inceleme 2026-11-19): yoksa bir sonraki
+     * günlük hatırlatma bir tam aralık sonraya kayardı — bakım biter bitmez açık ve onaysız alarm için kimseye bir şey gitmezdi.
+     */
+    void ackExpiredReminder(Long alertEventId, String claimedAt, String previousReAlertAt) {
         try {
             AlertEvent ev = alertEventId == null ? null : alertEventRepo.findById(alertEventId).orElse(null);
             if (ev == null || Boolean.TRUE.equals(ev.getResolved())) return;   // bu arada kapandı
@@ -1575,18 +1587,26 @@ public class EscalationService {
             if (ev.getStormId() != null && stormService != null && stormService.isActive(ev.getStormId())) {
                 saveLog(alertEventId, "-", "", subject, (ev.getMessage() == null ? "" : ev.getMessage()), STATUS_ACK_EXPIRED_STORM, "SKIPPED",
                         TRIGGER_ACK_EXPIRED);
+                restoreAckExpiryStamp(alertEventId, claimedAt, previousReAlertAt);
                 return;
             }
             if (domain != null && maintenanceService != null && maintenanceService.isUnderMaintenance(domain)) {
                 saveLog(alertEventId, "-", "", subject, (ev.getMessage() == null ? "" : ev.getMessage()), STATUS_ACK_EXPIRED_MAINTENANCE, "SKIPPED",
                         TRIGGER_ACK_EXPIRED);
+                restoreAckExpiryStamp(alertEventId, claimedAt, previousReAlertAt);
                 return;
             }
+            // Susturulmuş sistem bakımı: gönderim yolu iz satırını yazar ve hiçbir şey göndermez — damga eskisine döner
+            boolean muted = systemMaintenanceMuted(TRIGGER_ACK_EXPIRED);
             ReNotifyTargets targets = resolveReNotifyTargets(ev);
             ReNotifyContent c = reNotifyContent(ev, domain, ev.getAlertLevel(), ev.getAlertType(), ev.getDaysRemaining());
             sendCombinedAlert(targets.domainTeamId(), targets.ugTeamId(), targets.contacts(), domain, ev.getAlertLevel(),
                     ev.getAlertType(), c.message(), ACK_EXPIRED_SUBJECT_PREFIX, alertEventId, TRIGGER_ACK_EXPIRED,
                     c.days(), c.context());
+            if (muted) {
+                restoreAckExpiryStamp(alertEventId, claimedAt, previousReAlertAt);
+                return;
+            }
             ev.setNotifiedContacts(serializeContacts(targets.contacts()));
             persistIfOpen(ev, "notifiedContacts");
         } catch (Exception e) {
@@ -1595,6 +1615,15 @@ public class EscalationService {
                     "FAILED: onay süresi hatırlatması gönderilemedi (" + e.getClass().getSimpleName() + ")", "SKIPPED",
                     TRIGGER_ACK_EXPIRED);
         }
+    }
+
+    /**
+     * Gitmeyen hatırlatmanın sahiplenme damgasını geri alır — KOŞULLU (damga hâlâ bu sahiplenmeninse; arada başka yol ilerlettiyse
+     * dokunulmaz). Önceki damga yoksa dokunulmaz: NULL "ilk bildirim eksik" demektir ve bir INITIAL'ı yeniden tetiklerdi.
+     */
+    void restoreAckExpiryStamp(Long id, String claimedAt, String previousReAlertAt) {
+        if (id == null || claimedAt == null || previousReAlertAt == null) return;
+        releaseReAlert(id, claimedAt, previousReAlertAt);
     }
 
     /**
@@ -2418,6 +2447,7 @@ public class EscalationService {
                         event.setAcknowledged(false);
                         event.setAcknowledgedAt(null);
                         event.setAcknowledgedBy(null);
+                        event.setAckExpiresAt(null);   // süreli onayın süresi de düşer
                     }
                     // Varlık kaydı sahiplenilen damgayı GERİ yazmasın (kayıt tüm kolonları yazar)
                     if (!stormMember) event.setLastReAlertAt(claimAt);
@@ -6413,10 +6443,12 @@ public class EscalationService {
 
     /** Terfi öncesi değerler — terfi bildirimi istisnayla düşerse geri yüklenir (inceleme F2 / S-6). */
     record EscalationUndo(String level, String message, Boolean acknowledged, String acknowledgedAt, String acknowledgedBy,
-                          String lastReAlertAt, Integer daysRemaining, String notAfter, String notifiedContacts) {
+                          String lastReAlertAt, Integer daysRemaining, String notAfter, String notifiedContacts,
+                          String ackExpiresAt) {
         static EscalationUndo of(AlertEvent e) {
             return new EscalationUndo(e.getAlertLevel(), e.getMessage(), e.getAcknowledged(), e.getAcknowledgedAt(),
-                    e.getAcknowledgedBy(), e.getLastReAlertAt(), e.getDaysRemaining(), e.getNotAfter(), e.getNotifiedContacts());
+                    e.getAcknowledgedBy(), e.getLastReAlertAt(), e.getDaysRemaining(), e.getNotAfter(), e.getNotifiedContacts(),
+                    e.getAckExpiresAt());
         }
 
         void applyTo(AlertEvent e) {
@@ -6429,6 +6461,7 @@ public class EscalationService {
             e.setDaysRemaining(daysRemaining);
             e.setNotAfter(notAfter);
             e.setNotifiedContacts(notifiedContacts);
+            e.setAckExpiresAt(ackExpiresAt);
         }
     }
 
@@ -6455,11 +6488,11 @@ public class EscalationService {
         if (jdbcTemplate == null || event == null || event.getId() == null || undo == null) return false;
         try {
             int n = jdbcTemplate.update("UPDATE alert_events SET alert_level = ?, message = ?, acknowledged = ?, acknowledged_at = ?, "
-                    + "acknowledged_by = ?, last_re_alert_at = ?, days_remaining = ?, not_after = ?, notified_contacts = ? "
-                    + "WHERE id = ? AND resolved = FALSE AND last_re_alert_at = ?",
+                    + "acknowledged_by = ?, last_re_alert_at = ?, days_remaining = ?, not_after = ?, notified_contacts = ?, "
+                    + "ack_expires_at = ? WHERE id = ? AND resolved = FALSE AND last_re_alert_at = ?",
                     undo.level(), undo.message(), Boolean.TRUE.equals(undo.acknowledged()), undo.acknowledgedAt(),
                     undo.acknowledgedBy(), undo.lastReAlertAt(), undo.daysRemaining(), undo.notAfter(), undo.notifiedContacts(),
-                    event.getId(), claimedAt);
+                    undo.ackExpiresAt(), event.getId(), claimedAt);
             if (n == 1) undo.applyTo(event);
             return n == 1;
         } catch (Exception e) {

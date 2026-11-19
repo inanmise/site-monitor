@@ -162,4 +162,23 @@ class OutageCalendarTest {
         assertThat(OutageCalendar.ceilMinutes(60_000)).isEqualTo(1);
         assertThat(OutageCalendar.ceilMinutes(60_001)).isEqualTo(2);
     }
+
+    @Test
+    @DisplayName("saklama sınırı: başlangıcı sınırdan önce olan günler veri yok (0 değil), toplam yalnız kapsanan günler")
+    void coverageLimit() {
+        OutageCalendar.Result r = OutageCalendar.compute(NOV, List.of(
+                iv("2026-11-05T10:00", "2026-11-05T11:00", "CRITICAL"),
+                iv("2026-11-12T10:00", "2026-11-12T10:30", "HIGH")), AFTER, ist("2026-11-10T12:00"));
+        assertThat(day(r, 5).noData()).isTrue();
+        assertThat(day(r, 5).outageMinutes()).isNull();
+        assertThat(day(r, 5).alarms()).isZero();
+        assertThat(day(r, 10).noData()).isTrue();    // gün başı sınırdan önce — o günün alarmları eksik olabilir
+        assertThat(day(r, 11).noData()).isFalse();
+        assertThat(day(r, 11).outageMinutes()).isZero();
+        assertThat(day(r, 12).outageMinutes()).isEqualTo(30);
+        assertThat(r.totalMinutes()).isEqualTo(30);
+        // eski imza sınırsız: aynı veri, 5 Kasım dahil
+        assertThat(OutageCalendar.compute(NOV, List.of(iv("2026-11-05T10:00", "2026-11-05T11:00", "HIGH")), AFTER)
+                .totalMinutes()).isEqualTo(60);
+    }
 }

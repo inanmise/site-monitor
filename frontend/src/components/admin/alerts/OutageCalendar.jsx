@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarDays, ChevronLeft, ChevronRight, RefreshCcw, RotateCcw, TriangleAlert, Users } from 'lucide-react'
+import { CalendarDays, ChevronLeft, ChevronRight, History, RefreshCcw, RotateCcw, TriangleAlert, Users } from 'lucide-react'
 import { api } from '../../../api/client'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import SearchableSelect from '../../ui/SearchableSelect.jsx'
@@ -11,7 +11,8 @@ import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
 import {
   monthGrid, monthTitle, dayTitle, dayNumber, weekdayNames, todayKey, currentMonth, shiftMonth, canGoPrev, canGoNext,
-  formatMinutes, bucketOf, BUCKET_MIX, calendarFrom, summarize, outageDayList, defaultTeam, isUnsupportedAnswer,
+  formatMinutes, bucketOf, dayBucket, BUCKET_MIX, calendarFrom, summarize, outageDayList, defaultTeam, isUnsupportedAnswer,
+  fullDayTitle,
 } from './outageCalendarModel.js'
 
 /**
@@ -45,6 +46,8 @@ export default function OutageCalendar({
   const [error, setError] = useState(null)
   const [unsupported, setUnsupported] = useState(false)
   const [nonce, setNonce] = useState(0)
+  // Verisi olan en eski ay (saklama süresi) — ay değişse de kalır; "önceki ay" bundan geriye gitmez
+  const [oldest, setOldest] = useState(null)
   const seq = useRef(0)
 
   useEffect(() => {
@@ -59,7 +62,7 @@ export default function OutageCalendar({
       .then((res) => {
         if (my !== seq.current) return
         const cal = res?.success ? calendarFrom(res.data) : null
-        if (cal) { setData(cal); return }
+        if (cal) { setData(cal); if (cal.oldestMonth) setOldest(cal.oldestMonth); return }
         setData(null)
         if (res && isUnsupportedAnswer(res)) setUnsupported(true)
         else setError(res?.error || t('alh.cal.unreadableText'))
@@ -81,6 +84,7 @@ export default function OutageCalendar({
   const alarmsText = (n) => t(n === 1 ? 'alh.cal.alarmsOne' : 'alh.cal.alarms', n)
   const dayAria = (d) => {
     const head = dayTitle(d.day, locale)
+    if (d.noData) return t('alh.cal.aria.noData', head)
     if (!d.minutes && !d.alarms) return `${t('alh.cal.aria.none', head)} ${t('alh.cal.aria.open')}`
     const parts = [d.minutes ? t('alh.cal.aria.minutes', formatMinutes(d.minutes, t)) : t('alh.cal.noOutage'), alarmsText(d.alarms)]
     if (d.worst) parts.push(t('alh.cal.aria.level', levelText(d.worst)))
@@ -101,7 +105,7 @@ export default function OutageCalendar({
         </div>
         <div className="flex items-center gap-1" role="group" aria-label={t('alh.cal.monthNav')}>
           <Button type="button" variant="outline" size="icon" aria-label={t('alh.cal.prev')} title={t('alh.cal.prev')}
-            data-slot="outage-cal-prev" disabled={!canGoPrev(month, nowMs)} onClick={() => onMonthChange?.(shiftMonth(month, -1))}>
+            data-slot="outage-cal-prev" disabled={!canGoPrev(month, nowMs, oldest)} onClick={() => onMonthChange?.(shiftMonth(month, -1))}>
             <ChevronLeft aria-hidden="true" />
           </Button>
           <span data-slot="outage-cal-month" aria-live="polite" className="min-w-32 px-1 text-center text-sm font-semibold tabular-nums">{monthTitle(month, locale)}</span>
@@ -150,7 +154,16 @@ export default function OutageCalendar({
         {data.truncated && (
           <AlertBanner tone="warning" className="mb-0" title={t('alh.cal.truncated')}>{t('alh.cal.truncatedText')}</AlertBanner>
         )}
-        <p data-slot="outage-cal-summary" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+        {summary.noDataDays > 0 && (
+          <div data-slot="outage-cal-partial">
+            <AlertBanner tone="info" className="mb-0" icon={History} title={t('alh.cal.partial')}>
+              {data.retentionDays && data.coveredFrom
+                ? t('alh.cal.partialText', data.retentionDays, fullDayTitle(data.coveredFrom, locale))
+                : t('alh.cal.partialTextNoDate')}
+            </AlertBanner>
+          </div>
+        )}
+        <p data-slot="outage-cal-summary" data-partial={summary.noDataDays > 0 || undefined} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
           <span className="font-semibold [overflow-wrap:anywhere]">{teamName}</span>
           <span>{t('alh.cal.total', formatMinutes(summary.totalMinutes, t) ?? '—')}</span>
           <span className="text-muted-foreground">{t('alh.cal.outageDays', summary.outageDays)}</span>
@@ -168,8 +181,18 @@ export default function OutageCalendar({
             {weeks.flat().map((key, i) => {
               if (!key) return <div key={`e${i}`} aria-hidden="true" className="min-h-10 @2xl:min-h-20" />
               const d = data.days.get(key) || { day: key, minutes: null, alarms: 0, worst: null }
-              const bucket = bucketOf(d.minutes)
+              const bucket = dayBucket(d)
               const isToday = key === today
+              if (bucket === 'nodata') {
+                return (
+                  <div key={key} data-slot="outage-cal-day" data-day={key} data-bucket="nodata"
+                    className="flex min-h-10 flex-col rounded-md border border-dotted bg-muted/60 p-1 text-muted-foreground @2xl:min-h-20 @2xl:p-1.5">
+                    <span className="text-xs font-semibold tabular-nums">{dayNumber(key)}</span>
+                    <span aria-hidden="true" className="hidden text-xs leading-tight [overflow-wrap:anywhere] @2xl:block">{t('alh.cal.noData')}</span>
+                    <span className="sr-only">{dayAria(d)}</span>
+                  </div>
+                )
+              }
               if (bucket === 'future') {
                 return (
                   <div key={key} data-slot="outage-cal-day" data-day={key} data-bucket="future"
@@ -208,7 +231,7 @@ export default function OutageCalendar({
 
           <ul data-slot="outage-cal-list" aria-label={t('alh.cal.listTitle')} className="mt-3 flex flex-col gap-1.5 @2xl:hidden">
             {outageDays.length === 0 ? (
-              <li className="text-sm text-muted-foreground">{t('alh.cal.listEmpty')}</li>
+              <li className="text-sm text-muted-foreground">{t(summary.noDataDays > 0 ? 'alh.cal.listEmptyPartial' : 'alh.cal.listEmpty')}</li>
             ) : outageDays.map((d) => (
               <li key={d.day}>
                 <Button type="button" variant="outline" data-slot="outage-cal-list-day" data-day={d.day} onClick={() => onPickDay?.(team, d.day)}
@@ -235,6 +258,7 @@ export default function OutageCalendar({
             <LegendSwatch key={b} label={label} style={{ backgroundColor: `color-mix(in srgb, var(--destructive) ${BUCKET_MIX[b]}%, var(--card))` }} />
           ))}
           <LegendSwatch label={t('alh.cal.legend.future')} className="border-dashed bg-muted/30" />
+          {summary.noDataDays > 0 && <LegendSwatch label={t('alh.cal.legend.noData')} className="border-dotted bg-muted/60" />}
         </div>
       </div>
     )

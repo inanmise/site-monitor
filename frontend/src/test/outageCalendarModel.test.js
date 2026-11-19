@@ -4,7 +4,7 @@ import path from 'node:path'
 import {
   MAX_MONTHS_BACK, currentMonth, todayKey, isMonth, shiftMonth, oldestMonth, clampMonth, canGoPrev, canGoNext, monthGrid,
   dayNumber, weekdayNames, monthTitle, dayTitle, formatMinutes, bucketOf, calendarFrom, summarize, outageDayList,
-  dayListFilters, defaultTeam, isUnsupportedAnswer,
+  dayListFilters, defaultTeam, isUnsupportedAnswer, dayBucket, fullDayTitle,
 } from '../components/admin/alerts/outageCalendarModel.js'
 
 /** Takım kesinti takvimi (2026-11-19) — saf model. "Şimdi" UTC olarak verilir; İstanbul sabit UTC+3. */
@@ -166,6 +166,65 @@ describe('sunucu yanıtı', () => {
     expect(isUnsupportedAnswer(r(404, 'TEAM_NOT_FOUND'))).toBe(false)
     expect(isUnsupportedAnswer(r(503, 'DB_UNAVAILABLE'))).toBe(false)
     expect(isUnsupportedAnswer({ success: false, status: 400, code: 'INVALID_PARAMETER' })).toBe(true)
+  })
+})
+
+describe('saklama süresi — veri yok (inceleme 2026-11-19)', () => {
+  const resp = {
+    month: '2025-11', team_id: 5, team_name: 'Takim A', total_minutes: 30, truncated: false,
+    retention_days: 365, covered_from: '2025-11-20', oldest_month: '2025-11',
+    days: [
+      { day: '2025-11-19', outage_minutes: null, alarms: 0, worst_level: null, no_data: true },
+      // sunucu no_data dediyse diğer alanlar yok sayılır (savunma)
+      { day: '2025-11-18', outage_minutes: 99, alarms: 4, worst_level: 'CRITICAL', no_data: true },
+      { day: '2025-11-20', outage_minutes: 0, alarms: 0, worst_level: null },
+      { day: '2025-11-21', outage_minutes: 30, alarms: 1, worst_level: 'HIGH' },
+    ],
+  }
+
+  it('calendarFrom: no_data günü değersiz (0 değil), kova nodata; saklama alanları okunur', () => {
+    const cal = calendarFrom(resp)
+    const d18 = cal.days.get('2025-11-18')
+    expect(d18).toMatchObject({ noData: true, minutes: null, alarms: 0, worst: null })
+    expect(dayBucket(d18)).toBe('nodata')
+    expect(dayBucket(cal.days.get('2025-11-20'))).toBe('zero')
+    expect(dayBucket(cal.days.get('2025-11-21'))).toBe(2)
+    expect(cal.retentionDays).toBe(365)
+    expect(cal.coveredFrom).toBe('2025-11-20')
+    expect(cal.oldestMonth).toBe('2025-11')
+  })
+
+  it('summarize: veri yok günleri sayılır, toplama ve kesintili günlere girmez; listede yok', () => {
+    const cal = calendarFrom(resp)
+    const s = summarize(cal)
+    expect(s.noDataDays).toBe(2)
+    expect(s.outageDays).toBe(1)
+    expect(s.totalMinutes).toBe(30)
+    expect(outageDayList(cal).map((d) => d.day)).toEqual(['2025-11-21'])
+  })
+
+  it('bozuk saklama alanları düşer; eski sunucu (alan yok) → null', () => {
+    const cal = calendarFrom({ ...resp, retention_days: -3, covered_from: 'x', oldest_month: '2025-13' })
+    expect(cal.retentionDays).toBeNull()
+    expect(cal.coveredFrom).toBeNull()
+    expect(cal.oldestMonth).toBeNull()
+    const old = calendarFrom({ month: '2026-11', days: [] })
+    expect(old).toMatchObject({ retentionDays: null, coveredFrom: null, oldestMonth: null })
+    expect(summarize(old).noDataDays).toBe(0)
+  })
+
+  it('canGoPrev: verisi olan en eski aydan geriye gidilmez; en eski ayın kendisine gidilir', () => {
+    const now = at('2026-11-19T09:00:00')
+    expect(canGoPrev('2025-12', now, '2025-11')).toBe(true)
+    expect(canGoPrev('2025-11', now, '2025-11')).toBe(false)
+    expect(canGoPrev('2025-10', now, '2025-11')).toBe(false)
+    expect(canGoPrev('2025-12', now, null)).toBe(true)
+    expect(canGoPrev('2025-12', now, 'bozuk')).toBe(true)
+  })
+
+  it('fullDayTitle yıllı', () => {
+    expect(fullDayTitle('2025-11-20', 'tr-TR')).toBe('20 Kasım 2025')
+    expect(fullDayTitle('2025-11-20', 'en-GB')).toBe('20 November 2025')
   })
 })
 

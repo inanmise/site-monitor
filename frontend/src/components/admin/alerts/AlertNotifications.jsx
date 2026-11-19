@@ -38,7 +38,7 @@ const NOTIF_TONE = {
 }
 
 /** Push tetiği → ton anahtarı. */
-const PUSH_TRIGGER_CLS = { OPEN: 'initial', ESCALATION: 'escalation', RE_ALERT: 'daily', RESEND: 'manual', RESOLVE: 'resolution' }
+const PUSH_TRIGGER_CLS = { OPEN: 'initial', ESCALATION: 'escalation', RE_ALERT: 'daily', RESEND: 'manual', RESOLVE: 'resolution', ACK_EXPIRED: 'daily' }
 
 /** E-posta tetikleyicisi → ikon + etiket + ton. */
 const MAIL_TRIGGER = {
@@ -57,6 +57,8 @@ const MAIL_TRIGGER = {
   STORM_RESOLVE: { Icon: CloudLightning, textKey: 'alh.trigger.stormResolve', cls: 'resolution' },
   // 2026-10-01: zamana bağlı eskalasyon adımı — gecikmeli kişiye giden (ya da "SKIPPED: <neden>" ile atlanan) adım.
   ESCALATION_STEP: { Icon: Timer, textKey: 'alh.trigger.escalationStep', cls: 'escalation' },
+  // 2026-11-19: süreli onayın süresi doldu — alarm hâlâ açık, normal alıcılara giden hatırlatma (ya da atlanma kararı)
+  ACK_EXPIRED:     { Icon: Timer, textKey: 'alh.trigger.ackExpired',     cls: 'daily' },
   // 2026-10-01: sessiz saat — bildirim takımın özetine devredildi (KARAR satırı) ve pencere sonunda giden özet e-postası.
   QUIET_HOURS:   { Icon: Moon, textKey: 'alh.trigger.quietHours',  cls: 'quiet' },
   QUIET_DIGEST:  { Icon: Moon, textKey: 'alh.trigger.quietDigest', cls: 'quiet' },

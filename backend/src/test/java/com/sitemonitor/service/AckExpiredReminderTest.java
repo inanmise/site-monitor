@@ -61,12 +61,17 @@ class AckExpiredReminderTest {
     @Mock PageCheckRepository pageCheckRepo;
     @Mock AppSettingsService appSettings;
     @Mock SystemMaintenanceService systemMaintenance;
+    @Mock org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     static final long TEAM_B = 2L;
     static final String B_MAIL = "takim-b@example.com", B_MANAGER = "mudur-b@example.com";
     static final String DOMAIN = "b.example.com";
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
+
+    /** Sahiplenmenin yazdığı damga ve önceki damga (gitmeyen hatırlatmada koşullu geri alınır). */
+    static final String CLAIM = "2026-11-19T10:00:00", PREV = "2026-11-18T09:00:00";
+    static final String RESTORE_SQL = "UPDATE alert_events SET last_re_alert_at = ? WHERE id = ? AND last_re_alert_at = ?";
 
     final List<NotificationLog> logRows = new ArrayList<>();
     EscalationService service;
@@ -79,6 +84,7 @@ class AckExpiredReminderTest {
                 smtpSettings, maintenanceService, stormService, userPushService, domainMonitorRepo, domainCheckRepo,
                 dnsRecordRepo, pageCheckRepo, notificationGroups, appSettings);
         ReflectionTestUtils.setField(service, "self", service);
+        ReflectionTestUtils.setField(service, "jdbcTemplate", jdbc);
 
         when(appSettings.getBoolean(anyString(), anyBoolean())).thenAnswer(i -> i.getArgument(1));
         when(smtpSettings.getOrDefaults()).thenReturn(new com.sitemonitor.model.SmtpSettings());
@@ -136,7 +142,7 @@ class AckExpiredReminderTest {
     @Test
     @DisplayName("açık + onayı düşmüş alarm: takım adresi + seviyesine uyan eskalasyon kişisi, ACK_EXPIRED tetiği ve konu öneki")
     void reminderGoesToNormalRecipients() {
-        service.ackExpiredReminderAsync(100L);
+        service.ackExpiredReminder(100L, CLAIM, PREV);
 
         assertThat(sentTo()).containsExactlyInAnyOrder(B_MAIL, B_MANAGER);
         ArgumentCaptor<String> subject = ArgumentCaptor.forClass(String.class);
@@ -146,18 +152,19 @@ class AckExpiredReminderTest {
         assertThat(logRows).isNotEmpty();
         assertThat(logRows).extracting(NotificationLog::getTrigger).containsOnly(EscalationService.TRIGGER_ACK_EXPIRED);
         assertThat(logRows).extracting(NotificationLog::getEmailStatus).contains("SENT");
+        verify(jdbc, never()).update(eq(RESTORE_SQL), any(), any(), any());   // gitti — damga kalır
     }
 
     @Test
     @DisplayName("bu arada kapanmış ya da yeniden onaylanmış alarm: hiçbir şey gitmez, satır yazılmaz")
     void closedOrReAcknowledged_nothing() {
         row.setResolved(true);
-        service.ackExpiredReminderAsync(100L);
+        service.ackExpiredReminder(100L, CLAIM, PREV);
         row.setResolved(false);
         row.setAcknowledged(true);
-        service.ackExpiredReminderAsync(100L);
+        service.ackExpiredReminder(100L, CLAIM, PREV);
         when(alertEventRepo.findById(100L)).thenReturn(Optional.empty());
-        service.ackExpiredReminderAsync(100L);
+        service.ackExpiredReminder(100L, CLAIM, PREV);
 
         noMail();
         assertThat(logRows).isEmpty();
@@ -169,12 +176,13 @@ class AckExpiredReminderTest {
         row.setStormId(55L);
         when(stormService.isActive(55L)).thenReturn(true);
 
-        service.ackExpiredReminderAsync(100L);
+        service.ackExpiredReminder(100L, CLAIM, PREV);
 
         noMail();
         assertThat(logRows).hasSize(1);
         assertThat(logRows.get(0).getEmailStatus()).isEqualTo(EscalationService.STATUS_ACK_EXPIRED_STORM);
         assertThat(logRows.get(0).getTrigger()).isEqualTo(EscalationService.TRIGGER_ACK_EXPIRED);
+        verify(jdbc).update(RESTORE_SQL, PREV, 100L, CLAIM);   // gitmedi — günlük hatırlatma bir aralık kaymaz
     }
 
     @Test
@@ -182,11 +190,12 @@ class AckExpiredReminderTest {
     void maintenanceWindow_skippedWithTrace() {
         when(maintenanceService.isUnderMaintenance(DOMAIN)).thenReturn(true);
 
-        service.ackExpiredReminderAsync(100L);
+        service.ackExpiredReminder(100L, CLAIM, PREV);
 
         noMail();
         assertThat(logRows).hasSize(1);
         assertThat(logRows.get(0).getEmailStatus()).isEqualTo(EscalationService.STATUS_ACK_EXPIRED_MAINTENANCE);
+        verify(jdbc).update(RESTORE_SQL, PREV, 100L, CLAIM);
     }
 
     @Test
@@ -195,11 +204,26 @@ class AckExpiredReminderTest {
         service.setSystemMaintenance(systemMaintenance);
         when(systemMaintenance.notificationsMuted()).thenReturn(true);
 
-        service.ackExpiredReminderAsync(100L);
+        service.ackExpiredReminder(100L, CLAIM, PREV);
 
         verify(emailService, never()).sendAlert(any(String[].class), any(), any(), any(), any(), any(), any(), any());
         assertThat(logRows).extracting(NotificationLog::getTrigger).contains("SYSTEM_MAINTENANCE");
         verify(systemMaintenance).noteSuppressed(100L, EscalationService.TRIGGER_ACK_EXPIRED);
+        verify(jdbc).update(RESTORE_SQL, PREV, 100L, CLAIM);
+    }
+
+    @Test
+    @DisplayName("önceki damga yoksa geri alınmaz (NULL 'ilk bildirim eksik' demektir — INITIAL'ı yeniden tetiklerdi)")
+    void noPreviousStamp_notRestored() {
+        when(maintenanceService.isUnderMaintenance(DOMAIN)).thenReturn(true);
+
+        service.ackExpiredReminder(100L, CLAIM, null);
+
+        noMail();
+        verify(jdbc, never()).update(anyString(), any(Object[].class));
+        verify(jdbc, never()).update(eq(RESTORE_SQL), any(), any(), any());
+        verify(jdbc, never()).update(eq("UPDATE alert_events SET last_re_alert_at = NULL WHERE id = ? AND last_re_alert_at = ?"),
+                any(), any());
     }
 
     @Test
@@ -207,7 +231,7 @@ class AckExpiredReminderTest {
     void failure_leavesFailedRow() {
         when(maintenanceService.isUnderMaintenance(DOMAIN)).thenThrow(new IllegalStateException("db"));
 
-        service.ackExpiredReminderAsync(100L);
+        service.ackExpiredReminder(100L, CLAIM, PREV);
 
         noMail();
         assertThat(logRows).hasSize(1);

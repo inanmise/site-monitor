@@ -321,4 +321,17 @@ class PushLanguageTest {
                 new UserPushService.LocalizedText("tr metin", "en text"), "k:MGR");
         assertThat(store).extracting(UserPushDelivery::getMessage).containsExactly("en text", "tr metin");
     }
+
+    @Test
+    @DisplayName("süresi dolan onay (ACK_EXPIRED): faz metni önekli — sahip, nöbetçi ve iletim aynı metni alır; diğer fazlar öneksiz")
+    void ackExpiredPhasePrefix() {
+        AlertEvent e = event(EscalationService.TYPE_HTTP_DOWN, "CRITICAL", "https://shop.example.com",
+                "KRİTİK: https://shop.example.com bağlantı zaman aşımı", "2026-10-04T11:05:00");
+        String raw = service.rawMessage(e, "ACK_EXPIRED", null, "tr");
+        assertThat(service.phaseMessage(e, "ACK_EXPIRED", null, "tr")).isEqualTo("Onay süresi doldu: " + raw);
+        assertThat(service.phaseMessage(e, "ACK_EXPIRED", null, "en"))
+                .startsWith("Acknowledgement expired: ").endsWith(service.rawMessage(e, "ACK_EXPIRED", null, "en"));
+        assertThat(service.phaseMessage(e, "OPEN", null, "tr")).isEqualTo(service.rawMessage(e, "OPEN", null, "tr"));
+        assertThat(service.buildMessage(e, "ACK_EXPIRED", null, "tr")).startsWith("Onay süresi doldu: ");
+    }
 }

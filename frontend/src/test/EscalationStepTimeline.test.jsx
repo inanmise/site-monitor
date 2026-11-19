@@ -23,6 +23,17 @@ describe('ESCALATION_STEP tetiği — zaman çizelgesi ve bildirim kartı', () =
     expect(triggerLabel('ESCALATION_STEP', en)).toBe('Escalation step')
   })
 
+  it('ACK_EXPIRED (süreli onay, 2026-11-19): alarm penceresinde ham kod değil, okunur etiket + günlük hatırlatma tonu', () => {
+    expect(mailTriggerText(tr, 'ACK_EXPIRED')).toBe('Onay Süresi Doldu')
+    expect(mailTriggerText(en, 'ACK_EXPIRED')).toBe('Acknowledgement Expired')
+    const log = { id: 4, trigger: 'ACK_EXPIRED', sent_at: '2026-11-19T10:00:00', recipient_name: 'SY-A',
+      recipient_email: 'team@example.com', recipient_role: 'TEAM', subject: '[ONAY SÜRESİ DOLDU] [Site Monitor] KRİTİK · api',
+      message: 'hatırlatma', email_status: 'SENT', webhook_status: 'SKIPPED' }
+    const { container } = render(<NotifLogCard log={log} alertLevel="CRITICAL" />)
+    expect(container.querySelector('[data-notif-card]')).toHaveAttribute('data-notif-card', 'daily')
+    expect(screen.queryByText('ACK_EXPIRED')).toBeNull()
+  })
+
   it('buildAlertTimeline: ESCALATION_STEP satırı e-posta olayıdır (fırtına devri DEĞİL), zamanına göre sıralanır', () => {
     const alert = { id: 9, domain: 'api.example.com', alert_type: 'HTTP_DOWN', alert_level: 'CRITICAL',
       created_at: '2026-10-01T10:00:00', acknowledged: true, acknowledged_at: '2026-10-01T10:50:00', acknowledged_by: 'ayse' }

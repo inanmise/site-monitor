@@ -137,6 +137,41 @@ describe('OutageCalendar', () => {
     expect(screen.queryByText('Outage calendar unavailable')).toBeNull()
   })
 
+  it('saklama süresi: veri yok günleri tıklanamaz, nötr, bilgi bandı + gösterge; en eski aydan geri gidilmez', async () => {
+    const days = []
+    for (let d = 1; d <= 30; d++) {
+      const day = `2025-11-${String(d).padStart(2, '0')}`
+      if (d <= 19) days.push({ day, outage_minutes: null, alarms: 0, worst_level: null, no_data: true })
+      else if (d === 21) days.push({ day, outage_minutes: 30, alarms: 1, worst_level: 'HIGH' })
+      else days.push({ day, outage_minutes: 0, alarms: 0, worst_level: null })
+    }
+    api.admin.getOutageCalendar.mockResolvedValue({ success: true, data: {
+      month: '2025-11', team_id: 5, team_name: 'Takim A', days, total_minutes: 30, truncated: false,
+      retention_days: 365, covered_from: '2025-11-20', oldest_month: '2025-11' } })
+    const { container, onPickDay } = renderCal({ month: '2025-11' })
+    await waitFor(() => expect(dayCell(container, '2025-11-05')).toHaveAttribute('data-bucket', 'nodata'))
+    const nd = dayCell(container, '2025-11-05')
+    expect(nd.tagName).toBe('DIV')
+    expect(nd).toHaveTextContent(/no data/i)
+    fireEvent.click(nd)
+    expect(onPickDay).not.toHaveBeenCalled()
+    expect(dayCell(container, '2025-11-20').tagName).toBe('BUTTON')
+    const banner = container.querySelector('[data-slot="outage-cal-partial"]')
+    expect(banner).toHaveTextContent('No data for part of this month')
+    expect(banner).toHaveTextContent('365 days')
+    expect(banner).toHaveTextContent('20 November 2025')
+    expect(container.querySelector('[data-slot="outage-cal-summary"]')).toHaveAttribute('data-partial', 'true')
+    expect(container.querySelector('[data-slot="outage-cal-legend"]')).toHaveTextContent('No data (retention)')
+    expect(container.querySelector('[data-slot="outage-cal-prev"]')).toBeDisabled()
+  })
+
+  it('veri yok günü yoksa bant ve gösterge çizilmez', async () => {
+    const { container } = renderCal()
+    await waitFor(() => expect(dayCell(container, '2026-11-03')).toHaveAttribute('data-bucket', '3'))
+    expect(container.querySelector('[data-slot="outage-cal-partial"]')).toBeNull()
+    expect(container.querySelector('[data-slot="outage-cal-legend"]')).not.toHaveTextContent('No data')
+  })
+
   it('truncated: uyarı satırı', async () => {
     api.admin.getOutageCalendar.mockResolvedValue(calResponse(5, { truncated: true }))
     renderCal()

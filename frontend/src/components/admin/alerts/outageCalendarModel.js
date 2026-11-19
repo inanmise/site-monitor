@@ -2,8 +2,10 @@
  * Takım kesinti takvimi (2026-11-19) — Alarm Geçmişi "Takvim" görünümünün SAF modeli (React'siz, test edilebilir).
  *
  * Sunucu sözleşmesi (`GET /api/admin/alerts/outage-calendar?team=<id>&month=yyyy-MM`, OutageCalendarController):
- * `{ month, team_id, team_name, days: [{ day: 'yyyy-MM-dd', outage_minutes: number|null, alarms, worst_level }],
- *   total_minutes, truncated }`. Gün = Europe/Istanbul takvim günü; `outage_minutes` null → gelecek gün (değer yok, 0 değil).
+ * `{ month, team_id, team_name, days: [{ day: 'yyyy-MM-dd', outage_minutes: number|null, alarms, worst_level, no_data? }],
+ *   total_minutes, truncated, retention_days?, covered_from?, oldest_month? }`. Gün = Europe/Istanbul takvim günü;
+ * `outage_minutes` null → gelecek gün ya da `no_data: true` (çözülmüş alarmlar saklama süresi dolunca silinir — o gün
+ * "bilinmiyor"dur, asla "kesinti yok" değil; inceleme 2026-11-19). `oldest_month` = verisi olan en eski ay.
  *
  * URL: `cal=1` takvim görünümü (yok = liste), `calm=yyyy-MM` gösterilen ay (yok = bu ay, İstanbul), takım mevcut `team`
  * anahtarında (listeyle ortak). Anahtarlar uygulamanın PAGE_STATE_PARAMS listesinde.
@@ -63,7 +65,13 @@ export function clampMonth(v, nowMs = Date.now()) {
   return v
 }
 
-export const canGoPrev = (month, nowMs = Date.now()) => isMonth(month) && monthDiff(currentMonth(nowMs), month) < MAX_MONTHS_BACK
+/**
+ * Önceki aya gidilebilir mi: 24 ay sınırı ve — sunucu bildirdiyse — verisi olan en eski ay (`oldestMonth`; daha eskisi
+ * tamamen "veri yok" olurdu).
+ */
+export const canGoPrev = (month, nowMs = Date.now(), oldest = null) => isMonth(month)
+  && monthDiff(currentMonth(nowMs), month) < MAX_MONTHS_BACK
+  && !(isMonth(oldest) && monthDiff(month, oldest) <= 0)
 export const canGoNext = (month, nowMs = Date.now()) => isMonth(month) && monthDiff(month, currentMonth(nowMs)) < 0
 
 /**
@@ -116,6 +124,13 @@ export function monthTitle(month, locale) {
   } catch { return month }
 }
 
+/** "12 Kasım 2025" — dile göre, yıllı (saklama sınırı tarihi için). */
+export function fullDayTitle(key, locale) {
+  const d = dayDate(key)
+  if (!d) return String(key || '')
+  try { return new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(d) } catch { return key }
+}
+
 /** "12 Kasım" — dile göre (gün adı için ayrı). */
 export function dayTitle(key, locale) {
   const d = dayDate(key)
@@ -149,6 +164,9 @@ export function bucketOf(min) {
   return 4
 }
 
+/** Günün kovası: verisi yoksa `nodata` (saklama süresi — tıklanamaz, nötr), aksi {@link bucketOf}. */
+export const dayBucket = (d) => (d?.noData ? 'nodata' : bucketOf(d?.minutes))
+
 /** Kova → yıkıcı (destructive) rengin kart zeminine karışım yüzdesi — metin her kovada ön plan renginde okunur. */
 export const BUCKET_MIX = { 1: 18, 2: 30, 3: 44, 4: 60 }
 
@@ -164,9 +182,11 @@ export function calendarFrom(data) {
     const minutes = raw == null || !Number.isFinite(Number(raw)) ? null : Math.max(0, Math.round(Number(raw)))
     const alarms = Number.isFinite(Number(d.alarms)) ? Math.max(0, Math.round(Number(d.alarms))) : 0
     const worst = LEVELS.includes(d.worst_level) ? d.worst_level : null
-    days.set(String(d.day), { day: String(d.day), minutes, alarms, worst })
+    const noData = d.no_data === true
+    days.set(String(d.day), { day: String(d.day), minutes: noData ? null : minutes, alarms: noData ? 0 : alarms, worst: noData ? null : worst, noData })
   }
   const total = Number.isFinite(Number(data.total_minutes)) ? Math.max(0, Math.round(Number(data.total_minutes))) : null
+  const retention = Number(data.retention_days)
   return {
     month: String(data.month),
     teamId: data.team_id != null ? String(data.team_id) : null,
@@ -174,6 +194,9 @@ export function calendarFrom(data) {
     days,
     totalMinutes: total,
     truncated: data.truncated === true,
+    retentionDays: Number.isFinite(retention) && retention > 0 ? Math.round(retention) : null,
+    coveredFrom: DAY_RX.test(String(data.covered_from || '')) ? String(data.covered_from) : null,
+    oldestMonth: isMonth(data.oldest_month) ? String(data.oldest_month) : null,
   }
 }
 
@@ -191,7 +214,9 @@ export function summarize(cal) {
       if (!worst || d.minutes > worst.minutes || (d.minutes === worst.minutes && d.day < worst.day)) worst = d
     }
   }
-  return { totalMinutes: cal.totalMinutes ?? sum, outageDays, worstDay: worst }
+  let noDataDays = 0
+  for (const d of cal.days.values()) if (d.noData) noDataDays++
+  return { totalMinutes: cal.totalMinutes ?? sum, outageDays, worstDay: worst, noDataDays }
 }
 
 /** Kesintili günler listesi (dar ekran) — tarih sırasıyla, yalnız dakikası > 0 olanlar. */

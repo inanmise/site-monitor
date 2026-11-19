@@ -123,7 +123,7 @@ describe('ActionNoteDialog — onay süresi', () => {
     const items = [...group.querySelectorAll('[data-duration]')].map((b) => b.getAttribute('data-duration'))
     expect(items).toEqual(['none', '60', '240', '480', '1440', '4320'])
     expect(group.querySelector('[data-duration="none"]')).toHaveAttribute('aria-checked', 'true')
-    expect(dlg.querySelector('[data-slot="action-note-ack-duration-hint"]')).toHaveTextContent(/until you remove it/)
+    expect(dlg.querySelector('[data-slot="action-note-ack-duration-hint"]')).toHaveTextContent(/lasts until the alert closes or its level rises/)
     // "ne kadar süredir açık" metni ayrı kanca (çakışma yok)
     expect(dlg.querySelector('[data-slot="action-note-duration"]')).toHaveTextContent(/ago/)
   })
