@@ -52,7 +52,7 @@ export default function PanelIssueImages({ section, issues = EMPTY, reportId, im
                   return (
                     <ImageSlotTile key={s.id} slot={{ id: s.id, label: t('te.iss.imageN', s.n), width: 'full' }} image={s.image}
                       reportId={reportId} resolve={(x) => x} uiLang={uiLang} readOnly={readOnly} onImagesChange={notifyChange}
-                      hideWidth contextLabel={topic} otherBytes={() => otherBytes(s.id)} inPanel />
+                      hideWidth contextLabel={topic} otherBytes={() => otherBytes(s.id)} inPanel pairedRow />
                   )
                 })}
               </li>

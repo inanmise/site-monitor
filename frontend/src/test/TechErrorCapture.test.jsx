@@ -35,11 +35,11 @@ import { api } from '../api/client'
 import { prepareImage } from '../components/techerror/imagePrep.js'
 import { cropFrameToFile, frameUniform, readVideoFrame, releaseFrame, startLivePaint } from '../components/techerror/capture/frameReader.js'
 import { captureSession } from '../components/techerror/capture/captureSession.js'
+import { SLOT_ACTION_CLASS } from '../components/techerror/capture/SlotCapture.jsx'
 import { emitSessionReset } from '../utils/sessionResetBus.js'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
 import TechErrorReportsPage from '../components/techerror/TechErrorReportsPage.jsx'
 import { ImagePrepError } from '../components/techerror/imagePrep.js'
-import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 
 const te = () => api.techErrors
 const TITLE = 'Mobil Kanalı Teknik Hata Mesajları - Eylül 2026'
@@ -92,11 +92,10 @@ async function openEditor() {
   return { view, slot }
 }
 
-/** Yarım yuvanın "Diğer işlemler: <yuva>" menüsünü açar ve öğeyi döndürür. */
-async function moreItem(slotEl, name) {
-  pressMenuTrigger(within(slotEl).getByRole('button', { name: /^Diğer işlemler: / }))
-  const menu = await screen.findByRole('menu')
-  return within(menu).getByRole('menuitem', { name })
+/** Yuvanın ANA eylem düğmelerinin görünen adları, DOM sırasıyla (yuva adı ekran okuyucu ekidir, atılır). */
+function mainActions(slotEl) {
+  const row = slotEl.querySelector('[data-slot="te-image-main-actions"]')
+  return [...row.querySelectorAll('button')].map((b) => b.textContent.split(':')[0].trim())
 }
 
 describe('yapıştırma', () => {
@@ -147,13 +146,12 @@ describe('yapıştırma', () => {
     first.view.unmount()
     navigator.clipboard.read = vi.fn(async () => [{ types: ['text/html', 'image/png'], getType: async () => new Blob([new Uint8Array([1, 2])], { type: 'image/png' }) }])
     const { slot } = await openEditor()
-    // Yarım yuvada "Panodan yapıştır" adlı "Diğer işlemler" menüsünde (inceleme 2026-10-18 — 768 px'te iki yuva yan yana)
-    expect(within(slot()).queryByRole('button', { name: /Panodan yapıştır/ })).toBeNull()
-    fireEvent.click(await moreItem(slot(), `Panodan yapıştır: ${LABEL}`))
+    // Yarım yuvada da düğme (2026-11-20: her yuvada aynı eylemler — "Diğer işlemler" menüsü kalktı)
+    fireEvent.click(within(slot()).getByRole('button', { name: `Panodan yapıştır: ${LABEL}` }))
     await waitFor(() => expect(te().uploadImage).toHaveBeenCalledTimes(1))
     expect(prepareImage.mock.calls[0][0].name).toMatch(/^monthly-tx-pano-\d{8}-\d{6}\.png$/)
     navigator.clipboard.read = vi.fn(async () => { throw Object.assign(new Error('denied'), { name: 'NotAllowedError' }) })
-    fireEvent.click(await moreItem(slot('tech-errors'), /Panodan yapıştır/))
+    fireEvent.click(within(slot('tech-errors')).getByRole('button', { name: /Panodan yapıştır/ }))
     expect(await within(slot('tech-errors')).findByText('Tarayıcı panoyu okumaya izin vermedi. Yuvayı seçip Ctrl+V ile yapıştırın.'))
       .toBeInTheDocument()
     navigator.clipboard.read = vi.fn(async () => [{ types: ['text/plain'], getType: async () => new Blob(['x']) }])
@@ -220,42 +218,57 @@ describe('yapıştırma', () => {
     expect(await within(slot('daily-errors')).findByRole('alert')).toHaveTextContent('PDF dosyası görsel yuvasına yüklenemez')
   })
 
-  it('yarım yuva: "Yükle / Değiştir" ve "Ekrandan al" düğme; "Panodan yapıştır" ve "Kaldır" adlı "Diğer işlemler" menüsünde; tam yuvada hepsi düğme', async () => {
+  it('HER yuvada aynı eylemler, aynı sırada: Görsel yükle → Ekrandan al → Panodan yapıştır (yarım = tam yuva); menü yok', async () => {
+    navigator.clipboard.read = vi.fn()
+    const { slot } = await openEditor()
+    const half = slot()
+    const full = slot('daily-errors')
+    expect(mainActions(half)).toEqual(['Görsel yükle', 'Ekrandan al', 'Panodan yapıştır'])
+    expect(mainActions(full)).toEqual(mainActions(half))
+    for (const el of [half, full]) {
+      const actions = el.querySelector('[data-slot="te-image-actions"]')
+      expect(actions).toHaveAttribute('data-count', '3')
+      // Tek satır, eşit sütun: yarım ve tam yuvada AYNI ızgara
+      expect(actions.querySelector('[data-slot="te-image-main-actions"]').className).toContain('grid-cols-3')
+      expect(within(el).queryByRole('button', { name: /^Diğer işlemler/ })).toBeNull()
+      expect(within(el).queryByRole('button', { name: /^Kaldır/ })).toBeNull()   // boş yuvada "Kaldır" yok
+    }
+    // Üç düğme de aynı ortak biçim sınıflarını taşır (biri diğerinden farklı çizilmez): hücreyi doldurur, etiket sarar
+    for (const b of [...half.querySelectorAll('[data-slot="te-image-main-actions"] button'),
+      ...full.querySelectorAll('[data-slot="te-image-main-actions"] button')]) {
+      for (const token of SLOT_ACTION_CLASS.split(' ')) expect(b.className.split(' ')).toContain(token)
+    }
+  })
+
+  it('DOLU yuvada da sıra aynı (ilk düğme "Değiştir"); "Kaldır" ayrı satırda düğme — yarım yuvada da (menüde değil)', async () => {
     navigator.clipboard.read = vi.fn()
     te().report.mockResolvedValue(reportResponse({ images: [IMG, { ...IMG, id: 8, slot_id: 'daily-errors' }] }))
     te().deleteImage.mockResolvedValue({ success: true })
     const { slot } = await openEditor()
-    const half = slot()
-    expect(half.querySelector('[data-slot="te-image-actions"]')).toHaveAttribute('data-layout', 'compact')
-    expect(within(half).getByRole('button', { name: `Değiştir: ${LABEL}` })).toBeInTheDocument()
-    expect(within(half).getByRole('button', { name: `Ekrandan al: ${LABEL}` })).toBeInTheDocument()
-    expect(within(half).queryByRole('button', { name: /^Kaldır/ })).toBeNull()
-    const trigger = within(half).getByRole('button', { name: `Diğer işlemler: ${LABEL}` })
-    expect(trigger).toHaveTextContent('Diğer işlemler')
-    pressMenuTrigger(trigger)
-    const menu = await screen.findByRole('menu')
-    expect(within(menu).getByRole('menuitem', { name: `Panodan yapıştır: ${LABEL}` })).toBeInTheDocument()
-    fireEvent.click(within(menu).getByRole('menuitem', { name: `Kaldır: ${LABEL}` }))
+    expect(mainActions(slot())).toEqual(['Değiştir', 'Ekrandan al', 'Panodan yapıştır'])
+    expect(mainActions(slot('daily-errors'))).toEqual(mainActions(slot()))
+    for (const id of ['monthly-tx', 'daily-errors']) {
+      const remove = within(slot(id)).getByRole('button', { name: /^Kaldır: / })
+      expect(remove.closest('[data-slot="te-image-main-actions"]')).toBeNull()   // ana satırın dışında
+      expect(remove.closest('[data-slot="te-image-actions"]')).not.toBeNull()
+    }
+    fireEvent.click(within(slot()).getByRole('button', { name: `Kaldır: ${LABEL}` }))
     const dlg = await screen.findByRole('dialog', { name: 'Görsel kaldırılsın mı?' })
     fireEvent.click(within(dlg).getByRole('button', { name: 'Kaldır' }))
     await waitFor(() => expect(te().deleteImage).toHaveBeenCalledWith('100', 7))
     await waitFor(() => expect(slot().querySelector('img')).toBeNull())
-    // Boş yarım yuvada menüde yalnız yapıştırma kalır
-    pressMenuTrigger(within(slot()).getByRole('button', { name: `Diğer işlemler: ${LABEL}` }))
-    const menu2 = await screen.findByRole('menu')
-    expect(within(menu2).queryByRole('menuitem', { name: /Kaldır/ })).toBeNull()
-    fireEvent.keyDown(document.activeElement || document.body, { key: 'Escape' })
-    // Tam yuva: hepsi düğme, menü yok
-    const full = slot('daily-errors')
-    expect(full.querySelector('[data-slot="te-image-actions"]')).toHaveAttribute('data-layout', 'full')
-    expect(within(full).getByRole('button', { name: /^Panodan yapıştır: / })).toBeInTheDocument()
-    expect(within(full).getByRole('button', { name: /^Kaldır: / })).toBeInTheDocument()
-    expect(within(full).queryByRole('button', { name: /^Diğer işlemler/ })).toBeNull()
+    expect(mainActions(slot())).toEqual(['Görsel yükle', 'Ekrandan al', 'Panodan yapıştır'])
+    expect(within(slot()).queryByRole('button', { name: /^Kaldır/ })).toBeNull()
   })
 
-  it('pano arayüzü yoksa boş yarım yuvada menü hiç çizilmez (boş menü yok)', async () => {
+  it('pano arayüzü yoksa "Panodan yapıştır" hiçbir yuvada çizilmez: iki eşit sütun, sıra yine aynı', async () => {
     const { slot } = await openEditor()
-    expect(within(slot()).queryByRole('button', { name: /^Diğer işlemler/ })).toBeNull()
+    for (const id of ['monthly-tx', 'daily-errors']) {
+      expect(mainActions(slot(id))).toEqual(['Görsel yükle', 'Ekrandan al'])
+      const actions = slot(id).querySelector('[data-slot="te-image-actions"]')
+      expect(actions).toHaveAttribute('data-count', '2')
+      expect(actions.querySelector('[data-slot="te-image-main-actions"]').className).toContain('grid-cols-2')
+    }
   })
 
   it('yükleme bitince odak sayfanın gövdesine düşmüşse yuvaya döner; kullanıcı başka yere geçtiyse dokunulmaz', async () => {
@@ -302,6 +315,8 @@ describe('ekrandan alma', () => {
     // Paylaşım açık çipi (her görsel bölümünün başında) + Durdur
     expect(screen.getAllByText('Ekran paylaşımı açık: Qlik Sense — Kanal Raporu (Eylül)').length).toBeGreaterThan(0)
     const stage = dlg.querySelector('[data-slot="te-cap-stage"]')
+    // Sekme paylaşımı canlı açılır: canlıyken oklar seçimi oynatmaz (2026-11-20) — klavyeyle seçim için önce "Dondur"
+    fireEvent.click(await within(dlg).findByRole('button', { name: /Dondur/ }))
     fireEvent.keyDown(stage, { key: 'ArrowLeft', altKey: true, shiftKey: true })
     fireEvent.keyDown(stage, { key: 'ArrowRight', shiftKey: true })
     fireEvent.click(within(dlg).getByRole('button', { name: /Bu alanı yükle/ }))
@@ -475,7 +490,7 @@ describe('canlı görüntü ve kaydırma (sekme paylaşımı)', () => {
     const [, canvas, opts] = startLivePaint.mock.calls[0]
     expect(canvas).toBe(dlg.querySelector('[data-slot="te-cap-frame"]'))
     expect(typeof opts.onResize).toBe('function')
-    await waitFor(() => expect(status(dlg)).toHaveTextContent('Fare tekerleği paylaşılan sekmeyi buradan kaydırır.'))
+    await waitFor(() => expect(status(dlg)).toHaveTextContent('Fare tekerleği ya da dokunmatik yüzey (iki parmakla kaydırma) paylaşılan sekmeyi buradan kaydırır.'))
     expect(bar(dlg)).toHaveAttribute('data-scroll', 'on')
     expect(navigator.permissions.query).toHaveBeenCalledWith({ name: 'captured-surface-control' })
     expect(elementCalls()).toEqual([[pad(dlg)]])
@@ -507,7 +522,7 @@ describe('canlı görüntü ve kaydırma (sekme paylaşımı)', () => {
     expect(status(dlg)).toHaveTextContent('Kaydırma izni bekleniyor: tarayıcının sorusuna “İzin ver” deyin.')
     expect(within(dlg).queryByRole('button', { name: /Kaydırmayı etkinleştir/ })).toBeNull()
     await act(async () => { allow() })
-    await waitFor(() => expect(status(dlg)).toHaveTextContent('Fare tekerleği paylaşılan sekmeyi buradan kaydırır.'))
+    await waitFor(() => expect(status(dlg)).toHaveTextContent('Fare tekerleği ya da dokunmatik yüzey (iki parmakla kaydırma) paylaşılan sekmeyi buradan kaydırır.'))
   })
 
   it('izin sorusu yanıtlanmadan kapatılırsa yeniden denenebilir; izin engellenmişse site ayarları söylenir (düğme yok)', async () => {
@@ -672,7 +687,7 @@ describe('canlı görüntü ve kaydırma (sekme paylaşımı)', () => {
     await act(async () => { allow() })
     await waitFor(() => expect(fw).toHaveBeenLastCalledWith(null))
     expect(bar(dlg)).toHaveAttribute('data-scroll', 'ask')
-    expect(status(dlg)).not.toHaveTextContent('Fare tekerleği paylaşılan sekmeyi buradan kaydırır.')
+    expect(status(dlg)).not.toHaveTextContent('Fare tekerleği ya da dokunmatik yüzey (iki parmakla kaydırma) paylaşılan sekmeyi buradan kaydırır.')
     // … yeni katman için çağrı yalnız kullanıcının tıklamasıyla yapılır
     expect(elementCalls()).toHaveLength(1)
     expect(within(dlg).getByRole('button', { name: /Kaydırmayı etkinleştir/ })).toBeInTheDocument()
@@ -800,7 +815,7 @@ describe('görünürlük', () => {
     expect(within(slot()).queryByRole('button', { name: /Ekrandan al/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /Görsel paneli/ })).toBeNull()
     expect(document.querySelector('[data-slot="te-cap-hint"]')).toBeNull()
-    expect(await moreItem(slot(), /Panodan yapıştır/)).toBeInTheDocument()
+    expect(mainActions(slot())).toEqual(['Görsel yükle', 'Panodan yapıştır'])
   })
 
   it('Görsel paneli düğmesi ilk görsel bölümünün başlığında: bölüm kapalıyken de görünür', async () => {

@@ -2045,16 +2045,60 @@ for (const vp of VIEWPORTS) {
       expect(uploadBodies[0].toString('latin1')).toMatch(/filename="monthly-tx-pano-\d{8}-\d{6}\.png"/)
       await expect(paste).toHaveAttribute('data-has-image', 'true')
 
-      // Yarım yuvanın eylemleri (inceleme 2026-10-18): "Değiştir" + (masaüstünde) "Ekrandan al" düğme; "Panodan yapıştır" ve
-      // "Kaldır" adlı "Diğer işlemler: <yuva>" menüsünde. Eylemler yuvanın içinde kalır, kesilmez; menü klavyeyle açılır
+      // Yuva eylemleri (2026-11-20, kullanıcı isteği: "görsel yükle, Ekrandan al, panodan yapıştır her bir panelde eşit
+      // olmalı, aynı sırada olmalı, farklılık olmamalı"): HER yuvada (yarım / tam, dolu / boş) aynı düğmeler, aynı sırada,
+      // eşit genişlikte ve AYNI dizilişte — kap yeterince genişse tek satırda eşit karolar, çok darsa (768 px'te yarım
+      // yuva) alt alta; yarım ve tam yuvada diziliş ve düğme genişliği aynı. "Kaldır" ayrı satırda düğme; "Diğer
+      // işlemler" menüsü yok. Eylemler yuvanın içinde kalır, sözcükler bölünmez / kesilmez.
       const actions = paste.locator('[data-slot="te-image-actions"]')
-      await expect(actions).toHaveAttribute('data-layout', 'compact')
-      await expect(paste.locator('[data-slot="te-image-upload"]')).toBeVisible()
-      await expect(paste.locator('[data-slot="te-image-paste"]')).toHaveCount(0)
-      await expect(paste.locator('[data-slot="te-image-remove"]')).toHaveCount(0)
-      const more = paste.getByRole('button', { name: /^(Diğer işlemler|More actions): / })
-      await expect(more).toBeVisible()
+      const expectedActions = vp.width < 768 ? ['te-image-upload', 'te-image-paste'] : ['te-image-upload', 'te-image-snip', 'te-image-paste']
+      await expect(paste.getByRole('button', { name: /^(Diğer işlemler|More actions): / })).toHaveCount(0)
+      await expect(paste.locator('[data-slot="te-image-remove"]')).toBeVisible()
       await page.waitForTimeout(200)
+      const seen = {}
+      for (const id of ['monthly-tx', 'tech-errors', 'daily-errors']) {   // dolu yarım · boş yarım · boş tam
+        const main = editor.locator(`[data-slot-id="${id}"] [data-slot="te-image-main-actions"] > button`)
+        const info = await main.evaluateAll((els) => els.map((b) => {
+          const r = b.getBoundingClientRect()
+          // Etiketin en uzun sözcüğü düğmeye sığıyor mu (harf harf bölünme = sığmıyor)
+          const label = [...b.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join(' ').trim()
+          const probe = document.createElement('span')
+          probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;font:' + getComputedStyle(b).font
+          document.body.appendChild(probe)
+          let longest = 0
+          for (const w of label.split(/\s+/)) { probe.textContent = w; longest = Math.max(longest, probe.getBoundingClientRect().width) }
+          probe.remove()
+          const cs = getComputedStyle(b)
+          const room = r.width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - parseFloat(cs.borderLeftWidth) - parseFloat(cs.borderRightWidth)
+          return { slot: b.getAttribute('data-slot'), x: r.x, y: r.y, w: r.width, h: r.height, longest, room, col: cs.flexDirection === 'column' }
+        }))
+        expect(info.map((b) => b.slot), `eylem sırası (${id})`).toEqual(expectedActions)
+        const row = info.every((b) => Math.abs(b.y - info[0].y) <= 1)
+        const stack = info.every((b) => Math.abs(b.x - info[0].x) <= 1)
+        expect(row || stack, `tek satır ya da alt alta (${id})`).toBe(true)
+        for (let i = 0; i < info.length; i++) {
+          expect(Math.abs(info[i].w - info[0].w), `eşit genişlik (${id})`).toBeLessThanOrEqual(1)
+          if (row) expect(Math.abs(info[i].h - info[0].h), `eşit yükseklik (${id})`).toBeLessThanOrEqual(1)
+          if (i > 0 && row) expect(info[i].x, `soldan sağa sıra (${id})`).toBeGreaterThan(info[i - 1].x)
+          if (i > 0 && !row) expect(info[i].y, `yukarıdan aşağı sıra (${id})`).toBeGreaterThan(info[i - 1].y)
+          if (vp.touch) expect(info[i].h, `düğme yüksekliği ≥ 40 px (${id})`).toBeGreaterThanOrEqual(39.5)
+          // Karoda simge üstte; satırda (alt alta dizilişte) simge solda. Sözcük düğmeye sığar (harf harf bölünmez)
+          expect(info[i].col, `karo = tek satır dizilişi (${id})`).toBe(row && info.length > 1)
+          const iconRoom = info[i].col ? 0 : 22
+          expect(info[i].longest, `en uzun sözcük sığar (${id} · ${info[i].slot})`).toBeLessThanOrEqual(info[i].room - iconRoom + 1)
+        }
+        seen[id] = { row, w: info[0].w }
+      }
+      // Yarım ve tam yuvada AYNI diziliş ve AYNI düğme genişliği (tam yuvada eylem kabı yarım yuvanın iç genişliğine iner)
+      for (const id of ['tech-errors', 'daily-errors']) {
+        expect(seen[id].row, `diziliş aynı (${id})`).toBe(seen['monthly-tx'].row)
+        expect(Math.abs(seen[id].w - seen['monthly-tx'].w), `düğme genişliği aynı (${id})`).toBeLessThanOrEqual(2)
+      }
+      if (vp.width >= 1280 || vp.width < 768) expect(seen['monthly-tx'].row, 'geniş kapta tek satır').toBe(true)
+      // "Kaldır" ana satırın altında
+      const removeBox = await paste.locator('[data-slot="te-image-remove"]').boundingBox()
+      const mainBox = await paste.locator('[data-slot="te-image-main-actions"]').boundingBox()
+      expect(removeBox.y, '"Kaldır" ana eylemlerin altında').toBeGreaterThanOrEqual(mainBox.y + mainBox.height - 1)
       const slotBox = await paste.boundingBox()
       for (const b of await actions.locator('button').all()) {
         if (!(await b.isVisible())) continue
@@ -2063,30 +2107,19 @@ for (const vp of VIEWPORTS) {
         expect(r.x + r.width, 'eylem yuvanın içinde (sağ)').toBeLessThanOrEqual(slotBox.x + slotBox.width + 1)
       }
       expect(await page.evaluate(clipped, '[data-slot-id="monthly-tx"]'), 'kırpılan metin (yuva eylemleri)').toEqual([])
+      expect(await page.evaluate(clipped, '[data-slot-id="daily-errors"]'), 'kırpılan metin (tam yuva eylemleri)').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot-id="monthly-tx"]'), 'küçük hedef (yuva)').toEqual([])
-      await more.focus()
-      await page.keyboard.press('Enter')
-      const menu = page.getByRole('menu')
-      await expect(menu).toBeVisible()
-      await expect(menu.getByRole('menuitem', { name: /^(Panodan yapıştır|Paste from clipboard): / })).toBeVisible()
-      await expect(menu.getByRole('menuitem', { name: /^(Kaldır|Remove): / })).toBeVisible()
-      await page.keyboard.press('ArrowDown')
-      await expect(menu.locator('[role="menuitem"]:focus')).toHaveCount(1)
-      if (vp.touch) {
-        // Menü açılış animasyonu (zoom-in-95) bitmeden ölçülürse öğe %95–100 ölçekte görünür (CI'da 38,7 px ölçüldü —
-        // titrek): önce menünün animasyonları biter, sonra ölçülür
-        await page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().endTime !== Infinity).map((a) => a.finished.catch(() => null))))
-        for (const it of await menu.getByRole('menuitem').all()) {
-          expect((await it.boundingBox()).height, 'menü öğesi dokunmatikte ≥ 40 px').toBeGreaterThanOrEqual(39.5)
-        }
+      // Klavye: üç eylem sekme sırasında da aynı sırada
+      await paste.locator('[data-slot="te-image-upload"]').focus()
+      for (const next of expectedActions.slice(1)) {
+        await page.keyboard.press('Tab')
+        await expect(paste.locator(`[data-slot="${next}"]`)).toBeFocused()
       }
-      await page.keyboard.press('Escape')
-      await expect(menu).toHaveCount(0)
-      await expect(more).toBeFocused()
       await paste.screenshot({ path: `test-results/te-cap-slot-actions-${vp.name}.png` })
+      await editor.locator('[data-slot-id="daily-errors"]').screenshot({ path: `test-results/te-cap-slot-actions-full-${vp.name}.png` })
 
       if (vp.width < 768) {
-        // Telefonda ekrandan alma ve panel yok (bozuk düğme bırakılmaz); yapıştırma yolu ve "Panodan yapıştır" (menüde) var
+        // Telefonda ekrandan alma ve panel yok (bozuk düğme bırakılmaz); yapıştırma yolu ve "Panodan yapıştır" düğmesi var
         await expect(editor.locator('[data-slot="te-image-snip"]')).toHaveCount(0)
         await expect(editor.locator('[data-slot="te-images-panel-open"]')).toHaveCount(0)
         await page.waitForTimeout(200)
@@ -2095,9 +2128,6 @@ for (const vp of VIEWPORTS) {
         return
       }
       await expect(paste.locator('[data-slot="te-image-snip"]')).toBeVisible()
-      // Tam yuvada hepsi düğme (menü yok)
-      await expect(editor.locator('[data-slot-id="daily-errors"] [data-slot="te-image-actions"]')).toHaveAttribute('data-layout', 'full')
-      await expect(editor.locator('[data-slot-id="daily-errors"] [data-slot="te-image-paste"]')).toBeVisible()
 
       // 2) Ekrandan al: ilk basış paylaşımı başlatır (sahte getDisplayMedia = renk bloklu tuvalin akışı), kırpma penceresi
       const snipSlot = editor.locator('[data-slot-id="tech-errors"]')
@@ -2312,7 +2342,7 @@ for (const vp of VIEWPORTS) {
       await expect(bar).toHaveAttribute('data-scroll', 'asking')
       expect(await page.evaluate(() => window.__capAnswer('granted'))).toBe(true)
       await expect(bar).toHaveAttribute('data-scroll', 'on')
-      await expect(status).toContainText(/Fare tekerleği paylaşılan sekmeyi buradan kaydırır|The mouse wheel scrolls the shared tab from here/)
+      await expect(status).toContainText(/Fare tekerleği ya da dokunmatik yüzey .* paylaşılan sekmeyi buradan kaydırır|The mouse wheel or the touchpad .* scrolls the shared tab from here/)
       await fits('kaydırma açık')
 
       // 3) Tekerlek sahnenin üstünde: paylaşılan sekme kayar (pencerenin kendisi kaymaz), görüntü canlı güncellenir
@@ -2326,6 +2356,33 @@ for (const vp of VIEWPORTS) {
       const sb2 = await stage.boundingBox()
       expect(Math.abs(sb2.y - sb.y), 'sahne yerinde').toBeLessThanOrEqual(1)
       await page.screenshot({ path: `test-results/te-cap-live-on-${vp.name}.png` })
+
+      // 3b) Faresiz kullanım (2026-11-20, kullanıcı isteği: "faresi olmayan da aşağı yukarı gidebilmeli"): dokunmatik yüzey
+      //     küçük adımlı GERÇEK tekerlek olayı üretir — iletilir. Ok / sayfa tuşları paylaşılan sekmeyi buradan kaydıramaz
+      //     (tarayıcı kısıtı; gerçek Chromium 159'da ölçüldü: betikle üretilen tekerlek olayı da iletilmez): görüntü DONMAZ,
+      //     seçim oynamaz, arkadaki sayfa kaymaz; klavye ipucu baştan görünür ve tuşa basılınca vurgulanır.
+      const keysHint = dlg.locator('[data-slot="te-cap-keys-hint"]')
+      await expect(keysHint).toBeVisible()
+      await expect(keysHint).toContainText('Ctrl+Tab')
+      await expect(keysHint).not.toHaveAttribute('data-flash', 'true')
+      for (let i = 0; i < 5; i++) await page.mouse.wheel(0, 10)
+      await expect.poll(() => page.evaluate(() => window.__capScrollY), { timeout: 5000 }).toBe(200)
+      for (let i = 0; i < 5; i++) await page.mouse.wheel(0, -10)
+      await expect.poll(() => page.evaluate(() => window.__capScrollY), { timeout: 5000 }).toBe(150)
+      const fullRect = await stage.getAttribute('data-rect')
+      await stage.focus()
+      for (const key of ['ArrowDown', 'PageDown', 'ArrowUp', 'Space']) await page.keyboard.press(key)
+      await expect(keysHint).toHaveAttribute('data-flash', 'true')
+      await expect(dlg.locator('[data-slot="te-cap-keys-live"]'))
+        .toContainText(/Ok tuşları paylaşılan sekmeyi buradan kaydıramaz|The arrow keys cannot scroll the shared tab from here/)
+      await expect(stage).toHaveAttribute('data-live', 'true')
+      await expect(badge).toContainText(/Canlı|Live/)
+      expect(await stage.getAttribute('data-rect'), 'canlıyken oklar seçimi oynatmaz').toBe(fullRect)
+      expect(await page.evaluate(() => window.__capScrollY), 'tuşlar paylaşılan sekmeyi kaydırmaz').toBe(150)
+      expect(await page.evaluate(() => window.scrollY), 'tuşlar arkadaki sayfayı kaydırmaz').toBe(pageY)
+      await fits('klavye ipucu vurgulu')
+      await page.screenshot({ path: `test-results/te-cap-live-keys-${vp.name}.png` })
+      await expect.poll(async () => near(await pixel(100, 75), colorAt(100, 75, 150)), { timeout: 8000 }).toBe(true)
 
       // 4) Sürükleyerek seçim: görüntü donar, tekerlek iletimi kesilir
       await page.mouse.move(sb.x + sb.width * 0.2, sb.y + sb.height * 0.3)
