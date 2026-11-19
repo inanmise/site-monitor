@@ -17,10 +17,14 @@
 #      çakışmıyor ve sınırlı (≤ 5000); olmayan bir varlık düz metin 404 + no-store (SpaNotFoundAdvice); /boot-guard.js
 #      200 + no-store (sürüm bağımsız açılış koruması hiç önbelleğe alınmaz).
 #   8. (2026-10-29, k6 sürüm geçişi) günlük: etkin k6 (/usr/bin/k6) yoklaması "[K6] ✅ k6 bulundu — sürüm v<K6_VERSION> ("
-#      diyor; Dockerfile'da K6_CANDIDATE_VERSION varsa (2026-11-16, k6 2.3 → 2.4 geçişi) ADAY yoklaması da
-#      "[K6] aday k6 — sürüm v<K6_CANDIDATE_VERSION> (" diyor (aday yolu varsayılanı /opt/k6-candidate/k6, boş veritabanı);
-#      hiçbir [K6] satırı "desteklenmiyor" ya da "k6 bulunamadı" demiyor — yanlış ikili ya da eksik katman görünsün. Bu adım
-#      aynı zamanda okunamaz (0111) k6 ikililerinin ÇALIŞTIRILABİLDİĞİNİN kanıtıdır.
+#      diyor; Dockerfile'da K6_CANDIDATE_VERSION varsa ADAY yoklaması da "[K6] aday k6 — sürüm v<K6_CANDIDATE_VERSION> ("
+#      diyor (aday yolu = application.properties aday varsayılanı, boş veritabanı); hiçbir [K6] satırı "desteklenmiyor" ya da
+#      "k6 bulunamadı" demiyor — yanlış ikili ya da eksik katman görünsün. Bu adım aynı zamanda okunamaz (0111) k6
+#      ikililerinin ÇALIŞTIRILABİLDİĞİNİN kanıtıdır.
+#      BUGÜN (2026-11-20, k6 2.3 → 2.4 terfisinden beri) Dockerfile'da aday YOK: imajda tek ikili var (/usr/bin/k6 = 2.4.0),
+#      aday denetimleri (8 ve 9) atlanır. 20.212 – 20.217'nin aday yolu /opt/k6-candidate/k6 artık etkin ikiliye sembolik
+#      bağdır; aşağıdaki aday dallarında yazılı o yol 1. adımdan kalmadır — SONRAKİ aday YENİ bir yolda gelir, o gün bu
+#      betikteki yol (ve scripts/__tests__/image-boot-check.test.mjs) Dockerfile'ın COPY satırıyla birlikte güncellenir.
 #   9. (2026-10-31, k6 inceleme A2 — işlem sertleştirmesi) günlük: "İşlem sertleştirmesi uygulandı" satırı VAR, "restricted
 #      method" uyarısı YOK; konteyner içinde (SM_CONTAINER, varsayılan "sm"; docker yoksa ya da konteyner bulunamazsa bu
 #      kısım uyarıyla atlanır) uygulama kullanıcısıyla `cat /proc/1/environ` (JVM dump-edilemez), `cat /usr/bin/k6` ve
@@ -140,7 +144,8 @@ if [ -n "$LISTS" ]; then
 fi
 
 # ── 8: k6 ikilileri (2026-10-29; aday 2026-11-16) ─────────────────────────────────────────────
-# Beklenen sürümler depodaki Dockerfile'dan okunur (iş akışı depoyu çeker, betik kök dizinden koşar).
+# Beklenen sürümler depodaki Dockerfile'dan okunur (iş akışı depoyu çeker, betik kök dizinden koşar). Dockerfile'da aday
+# ARG'ı yoksa (bugün — 2026-11-20 terfisinden beri) k6_cand boştur ve aday denetimleri atlanır.
 k6_main="$(sed -n 's/^ARG K6_VERSION=//p' Dockerfile 2>/dev/null | head -1 | tr -d '[:space:]')"
 k6_cand="$(sed -n 's/^ARG K6_CANDIDATE_VERSION=//p' Dockerfile 2>/dev/null | head -1 | tr -d '[:space:]')"
 if [ -s "$LOG" ]; then
@@ -238,7 +243,9 @@ elif [ "$inspect_rc" -eq 0 ]; then
   expect_unreadable /usr/bin/k6 \
     "konteynerde /usr/bin/k6 OKUNABİLİYOR — 0111 izni yok (kardeş k6 süreçlerinin ortamı birbirine açık)"
   expect_runs /usr/bin/k6
-  # Aday ikili (2026-11-16): uyumluluk taraması aynı betikleri aynı gizli değerlerle koşar — AYNI koruma.
+  # Aday ikili (2026-11-16): uyumluluk taraması aynı betikleri aynı gizli değerlerle koşar — AYNI koruma. Yalnız
+  # Dockerfile'da aday varken; aşağıdaki yol 1. adımın (20.212 – 20.217) yoludur — sonraki aday YENİ bir yolda gelir
+  # (başlıktaki 8. madde notu).
   if [ -n "${k6_cand:-}" ]; then
     expect_unreadable /opt/k6-candidate/k6 \
       "konteynerde /opt/k6-candidate/k6 OKUNABİLİYOR — 0111 izni yok (aday k6 süreçlerinin ortamı birbirine açık)"

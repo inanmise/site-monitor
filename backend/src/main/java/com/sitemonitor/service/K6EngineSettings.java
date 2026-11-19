@@ -34,10 +34,15 @@ public final class K6EngineSettings {
     public static final String KEY_SCAN_RETENTION = "site.monitor.scripted.compat-scan.retention-days";
 
     /**
-     * İmajın aday ikiliyi koyduğu yol (Dockerfile {@code COPY --from=k6-bin /k6-candidate /opt/k6-candidate/k6}) =
-     * {@code application.properties} aday varsayılanı (gate: {@code K6EngineSettingsTest.candidateDefaultMatchesImage}).
+     * İmajın ADAY ikiliyi koyduğu yol = {@code application.properties} aday varsayılanı. <b>BOŞ = bu imajda aday ikili
+     * yok</b> (2026-11-20, k6 2.3 → 2.4 terfisinden beri: imajda tek ikili var, {@code /usr/bin/k6} = 2.4.0;
+     * {@code /opt/k6-candidate/k6} ve {@code /opt/k6-next/k6} ona sembolik bağdır, aday DEĞİLDİR).
+     *
+     * <p>Sonraki aday geldiğinde ÜÇ yer BİRLİKTE değişir: Dockerfile ({@code K6_CANDIDATE_*} ARG'ları +
+     * {@code COPY --from=k6-bin /k6-candidate <yol>} — YENİ bir yol), {@code application.properties} aday varsayılanı ve bu
+     * sabit (gate: {@code K6EngineSettingsTest.candidateDefaultMatchesImage}).
      */
-    public static final String CANDIDATE_IMAGE_PATH = "/opt/k6-candidate/k6";
+    public static final String CANDIDATE_IMAGE_PATH = "";
 
     /**
      * Aday satırının {@code default_path} işareti (2026-11-17, inceleme): ETKİN aday yolu imajın kendi aday yolu mu —
@@ -45,9 +50,17 @@ public final class K6EngineSettings {
      * geliştirme / adayı taşımayan imaj). Ortam değişkeniyle ({@code SCRIPTED_K6_BIN_CANDIDATE}) ya da ekrandan verilmiş
      * BAŞKA bir yol bulunamıyorsa bu bir yapılandırma hatasıdır (tehlike). Önceki kural yalnız "kayıtlı değer yok" diye
      * bakıyordu: ortam değişkeniyle verilmiş yanlış bir yol da varsayılan sayılıp nötr görünüyordu.
+     *
+     * <p>İmaj aday taşımıyorken ({@link #CANDIDATE_IMAGE_PATH} boş — bugün) HER yol için false: tanımlı bir aday yolu
+     * bulunamıyorsa bu daima bir yapılandırma hatasıdır.
      */
     public static boolean isImageCandidatePath(String bin) {
-        return bin != null && CANDIDATE_IMAGE_PATH.equals(bin.trim());
+        return isImageCandidatePath(bin, CANDIDATE_IMAGE_PATH);
+    }
+
+    /** Saf kural (test edilebilir): {@code imagePath} boşsa (imajda aday yok) hiçbir yol imaj adayı değildir. */
+    public static boolean isImageCandidatePath(String bin, String imagePath) {
+        return bin != null && imagePath != null && !imagePath.isBlank() && imagePath.trim().equals(bin.trim());
     }
 
     /** Sayfanın yazdığı anahtarlar (yedek / aday ikili yolları dahil) — denetleyici yalnız bunları kabul eder. */
@@ -58,7 +71,7 @@ public final class K6EngineSettings {
 
     /**
      * İzinli GODEBUG anahtarları — yalnız İSTEMCİ tarafında eski TLS / sertifika davranışını geri getirenler. Değer 0 ya da
-     * 1. Kaynak: go.dev/doc/godebug (Go 1.26 — k6 v2.3.0 sürüm tarball'ı go1.26.8, v2.4.0 go1.26.11 ile derlenmiş).
+     * 1. Kaynak: go.dev/doc/godebug (Go 1.26 — etkin ikili k6 v2.4.0'ın sürüm tarball'ı go1.26.11 ile derlenmiş).
      * {@code tlsrsakex} ve {@code tls3des} Go 1.27'de KALDIRILDI: Go 1.27 ile derlenmiş bir k6'da etkisizdir
      * ({@link #GODEBUG_REMOVED}, {@link #ignoredGodebugKeys}).
      */
@@ -80,7 +93,7 @@ public final class K6EngineSettings {
 
     /**
      * Kaldırılan GODEBUG ayarları — TEK YER. Kaynak: go.dev/doc/godebug geçmişi ("Go 1.27 removed the tlsrsakex setting",
-     * "Go 1.27 removed the tls3des setting"). Bugünkü ikililer go1.26.x (k6 v2.3.0 go1.26.8, v2.4.0 go1.26.11): ikisi de
+     * "Go 1.27 removed the tls3des setting"). Bugünkü etkin ikili k6 v2.4.0 go1.26.11 ile derlenmiş: iki ayar da orada
      * hâlâ geçerli. Go 1.27 ile derlenmiş bir k6 aday olursa motor sayfası o motorda "yok sayılan kaçışlar" uyarısı gösterir.
      */
     static final Map<String, GodebugRemoval> GODEBUG_REMOVED = removedMap();
@@ -317,8 +330,8 @@ public final class K6EngineSettings {
         }
         if (!ok) {
             throw new FieldValidationException(field, Msg.t(
-                    "İkili yolu geçersiz: boşluk, tırnak ya da kabuk karakteri içermeyen tek bir yol yazın (ör. /opt/k6-candidate/k6).",
-                    "Invalid binary path: enter a single path without spaces, quotes or shell characters (e.g. /opt/k6-candidate/k6)."));
+                    "İkili yolu geçersiz: boşluk, tırnak ya da kabuk karakteri içermeyen tek bir yol yazın (ör. /opt/k6-new/k6).",
+                    "Invalid binary path: enter a single path without spaces, quotes or shell characters (e.g. /opt/k6-new/k6)."));
         }
     }
 

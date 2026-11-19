@@ -8,44 +8,20 @@
 #   3. GEREKÇELİ olmalı (`statement`): neden şimdi kapatılamadığı ve ne zaman kapanacağı.
 # Biçim: https://trivy.dev/docs/latest/configuration/filtering/#trivyignoreyaml (Trivy ≥ 0.47).
 # Ayrıntı: docs/RUNBOOK.md "Yayın güvenlik kapısı (Trivy)".
+#
+# Şu an istisna yok (2026-11-20). k6 2.3.0 bloğu (5 CVE, usr/bin/k6 — go1.26.8, golang.org/x/net v0.58.0) k6 2.3 → 2.4
+# terfisiyle SİLİNDİ: 2.3.0 imajdan çıktı, /usr/bin/k6 artık 2.4.0 (go1.26.11, x/net v0.62.0). Terfiyi tetikleyen bulgu:
+# CVE-2026-97054 (Go net/http HTTP/1 sunucusu MaxBytesReader yarışı; go 1.26.11'de kapalı) — istisna EKLENMEDİ, ikili
+# yükseltildi (kullanıcı kararı).
+#
+# `vulnerabilities` anahtarı BOŞ LİSTE olarak durmalı — silmeyin: dosya yalnız yorumdan oluşursa geçerli bir YAML belgesi
+# kalmaz (boş belge) ve Trivy'nin YAML okuyucusu bunu ayrıştırma hatası sayabilir (boş belge denenmedi; boş liste güvenli
+# biçim). Yeni bir istisna bu listeye yukarıdaki üç kuralla eklenir:
+#   - id: CVE-YYYY-NNNNN
+#     paths:
+#       - "usr/bin/ornek"
+#     expired_at: 2027-01-31
+#     statement: >-
+#       Neden şimdi kapatılamıyor, ne zaman kapanacak.
 
-vulnerabilities:
-  # ── k6 2.3.0 (/usr/bin/k6 — go1.26.8, golang.org/x/net v0.58.0) ──────────────────────────────────────────────
-  # k6 2.4.0 (go1.26.11, x/net v0.62.0) imajda ADAY olarak duruyor (/opt/k6-candidate/k6) ve temiz. Geçiş: Ayarlar →
-  # Platform → k6 motoru → uyumluluk taraması → "Adayı etkin yap" (prod'da yönetici yapar). Terfi sürümünde 2.3.0
-  # imajdan çıkar; o sürümde bu blok SİLİNİR (k6 sürüm geçişi 2. adım, docs/RUNBOOK.md).
-  - id: CVE-2026-78661
-    paths:
-      - "usr/bin/k6"
-    expired_at: 2027-01-31
-    statement: >-
-      k6 2.3.0 golang.org/x/net/html — özel hazırlanmış HTML ile hizmet engelleme. Yalnız izlenen bir sitenin
-      yanıtını ayrıştıran k6 koşusunu etkiler; koşu süreç zaman aşımıyla kesilir. 2.4.0 adayında kapalı.
-  - id: CVE-2026-78669
-    paths:
-      - "usr/bin/k6"
-    expired_at: 2027-01-31
-    statement: >-
-      k6 2.3.0 net/http · x/net/http2 — aşırı HTTP/2 SETTINGS çerçevesiyle hizmet engelleme (stdlib ve x/net'te aynı
-      kimlik). k6 istemcidir; etkisi tek bir k6 koşusuyla sınırlı. 2.4.0 adayında kapalı.
-  - id: CVE-2026-111943
-    paths:
-      - "usr/bin/k6"
-    expired_at: 2027-01-31
-    statement: >-
-      k6 2.3.0 crypto/x509 — güvenilmeyen ara sertifikalarla ortadaki adam saldırısı. k6 betikleri izlenen hedeflere
-      kimlik bilgisi gönderebildiği için EN ÖNEMLİ madde: prod'da 2.4.0 adayına geçiş öncelikli. 2.4.0 adayında kapalı.
-  - id: CVE-2026-78667
-    paths:
-      - "usr/bin/k6"
-    expired_at: 2027-01-31
-    statement: >-
-      k6 2.3.0 net/http — özel Range başlıklarıyla hizmet engelleme (sunucu tarafı; k6 HTTP sunucusu açmaz).
-      2.4.0 adayında kapalı.
-  - id: CVE-2026-97031
-    paths:
-      - "usr/bin/k6"
-    expired_at: 2027-01-31
-    statement: >-
-      k6 2.3.0 crypto/tls — çoklu ECH dış uzantı başvurusuyla hizmet engelleme; etkisi tek bir k6 koşusuyla sınırlı.
-      2.4.0 adayında kapalı.
+vulnerabilities: []

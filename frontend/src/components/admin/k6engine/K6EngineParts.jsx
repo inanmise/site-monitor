@@ -193,7 +193,7 @@ export function SettingsCard({ data, form, dirty, saving, fe, onChange, onSave, 
         <Field label={t('k6e.f.candidateBin')} hint={t('k6e.f.candidateBinHint')} {...fe.fieldProps('candidate_bin')}>
           {({ id, describedBy, invalid }) => (
             <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} value={form.candidate_bin} disabled={saving}
-              spellCheck={false} autoComplete="off" placeholder="/opt/k6-candidate/k6" onChange={(e) => onChange('candidate_bin', e.target.value)}
+              spellCheck={false} autoComplete="off" placeholder="/opt/k6-new/k6" onChange={(e) => onChange('candidate_bin', e.target.value)}
               data-slot="k6e-f-candidate" className="h-10 font-mono" />
           )}
         </Field>
@@ -201,7 +201,7 @@ export function SettingsCard({ data, form, dirty, saving, fe, onChange, onSave, 
           <Field label={t('k6e.f.userAgent')} hint={t('k6e.f.userAgentHint')} {...fe.fieldProps('user_agent')}>
             {({ id, describedBy, invalid }) => (
               <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} value={form.user_agent} disabled={saving}
-                spellCheck={false} autoComplete="off" maxLength={260} placeholder="Grafana k6/2.3.0"
+                spellCheck={false} autoComplete="off" maxLength={260} placeholder="Grafana k6/2.4.0"
                 onChange={(e) => onChange('user_agent', e.target.value)} data-slot="k6e-f-ua" className="h-10 font-mono" />
             )}
           </Field>

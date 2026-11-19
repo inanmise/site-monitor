@@ -1225,14 +1225,16 @@ satırı yalnız bilgidir. Sistem metrikleri örneklemesi kapalıysa (`site.moni
 
 ## k6 sürüm geçişi (0.49 → 2.3)
 
-**Durum (2026-10-30, Yayın B + C tek sürümde):** geçiş tamamlandı (2026-11-16'dan beri imajda ayrıca ADAY v2.4.0 var —
-aşağıdaki "k6 sürüm geçişi (2.3 → 2.4, aday ikili)"). Etkin ikili: `/usr/bin/k6` = **v2.3.0**
-(GitHub sürüm tarball'ı, sabit SHA-256). 0.49 imajdan çıktı; uygulama yalnız **v2.0.0 ve üstünü** koşar — daha eski bir
-ikili tanımlanırsa bulunur ama koşmaz ("desteklenmiyor"). Sürüm yalnız `k6 v2.3.0 (…)` biçimindeki satırdan okunur;
+**Durum (2026-10-30, Yayın B + C tek sürümde):** geçiş tamamlandı; o sürümle etkin ikili `/usr/bin/k6` = v2.3.0 oldu
+(GitHub sürüm tarball'ı, sabit SHA-256). **Bugün (2026-11-20'den beri) etkin ikili v2.4.0'dır** — 2.3 → 2.4 terfisi,
+aşağıdaki "k6 sürüm geçişi (2.3 → 2.4, aday ikili)"; bu bölümdeki "v2.3.0" / "2.3" ifadeleri o günkü geçişi anlatır.
+0.49 imajdan çıktı; uygulama yalnız **v2.0.0 ve üstünü** koşar — daha eski bir
+ikili tanımlanırsa bulunur ama koşmaz ("desteklenmiyor"). Sürüm yalnız `k6 v2.4.0 (…)` biçimindeki satırdan okunur;
 okunamayan bir sürüm (ör. geliştirme derlemesi `k6 (devel) …`) "desteklenmiyor" sayılmaz, ikili koşar. `/opt/k6-next/k6` yalnız
 bir **sembolik bağdır** (`/usr/bin/k6`'ya): 20.172.x'te "Adayı etkin yap" etkin ikili ayarını bu yola yazıyordu; o kayıtlı
 değer BİLEREK korunur (aşağıda). Sembolik bağ, kayıtlı bir `/opt/k6-next/k6` değerini ÖNCE taşıyan gelecekteki bir sürüme
-dek imajda kalır — kaldırma kararı normalleştirme nişanına değil, ayarın KAYITLI DEĞERİNE bakmalıdır.
+dek imajda kalır — kaldırma kararı normalleştirme nişanına değil, ayarın KAYITLI DEĞERİNE bakmalıdır. Aynı kural 2026-11-20'den
+beri `/opt/k6-candidate/k6` bağı için de geçerlidir (20.212 – 20.217'de "Adayı etkin yap"ın yazdığı yol).
 Ekran: **Ayarlar → Platform → k6 motoru** (yalnız genel yönetici). İnceleme raporu:
 https://claude.ai/artifact/DUqdNtGqQ55Px4uxgqjqdi
 
@@ -1257,6 +1259,10 @@ dokunulmaz). Bir şey değiştiyse günlükte `[K6] Ayar normalleştirmesi tamam
 `K6_ENGINE_SETTINGS_NORMALIZE` görünür; değişecek bir şey yoksa `… değiştirilecek eski yedek / aday yolu yok`. 36 başarısız denemeden
 sonra o pod bırakır (ERROR satırı; nişan yazılmaz — sonraki açılış yeniden dener). Sürüm geçmişi kapalıysa (pod sürümü sinyali
 yok) hemen koşar.
+
+2026-11-20'den beri aynı iş İKİ geçiş koşar, her biri kendi nişanıyla (1. geçiş: yukarıdaki; 2. geçiş: 2.4 terfisi —
+aşağıdaki bölüm, nişan `2026-11-20-k6-24-promotion-normalize`). Nişanı yazılmış geçiş yeniden koşmaz; günlük satırlarının
+sonunda `[geçiş <nişan>]`, denetim kaydında `marker` alanı hangi geçişin yazdığını söyler.
 
 **Dağıtım sonrası denetim:**
 1. Bütün pod'larda `[K6] ✅ k6 bulundu — sürüm v2.3.0 (k6)` — Yayın A'da "Adayı etkin yap" yapıldıysa yol
@@ -1292,9 +1298,14 @@ WAF için User-Agent ayarı aynen geçerlidir.
   yapıldıysa sembolik bağ sayesinde 2.3 koşmaya devam eder.
 
 **Sonraki k6 yükseltmesi (sayfa ve tarama bunun için duruyor):**
-1. Yeni ikiliyi imaja ya da bağlı bir yola KENDİ yoluyla koyun (ör. `/opt/k6-candidate/k6`) — `/opt/k6-next/k6`'ya DEĞİL:
-   bir ortamda etkin ayar hâlâ o yolu gösteriyorsa aday taramasız etkin olurdu; sembolik bağ, kayıtlı bir `/opt/k6-next/k6`
-   değerini önce taşıyan bir sürüme dek kalır. Dockerfile'da sürüm + iki sağlama toplamı BİRLİKTE değişir.
+1. Yeni ikiliyi imaja ya da bağlı bir yola KENDİ, YENİ yoluyla koyun (ör. `/opt/k6-new/k6`) — `/opt/k6-next/k6`'ya ya da
+   `/opt/k6-candidate/k6`'ya DEĞİL: bir ortamda etkin ayar hâlâ o yollardan birini gösteriyorsa aday taramasız etkin olurdu;
+   iki sembolik bağ da, kayıtlı o değeri önce taşıyan bir sürüme dek kalır. Dockerfile'da aday için `K6_CANDIDATE_VERSION` +
+   `K6_CANDIDATE_SHA256_AMD64|ARM64` ARG'ları, `k6-bin` aşamasında ikinci `fetch_k6` çağrısı (`/k6-candidate` çıktısı) ve
+   çalışma imajında `COPY --from=k6-bin /k6-candidate <yeni yol>` + aynı `0111` sertleştirmesi eklenir; aynı değişiklikte
+   `K6EngineSettings.CANDIDATE_IMAGE_PATH` ve `application.properties` aday varsayılanı o yolu gösterir (kapı
+   `K6EngineSettingsTest.candidateDefaultMatchesImage`), `scripts/image-boot-check.sh` içindeki aday yolu da güncellenir.
+   Sürüm + iki sağlama toplamı BİRLİKTE değişir. Örnek: 2.3 → 2.4 geçişinin 1. adımı (aşağıdaki bölüm, 20.212.0).
 2. k6 motoru → "Aday ikili yolu" = o yol → kaydet → aday "Çalışıyor" olmalı (2.0'dan eskisi "Desteklenmiyor").
 3. Yan etkili betikleri "Tarama dışı" listesine ekleyin → **Taramayı başlat**. Her etkin izleme aday ile BİR kez derlenir +
    koşulur ve son gerçek (zamanlanmış) kontrolüyle karşılaştırılır. Geçmişe satır, alarm, bildirim YOK; aynı anda tek betik,
@@ -1319,29 +1330,35 @@ WAF için User-Agent ayarı aynen geçerlidir.
   da bu içe aktarımları reddeder.
 - `exec.test.fail()` çıkış kodu 110 = FAIL (betik bilerek başarısız işaretledi).
 - 2.x REST API'yi açmaz; hiçbir k6 komutuna `--address` verilmez.
-- İkili sürümü ve sağlama toplamları Dockerfile'da (`K6_VERSION`, `K6_SHA256_AMD64|ARM64`; aday için `K6_CANDIDATE_*`, aşağıdaki
-  bölüm); imaj derlemesi bütün yolların (`/usr/bin/k6`, `/opt/k6-next/k6`, `/opt/k6-candidate/k6`) `k6 version` çıktısını
-  denetler, imaj açılış testi yoklamaların günlükte göründüğünü ve "desteklenmiyor / bulunamadı" demediğini denetler. CI
-  `backend-k6-contract` işi gerçek ikililerle (etkin + aday) sözleşme testlerini koşar.
+- İkili sürümü ve sağlama toplamları Dockerfile'da (`K6_VERSION`, `K6_SHA256_AMD64|ARM64`; bir aday varken ayrıca
+  `K6_CANDIDATE_*` — bugün yok); imaj derlemesi bütün yolların (`/usr/bin/k6` ve ona sembolik bağ olan `/opt/k6-next/k6`,
+  `/opt/k6-candidate/k6`) `k6 version` çıktısını ve iki bağın hedefini denetler, imaj açılış testi yoklamaların günlükte
+  göründüğünü ve "desteklenmiyor / bulunamadı" demediğini denetler. CI `backend-k6-contract` işi gerçek ikiliyle (etkin;
+  Dockerfile'da aday varsa onunla da) sözleşme testlerini koşar.
 - Etkin ikili 2.0'dan eskiyse senaryo sayfası "k6 sürümü (…) desteklenmiyor" afişi gösterir, kontroller koşmaz (koşum yolu
   da o ikiliyi başlatmaz); k6 motoru satırı "Desteklenmiyor", günlük `[K6] Sentetik izleme YÜRÜTÜLMÜYOR — k6 sürümü …
-  desteklenmiyor` der. Çözüm: etkin ikiliyi `k6`'ya (imajdaki 2.3) çekin.
+  desteklenmiyor` der. Çözüm: etkin ikiliyi `k6`'ya (imajdaki 2.4.0) çekin.
 - Dosya okuma taraması (`site.monitor.scripted.file-read-policy`) `open(…)` ile birlikte `open?.(…)` çağrısını da yakalar.
 - Ekranda boşaltılan yedek / aday yolu, GODEBUG ve User-Agent `none` olarak yazılır (boş değer ayarı silip ortam
   varsayılanını geri getirirdi).
 - Tarama sayıları: gerileme dışında "koşulamadı", "yeni hata" (gerçek kontrolü yok, adayla düşüyor) ve "değişti" de onay
   penceresinde uyarıdır — "temiz" denmez. Tarama 2 sa 50 dk'yı aşarsa kendisi durur (kilit tavanı 3 sa); kalanları seçerek
-  yeniden tarayın. Aday tanımlı değilse tarama başlamaz (`K6_CANDIDATE_NOT_SET`; 20.211.x'e dek varsayılan buydu —
-  2026-11-16'dan beri varsayılan aday imajdaki `/opt/k6-candidate/k6`, aşağıdaki bölüm).
+  yeniden tarayın. Aday tanımlı değilse tarama başlamaz (`K6_CANDIDATE_NOT_SET`) — bugünkü varsayılan budur (imajda aday
+  yok; yalnız 20.212 – 20.217'de varsayılan aday imajdaki `/opt/k6-candidate/k6` idi, aşağıdaki bölüm).
 
 ## k6 sürüm geçişi (2.3 → 2.4, aday ikili)
 
-**Neden:** Trivy, imajdaki `/usr/bin/k6`'da (k6 v2.3.0 — go1.26.8, golang.org/x/net v0.58.0) 6 HIGH bulgu gösteriyor; k6
+**Durum (2026-11-20): TAMAMLANDI.** 2. adım (terfi) yayınlandı — imajda TEK k6 ikilisi var: `/usr/bin/k6` = **v2.4.0**;
+2.3.0 imajdan çıktı, imajda aday ikili yok. Bugünkü durum, tek seferlik ayar geçişi ve geri alma aşağıda "2. adım — terfi"
+başlığında; "1. adım" ve "Geçiş" kısımları 20.212 – 20.217 için TARİHÇEDİR (ölçülen 2.3 → 2.4 davranış farkları listesi
+geçerliliğini korur).
+
+**Neden:** Trivy, imajdaki `/usr/bin/k6`'da (k6 v2.3.0 — go1.26.8, golang.org/x/net v0.58.0) 6 HIGH bulgu gösteriyordu; k6
 v2.4.0 (2026-11-12 yayını; go1.26.11, golang.org/x/net v0.62.0) bunları kapatır. Kullanıcı kararı: motor sayfasındaki aday
 ikili ve gölge taramayla İKİ ADIMDA geçilir. Go hâlâ 1.26.x — GODEBUG `tlsrsakex` / `tls3des` 2.4.0'da da çalışır (Go 1.27
 bunları kaldırdı; Go 1.27 ile derlenmiş bir k6 aday olursa k6 motoru o satırda "kaçışları yok sayar" uyarısı gösterir).
 
-**1. adım — bu sürüm (2026-11-16):** imajda iki ikili:
+**1. adım — 20.212.0 – 20.217.x (2026-11-16; TARİHÇE):** imajda iki ikili vardı:
 - etkin `/usr/bin/k6` = **v2.3.0** (değişmedi; senaryo kontrolleri dağıtımdan sonra da bununla koşar);
 - aday `/opt/k6-candidate/k6` = **v2.4.0** (Dockerfile `K6_CANDIDATE_VERSION` + `K6_CANDIDATE_SHA256_AMD64|ARM64`, aynı
   `k6-bin` aşamasında aynı kabuk işleviyle indirilir, toplam ve sürüm denetlenir); etkin ikili gibi root sahipli, `0111`.
@@ -1351,7 +1368,9 @@ bunları kaldırdı; Go 1.27 ile derlenmiş bir k6 aday olursa k6 motoru o satı
 - Yerel geliştirmede `/opt/k6-candidate/k6` yoktur: aday "Bulunamadı" (nötr ton) görünür, `[K6] aday k6 bulunamadı (…)` INFO
   satırı yazılır; hiçbir izleme etkilenmez.
 
-**Geçiş (dağıtım bitince, mesai içinde) — Ayarlar → Platform → k6 motoru:**
+**Geçiş (1. adım sürümlerinde; dağıtım bitince, mesai içinde) — Ayarlar → Platform → k6 motoru.** Terfi sürümünde bu adımlar
+gerekmez (herkes 2.4.0 koşar); terfi sürümüne geçmeden ÖNCE, hâlâ 20.212 – 20.217 koşan bir ortamda taramayı (2 – 3. madde)
+koşmak içindir:
 1. Motorlar: Etkin v2.3.0 (go1.26.8) "Çalışıyor", Aday v2.4.0 (go1.26.11) "Çalışıyor".
 2. Yan etkili betikleri "Tarama dışı" listesine ekleyin → **Taramayı başlat** → bitmesini bekleyin.
 3. **REGRESSION** ve **NEW_FAIL** satırlarını inceleyin (yukarıdaki "Sonraki k6 yükseltmesi" → 4. madde: TLS, 403 / WAF,
@@ -1373,28 +1392,76 @@ bunları kaldırdı; Go 1.27 ile derlenmiş bir k6 aday olursa k6 motoru o satı
    Aday satırı etkinle aynı yolu gösterir ve "Adayı etkin yap" kapalıdır — beklenen (terfi sürümü aday varsayılanını boşaltır).
 5. Sorun → **Yedeğe geri dön** (yeniden dağıtım yok).
 
-**Geri alma (helm):** 20.211.x imajında `/opt/k6-candidate/k6` YOKTUR. Geçiş yapıldıysa (`k6-bin` = `/opt/k6-candidate/k6`)
+**Geri alma (helm) — 1. adım sürümlerinden (20.212 – 20.217) 20.211.x'e:** 20.211.x imajında `/opt/k6-candidate/k6`
+YOKTUR. Geçiş yapıldıysa (`k6-bin` = `/opt/k6-candidate/k6`)
 **ÖNCE "Yedeğe geri dön", SONRA `helm rollback`.** Doğrulandı (20.211.0 kodu): kayıtlı yol bulunamazsa etkin yoklama
 `[K6] ⚠ k6 bulunamadı (/opt/k6-candidate/k6)` der, senaryo taraması hiç koşmaz (her turda `[K6] Sentetik izleme YÜRÜTÜLMÜYOR —
 k6 bulunamadı …`), kontrol satırı yazılmaz, alarm ne açılır ne kapanır; "Şimdi kontrol et" "k6 bulunamadı" diye atlanır, form
 "Test" / teşhis 400 döner. Unutulduysa 20.211.0'da k6 motoru → "Yedeğe geri dön" yine çalışır (yedek = eski etkin yol, o
 imajda var; bütün pod'lar 20.211.0'a geçtikten sonra). Geçiş yapılmadıysa (`k6-bin` = `k6`) geri alma k6 için güvenlidir.
 
-**2. adım — terfi sürümü (henüz YAPILMADI; yapılacaklar):** Trivy'deki 6 HIGH ancak burada kapanır.
-1. Dockerfile: `K6_VERSION` = 2.4.0 ve `K6_SHA256_AMD64|ARM64` = bugünkü aday değerleri; `K6_CANDIDATE_*` ARG'ları ve ikinci
-   `fetch_k6` çağrısı kalkar (2.3.0 imajdan çıkar). `scripts/fetch-k6-binaries.sh`, CI aday koşusu ve imaj açılış denetimi
-   aday ARG'ı yokken adayı kendiliğinden atlar.
-2. `/opt/k6-candidate/k6` yolu `/usr/bin/k6`'ya **SEMBOLİK BAĞ** olarak KALIR (`/opt/k6-next/k6` ile aynı desen): geçiş yapılan
-   ortamlarda kayıtlı etkin değer bu yoldur. Bağı kaldırma kararı normalleştirme nişanına değil, ayarın KAYITLI DEĞERİNE bakmalı
-   (önce kayıtlı `/opt/k6-candidate/k6` değerini taşıyan bir sürüm).
-3. `site.monitor.scripted.k6-bin-candidate` varsayılanı yeniden boş olur (aday etkinle aynı ikili olurdu).
-4. Yeni, tek seferlik bir ayar normalleştirmesi (`K6SettingsNormalizer` deseni, YENİ nişan anahtarı): yedek ∈ {`k6`,
-   `/usr/bin/k6`, `/opt/k6-next/k6`, `/opt/k6-candidate/k6`} → yok; aday = `/opt/k6-candidate/k6` → yok. **`k6-bin`'e
-   DOKUNULMAZ** — kayıtlı `/opt/k6-candidate/k6` bağ sayesinde 2.4'ü, bu sürüme `helm rollback`'te GERÇEK 2.4'ü gösterir.
-5. Geçiş yapılmamış ortam (`k6-bin` = `k6`) terfi sürümüyle 2.4'e TARAMASIZ geçer — taramayı 1. adım sürümünde koşun.
-6. `.trivyignore.yaml`'daki k6 2.3.0 bloğu (5 CVE, `usr/bin/k6`, son tarih 2027-01-31) silinir: 2.3.0 imajdan çıkınca
-   eşleşecek bulgu kalmaz. Terfi sürümü son tarihten önce gelmezse yayın o gün yeniden durur (bilerek — aşağıdaki
-   "Yayın güvenlik kapısı (Trivy)").
+**2. adım — terfi (2026-11-20, YAPILDI; kullanıcı kararı).** Tetikleyen: yayın Trivy kapısında YENİ bir bulguyla durdu —
+CVE-2026-97054, `usr/bin/k6` (k6 2.3.0, go1.26.8; Go `net/http` HTTP/1 sunucusunda `MaxBytesReader` yarışı, go 1.26.11'de
+kapalı). İstisna eklemek yerine terfi seçildi. Trivy'deki k6 bulguları (eski 6 HIGH + bu bulgu) bu sürümle kapandı.
+
+*Bugünkü durum:*
+- İmajda TEK ikili: `/usr/bin/k6` = **v2.4.0** (Dockerfile `K6_VERSION` = 2.4.0, 1. adımdaki aday sağlama toplamlarıyla;
+  `K6_CANDIDATE_*` ARG'ları ve ikinci `fetch_k6` çağrısı kalktı). 2.3.0 imajda yok — karşılaştıracak / dönecek eski sürüm yok.
+- `/opt/k6-candidate/k6` ve `/opt/k6-next/k6` → `/usr/bin/k6`'ya **SEMBOLİK BAĞ** (imaj derlemesi iki bağın hedefini ve
+  sürümünü doğrular). Kayıtlı ETKİN ayar bu yollardan biri olabilir (1. adımda / Yayın A'da "Adayı etkin yap" yapılmış
+  ortamlar); bağlar o yüzden durur ve aday olarak KULLANILMAZ. Bir bağı kaldırma kararı normalleştirme nişanına değil, ayarın
+  KAYITLI DEĞERİNE bakmalı (önce kayıtlı o değeri taşıyan bir sürüm).
+- `site.monitor.scripted.k6-bin-candidate` varsayılanı BOŞ (aday yok; `K6EngineSettings.CANDIDATE_IMAGE_PATH` boş): k6 motoru
+  sayfasında Aday "Tanımlı değil", tarama `K6_CANDIDATE_NOT_SET` ile başlamaz. Tanımlı bir aday yolu bulunamıyorsa artık her
+  zaman tehlike tonundadır (imajın kendi aday yolu için geçerli nötr "Bulunamadı" istisnası aday yokken uygulanmaz).
+- Açılış günlüğü: `[K6] ✅ k6 bulundu — sürüm v2.4.0 (k6)` — 1. adımda "Adayı etkin yap" yapılmış ortamda yol
+  `(/opt/k6-candidate/k6)`, Yayın A'dan kalan ortamda `(/opt/k6-next/k6)` (ayar korunur, bağ 2.4.0'dır); `[K6] aday k6 …`
+  satırı YOKTUR.
+- 1. adımda geçiş yapılmamış ortam (`k6-bin` = `k6` ya da `/opt/k6-next/k6`) bu sürümle 2.4.0'a TARAMASIZ geçer. Taramayı
+  dağıtımdan ÖNCE, ortam hâlâ 20.212 – 20.217 koşarken yapın (PROD_DEPLOY_CHECKLIST → "k6 2.4 terfisi"). Bilinen davranış
+  farkları yukarıdaki listededir (en önemlisi: `default()` hiç bitmeyen bir Promise döndürürse 2.4'te ERROR, 2.3'te PASS).
+- `.trivyignore.yaml`'daki k6 2.3.0 bloğu silindi (dosyada istisna yok — aşağıdaki "Yayın güvenlik kapısı (Trivy)").
+- CI `backend-k6-contract` yalnız etkin ikiliyi (2.4.0) koşar, aday adımı bildirimle atlanır; imaj açılış denetimi (8. adım)
+  yalnız etkin yoklama satırını arar. `scripts/fetch-k6-binaries.sh` yalnız `/k6`'yı çıkarır.
+
+*Ayar normalleştirmesinin 2. geçişi (tek seferlik, kendiliğinden):* `K6SettingsNormalizer`, nişan
+`2026-11-20-k6-24-promotion-normalize` (`schema_patch_markers`); 1. geçişle aynı kilit ve aynı koşullar (açılıştan 3 dk
+sonra, 10 dk'da bir; yalnız BÜTÜN pod'lar bu sürümdeyken; 36 başarısız denemede o pod bırakır):
+- yedek ikili ∈ {`k6`, `/usr/bin/k6`, `/opt/k6-next/k6`, `/opt/k6-candidate/k6`} → yok — dördü de bu imajda aynı 2.4.0
+  ikilisi; "Yedeğe geri dön" aynı sürüme dönerdi;
+- aday ikili = `/opt/k6-candidate/k6` → yok — o yol artık etkin ikilinin kendisi (kayıtlı kalsaydı sayfa "aday hazır" derdi);
+- **`k6-bin`'e DOKUNULMAZ** — kayıtlı `/opt/k6-candidate/k6` bağ sayesinde 2.4.0'ı, 20.212 – 20.217'ye `helm rollback`'te
+  GERÇEK 2.4.0 adayını gösterir;
+- kayıtlı etkin değer bu dört yolun DIŞINDA özel bir yolsa (elle girilmiş başka bir ikili) yedek KORUNUR — o durumda
+  yedekteki `k6` gerçekten başka bir ikilidir; aday sıfırlaması atlanmaz;
+- başka değerler (özel yol, `none`) olduğu gibi kalır; silme koşulludur (arada bir yönetici kaydettiyse dokunulmaz).
+
+Günlük: `[K6] Ayar normalleştirmesi tamamlandı — … [geçiş 2026-11-20-k6-24-promotion-normalize]` ya da
+`[K6] Ayar normalleştirmesi: değiştirilecek eski yedek / aday yolu yok … [geçiş …]`; değişiklik olduysa denetimde
+`K6_ENGINE_SETTINGS_NORMALIZE` (`marker` = geçişin nişanı). Sonrasında k6 motoru: Etkin = v2.4.0 "Çalışıyor", Yedek ve Aday
+"Tanımlı değil" (elle başka yol girilmediyse). 1. geçişin nişanı (`2026-10-30-k6-settings-normalize`) olan veritabanında
+yalnız 2. geçiş koşar; nişanı hiç olmayan (çok eski sürümden gelen) veritabanında ikisi sırayla koşar.
+
+*Dağıtım sürerken (20.212 – 20.217 + bu sürüm):* eski pod'lar KENDİ motorlarıyla koşar (varsayılan `k6` = 2.3.0, geçiş
+yapıldıysa `/opt/k6-candidate/k6` = 2.4.0); yeni pod'lar ayar ne derse desin 2.4.0 koşar. 2.3 ile 2.4 arasında betik
+sözdizimi farkı yoktur. "Adayı etkin yap" / "Yedeğe geri dön" dağıtım sürerken kapalıdır; normalleştirme dağıtım bitince koşar.
+
+*Geri alma (helm) — terfi sürümünden:*
+- **20.212 – 20.217'ye:** o imajlarda `/usr/bin/k6` = 2.3.0 ve `/opt/k6-candidate/k6` = GERÇEK 2.4.0 adayıdır. Kayıtlı etkin
+  ayar `/opt/k6-candidate/k6` ise senaryo kontrolleri 2.4.0 ile koşmaya devam eder. Etkin ayar varsayılan `k6` (ya da
+  `/opt/k6-next/k6`) ise kontroller yeniden **2.3.0** ile koşar (açık CVE'li sürüm); 2.4.0'da kalmak için orada k6 motoru →
+  **Adayı etkin yap** (oradaki varsayılan aday `/opt/k6-candidate/k6`; alan boş görünüyorsa veritabanında `none` kayıtlıdır —
+  yolu bir kez yazın). Yedek alanı 2. geçişte sıfırlandı: orada "Yedeğe geri dön" gerekiyorsa alana `k6` yeniden yazılabilir
+  (o imajda gerçek 2.3.0). O sürümler Trivy kapısından YENİDEN YAYINLANAMAZ (CVE-2026-97054; istisna bloğu silindi) — geri
+  alma yalnız mevcut imajlarla ve geçici olmalıdır.
+- **≤ 20.211.x'e:** o imajlarda `/opt/k6-candidate/k6` YOKTUR. Etkin ayar o yolsa yedek sıfırlandığı için "Yedeğe geri dön"
+  sunulmaz: ÖNCE Ayarlar'da `site.monitor.scripted.k6-bin` = `k6` yapın (bu imajda `k6` da 2.4.0'dır, davranış değişmez),
+  SONRA `helm rollback` — yoksa hedefte bütün senaryo kontrolleri `k6 bulunamadı` ile durur (satır yazılmaz, alarm ne açılır
+  ne kapanır). Hedefte `k6` = 2.3.0'dır (20.172.x ve öncesi için yukarıdaki "0.49 → 2.3" bölümünün geri alma notları).
+- Geri alıp yeniden bu sürüme gelindiğinde nişanlar yazılıdır; iş bir daha koşmaz. O arada yedek alanına yazılan `k6` kalır
+  (bu imajda etkinle aynı sürüm olduğu için "Yedeğe geri dön" sunulmaz — zararsız; alanı boşaltabilirsiniz).
+
+*Sonraki k6 yükseltmesi* yine iki adımdır ve adayını YENİ bir yola koyar — yukarıdaki "Sonraki k6 yükseltmesi" maddeleri.
 
 ## Yayın güvenlik kapısı (Trivy)
 
@@ -1419,14 +1486,19 @@ imajda var; bütün pod'lar 20.211.0'a geçtikten sonra). Geçiş yapılmadıysa
    - Alpine paketi → derleme zaten `apk upgrade` koşar; düzeltme Alpine deposuna yeni girdiyse yeniden koşmak yeter.
      Taban imaj sorunuysa Dockerfile'ın üstündeki digest yenileme yönergesi.
    - Java bağımlılığı (`app/app.jar`) → aynı ana sürüm içinde yükseltin (ana sürüm geçişi yapılmaz).
-   - Bir ikili (k6 gibi) → yeni sürümü aday olarak getirin (k6 sürüm geçişi bölümü).
+   - Bir ikili (k6 gibi) → yeni sürümü aday olarak getirin (k6 sürüm geçişi bölümü); aday zaten imajda ve taranmışsa
+     terfi ettirin (2026-11-20'de k6 2.4.0 böyle etkin oldu).
 3. Hemen kapatılamıyorsa: `.trivyignore.yaml`'a istisna ekleyin — **yol kapsamlı** (`paths`), **son tarihli**
    (`expired_at`) ve **gerekçeli** (`statement`). `fix(ci): …` ile main'e alın; Release yeniden koşar. Önceki koşu hiçbir şey
    itmediği için aynı sürüm numarası kullanılır.
 4. İstisnanın son tarihi geçince istisna kendiliğinden düşer ve yayın yeniden durur — bilerek: sorunu kapatın ya da
    gerekçeyi gözden geçirip tarihi yenileyin.
 
-Şu anki istisnalar: yalnız k6 2.3.0'ın 5 CVE'si (6 bulgu; `usr/bin/k6`, 2027-01-31). k6 terfi sürümünde silinir.
+Şu anki istisnalar: **yok** (2026-11-20). k6 2.3.0'ın 5 CVE'lik bloğu (6 bulgu; `usr/bin/k6`, son tarih 2027-01-31) k6
+2.4 terfisiyle silindi: 2.3.0 imajdan çıktı, eşleşecek bulgu kalmadı. Terfiyi tetikleyen bulgu CVE-2026-97054 idi
+(`usr/bin/k6`, k6 2.3.0 / go1.26.8 — Go `net/http` HTTP/1 sunucusu `MaxBytesReader` yarışı; go 1.26.11'de kapalı): istisna
+eklenmedi, ikili yükseltildi ("k6 sürüm geçişi (2.3 → 2.4, aday ikili)" → "2. adım — terfi"). `.trivyignore.yaml`'da
+`vulnerabilities: []` satırı BİLEREK durur (dosya geçerli bir YAML belgesi kalsın); yeni istisna o listeye eklenir.
 
 **OWASP bağımlılık taraması (`dependency-check.yml`):** Pazartesi ve Perşembe 06:00 UTC + elle. Temiz değilse iş KIRMIZI
 (önceden her durumda yeşildi):

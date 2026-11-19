@@ -189,7 +189,7 @@ class K6EngineControllerTest {
         assertThat(c.get("go_version")).isEqualTo("go1.27.2");
         assertThat((List<String>) c.get("godebug_ignored")).containsExactly("tlsrsakex");   // tls3des=0 kayıp değil
 
-        // Bugünkü gerçek aday (k6 v2.4.0, go1.26.11): hiçbir şey yok sayılmaz
+        // Gerçek k6 v2.4.0 çıktısı (go1.26.11 — 2026-11-20 terfisinden beri imajın etkin ikilisi): hiçbir şey yok sayılmaz
         K6Profile real240 = K6Profile.fromVersionOutput("/opt/k6-candidate/k6",
                 "k6 v2.4.0 (commit/dd9395906d, go1.26.11, linux/amd64)", 1L);
         when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(active, null, real240));
@@ -203,27 +203,37 @@ class K6EngineControllerTest {
     }
 
     @Test
-    @DisplayName("Aday default_path (2026-11-16; 2026-11-17 inceleme): ETKİN aday yolu imajın aday yolu "
-            + "(/opt/k6-candidate/k6) ise true (bulunamaması nötr) — kayıt yok, boş kayıt ya da aynı yol kayıtlı fark etmez; "
-            + "SCRIPTED_K6_BIN_CANDIDATE ortam değişkeniyle (kayıt YOK) verilmiş başka yol false, kayıtlı başka yol false; "
-            + "etkin / yedek satırında alan yok; tanımsız aday null kalır")
+    @DisplayName("Aday default_path — 2026-11-20 terfisinden beri imajda aday ikili YOK (CANDIDATE_IMAGE_PATH boş): HER aday "
+            + "yolu için false (bulunamayan tanımlı aday = yapılandırma hatası, tehlike) — eski aday yolu /opt/k6-candidate/k6 "
+            + "dahil (kayıt yok, boş kayıt ya da aynı yol kayıtlı fark etmez), ortam değişkeniyle ya da ekrandan verilmiş yol "
+            + "dahil; etkin / yedek satırında alan yok; tanımsız aday null kalır. (Aday imaja girdiğinde kural: "
+            + "K6EngineSettingsTest.imageCandidatePathRule)")
     @SuppressWarnings("unchecked")
     void candidateDefaultPathFlag() {
-        K6Profile imagePath = K6Profile.fromVersionOutput(K6EngineSettings.CANDIDATE_IMAGE_PATH, null, 1L);
-        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v220, null, imagePath));
+        assertThat(K6EngineSettings.CANDIDATE_IMAGE_PATH).isEmpty();
+        // 20.212 – 20.217'nin aday yolu: bu imajda etkin ikiliye sembolik bağ, "imaj adayı" değil
+        K6Profile oldImagePath = K6Profile.fromVersionOutput("/opt/k6-candidate/k6", null, 1L);
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v220, null, oldImagePath));
         Map<String, Object> eng = (Map<String, Object>) data(ctl.status(session(true))).get("engines");
-        assertThat((Map<String, Object>) eng.get("candidate")).containsEntry("default_path", true);
+        assertThat((Map<String, Object>) eng.get("candidate")).containsEntry("default_path", false)
+                .containsEntry("available", false);
         assertThat((Map<String, Object>) eng.get("active")).doesNotContainKey("default_path");
 
         when(settings.getOverride(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY)).thenReturn("   ");
         eng = (Map<String, Object>) data(ctl.status(session(true))).get("engines");
-        assertThat((Map<String, Object>) eng.get("candidate")).containsEntry("default_path", true);
-        // Aynı yol elle kaydedilmiş: yine imajın yolu → nötr
-        when(settings.getOverride(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY)).thenReturn(K6EngineSettings.CANDIDATE_IMAGE_PATH);
+        assertThat((Map<String, Object>) eng.get("candidate")).containsEntry("default_path", false);
+        // Aynı yol elle kaydedilmiş: yine imaj adayı değil
+        when(settings.getOverride(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY)).thenReturn("/opt/k6-candidate/k6");
         eng = (Map<String, Object>) data(ctl.status(session(true))).get("engines");
-        assertThat((Map<String, Object>) eng.get("candidate")).containsEntry("default_path", true);
+        assertThat((Map<String, Object>) eng.get("candidate")).containsEntry("default_path", false);
+        // Bulunan (çalışan) bir adayda da false — alan yalnız "bulunamadı"nın tonunu belirler
+        when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v220, null,
+                K6Profile.fromVersionOutput("/opt/k6-candidate/k6", "k6 v2.4.0 (commit/dd9395906d, go1.26.11, linux/amd64)", 1L)));
+        eng = (Map<String, Object>) data(ctl.status(session(true))).get("engines");
+        assertThat((Map<String, Object>) eng.get("candidate")).containsEntry("default_path", false)
+                .containsEntry("available", true);
 
-        // Ortam değişkeniyle verilmiş başka yol (DB kaydı YOK) — eski kural bunu "varsayılan" sayıp nötr gösteriyordu
+        // Ortam değişkeniyle verilmiş başka yol (DB kaydı YOK)
         when(settings.getOverride(ScriptedCheckerService.K6_BIN_CANDIDATE_KEY)).thenReturn(null);
         K6Profile envPath = K6Profile.fromVersionOutput("/srv/k6-env/k6", null, 1L);
         when(checker.profiles()).thenReturn(new ScriptedCheckerService.Profiles(v220, null, envPath));
