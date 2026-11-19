@@ -154,3 +154,34 @@ describe('AlertHistory — "Geçmişini gör" listeyi o imzaya süzer', () => {
     })
   })
 })
+
+describe('AlertHistory gömülü (izleme sayfasının Alarmlar görünümü) — "Geçmişini gör" süzgeci görünür ve temizlenir (2026-11-19)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.admin.getAlerts.mockImplementation((q) => Promise.resolve(q?.q
+      ? { success: true, data: [], total: 0, page: 0, size: 50 }
+      : { success: true, data: [openAlert], total: 1, page: 0, size: 50 }))
+  })
+
+  it('gizli süzgeç şeritte söylenir; boş liste yeşil "açık alarm yok" DEĞİL; Temizle süzgeci kaldırır', async () => {
+    render(<AlertHistory types={['PING_DOWN']} initialTab="open" />)
+    fireEvent.click(await screen.findByRole('button', { name: /ping\.example\.com.*(ayrıntıları aç|open details)/ }))
+    fireEvent.click(await within(await screen.findByRole('dialog')).findByRole('button', { name: /Geçmişini gör|See its history/ }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    const strip = await waitFor(() => {
+      const el = document.querySelector('[data-slot="alh-embedded-filters"]')
+      expect(el).not.toBeNull()
+      return el
+    })
+    expect(strip.textContent).toMatch(/ping\.example\.com/)
+    // Açık sekmesine dönünce de süzgeç sürer — boş sonuç "süzgeçle sonuç yok" olarak söylenir
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /Açık|Open/ }))
+    fireEvent.click(screen.getByRole('tab', { name: /Açık|Open/ }))
+    await waitFor(() => expect(api.admin.getAlerts.mock.calls.at(-1)[0]).toMatchObject({ q: 'ping.example.com' }))
+    await waitFor(() => expect(screen.getByText(/No alerts match these filters/)).toBeInTheDocument())
+    expect(screen.queryByText(/No open alarms|Açık alarm yok/)).toBeNull()
+    fireEvent.click(document.querySelector('[data-slot="alh-embedded-clear"]'))
+    await waitFor(() => expect(document.querySelector('[data-slot="alh-embedded-filters"]')).toBeNull())
+    await waitFor(() => expect(api.admin.getAlerts.mock.calls.at(-1)[0].q).toBeFalsy())
+  })
+})

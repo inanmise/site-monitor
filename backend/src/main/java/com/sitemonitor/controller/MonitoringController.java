@@ -1196,6 +1196,9 @@ public class MonitoringController {
         }
         closeAlertsOnPause(before.get("active") instanceof Boolean b ? b : null, k.active(),
                 keyChanged ? oldKey : k.key(), k.types(), k.owner());
+        if (keyChanged && MonitorHistoryService.DNS.equals(kind) && permanentDeletion != null && entity instanceof DnsMonitor dm) {
+            permanentDeletion.markDnsTargetChanged(dm.getId(), oldKey);   // geri yükleme de alan adını değiştirebilir (2026-11-19)
+        }
         if (MonitorHistoryService.DNS.equals(kind)) {
             Object prevExpected = before.get("expectedValue");
             DnsMonitor dns = (DnsMonitor) entity;
@@ -3365,6 +3368,11 @@ public class MonitoringController {
             DnsMonitor saved = dnsMonitorRepo.save(m);
             if (detached && baselineConfigService != null)   // alan adı (taban çizgisi hedefi) değişti → eski örnekler karışmasın
                 baselineConfigService.clearSamples(com.sitemonitor.service.baseline.BaselineTypes.DNS, saved.getId());
+            // Alan adı değişti → eski alan adının son kaydı değişiklik tabanı olmasın, bekleyen değişiklik bastırılır (2026-11-19)
+            if (permanentDeletion != null && _prevDomain != null && saved.getDomain() != null
+                    && !_prevDomain.equalsIgnoreCase(saved.getDomain())) {
+                permanentDeletion.markDnsTargetChanged(saved.getId(), _prevDomain);
+            }
             auditService.recordAction("MONITOR_UPDATE", session, "DNS_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                     AuditDiff.diff(_before, AuditDiff.snapshot(saved, MON_FIELDS)));
             // Aynı before/after çifti geçmişe de gider — audit çağrısına DOKUNULMAZ.

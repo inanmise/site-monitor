@@ -4336,9 +4336,12 @@ class AdminControllerTest {
     @Autowired AdminController adminController;
 
     @Test
-    @DisplayName("type-summary: kısa ömürlü bellek — aynı kapsam + parametre ikinci çağrıda sorgusuz; fresh yeniden hesaplar; başka tip ayrı anahtar")
+    @DisplayName("type-summary: kısa ömürlü bellek — aynı kapsam + parametre ikinci çağrıda sorgusuz; fresh en çok 5 sn'de bir yeniden hesaplar; başka tip / kapsam ayrı anahtar")
     void alertTypeSummary_memoisedPerScopeAndParams() throws Exception {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
         org.springframework.test.util.ReflectionTestUtils.setField(adminController, "typeSummaryCacheMs", 60_000L);
+        org.springframework.test.util.ReflectionTestUtils.setField(adminController, "typeSummaryMemo",
+                new com.sitemonitor.util.TtlMemo<Map<String, Object>>(512, clock::get));
         try {
             when(alertEventRepo.topDomainsByAlertCount(any(), any(), anyBoolean(), any(), any(Pageable.class))).thenReturn(List.of());
             for (int i = 0; i < 3; i++) {
@@ -4346,7 +4349,18 @@ class AdminControllerTest {
                         .andExpect(status().isOk()).andExpect(jsonPath("$.data.top.days").value(7));
             }
             verify(alertEventRepo, times(1)).topDomainsByAlertCount(any(), any(), anyBoolean(), any(), any(Pageable.class));
+            // fresh art arda: 5 sn dolmadan belleği atlamaz (Yenile tıklamaları gruplu sorguyu tekrarlatmaz)
+            for (int i = 0; i < 3; i++) {
+                mvc.perform(get("/api/admin/alerts/type-summary").param("alertTypes", "PING_DOWN").param("fresh", "true").session(authSession()))
+                        .andExpect(status().isOk());
+            }
+            verify(alertEventRepo, times(1)).topDomainsByAlertCount(any(), any(), anyBoolean(), any(), any(Pageable.class));
+            clock.addAndGet(5_001L);
             mvc.perform(get("/api/admin/alerts/type-summary").param("alertTypes", "PING_DOWN").param("fresh", "true").session(authSession()))
+                    .andExpect(status().isOk());
+            verify(alertEventRepo, times(2)).topDomainsByAlertCount(any(), any(), anyBoolean(), any(), any(Pageable.class));
+            // taze sonuç saklandı: sonraki yoklama sorgusuz
+            mvc.perform(get("/api/admin/alerts/type-summary").param("alertTypes", "PING_DOWN").session(authSession()))
                     .andExpect(status().isOk());
             verify(alertEventRepo, times(2)).topDomainsByAlertCount(any(), any(), anyBoolean(), any(), any(Pageable.class));
             mvc.perform(get("/api/admin/alerts/type-summary").param("alertTypes", "PORT_DOWN").session(authSession()))
@@ -4358,7 +4372,69 @@ class AdminControllerTest {
             verify(alertEventRepo, times(4)).topDomainsByAlertCount(any(), any(), anyBoolean(), any(), any(Pageable.class));
         } finally {
             org.springframework.test.util.ReflectionTestUtils.setField(adminController, "typeSummaryCacheMs", 0L);
+            org.springframework.test.util.ReflectionTestUtils.setField(adminController, "typeSummaryMemo",
+                    new com.sitemonitor.util.TtlMemo<Map<String, Object>>(512));
         }
+    }
+
+    @Test
+    @DisplayName("type-summary: izleme adları okunamazsa sonuç bayraklı ve BELLEĞE YAZILMAZ — sonraki yoklama yeniden çözer")
+    void alertTypeSummary_namesUnavailableNotMemoised() throws Exception {
+        org.springframework.test.util.ReflectionTestUtils.setField(adminController, "typeSummaryCacheMs", 60_000L);
+        org.springframework.test.util.ReflectionTestUtils.setField(adminController, "typeSummaryMemo",
+                new com.sitemonitor.util.TtlMemo<Map<String, Object>>(512));
+        try {
+            when(alertEventRepo.topDomainsByAlertCount(any(), any(), anyBoolean(), any(), any(Pageable.class))).thenReturn(List.<Object[]>of(
+                    new Object[]{"https://e.example.com", 5L, 2L, 30L, 1L}));
+            when(alertEventRepo.findAllById(any())).thenReturn(List.of(alarmRow(30L, "https://e.example.com", "HTTP_DOWN", 5L)));
+            when(monitorRefs.pick(any(), any())).thenThrow(new RuntimeException("db"))
+                    .thenReturn(Map.of(30L, new com.sitemonitor.service.MonitorRefResolver.Pick("E sitesi", "http", "http", 12L, 5L)));
+            mvc.perform(get("/api/admin/alerts/type-summary").param("alertTypes", "HTTP_DOWN").session(authSession()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.top.names_unavailable").value(true))
+                    .andExpect(jsonPath("$.data.top.items[0].monitor").doesNotExist());
+            mvc.perform(get("/api/admin/alerts/type-summary").param("alertTypes", "HTTP_DOWN").session(authSession()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.top.names_unavailable").doesNotExist())
+                    .andExpect(jsonPath("$.data.top.items[0].monitor.name").value("E sitesi"));
+            verify(alertEventRepo, times(2)).topDomainsByAlertCount(any(), any(), anyBoolean(), any(), any(Pageable.class));
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(adminController, "typeSummaryCacheMs", 0L);
+            org.springframework.test.util.ReflectionTestUtils.setField(adminController, "typeSummaryMemo",
+                    new com.sitemonitor.util.TtlMemo<Map<String, Object>>(512));
+        }
+    }
+
+    @Test
+    @DisplayName("Alarm satırı: TAKIMSIZ izlemenin adı kapsamlı kullanıcıya verilmez (liste uçları gibi); global görüntüleyici görür")
+    void listAlerts_teamlessMonitorRefOnlyForGlobalViewer() throws Exception {
+        AlertEvent ping = alarmRow(17L, "api.example.com", "PING_DOWN", null);
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(ping)));
+        when(monitorRefs.pick(any(), any())).thenReturn(Map.of(
+                17L, new com.sitemonitor.service.MonitorRefResolver.Pick("Eski ping", "ping", "ping", 21L, null)));
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.read"), eq("view"))).thenReturn(true);
+        mvc.perform(get("/api/admin/alerts").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].monitor_ref").doesNotExist());
+        mvc.perform(get("/api/admin/alerts").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].monitor_ref.name").value("Eski ping"))
+                .andExpect(jsonPath("$.data[0].monitor_ref.monitor_id").value(21));
+    }
+
+    @Test
+    @DisplayName("Alarm satırı: belirsiz seçim (birden çok adaydan 'ilk aday') ad / bağlantı vermez — yanlış izleme adlandırılmaz")
+    void listAlerts_uncertainPickHasNoMonitorRef() throws Exception {
+        AlertEvent sc = alarmRow(18L, "Giriş akışı", "SCRIPTED_FAIL", null);
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(sc)));
+        when(monitorRefs.pick(any(), any())).thenReturn(Map.of(
+                18L, new com.sitemonitor.service.MonitorRefResolver.Pick("Giriş akışı", "scripted", "scripted", 31L, 1L, false)));
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.read"), eq("view"))).thenReturn(true);
+        mvc.perform(get("/api/admin/alerts").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].monitor_ref").doesNotExist());
     }
 
     @Test

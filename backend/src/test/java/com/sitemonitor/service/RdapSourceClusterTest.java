@@ -62,10 +62,26 @@ class RdapSourceClusterTest {
         ExtendedHealthService s = new ExtendedHealthService(mock(NotificationLogRepository.class), mock(SystemHeartbeatRepository.class),
                 mock(AlertEventRepository.class), template, rdap, mock(RetentionRunRepository.class), mock(AppSettingsService.class));
         s.instanceIdSupplier = () -> id;
+        s.nowMs = () -> java.time.Instant.parse("2026-10-23T07:00:00Z").toEpochMilli();   // fikstür saatleri güncel
         return s;
     }
 
     static Map<String, Object> status(String source, boolean alarm, String reason, String lastOk, String lastErr) {
+        Map<String, Object> m = legacyStatus(source, alarm, reason, lastOk, lastErr);
+        // Bugünkü RdapDomainClient.getSourceStatus biçimi: ardışık hata sayacı + kesinti eşiği
+        m.put("consecutive_failures", "NONE".equals(source) ? 3 : "DEGRADED".equals(source) ? 1 : 0);
+        m.put("outage_after", 3);
+        return m;
+    }
+
+    static Map<String, Object> failures(String source, int cf, String lastOk, String lastErr) {
+        Map<String, Object> m = status(source, "NONE".equals(source), "rdap http 503", lastOk, lastErr);
+        m.put("consecutive_failures", cf);
+        return m;
+    }
+
+    /** 20.215.0 öncesi biçim: sayaç / eşik yok — tek başarısız sorgu NONE'du. */
+    static Map<String, Object> legacyStatus(String source, boolean alarm, String reason, String lastOk, String lastErr) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("source", source);
         m.put("alarm", alarm);
@@ -137,5 +153,69 @@ class RdapSourceClusterTest {
     void missingTableIsLocal() {
         jdbc.execute("DROP TABLE cluster_observations");
         assertThat(follower.getDomainExpirySourceStatus()).containsEntry("source", "IDLE").containsEntry("scope", "local");
+    }
+
+    @Test
+    @DisplayName("2026-11-19: takipçinin TEK başarısız sorgusu liderin kesintisini uyarıya indirmez — sayaçlar birleşir (5 + 1)")
+    void followerSingleFailureKeepsLeadersOutage() {
+        when(leaderRdap.getSourceStatus()).thenReturn(failures("NONE", 5, "2026-10-22T06:00:00Z", "2026-10-23T06:00:00Z"));
+        leader.publishDomainExpirySource();
+        when(followerRdap.getSourceStatus()).thenReturn(failures("DEGRADED", 1, null, "2026-10-23T06:10:00Z"));
+        // yayınlamadan önce de (takipçinin kendi yeni hatası) kesinti görünür
+        assertThat(follower.getDomainExpirySourceStatus()).containsEntry("source", "NONE").containsEntry("alarm", true)
+                .containsEntry("consecutive_failures", 6);
+        follower.publishDomainExpirySource();
+        assertThat(leader.getDomainExpirySourceStatus()).containsEntry("source", "NONE").containsEntry("alarm", true)
+                .containsEntry("consecutive_failures", 6).containsEntry("observed_by", FOLLOWER)
+                .containsEntry("last_success", "2026-10-22T06:00:00Z");
+        // arada başarı → sayaç sıfır: liderin başarısı kesintiyi kapatır
+        when(leaderRdap.getSourceStatus()).thenReturn(status("RDAP", false, null, "2026-10-23T06:20:00Z", "2026-10-23T06:00:00Z"));
+        leader.publishDomainExpirySource();
+        assertThat(follower.getDomainExpirySourceStatus()).containsEntry("source", "RDAP").containsEntry("alarm", false);
+    }
+
+    @Test
+    @DisplayName("2026-11-19: iki pod sırayla birer hata → üçüncüde kesinti; aynı pod'un yeniden yayını hatalarını iki kez saymaz")
+    void failuresAcrossPodsCountOnce() {
+        when(leaderRdap.getSourceStatus()).thenReturn(failures("DEGRADED", 1, null, "2026-10-23T06:00:00Z"));
+        leader.publishDomainExpirySource();
+        when(followerRdap.getSourceStatus()).thenReturn(failures("DEGRADED", 1, null, "2026-10-23T06:01:00Z"));
+        follower.publishDomainExpirySource();
+        assertThat(leader.getDomainExpirySourceStatus()).containsEntry("source", "DEGRADED").containsEntry("consecutive_failures", 2);
+        when(leaderRdap.getSourceStatus()).thenReturn(failures("DEGRADED", 2, null, "2026-10-23T06:02:00Z"));
+        leader.publishDomainExpirySource();   // lider yalnız YENİ hatasını (1) ekler: 2 + 1 = 3
+        assertThat(follower.getDomainExpirySourceStatus()).containsEntry("source", "NONE").containsEntry("alarm", true)
+                .containsEntry("consecutive_failures", 3);
+    }
+
+    @Test
+    @DisplayName("2026-11-19: arada bu pod başarı gördüyse önceki hata sayılmaz (kendi sayacı)")
+    void ownSuccessAfterPriorFailureIsNotMerged() {
+        when(leaderRdap.getSourceStatus()).thenReturn(failures("NONE", 4, null, "2026-10-23T06:00:00Z"));
+        leader.publishDomainExpirySource();
+        when(followerRdap.getSourceStatus()).thenReturn(failures("DEGRADED", 1, "2026-10-23T06:05:00Z", "2026-10-23T06:06:00Z"));
+        follower.publishDomainExpirySource();
+        assertThat(leader.getDomainExpirySourceStatus()).containsEntry("source", "DEGRADED").containsEntry("consecutive_failures", 1);
+    }
+
+    @Test
+    @DisplayName("2026-11-19: önceki sürümün NONE gözlemi (sayaçsız, tek .tr 404) uyarı olarak okunur — kart süresiz kırmızı kalmaz")
+    void legacyNoneRowIsWarning() {
+        when(leaderRdap.getSourceStatus()).thenReturn(legacyStatus("NONE", true, "rdap http 404", null, "2026-10-23T06:00:00Z"));
+        leader.publishDomainExpirySource();
+        assertThat(follower.getDomainExpirySourceStatus()).containsEntry("source", "DEGRADED").containsEntry("alarm", false)
+                .containsEntry("legacy", true);
+    }
+
+    @Test
+    @DisplayName("2026-11-19: 48 saatten eski hata gözlemi güncel değil — alarm yok, stale (RDAP'a sorgu gitmiyor)")
+    void staleFailureIsNotAnAlarm() {
+        when(leaderRdap.getSourceStatus()).thenReturn(failures("NONE", 3, null, "2026-10-23T06:00:00Z"));
+        leader.publishDomainExpirySource();
+        follower.nowMs = () -> java.time.Instant.parse("2026-10-25T07:00:00Z").toEpochMilli();
+        assertThat(follower.getDomainExpirySourceStatus()).containsEntry("source", "NONE").containsEntry("alarm", false)
+                .containsEntry("stale", true);
+        follower.nowMs = () -> java.time.Instant.parse("2026-10-24T06:00:00Z").toEpochMilli();
+        assertThat(follower.getDomainExpirySourceStatus()).containsEntry("alarm", true).doesNotContainKey("stale");
     }
 }

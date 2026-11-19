@@ -92,7 +92,9 @@ export function integrationList({ health, pushKpi, smtpPeriod = '7d', configChec
     const d = h.domain_expiry
     const src = d.source || 'IDLE'
     // DEGRADED (2026-11-19): son sorgu başarısız ama ardışık kaynak hatası kesinti eşiğine ulaşmadı — uyarı, kesinti değil
-    const level = d.alarm || src === 'NONE' ? 'down' : src === 'RDAP' ? 'ok' : (src === 'FALLBACK' || src === 'DEGRADED') ? 'warn' : 'unknown'
+    // stale (2026-11-19): 48 saatten eski hata gözlemi — RDAP'a sorgu gitmiyor; güncel durum bilinmiyor (ne kırmızı ne yeşil)
+    const level = d.stale ? 'unknown'
+      : d.alarm || src === 'NONE' ? 'down' : src === 'RDAP' ? 'ok' : (src === 'FALLBACK' || src === 'DEGRADED') ? 'warn' : 'unknown'
     out.push({ key: 'domain', level, data: d })
   }
   if (h.network) out.push({ key: 'network', level: h.network.alarm ? 'down' : 'ok', data: h.network })

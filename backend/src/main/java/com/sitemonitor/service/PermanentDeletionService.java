@@ -158,24 +158,40 @@ public class PermanentDeletionService {
         int moved = 0;
         Map<String, Integer> rows = new LinkedHashMap<>();
         // Korunan satır: adı BİREBİR eşleşen (canlı) satır önce, sonra en eski — harf farkıyla kalmış bayat kalıntı tutulup
-        // canlı satır (ve geçmişi) silinmesin.
-        List<Long> ports = jdbc.queryForList("SELECT id FROM port_monitors WHERE LOWER(host) = LOWER(?) AND port = ? "
-                + "AND (standalone IS NULL OR standalone = FALSE) ORDER BY CASE WHEN host = ? THEN 0 ELSE 1 END, id",
-                Long.class, oldDomain, op, oldDomain);
-        if (!ports.isEmpty()) {
-            Long keep = ports.get(0);
+        // canlı satır (ve geçmişi) silinmesin. Harf varyantı yalnız envanterde KENDİ kaydı yoksa bu kaydındır (2026-11-19,
+        // yayın sonrası düzeltme: eski güncelleme yolu "Other.com"u "other.com"un yanında bırakmış olabilir — başkasının
+        // canlı izlemesi silinmesin).
+        List<Long> ports = ownDerived(jdbc.queryForList("SELECT id, host AS k FROM port_monitors WHERE LOWER(host) = LOWER(?) "
+                + "AND port = ? AND (standalone IS NULL OR standalone = FALSE) ORDER BY CASE WHEN host = ? THEN 0 ELSE 1 END, id",
+                oldDomain, op, oldDomain), oldDomain);
+        // Eski hostun BAŞKA porttaki türev satırları: eski bir port değişiminin (ya da içe aktarmanın) kalıntısı — kayıt tek
+        // porttur. Taşınmazlarsa tarama onları hâlâ kontrol eder (kapı yalnız host'a bakar), Port sayfası listelemez.
+        java.util.LinkedHashSet<Long> leftovers = new java.util.LinkedHashSet<>(jdbc.queryForList("SELECT id FROM port_monitors "
+                + "WHERE host = ? AND port <> ? AND (standalone IS NULL OR standalone = FALSE)", Long.class, oldDomain, op));
+        Long portKeep = ports.isEmpty() ? null : ports.get(0);
+        if (portKeep != null) {
             List<Long> stale = new ArrayList<>(jdbc.queryForList("SELECT id FROM port_monitors WHERE host = ? AND port = ? "
-                    + "AND (standalone IS NULL OR standalone = FALSE) AND id <> ?", Long.class, newDomain, np, keep));
+                    + "AND (standalone IS NULL OR standalone = FALSE) AND id <> ?", Long.class, newDomain, np, portKeep));
             stale.addAll(ports.subList(1, ports.size()));   // harf farkıyla çift kalmış eski satır (benzersizlik yalnız birebir)
+            leftovers.removeAll(stale);
+            leftovers.remove(portKeep);
             for (Long id : stale) closeDerivedAlarms(id, newDomain, PORT_ALERT_TYPES);
             purgePortMonitors(stale, rows);
             moved += jdbc.update("UPDATE port_monitors SET host = ?, port = ?, name = CASE WHEN name = ? THEN ? ELSE name END, "
-                    + "updated_at = ? WHERE id = ?", newDomain, np, oldDomain, newDomain, now, keep);
+                    + "updated_at = ? WHERE id = ?", newDomain, np, oldDomain, newDomain, now, portKeep);
+            moveNotesAndGuide("PORT", oldDomain + ":" + op, newDomain + ":" + np,
+                    countOf("SELECT COUNT(*) FROM port_monitors WHERE host = ? AND port = ?", oldDomain, op) > 0);
+            clearBaselineAfterCommit(com.sitemonitor.service.baseline.BaselineTypes.PORT, portKeep);
+        }
+        if (!leftovers.isEmpty()) {
+            List<Long> left = new ArrayList<>(leftovers);
+            for (Long id : left) closeDerivedAlarms(id, oldDomain, PORT_ALERT_TYPES);
+            purgePortMonitors(left, rows);
         }
         if (hostChanged) {
-            List<Long> dns = jdbc.queryForList("SELECT id FROM dns_monitors WHERE LOWER(domain) = LOWER(?) "
+            List<Long> dns = ownDerived(jdbc.queryForList("SELECT id, domain AS k FROM dns_monitors WHERE LOWER(domain) = LOWER(?) "
                     + "AND (standalone IS NULL OR standalone = FALSE) ORDER BY CASE WHEN domain = ? THEN 0 ELSE 1 END, id",
-                    Long.class, oldDomain, oldDomain);
+                    oldDomain, oldDomain), oldDomain);
             if (!dns.isEmpty()) {
                 Long keep = dns.get(0);
                 List<Long> stale = new ArrayList<>(jdbc.queryForList("SELECT id FROM dns_monitors WHERE domain = ? "
@@ -185,6 +201,10 @@ public class PermanentDeletionService {
                 purgeDnsMonitors(stale, rows);
                 moved += jdbc.update("UPDATE dns_monitors SET domain = ?, name = CASE WHEN name = ? THEN ? ELSE name END, "
                         + "updated_at = ? WHERE id = ?", newDomain, oldDomain, newDomain, now, keep);
+                markDnsTargetChanged(keep, oldDomain);
+                moveNotesAndGuide("DNS", oldDomain, newDomain,
+                        countOf("SELECT COUNT(*) FROM dns_monitors WHERE domain = ?", oldDomain) > 0);
+                clearBaselineAfterCommit(com.sitemonitor.service.baseline.BaselineTypes.DNS, keep);
             }
         }
         if (moved > 0 || !rows.isEmpty()) {
@@ -232,6 +252,80 @@ public class PermanentDeletionService {
         return true;
     }
 
+    /**
+     * DNS izlemesinin alan adı değişti (2026-11-19, yayın sonrası düzeltme): eski alan adının son taban kaydı ve bekleyen
+     * değişiklik satırları yeni alan adıyla kıyaslanmasın. Bu sürümden önceki kayıtlarda {@code checked_domain} boştur ve
+     * "aynı hedef" sayılır — yeni alan adının ilk taraması eski alan adının değerini taban alıp sahte DNS_CHANGED açıyordu
+     * (envanter yeniden adlandırması, bağımsız izlemenin alan adı düzenlemesi, değişiklik geçmişinden geri yükleme). Son
+     * zamanlanmış başarılı kayda eski alan adı yazılır; bekleyen (PENDING) değişiklikleri SUPPRESSED olur. Çağıranın işlemine
+     * katılır (bu adımlar hata verirse yeniden adlandırma da geri alınır — sessiz yarım iş yok).
+     */
+    public void markDnsTargetChanged(Long monitorId, String oldDomain) {
+        if (monitorId == null || oldDomain == null || oldDomain.isBlank()) return;
+        jdbc.update("UPDATE dns_records SET checked_domain = ? WHERE checked_domain IS NULL AND id = (SELECT r.id FROM dns_records r "
+                + "WHERE r.monitor_id = ? AND r.\"value\" <> '' AND (r.manual IS NULL OR r.manual = FALSE) "
+                + "ORDER BY r.checked_at DESC, r.id DESC FETCH FIRST 1 ROWS ONLY)", oldDomain, monitorId);
+        jdbc.update("UPDATE dns_records SET change_state = 'SUPPRESSED' WHERE monitor_id = ? AND change_state = 'PENDING'", monitorId);
+    }
+
+    /** Harf farkıyla bulunan satırlardan bu kaydınkiler: anahtarı BİREBİR eşleşen ya da envanterde KENDİ kaydı olmayan varyant. */
+    private List<Long> ownDerived(List<Map<String, Object>> found, String domain) {
+        List<Long> out = new ArrayList<>();
+        Map<String, Boolean> variantOwned = new HashMap<>();
+        for (Map<String, Object> r : found) {
+            String k = r.get("k") == null ? null : r.get("k").toString();
+            Long id = r.get("id") instanceof Number n ? n.longValue() : null;
+            if (id == null) continue;
+            if (k != null && !k.equals(domain)
+                    && variantOwned.computeIfAbsent(k, v -> countOf(SQL_INV_HAS_DOMAIN, v) > 0)) continue;
+            out.add(id);
+        }
+        return out;
+    }
+
+    private int countOf(String sql, Object... args) {
+        Integer n = jdbc.queryForObject(sql, Integer.class, args);
+        return n == null ? 0 : n;
+    }
+
+    /**
+     * Hedef taşındı: not / rehber satırları (tür, hedef) anahtarlı — eski hedefte izleme kalmadıysa yeni hedefe geçer (yoksa
+     * taşınan izleme notlarını, alarm postası "Ne yapılmalı" bloğunu yitirir; eski adla gelecekte başka takımın izlemesi
+     * onları gösterirdi). Yeni hedefin zaten rehberi varsa o kazanır, eskisi silinir (benzersizlik).
+     */
+    private void moveNotesAndGuide(String type, String oldTarget, String newTarget, boolean oldStillMonitored) {
+        if (oldTarget == null || newTarget == null || oldTarget.equals(newTarget) || oldStillMonitored) return;
+        jdbc.update("UPDATE monitor_notes SET target = ? WHERE monitor_type = ? AND target = ?", newTarget, type, oldTarget);
+        if (countOf("SELECT COUNT(*) FROM monitor_guide WHERE monitor_type = ? AND target = ?", type, newTarget) == 0) {
+            jdbc.update("UPDATE monitor_guide SET target = ? WHERE monitor_type = ? AND target = ?", newTarget, type, oldTarget);
+        } else {
+            jdbc.update("DELETE FROM monitor_guide WHERE monitor_type = ? AND target = ?", type, oldTarget);
+        }
+    }
+
+    /** Hedef değişti: dinamik taban örnekleri (eski hostun yanıt süreleri) commit'ten SONRA temizlenir — yapılandırma kalır. */
+    private void clearBaselineAfterCommit(String type, Long id) {
+        if (baselineConfigService == null || id == null) return;
+        Runnable cleanup = () -> {
+            try {
+                baselineConfigService.clearSamples(type, id);
+            } catch (RuntimeException e) {
+                log.warn("Taşınan izlemenin taban çizgisi örnekleri silinemedi ({}#{}): {}", type, id, e.getMessage());
+            }
+        };
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            cleanup.run();
+                        }
+                    });
+        } else {
+            cleanup.run();
+        }
+    }
+
     /** Türev izlemenin YALNIZ kendi açık alarmları — sahip bağlamı {@code MonitoringController.ownerCtxDual}'ın türev dalı. */
     private void closeDerivedAlarms(Long id, String key, Set<String> types) {
         if (id == null || key == null) return;
@@ -258,13 +352,14 @@ public class PermanentDeletionService {
         int derived = 0;
         if (domain != null) {
             // Envanter türevi Port/DNS: standalone OLMAYAN satırlar, anahtar = envanter alan adı (birebir; envanterde UNIQUE).
-            List<Long> ports = jdbc.queryForList(
-                    "SELECT id FROM port_monitors WHERE LOWER(host) = LOWER(?) AND (standalone IS NULL OR standalone = FALSE)",
-                    Long.class, domain);
-            // Büyük/küçük harf duyarsız (2026-11-19): harf farkıyla kalmış eski türev satır da envanterle gider
-            List<Long> dns = jdbc.queryForList(
-                    "SELECT id FROM dns_monitors WHERE LOWER(domain) = LOWER(?) AND (standalone IS NULL OR standalone = FALSE)",
-                    Long.class, domain);
+            // Büyük/küçük harf duyarsız (2026-11-19): harf farkıyla kalmış eski türev satır da envanterle gider — ama varyantın
+            // envanterde KENDİ kaydı varsa o başka bir kaydın canlı izlemesidir, dokunulmaz (yayın sonrası düzeltme).
+            List<Long> ports = ownDerived(jdbc.queryForList(
+                    "SELECT id, host AS k FROM port_monitors WHERE LOWER(host) = LOWER(?) AND (standalone IS NULL OR standalone = FALSE)",
+                    domain), domain);
+            List<Long> dns = ownDerived(jdbc.queryForList(
+                    "SELECT id, domain AS k FROM dns_monitors WHERE LOWER(domain) = LOWER(?) AND (standalone IS NULL OR standalone = FALSE)",
+                    domain), domain);
             purgePortMonitors(ports, rows);
             purgeDnsMonitors(dns, rows);
             derived = ports.size() + dns.size();

@@ -101,23 +101,52 @@ public class DomainCheckerService {
      */
     private static final ThreadLocal<DomainCheck> LAST_PERSISTED = new ThreadLocal<>();
 
+    /** Sorgu adresinin sütun sınırı (domain_checks.query_url) — maskeden SONRA da denetlenir. */
+    static final int QUERY_URL_MAX = 500;
+    /** Sorgu sunucusu sütun sınırı (domain_checks.query_server). */
+    static final int QUERY_SERVER_MAX = 255;
+    /** Sorgu adresinde değeri AÇIK kalan parametreler (alan adını taşıyanlar + dil); diğer her değer maskelenir. */
+    private static final java.util.Set<String> QUERY_URL_OPEN_PARAMS = java.util.Set.of("domainname", "domain", "name", "q", "query", "lang", "hl");
+
     /**
      * Sorgu adresi yalnız http(s) ve ≤ 500 karakter ise saklanır / gösterilir (bağlantı olarak açılır); başka şema, bilgi
-     * (userinfo) içeren ya da okunamayan adres null. Sorgu dizesi alan adını taşır (isimtescil), kişisel veri içermez.
+     * (userinfo) içeren ya da okunamayan adres null. Yapılandırılmış adres (RDAP yedeği, isimtescil) bir erişim anahtarı
+     * taşıyabilir ve izlemeyi okuyan herkes görür: alan adını taşıyan parametreler dışındaki HER sorgu değeri maskelenir
+     * (ad listesi yaklaşımı `key=` / `sig=` / `code=`'u kaçırıyordu — 2026-11-19, yayın sonrası düzeltme), parça (#) atılır;
+     * maske adresi uzatabilir → uzunluk maskeden sonra yeniden denetlenir (sütuna sığmayan değer satırı düşürmesin).
      */
     public static String safeQueryUrl(Object raw) {
-        if (!(raw instanceof String s) || s.isBlank() || s.length() > 500) return null;
+        if (!(raw instanceof String s) || s.isBlank() || s.length() > QUERY_URL_MAX) return null;
         try {
             java.net.URI u = java.net.URI.create(s.trim());
             String scheme = u.getScheme();
             if (scheme == null || !(scheme.equalsIgnoreCase("https") || scheme.equalsIgnoreCase("http"))) return null;
             if (u.getRawUserInfo() != null || u.getHost() == null) return null;
-            // Yapılandırılmış sorgu adresi (RDAP yedeği, isimtescil) bir erişim anahtarı taşıyabilir (`?token=…`); izlemeyi
-            // okuyan herkes görür → hassas adlı parametrelerin değeri maskelenir, alan adı parametresi görünür kalır.
-            return SecretMask.maskUrlQuery(u.toString());
+            String base = u.getScheme() + "://" + u.getRawAuthority() + (u.getRawPath() == null ? "" : u.getRawPath());
+            String q = u.getRawQuery();
+            String out = q == null || q.isEmpty() ? base : base + "?" + maskQueryValues(q);
+            return out.length() > QUERY_URL_MAX ? null : out;
         } catch (RuntimeException e) {
             return null;
         }
+    }
+
+    /** {@code a=1&b=2} — açık listede olmayan parametrenin değeri {@code *****}; doğrusal, sınırlı (adres ≤ 500). */
+    private static String maskQueryValues(String rawQuery) {
+        StringBuilder sb = new StringBuilder(rawQuery.length());
+        for (String part : rawQuery.split("&", -1)) {
+            if (sb.length() > 0) sb.append('&');
+            int eq = part.indexOf('=');
+            String name = eq < 0 ? part : part.substring(0, eq);
+            if (eq < 0 || QUERY_URL_OPEN_PARAMS.contains(name.toLowerCase(java.util.Locale.ROOT))) sb.append(part);
+            else sb.append(name).append("=*****");
+        }
+        return sb.toString();
+    }
+
+    /** Port-43 sunucusu metni (sütuna sığmayan değer null — satır düşmesin). */
+    static String safeQueryServer(Object raw) {
+        return raw instanceof String qs && !qs.isBlank() && qs.length() <= QUERY_SERVER_MAX ? qs : null;
     }
 
     /** Test (kaydetmeden) — persist yok, değişiklik tespiti yok. */
@@ -251,7 +280,7 @@ public class DomainCheckerService {
         // SiteMonitor'ün sorguladığı adres (2026-11-19): kart bağlantısı — çevrimiçi sorguyla karşılaştırmak için.
         // Yalnız http(s) adres bağlantı olur; port-43 sunucusu metin. Veri gelmese de (UNKNOWN) son denenen adres yazılır.
         out.put("query_url", safeQueryUrl(info.get("query_url")));
-        out.put("query_server", info.get("query_server") instanceof String qs && !qs.isBlank() ? qs : null);
+        out.put("query_server", safeQueryServer(info.get("query_server")));
         out.put("status", status);
         out.put("days_remaining", days);
         out.put("expiry_date", expiry);

@@ -387,7 +387,9 @@ public class RdapDomainClient {
             } catch (Exception e) {
                 if (attempts < 1) { attempts++; sleep(backoff); backoff *= 2; continue; }
                 log.debug("RDAP {} başarısız: {}", domain, e.getMessage());
-                return err(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+                Map<String, Object> out = err(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+                out.put(QUERY_URL_KEY, url);   // zaman aşımında da kart sorgulanan adresi gösterir (karşılaştırma tam o an gerekir)
+                return out;
             }
         }
     }

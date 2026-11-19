@@ -3434,18 +3434,19 @@ public class AdminController {
     /**
      * {@link #decorateMonitorRefs} ve {@link #alertTypeSummary} ORTAK biçimi; izlemeye çözülmeyen seçim → null. Seçilen
      * izleme izleyicinin OKUYAMADIĞI bir takımdaysa (damgasız alarmda ilk aday, bağlamdaki izleme sonradan başka takıma
-     * taşınmış) referans hiç yazılmaz — başka takımın izleme adı sızmaz; satır yalnız alan adıyla görünür.
+     * taşınmış) ya da TAKIMSIZSA (yalnız kurum geneli görenler okur — liste uçları gibi) referans hiç yazılmaz — başka
+     * takımın izleme adı sızmaz; satır yalnız alan adıyla görünür. Seçim belirsizse (birden çok adaydan "ilk aday") da
+     * yazılmaz — yanlış izlemeyi adlandırıp ona bağlantı vermesin (2026-11-19, yayın sonrası düzeltme).
      */
     private static Map<String, Object> monitorRefMap(com.sitemonitor.service.MonitorRefResolver.Pick p, HttpSession session,
                                                      boolean monitoringRead) {
-        if (p == null || p.monitorId() == null || "cert".equals(p.family())) return null;
-        boolean teamVisible = SessionScope.canViewMonitoring(session, p.teamId());
-        if (p.teamId() != null && !teamVisible) return null;
+        if (p == null || p.monitorId() == null || "cert".equals(p.family()) || !p.certain()) return null;
+        if (!SessionScope.canViewMonitoring(session, p.teamId())) return null;
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("name", p.name());
         m.put("type", p.family());
         m.put("tab", p.tab());
-        if (monitoringRead && teamVisible) m.put("monitor_id", p.monitorId());
+        if (monitoringRead) m.put("monitor_id", p.monitorId());
         return m;
     }
 
@@ -3460,7 +3461,9 @@ public class AdminController {
      */
     @org.springframework.beans.factory.annotation.Value("${site.monitor.alerts.type-summary-cache-ms:15000}")
     private long typeSummaryCacheMs;
-    private final com.sitemonitor.util.TtlMemo<Map<String, Object>> typeSummaryMemo = new com.sitemonitor.util.TtlMemo<>(512);
+    private com.sitemonitor.util.TtlMemo<Map<String, Object>> typeSummaryMemo = new com.sitemonitor.util.TtlMemo<>(512);
+    /** {@code fresh=true} (Yenile, alarm değişti) belleği en çok bu sıklıkla atlar — kardeş özetlerle aynı (Olaylar, Pano). */
+    static final long TYPE_SUMMARY_FRESH_MIN_MS = 5_000L;
 
     /**
      * İzleme sayfasının Alarmlar görünümü özeti (2026-11-19, kullanıcı isteği: "izleme sayfası üzerinden o izleme tipinden
@@ -3493,7 +3496,11 @@ public class AdminController {
                 + "|" + String.join(",", new java.util.TreeSet<>(types)) + "|" + d + "|" + lim;
         // Zarf: {success, data:{alert_types, open, top}} — istemci `res.data`'yı okur (monitorAlarmsModel.summaryFrom)
         Map<String, Object> resp = new LinkedHashMap<>();
-        resp.put("data", typeSummaryMemo.get(key, typeSummaryCacheMs, fresh, () -> computeTypeSummary(types, d, lim, allAlerts, session)));
+        // `fresh` belleği ATLAMAZ, ömrü 5 sn'ye indirir: art arda Yenile tıklaması her seferinde gruplu sorgu koşturmasın
+        // (2026-11-19, yayın sonrası düzeltme). İzleme adları okunamadıysa sonuç saklanmaz (bir sonraki yoklama yeniden dener).
+        long ttl = fresh ? Math.min(typeSummaryCacheMs, TYPE_SUMMARY_FRESH_MIN_MS) : typeSummaryCacheMs;
+        resp.put("data", typeSummaryMemo.get(key, ttl, false, () -> computeTypeSummary(types, d, lim, allAlerts, session),
+                v -> v.get("top") instanceof Map<?, ?> tp && Boolean.TRUE.equals(tp.get("names_unavailable")) ? 0L : Long.MAX_VALUE));
         return ok(resp);
     }
 
@@ -3540,13 +3547,15 @@ public class AdminController {
         open.put("stale", stale);
         open.put("stale_hours", ALERT_STALE_HOURS);
 
-        top.put("items", topMonitors(types, since, scoped, scopeList, lim, session));
+        boolean[] namesFailed = { false };
+        top.put("items", topMonitors(types, since, scoped, scopeList, lim, session, namesFailed));
+        if (namesFailed[0]) top.put("names_unavailable", true);
         return body;
     }
 
     /** {@link #alertTypeSummary} şeridi: gruplu sayım → temsil satırı → takım duyarlı izleme adı → birleştir → ilk {@code limit}. */
     private List<Map<String, Object>> topMonitors(List<String> types, String since, boolean scoped, List<Long> scopeList,
-                                                  int limit, HttpSession session) {
+                                                  int limit, HttpSession session, boolean[] namesFailed) {
         List<Object[]> groups = alertEventRepo.topDomainsByAlertCount(types, since, scoped, scopeList, PageRequest.of(0, limit * 3));
         if (groups.isEmpty()) return List.of();
         List<Long> repIds = new ArrayList<>();
@@ -3568,6 +3577,7 @@ public class AdminController {
             try {
                 picks = monitorRefs.pick(new ArrayList<>(reps.values()), dom -> invTeams.getOrDefault(dom, Set.of()));
             } catch (RuntimeException ex) {
+                namesFailed[0] = true;
                 log.debug("En çok alarm üreten izlemeler çözülemedi: {}", ex.toString());
             }
         }

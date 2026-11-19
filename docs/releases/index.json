@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-19T00:32:37Z",
+  "generatedAt": "2026-11-19T07:55:59Z",
   "repo": "inanmise/site-monitor",
-  "count": 860,
+  "count": 861,
   "releases": [
+    {
+      "version": "20.215.1",
+      "tag": "v20.215.1",
+      "releasedAt": "2026-11-19T07:55:45Z",
+      "commit": "d4390192f4a3c1a87dd2e52bb21fe254ab00e28f",
+      "prevVersion": "20.215.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "d4390192",
+          "subject": "20.215.0 sonrası hata taraması — alarm görünümü, RDAP küme sayacı, türev Port/DNS taşıma"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.215.0",
       "tag": "v20.215.0",

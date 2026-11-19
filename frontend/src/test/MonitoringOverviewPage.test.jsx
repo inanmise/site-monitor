@@ -411,7 +411,7 @@ describe('İzleme Panosu — KPI özet pencereleri', () => {
     expect(events.at(-1)).toEqual({ tab: 'domains', params: { domain: 'ivr.example.com', i_scope: 'all' } })
     const residue = body.querySelector('[data-slot="mo-dlg-residue"]')
     expect(residue.textContent).toMatch(/Orphaned leftovers \(2\)/)
-    expect(residue.textContent).toMatch(/They are not counted and there is no monitor to open/)
+    expect(residue.textContent).toMatch(/They are not counted, not checked and have no monitor to open; the one-time cleanup after the upgrade removes them/)
     expect(residue.querySelectorAll('[data-slot="mo-dlg-residue-item"]')).toHaveLength(2)
     expect(residue.textContent).toMatch(/eski-ad\.example\.com:443/)
     // açılacak izleme yok: "Aç" / envanter düğmesi çizilmez (takım rozeti üyeleri açar — o ayrı)

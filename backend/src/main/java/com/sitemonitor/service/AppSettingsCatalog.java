@@ -733,6 +733,14 @@ public final class AppSettingsCatalog {
         "site.monitor.trust.ca-bundle-pem",
         "site.monitor.trust.auto-pin.enabled",
         "site.monitor.http.rdap-base-url",
+        // Alan adı süre kaynakları (2026-11-19, yayın sonrası düzeltme): BÜTÜN takımların alan adı sorgularını ve kartın
+        // "Sorgulanan sayfa" bağlantısını belirler — bir takım müdürü bunları kendi sunucusuna yönlendiremez.
+        "site.monitor.domain.rdap-bootstrap-url",
+        "site.monitor.domain.rdap-fallback-url",
+        "site.monitor.domain.whois-servers",
+        "site.monitor.domain.isimtescil-whois-url",
+        "site.monitor.domain.trabis-whois-url",
+        "site.monitor.domain.trabis-whois43-host",
         "site.monitor.scripted.k6-bin",
         // k6 motoru (2026-10-29): bütün senaryo izlemelerinin motoru / TLS kaçışları / User-Agent'ı — kurum geneli.
         "site.monitor.scripted.k6-bin-rollback",

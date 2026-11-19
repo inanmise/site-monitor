@@ -129,7 +129,12 @@ export default function IntegrationsSection({
             {d.scope === 'local' ? <PodChip t={t} pod={health?.served_by_pod || health?.served_by} /> : d.scope && <PodChip t={t} scope="cluster" />}
             {d.alarm && <AlertBanner tone="danger" className="mb-0">{t('health.domAlarm')}</AlertBanner>}
             {/* Tek / iki başarısız sorgu kesinti değil (2026-11-19, prod: tek bir .tr sorgusu kartı kırmızıya çeviriyordu) */}
-            {!d.alarm && src === 'DEGRADED' && (
+            {d.stale && (
+              <div data-slot="dom-stale">
+                <AlertBanner tone="info" className="mb-0">{t('health.domStale')}</AlertBanner>
+              </div>
+            )}
+            {!d.alarm && !d.stale && src === 'DEGRADED' && (
               <div data-slot="dom-degraded">
                 <AlertBanner tone="warning" className="mb-0">
                   {t('health.domDegraded', d.consecutive_failures ?? 1, d.outage_after ?? 3)}

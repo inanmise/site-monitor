@@ -443,6 +443,94 @@ class PermanentDeletionServiceTest {
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("2026-11-19: yeniden adlandırılan DNS izlemesinin eski (checked_domain boş) taban kaydı yeni alan adıyla kıyaslanmaz; bekleyen değişiklik bastırılır")
+    void retarget_dnsLegacyBaselineIsNotCompared() {
+        DnsMonitor dd = dns("old.example.com", "A", false);   // kaydı checked_domain = NULL (sürüm öncesi)
+        jdbc.update("INSERT INTO dns_records (monitor_id, record_type, \"value\", checked_at, changed, change_state) "
+                + "VALUES (?, 'A', '192.0.2.9', '2026-10-07T09:00:00', TRUE, 'PENDING')", dd.getId());
+
+        service.retargetDerivedMonitors("old.example.com", 443, "new.example.com", 443);
+
+        DnsMonitor moved = dnsRepo.findById(dd.getId()).orElseThrow();
+        DnsRecord base = dnsRecordRepo.findLatestScheduledSuccessful(dd.getId()).orElseThrow();
+        assertThat(base.getCheckedDomain()).isEqualTo("old.example.com");
+        assertThat(SchedulerService.sameDnsTarget(base, moved)).as("eski alan adının değeri taban değil").isFalse();
+        assertThat(count("dns_records", "monitor_id = ? AND change_state = 'PENDING'", dd.getId())).isZero();
+        assertThat(count("dns_records", "monitor_id = ? AND change_state = 'SUPPRESSED'", dd.getId())).isEqualTo(1);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("2026-11-19: eski hostun BAŞKA porttaki türev kalıntısı (eski port değişimi) yeniden adlandırmada kalıcı silinir; alarmı kendi anahtarıyla kapanır")
+    void retarget_purgesOtherPortLeftovers() {
+        PortMonitor live = port("a.example.com", 8443, false);
+        PortMonitor leftover = port("a.example.com", 443, false);   // kaydın portu 443 → 8443 değişmişti, satır kalmıştı
+        PortMonitor standalone = port("a.example.com", 9000, true);
+
+        service.retargetDerivedMonitors("a.example.com", 8443, "b.example.com", 8443);
+
+        assertThat(portRepo.findById(live.getId()).orElseThrow().getHost()).isEqualTo("b.example.com");
+        assertThat(portRepo.findById(leftover.getId())).isEmpty();
+        assertThat(count("port_checks", "monitor_id = ?", leftover.getId())).isZero();
+        assertThat(portRepo.findById(standalone.getId())).as("bağımsız izlemeye dokunulmaz").isPresent();
+        verify(escalationService).resolveOpenAlertsSilently(eq("a.example.com"), eq(PermanentDeletionService.PORT_ALERT_TYPES),
+                eq(PermanentDeletionService.RESOLVED_BY_ORPHAN), argThat(c -> leftover.getId().equals(c.get("monitor_id"))));
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("2026-11-19: harf farkıyla AYRI envanter kaydı olan varyantın türev izlemeleri silme / yeniden adlandırmada korunur")
+    void caseVariantWithItsOwnInventoryRecordIsKept() {
+        CertificateInventory lower = inventory("other.example.com", 443, 5L, null);
+        inventory("Other.example.com", 443, 5L, null);   // eski güncelleme yolunun bıraktığı ayrı kayıt
+        PortMonitor otherPort = port("Other.example.com", 443, false);
+        DnsMonitor otherDns = dns("Other.example.com", "A", false);
+        PortMonitor ownPort = port("other.example.com", 443, false);
+        DnsMonitor ownDns = dns("other.example.com", "A", false);
+        inventory("x.example.com", 443, 5L, null);
+        PortMonitor xUpper = port("X.example.com", 443, false);   // varyantın kendi kaydı YOK → bu kaydın kalıntısı
+        inventory("X.EXAMPLE.com", 443, 5L, null);
+        PortMonitor xOther = port("X.EXAMPLE.com", 443, false);
+
+        // Yeniden adlandırma: kendi satırı taşınır, ayrı kaydın varyantına dokunulmaz
+        service.retargetDerivedMonitors("x.example.com", 443, "y.example.com", 443);
+        assertThat(portRepo.findById(xUpper.getId()).orElseThrow().getHost()).as("kendi kaydı olmayan varyant bu kaydındır — taşınır").isEqualTo("y.example.com");
+        assertThat(portRepo.findById(xOther.getId()).orElseThrow().getHost()).isEqualTo("X.EXAMPLE.com");
+
+        // Silme: kendi satırları gider, ayrı kaydın varyantı kalır
+        service.deleteInventory(lower);
+        assertThat(portRepo.findById(ownPort.getId())).isEmpty();
+        assertThat(dnsRepo.findById(ownDns.getId())).isEmpty();
+        assertThat(portRepo.findById(otherPort.getId())).as("başka kaydın canlı izlemesi").isPresent();
+        assertThat(dnsRepo.findById(otherDns.getId())).isPresent();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("2026-11-19: taşınan izlemenin notları ve rehberi yeni hedefe geçer; taban çizgisi örnekleri temizlenir")
+    void retarget_movesNotesGuideAndClearsBaseline() {
+        PortMonitor dp = port("old.example.com", 443, false);
+        DnsMonitor dd = dns("old.example.com", "A", false);
+        jdbc.update("INSERT INTO monitor_notes (monitor_type, target, problem) VALUES ('PORT', 'old.example.com:443', 'p')");
+        jdbc.update("INSERT INTO monitor_guide (monitor_type, target, guide) VALUES ('PORT', 'old.example.com:443', 'g')");
+        jdbc.update("INSERT INTO monitor_notes (monitor_type, target, problem) VALUES ('DNS', 'old.example.com', 'p')");
+        jdbc.update("INSERT INTO monitor_guide (monitor_type, target, guide) VALUES ('DNS', 'old.example.com', 'g-old')");
+        jdbc.update("INSERT INTO monitor_guide (monitor_type, target, guide) VALUES ('DNS', 'new.example.com', 'g-new')");
+
+        service.retargetDerivedMonitors("old.example.com", 443, "new.example.com", 443);
+
+        assertThat(count("monitor_notes", "monitor_type = 'PORT' AND target = 'new.example.com:443'")).isEqualTo(1);
+        assertThat(count("monitor_guide", "monitor_type = 'PORT' AND target = 'new.example.com:443'")).isEqualTo(1);
+        assertThat(count("monitor_notes", "target LIKE 'old.example.com%'")).isZero();
+        assertThat(count("monitor_guide", "target LIKE 'old.example.com%'")).as("yeni hedefin rehberi kazanır, eskisi silinir").isZero();
+        assertThat(jdbc.queryForObject("SELECT guide FROM monitor_guide WHERE monitor_type = 'DNS' AND target = 'new.example.com'",
+                String.class)).isEqualTo("g-new");
+        verify(baselineConfigService).clearSamples(com.sitemonitor.service.baseline.BaselineTypes.PORT, dp.getId());
+        verify(baselineConfigService).clearSamples(com.sitemonitor.service.baseline.BaselineTypes.DNS, dd.getId());
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     @DisplayName("envanter silme büyük/küçük harf duyarsız: harf farkıyla kalmış türev satır da gider")
     void deleteInventory_caseInsensitiveDerived() {
         CertificateInventory inv = inventory("case.example.com", 443, 5L, null);
