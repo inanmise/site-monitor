@@ -241,6 +241,7 @@ public class InventoryImportService {
                 }
                 Map<String, Object> before = AuditDiff.snapshot(ex, HISTORY_FIELDS);
                 boolean wasActive = !Boolean.FALSE.equals(ex.getActive());
+                Integer portBefore = ex.getPort();
                 List<String> changes = apply(ex, r, teamId, ugTeamId, port, tier, platform, actor, false, dryRun);
                 if (changes.isEmpty()) { out.add(new RowResult(line, domain, "skip", "no_change", List.of())); skipped++; continue; }
                 if (!dryRun) {
@@ -248,6 +249,11 @@ public class InventoryImportService {
                     // "Son güncelleyen" künyesi (2026-10-22, ADMIN-4): updated_at "şimdi" olurken updated_by eskide kalıyordu.
                     if (session != null) monitorHistory.stampUpdated(ex, session);
                     inventoryRepo.save(ex);
+                    // Port değişti → türev Port izlemesi yeni porta taşınır (düzenleme yoluyla aynı, 2026-11-19 yayın sonrası
+                    // düzeltme): eskiden ikinci bir türev satır doğuyor, eski porttaki görünmez satır taranmaya devam ediyordu.
+                    if (changes.contains("port") && permanentDeletion != null) {
+                        permanentDeletion.retargetDerivedMonitors(ex.getDomain(), portBefore, ex.getDomain(), ex.getPort());
+                    }
                     if (wasActive && changes.contains("active") && Boolean.FALSE.equals(ex.getActive())) {
                         if (silentAlarmCloser != null) silentAlarmCloser.closeOnInventoryDeactivate(ex.getDomain());
                         else if (escalationService != null) escalationService.closeAlertsOnDeactivate(ex.getDomain());

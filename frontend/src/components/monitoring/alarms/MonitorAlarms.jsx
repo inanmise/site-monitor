@@ -11,6 +11,27 @@ import { ALARM_VIEW_KEY, alarmTabFromUrl, inPageTarget } from './monitorAlarmsMo
 /** Ağır görünüm (Alarm Geçmişi listesi) yalnız Alarmlar görünümü açılınca indirilir. */
 const MonitorAlarmsView = lazy(() => import('./MonitorAlarmsView.jsx'))
 
+/**
+ * Alarmlar görünümü sunulur mu? `alerts.read` izni YOKSA hayır (liste 403, özet okunamaz). Yalnız izin anlık görüntüsü
+ * OKUNMUŞ ve kaynağı TAŞIYORSA karar verilir — sağlayıcı yok / eski sunucu / henüz okunmadı → sunucu karar verir (sunulur).
+ */
+export function alarmsAllowed(perms, loaded) {
+  const r = perms?.['alerts.read']
+  return !(loaded && r && !r.view)
+}
+
+/**
+ * İzin sağlayıcısının ALTINDA çizilip kararı yukarı bildiren sonda (2026-11-19, yayın sonrası düzeltme): Sertifika Panosu'nun
+ * görünüm durumu App gövdesinde yaşar ve App sağlayıcıyı kendisi çizer — App gövdesindeki `usePermissions()` sağlayıcısız
+ * varsayılanı (her şey serbest) okur, izin kapısı panoda hiç işlemiyordu.
+ */
+export function AlarmsPermissionProbe({ onChange }) {
+  const { perms, loaded } = usePermissions()
+  const ok = alarmsAllowed(perms, loaded)
+  useEffect(() => { onChange?.(ok) }, [ok, onChange])
+  return null
+}
+
 /** App ile aynı olay (aynı sekmede yeni parametre — `useMonitorDeepLink` dinler); App'i içe aktarmamak için ad burada. */
 const TAB_PARAMS_EVENT = 'sm:tab-params'
 
@@ -20,16 +41,15 @@ const TAB_PARAMS_EVENT = 'sm:tab-params'
  * anahtara ({@link MonitorViewSwitch}) ve gövde sarmalayıcısına ({@link MonitorPageBody}) verir.
  *
  * @param {string} src   sayfa kategorisi (`http`, `uptime`, `cert` …) — alarm tipleri ve Alarm Geçmişi bağlantısı buradan
- * @param {{ onSearch?: (q: string) => void, enabled?: boolean }} [opts]  kimliksiz satırda sayfa içi arama (Erişilebilirlik);
- *        `enabled: false` → URL'e yazmaz (App'te yaşayan Sertifika Panosu, başka sekme açıkken o sekmenin `mal`'ını ezmesin)
+ * @param {{ onSearch?: (q: string) => void, enabled?: boolean, allowed?: boolean }} [opts]  kimliksiz satırda sayfa içi arama
+ *        (Erişilebilirlik); `enabled: false` → URL'e yazmaz (App'te yaşayan Sertifika Panosu, başka sekme açıkken o sekmenin
+ *        `mal`'ını ezmesin); `allowed` → izin kararı dışarıdan ({@link AlarmsPermissionProbe} — sağlayıcının üstünde yaşayan
+ *        App), verilmezse sayfanın kendi `usePermissions()`'ı
  */
-export function useMonitorAlarmsView(src, { onSearch, enabled = true } = {}) {
+export function useMonitorAlarmsView(src, { onSearch, enabled = true, allowed: allowedOpt } = {}) {
   const [tab, setTab] = useState(() => alarmTabFromUrl(readUrlParam(ALARM_VIEW_KEY, null)))
-  // `alerts.read` izni YOKSA görünüm sunulmaz (liste 403, özet okunamaz). Yalnız izin anlık görüntüsü OKUNMUŞ ve kaynağı
-  // TAŞIYORSA karar verilir — sağlayıcı yok / eski sunucu / henüz okunmadı → sunucu karar verir (gösterilir).
   const { perms, loaded } = usePermissions()
-  const alertsRead = perms?.['alerts.read']
-  const allowed = !(loaded && alertsRead && !alertsRead.view)
+  const allowed = typeof allowedOpt === 'boolean' ? allowedOpt : alarmsAllowed(perms, loaded)
   useUrlQuerySync({ [ALARM_VIEW_KEY]: allowed ? tab : null }, { enabled })
   const searchRef = useRef(onSearch)
   searchRef.current = onSearch

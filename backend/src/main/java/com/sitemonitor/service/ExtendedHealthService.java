@@ -56,6 +56,17 @@ public class ExtendedHealthService {
 
     /** Bu pod'un en son yayınladığı RDAP gözleminin anı (epoch ms; -1 = hiç). */
     private volatile long lastPublishedRdapMs = -1L;
+    /**
+     * Bu pod'un ardışık hata sayacının kümeye ZATEN katılmış kısmı (2026-11-19, yayın sonrası düzeltme): yayında yalnız
+     * yeni hatalar kümedeki sayaca eklenir — bir pod'un tek hatası başka pod'un kesintisini uyarıya indirmez.
+     */
+    private volatile int rdapFailuresFolded = 0;
+    /** Bu kadar eski RDAP hata gözlemi güncel sayılmaz (sorgu yok: yalnız .tr alanları, izleme silindi …). */
+    static final long RDAP_STALE_MS = 48L * 3_600_000L;
+    /** Kümedeki ardışık hata sayacının tavanı (taşma / anlamsız büyük sayı yok). */
+    static final int RDAP_FAILURE_CAP = 1_000;
+    /** Saat (test kancası) — eski hata gözlemi kararı. */
+    java.util.function.LongSupplier nowMs = System::currentTimeMillis;
 
     private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
 
@@ -115,11 +126,89 @@ public class ExtendedHealthService {
             log.debug("RDAP küme gözlemi okunamadı — bu pod'un durumu gösteriliyor: {}", e.toString());
             return withObserver(local, "local", localMs >= 0 ? instanceId() : null, localMs);
         }
-        if (row.isPresent() && row.get().observedMs() > localMs) {
-            Map<String, Object> remote = parsePayload(row.get().payload());
-            if (remote != null) return withObserver(remote, "cluster", row.get().instanceId(), row.get().observedMs());
+        Map<String, Object> remote = row.isPresent() ? parsePayload(row.get().payload()) : null;
+        if (remote != null && row.get().observedMs() > localMs) {
+            return withObserver(staleAware(legacyAware(remote), row.get().observedMs(), nowMs.getAsLong()), "cluster",
+                    row.get().instanceId(), row.get().observedMs());
         }
-        return withObserver(local, "cluster", localMs >= 0 ? instanceId() : null, localMs);
+        // Bu pod'un henüz yayınlamadığı yeni hatası kümedeki kesintiyi uyarıya indirmesin: önceki gözlemle birleşir
+        Map<String, Object> merged = mergeRdapFailures(local, newOwnFailures(local), remote == null ? null : legacyAware(remote));
+        return withObserver(staleAware(merged, localMs, nowMs.getAsLong()), "cluster", localMs >= 0 ? instanceId() : null, localMs);
+    }
+
+    /** Hata durumu mu (kesinti ya da uyarı)? */
+    static boolean isRdapFailure(Map<String, Object> s) {
+        Object src = s == null ? null : s.get("source");
+        return "NONE".equals(src) || "DEGRADED".equals(src);
+    }
+
+    /** Bu pod'un sayacındaki, kümeye henüz katılmamış hata sayısı (sayaç sıfırlandıysa — arada başarı — tamamı yeni). */
+    private int newOwnFailures(Map<String, Object> own) {
+        int streak = intOf(own == null ? null : own.get("consecutive_failures"), 0);
+        int folded = rdapFailuresFolded;
+        return streak >= folded ? streak - folded : streak;
+    }
+
+    /**
+     * Kümedeki ardışık hata sayacı (2026-11-19, yayın sonrası düzeltme): sayaç her pod'un belleğinde, küme durumu ise "en
+     * yeni gözlem kazanır" — başka pod'daki tek bir başarısız sorgu (elle "Şimdi kontrol et", Kayıt sekmesi) liderin
+     * kesintisini (NONE) uyarıya (DEGRADED, 1 / 3) indiriyordu; lider yeniden başlayınca da sayaç sıfırdan başlıyordu.
+     * Önceki gözlem de hata durumundaysa ve bu pod o hatadan SONRA başarı görmediyse, önceki sayaca bu pod'un YENİ hataları
+     * eklenir; eşiğe ulaşan toplam kesintidir. Önceki gözlem başarı ise / bu pod arada başarı gördüyse kendi durumu aynen.
+     */
+    static Map<String, Object> mergeRdapFailures(Map<String, Object> own, int newOwnFailures, Map<String, Object> prior) {
+        if (own == null || prior == null || !isRdapFailure(own) || !isRdapFailure(prior)) return own;
+        long priorErr = instantMs(prior.get("last_error"));
+        long ownOk = instantMs(own.get("last_success"));
+        if (priorErr < 0 || ownOk >= priorErr) return own;
+        int priorCf = Math.max(1, intOf(prior.get("consecutive_failures"), 1));
+        int merged = (int) Math.min(RDAP_FAILURE_CAP, (long) priorCf + Math.max(0, newOwnFailures));
+        int after = Math.max(1, intOf(own.get("outage_after"), 3));
+        Map<String, Object> m = new LinkedHashMap<>(own);
+        m.put("consecutive_failures", Math.max(merged, intOf(own.get("consecutive_failures"), 0)));
+        if (((Number) m.get("consecutive_failures")).intValue() >= after) {
+            m.put("source", "NONE");
+            m.put("alarm", true);
+        }
+        if (own.get("last_success") == null && prior.get("last_success") != null) m.put("last_success", prior.get("last_success"));
+        return m;
+    }
+
+    /**
+     * Önceki sürümün gözlemi ({@code outage_after} yok): o sürüm TEK başarısız sorguyu (ör. .tr 404) kesinti sayıyordu —
+     * gerçek ardışık sayı bilinmez; uyarı olarak gösterilir (yükseltmeden sonra kart sonsuza dek kırmızı kalmasın).
+     */
+    static Map<String, Object> legacyAware(Map<String, Object> s) {
+        if (s == null || s.containsKey("outage_after") || !"NONE".equals(s.get("source"))) return s;
+        Map<String, Object> m = new LinkedHashMap<>(s);
+        m.put("source", "DEGRADED");
+        m.put("alarm", false);
+        m.put("consecutive_failures", 1);
+        m.put("outage_after", 3);
+        m.put("legacy", true);
+        return m;
+    }
+
+    /**
+     * {@link #RDAP_STALE_MS}'ten eski hata gözlemi güncel değildir (2026-11-19): RDAP'a hiç sorgu gitmiyor (yalnız .tr alan
+     * adları, izlemeler silindi) — eski hata kartı süresiz kırmızı / sarı tutmasın; durum "bilinmiyor" (stale) gösterilir.
+     */
+    static Map<String, Object> staleAware(Map<String, Object> s, long eventMs, long now) {
+        if (s == null || !isRdapFailure(s) || eventMs < 0 || now - eventMs <= RDAP_STALE_MS) return s;
+        Map<String, Object> m = new LinkedHashMap<>(s);
+        m.put("stale", true);
+        m.put("alarm", false);
+        return m;
+    }
+
+    private static long instantMs(Object v) {
+        if (v == null) return -1L;
+        try { return java.time.Instant.parse(String.valueOf(v)).toEpochMilli(); } catch (Exception e) { return -1L; }
+    }
+
+    private static int intOf(Object v, int dflt) {
+        if (v instanceof Number n) return (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, n.longValue()));
+        return dflt;
     }
 
     private static Map<String, Object> withObserver(Map<String, Object> m, String scope, String by, long atMs) {
@@ -163,9 +252,24 @@ public class ExtendedHealthService {
             Map<String, Object> s = rdapDomainClient.getSourceStatus();
             long ms = rdapEventMs(s);
             if (ms < 0 || ms <= lastPublishedRdapMs) return;
+            int ownStreak = intOf(s.get("consecutive_failures"), 0);
+            if (isRdapFailure(s)) {
+                // Önceki küme gözlemi de hataysa sayaçlar birleşir (bu pod'un yeni hataları eklenir) — mergeRdapFailures
+                Map<String, Object> prior = null;
+                try {
+                    prior = store().read(com.sitemonitor.service.health.ClusterHealthStore.OBS_RDAP)
+                            .map(o -> parsePayload(o.payload())).orElse(null);
+                } catch (Exception e) {
+                    log.debug("RDAP küme gözlemi okunamadı — sayaç birleştirilmeden yayınlanıyor: {}", e.toString());
+                }
+                s = mergeRdapFailures(s, newOwnFailures(s), prior == null ? null : legacyAware(prior));
+            }
             var r = store().publish(com.sitemonitor.service.health.ClusterHealthStore.OBS_RDAP, instanceId(), ms,
                     JSON.writeValueAsString(s), LocalDateTime.now(ZoneOffset.UTC).format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")));
-            if (r != com.sitemonitor.service.health.ClusterHealthStore.Publish.FAILED) lastPublishedRdapMs = ms;
+            if (r != com.sitemonitor.service.health.ClusterHealthStore.Publish.FAILED) {
+                lastPublishedRdapMs = ms;
+                rdapFailuresFolded = ownStreak;
+            }
         } catch (Exception e) {
             log.debug("RDAP gözlemi yayınlanamadı: {}", e.toString());
         }

@@ -90,6 +90,28 @@ class InventoryImportServiceTest {
     }
 
     @Test
+    @DisplayName("2026-11-19: içe aktarmada port değişirse türev Port izlemesi yeni porta TAŞINIR (ikinci türev satır doğmaz); plan taşımaz")
+    void portChange_retargetsDerivedPort() {
+        PermanentDeletionService deletion = mock(PermanentDeletionService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "permanentDeletion", deletion);
+        CertificateInventory ex = new CertificateInventory();
+        ex.setId(7L); ex.setDomain("a.example.com"); ex.setTeamId(5L); ex.setTier(2); ex.setPort(443);
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(Optional.of(ex));
+
+        service.plan(List.of(row("domain", "a.example.com", "port", "8443")), t -> true, "admin", null);
+        verify(deletion, never()).retargetDerivedMonitors(anyString(), any(), anyString(), any());
+        ex.setPort(443);
+
+        var r = service.commit(List.of(row("domain", "a.example.com", "port", "8443")), t -> true, "admin", null);
+        assertThat(r.updated()).isEqualTo(1);
+        verify(deletion).retargetDerivedMonitors("a.example.com", 443, "a.example.com", 8443);
+
+        var tierOnly = service.commit(List.of(row("domain", "a.example.com", "tier", "1")), t -> true, "admin", null);
+        assertThat(tierOnly.updated()).isEqualTo(1);
+        verify(deletion, times(1)).retargetDerivedMonitors(anyString(), any(), anyString(), any());
+    }
+
+    @Test
     @DisplayName("D9 (2026-09-28): bilinmeyen UG takım adı satır HATASIDIR (unknown_ug_team) — sessizce yok sayılıp 'create' raporlanmaz")
     void unknownUgTeam_isRowError() {
         var r = service.commit(List.of(row("domain", "ug.example.com", "team", "Takım A", "ug_team", "Takım Z")), t -> true, "admin", null);

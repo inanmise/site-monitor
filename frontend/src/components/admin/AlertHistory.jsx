@@ -566,7 +566,9 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   }, [summary, t]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const active = activeAlertFilters(filters, tab)
-  const filtered = !embedded && active.length > 0
+  // Gömülü listede araç çubuğu yok; tek süzgeç kaynağı "önceki oluşumlar" (showSignatureHistory). Süzgeç görünür bir
+  // şeritte söylenir ve temizlenir, boş durum da "süzgeçle sonuç yok" olur — yeşil "açık alarm yok" yanıltırdı (2026-11-19).
+  const filtered = active.length > 0
   // Sıralama (2026-10-01): sütun başlığı / araç çubuğu seçicisi → `filters.sort` (URL); gün bölümleri sıralama alanına göre.
   const sort = useMemo(() => sortParts(filters.sort, tab), [filters.sort, tab])
   const onSort = useCallback((key) => patch({ sort: toggleSort(filters.sort, key, tab) }), [patch, filters.sort, tab])
@@ -756,6 +758,18 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
 
         {urlSync && (
           <AlertToolbar tab={tab} filters={filters} patch={patch} reset={resetFilters} typeCounts={facets.typeCounts} teams={teams} phone={phone} />
+        )}
+        {embedded && active.length > 0 && (
+          <div data-slot="alh-embedded-filters" role="group" aria-label={t('alh.activeFilters')}
+            className="flex min-w-0 flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+            <FilterX aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+              {active.map((f) => (f.key === 'type' ? alertTypeLabel(t, f.value) : f.key === 'q' ? t('alh.chip.search', f.value) : String(f.value))).join(' · ')}
+            </span>
+            <Button type="button" variant="outline" size="sm" data-slot="alh-embedded-clear" className="pointer-coarse:h-10" onClick={resetFilters}>
+              {t('alh.clearFilters')}
+            </Button>
+          </div>
         )}
 
         {TABS.map((v) => (

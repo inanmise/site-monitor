@@ -12512,7 +12512,7 @@ public class SchedulerService {
         List<Map<String, Object>> rows;
         try {
             // "value" tırnaklı: H2'de anahtar sözcük (NON_KEYWORDS olmadan); PostgreSQL'de aynı kolon.
-            rows = jdbcTemplate.queryForList("SELECT id, monitor_id, previous_value, \"value\" AS dns_value, checked_at "
+            rows = jdbcTemplate.queryForList("SELECT id, monitor_id, previous_value, \"value\" AS dns_value, checked_at, checked_domain "
                             + "FROM dns_records "
                             // ORDER BY checked_at: bekleyenlerin kısmi dizini / checked_at dizininde aralık taraması (büyük
                             // tablo — id sırası tüm tabloyu tarayabilirdi; bekleyen satır yokken bile)
@@ -12546,7 +12546,11 @@ public class SchedulerService {
                 String prev = row.get("previous_value") == null ? null : String.valueOf(row.get("previous_value"));
                 boolean live = m != null && Boolean.TRUE.equals(m.getActive())
                         && (Boolean.TRUE.equals(m.getStandalone()) || inventoryLive(m.getDomain()));
-                if (!live || !dnsChangeWillAlarm(m, DnsCheckerService.splitLines(value))) {
+                // Satır başka alan adının (izleme o arada yeniden adlandırıldı): eski taban yeni alan adıyla kıyaslanmaz
+                // (2026-11-19, yayın sonrası düzeltme — yarıda kalmış zincir sahte DNS_CHANGED açıyordu).
+                Object cd = row.get("checked_domain");
+                boolean otherTarget = m != null && cd != null && m.getDomain() != null && !cd.toString().equalsIgnoreCase(m.getDomain());
+                if (!live || otherTarget || !dnsChangeWillAlarm(m, DnsCheckerService.splitLines(value))) {
                     decidePendingRow("dns_records", id, com.sitemonitor.service.monitoring.ChangeStates.SUPPRESSED);
                     continue;
                 }

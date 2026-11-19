@@ -65,6 +65,7 @@ class RdapSourceStatusTest {
         server.createContext("/reg/", ex -> {
             registryHits.incrementAndGet();
             String path = ex.getRequestURI().getPath();
+            if (path.endsWith("/drop.com")) { ex.close(); return; }   // yanıtsız kapanış → istemci istisnası
             if (path.endsWith("/ok.com")) reply(ex, 200, RDAP_JSON);
             else if (path.endsWith("/missing.com")) reply(ex, 404, "{\"errorCode\":404}");
             else reply(ex, 500, "{\"errorCode\":500}");
@@ -199,5 +200,24 @@ class RdapSourceStatusTest {
                 .isEqualTo("https://rdap.example/domain/a.com?token=" + SecretMask.MASK + "&lang=tr");
         assertThat(DomainCheckerService.safeQueryUrl("https://whois.example/q?domainname=a.com.tr&api_key=k1"))
                 .isEqualTo("https://whois.example/q?domainname=a.com.tr&api_key=" + SecretMask.MASK);
+        // 2026-11-19: ad listesinde olmayan anahtar adları da (key, sig, code …) maskelenir; parça (#) atılır
+        assertThat(DomainCheckerService.safeQueryUrl("https://proxy.example/whois?key=S3CR3T&domainname=a.com.tr&sig=abc#frag"))
+                .isEqualTo("https://proxy.example/whois?key=" + SecretMask.MASK + "&domainname=a.com.tr&sig=" + SecretMask.MASK);
+        // maske adresi uzatır → 500 sınırı maskeden SONRA da denetlenir (sütuna sığmayan değer satırı düşürmesin)
+        String longish = "https://x.example/w?domainname=" + "a".repeat(462) + "&p=1";
+        assertThat(longish.length()).isLessThanOrEqualTo(500);
+        String masked = DomainCheckerService.safeQueryUrl(longish);
+        assertThat(masked == null || masked.length() <= 500).isTrue();
+        assertThat(DomainCheckerService.safeQueryServer("whois.example:43")).isEqualTo("whois.example:43");
+        assertThat(DomainCheckerService.safeQueryServer("w".repeat(260) + ":43")).isNull();
+        assertThat(DomainCheckerService.safeQueryServer(" ")).isNull();
+    }
+
+    @Test
+    @DisplayName("2026-11-19: istek istisnayla bitse de (zaman aşımı, bağlantı koptu) sonuç sorgulanan adresi taşır — kart bağlantısı tam o an gerekir")
+    void exceptionResultCarriesQueryUrl() {
+        Map<String, Object> r = client.lookup("drop.com");
+        assertThat(r.get("error")).isNotNull();
+        assertThat(String.valueOf(r.get(RdapDomainClient.QUERY_URL_KEY))).contains("/reg/domain/drop.com");
     }
 }

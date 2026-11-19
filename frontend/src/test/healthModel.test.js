@@ -125,6 +125,17 @@ describe('healthModel — Alan Adı Süre Kaynağı (2026-11-19)', () => {
     const old = integrationList({ health: { ...CLEAN, domain_expiry: { source: 'NONE', alarm: true } }, pushKpi: PUSH_OK, smtpPeriod: '7d' })
     expect(old.find((i) => i.key === 'domain').level).toBe('down')
   })
+
+  it('stale (48 saatten eski hata gözlemi) bilinmiyor sayılır: ne kesinti ne uyarı, bant gerekçesi eklenmez', () => {
+    for (const source of ['NONE', 'DEGRADED']) {
+      const d = { source, alarm: false, stale: true, consecutive_failures: 4, outage_after: 3 }
+      const list = integrationList({ health: { ...CLEAN, domain_expiry: d }, pushKpi: PUSH_OK, smtpPeriod: '7d' })
+      expect(list.find((i) => i.key === 'domain').level).toBe('unknown')
+      const o = deriveOverall({ health: { ...CLEAN, domain_expiry: d }, httpMetrics: HTTP_OK, pushKpi: PUSH_OK })
+      expect(o.reasons.map((x) => x.code)).not.toContain('domAlarm')
+      expect(o.reasons.map((x) => x.code)).not.toContain('domDegraded')
+    }
+  })
 })
 
 describe('healthModel — KPI sayıları', () => {

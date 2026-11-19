@@ -128,7 +128,7 @@ export function DomainQueryLink({ monitor: m }) {
   return (
     <p data-slot="domain-query" data-kind="url" className={cn(CARD_LAYER, 'mt-1 flex w-fit max-w-full min-w-0 items-center text-xs')}>
       <a href={ref.url} target="_blank" rel="noopener noreferrer" data-slot="domain-query-link"
-        aria-label={t('domcard.query.open', m.domain, ref.host)} title={ref.url}
+        aria-label={t('domcard.query.open', t('domcard.query.label', ref.host), m.domain)} title={ref.url}
         className="inline-flex min-w-0 items-center gap-1 rounded-sm text-primary underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none pointer-coarse:min-h-10">
         <ExternalLink aria-hidden="true" className="size-3.5 shrink-0" />
         <span className="min-w-0 [overflow-wrap:anywhere]">{t('domcard.query.label', ref.host)}</span>

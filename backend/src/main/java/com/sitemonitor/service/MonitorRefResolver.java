@@ -113,7 +113,12 @@ public class MonitorRefResolver {
      * Takım duyarlı seçimin sonucu (2026-11-19): {@code teamId} seçilen izleme SATIRININ takımı (izleyicinin o izlemeyi
      * açıp açamayacağı buna göre karar verilir); çözülemeyen olayda {@code monitorId} / {@code teamId} null, ad = alan adı.
      */
-    public record Pick(String name, String family, String tab, Long monitorId, Long teamId) {}
+    public record Pick(String name, String family, String tab, Long monitorId, Long teamId, boolean certain) {
+        /** Kesin seçim (eski çağıranlar / testler). */
+        public Pick(String name, String family, String tab, Long monitorId, Long teamId) {
+            this(name, family, tab, monitorId, teamId, true);
+        }
+    }
 
     /**
      * Olaylar ekranı ve Alarm Geçmişi'nin ORTAK takım duyarlı çözümlemesi (2026-11-19 — iki kopya yerine tek yer; kural
@@ -138,11 +143,13 @@ public class MonitorRefResolver {
             String fam = family(e.getAlertType());
             Map<String, List<Object[]>> byKey = idx == null ? null : idx.get(fam);
             Set<Long> inv = inventoryTeams == null || e.getDomain() == null ? Set.of() : inventoryTeams.apply(e.getDomain());
-            Object[] ref = byKey == null ? null
-                    : pickMonitor(byKey.get(e.getDomain()), contextMonitorId(e.getContextJson()), e.getTeamId(), inv);
+            List<Object[]> cands = byKey == null ? null : byKey.get(e.getDomain());
+            Long ctxId = contextMonitorId(e.getContextJson());
+            Object[] ref = byKey == null ? null : pickMonitor(cands, ctxId, e.getTeamId(), inv);
             Long id = ref != null && ref[1] instanceof Number n ? Long.valueOf(n.longValue()) : null;
             Long team = ref != null && ref.length > 2 && ref[2] instanceof Number t ? Long.valueOf(t.longValue()) : null;
-            out.put(e.getId(), new Pick(ref != null ? (String) ref[0] : e.getDomain(), fam, tabFor(fam), id, team));
+            boolean certain = ref == null || !pickedByFallback(cands, ctxId, e.getTeamId(), inv);
+            out.put(e.getId(), new Pick(ref != null ? (String) ref[0] : e.getDomain(), fam, tabFor(fam), id, team, certain));
         }
         return out;
     }
@@ -166,6 +173,22 @@ public class MonitorRefResolver {
             for (Object[] c : cands) if (c[2] != null && inventoryTeams.contains(c[2])) return c;
         }
         return cands.get(0);
+    }
+
+    /**
+     * {@link #pickMonitor} seçimi YALNIZ "ilk aday" geri dönüşüyle mi yaptı (bağlam kimliği / damga / envanter takımı
+     * eşleşmedi ve birden çok aday var)? O zaman seçilen izleme başka bir takımın aynı adlı / aynı adresli izlemesi olabilir
+     * (2026-11-19, yayın sonrası düzeltme) — Alarm Geçmişi satırı yanlış izlemeyi adlandırıp ona bağlantı vermesin.
+     */
+    public static boolean pickedByFallback(List<Object[]> cands, Long contextMonitorId, Long stampedTeam, Set<Long> inventoryTeams) {
+        if (cands == null || cands.size() <= 1 || stampedTeam != null) return false;
+        if (contextMonitorId != null) {
+            for (Object[] c : cands) if (contextMonitorId.equals(c[1] instanceof Number n ? Long.valueOf(n.longValue()) : null)) return false;
+        }
+        if (inventoryTeams != null && !inventoryTeams.isEmpty()) {
+            for (Object[] c : cands) if (c[2] != null && inventoryTeams.contains(c[2])) return false;
+        }
+        return true;
     }
 
     private static final com.fasterxml.jackson.databind.ObjectMapper CTX_MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();

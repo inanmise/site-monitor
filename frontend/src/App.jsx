@@ -94,7 +94,7 @@ import { LoadingBlock, Spinner } from './components/ui/Progress.jsx'
 import StatusBlock from './components/ui/StatusBlock.jsx'
 import CollapsibleSection from './components/ui/CollapsibleSection.jsx'
 import PageHeader from './components/ui/PageHeader.jsx'
-import { MonitorPageBody, MonitorViewSwitch, useMonitorAlarmsView } from './components/monitoring/alarms/MonitorAlarms.jsx'
+import { AlarmsPermissionProbe, MonitorPageBody, MonitorViewSwitch, useMonitorAlarmsView } from './components/monitoring/alarms/MonitorAlarms.jsx'
 import { isTvModeActive, onTvModeChange } from './utils/tvMode.js'
 import { TAB_META } from './components/palette/paletteModel.js'   // sekme başlığı ikonu = kenar çubuğundaki ikon
 // Markalı 404 + sayfa meta'sı (2026-10-08): sekme anahtarları tek kaynakta; bilinmeyen/kapalı sekmede panel
@@ -455,7 +455,12 @@ export default function App() {
   const [tab, setTab] = useState('dashboard')
   // Sertifika Panosu "Sertifikalar | Alarmlar" görünümü (2026-11-19): App'te yaşar → URL'e yalnız pano açıkken yazar,
   // başka sekmeye geçince kapanır (o sekmenin kendi `mal` anahtarına dokunmaz). Ağır görünüm tembel yüklenir.
-  const dashAlarms = useMonitorAlarmsView('cert', { enabled: tab === 'dashboard' })
+  // Açılışta `tab` durumu oturum okunana dek 'dashboard'dır; adres başka sekmeyi (?tab=http&mal=open) gösterirken pano
+  // kancası yazarsa o sekmenin `mal`'ını SİLER (2026-11-19, yayın sonrası düzeltme) — yazım yalnız adres de panoyken.
+  const dashUrlIsDash = (tabFromSearch(window.location.search) || 'dashboard') === 'dashboard'
+  // `alerts.read` izni sağlayıcının ALTINDAN (AlarmsPermissionProbe) — App gövdesi sağlayıcının dışında
+  const [dashAlarmsPerm, setDashAlarmsPerm] = useState(true)
+  const dashAlarms = useMonitorAlarmsView('cert', { enabled: tab === 'dashboard' && dashUrlIsDash, allowed: dashAlarmsPerm })
   const closeDashAlarms = dashAlarms.close
   const syncDashAlarms = dashAlarms.syncFromUrl
   // Panoya dönüşte (Geri tuşu dahil) görünüm URL'den yeniden okunur; başka sekmenin `mal`'ı panoyu açmaz.
@@ -2114,6 +2119,7 @@ export default function App() {
 
   return (
     <PermissionsProvider user={user}>
+      <AlarmsPermissionProbe onChange={setDashAlarmsPerm} />
     <UserDirectoryProvider>
     <TeamDirectoryProvider>
     <TourProvider ctx={tourCtx} tourState={tourState} onPersist={persistTour}>

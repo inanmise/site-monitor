@@ -89,6 +89,18 @@ class SettingsScopedAdminGateTest {
     }
 
     @Test
+    @DisplayName("2026-11-19: alan adı süre kaynak adresleri (RDAP bootstrap / yedek, WHOIS sunucuları, .tr web whois) GLOBAL_ONLY — müdür bütün takımların sorgusunu ve kart bağlantısını kendi sunucusuna yönlendiremez")
+    void domainSourceUrls_globalOnly() {
+        assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(
+                "site.monitor.domain.rdap-bootstrap-url",
+                "site.monitor.domain.rdap-fallback-url",
+                "site.monitor.domain.whois-servers",
+                "site.monitor.domain.isimtescil-whois-url",
+                "site.monitor.domain.trabis-whois-url",
+                "site.monitor.domain.trabis-whois43-host");
+    }
+
+    @Test
     @DisplayName("BO6: LDAP müdür/üyelik eşlemesi (yetkilendirme girdisi) GLOBAL_ONLY — takım kapsamlı müdür değiştiremez")
     void ldapAuthorisationInputs_globalOnly() {
         assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(
