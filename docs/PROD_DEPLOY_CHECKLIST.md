@@ -79,7 +79,8 @@ Arayüzden: menüdeki sürüm çipi ya da Sistem Sağlığı → Sürüm & Dağ�
 | < 20.176.0 | Veritabanı sorgu izlemesi kullanılacaksa: pod'lardan hedef veritabanlarına çıkış (egress) kuralı ve hedefte salt okur hesap (ayrıntı RUNBOOK "Veritabanı sorgu izleme") | |
 | < 20.186.3 | [20.185 → 20.208](#20185--20208--bir-kerelik): 15 gereksiz indeksin düşürülmesi + gece `REINDEX CONCURRENTLY` (DBA bildirimi, tablo sahipliği, disk payı) | **ENGEL** |
 | < 20.208.0 | [20.185 → 20.208](#20185--20208--bir-kerelik): kullanıcı duyuruları (anahtar kelime eşleşmesi, POST yönlendirmesi, sayfa hızı SLA'sı, alan adı çözüm postaları) | |
-| ≤ 20.211.x | [k6 sürüm geçişi (2.3 → 2.4, aday ikili)](#k6-sürüm-geçişi-23--24-aday-ikili) — dağıtım çalışan izlemeleri DEĞİŞTİRMEZ (etkin k6 2.3.0 kalır); 2.4.0'a geçiş dağıtımdan sonra elle (tarama + "Adayı etkin yap"). Geçişten sonra 20.211.x'e `helm rollback` gerekirse ÖNCE "Yedeğe geri dön" | |
+| ≤ 20.211.x | [k6 2.4 terfisi](#k6-24-terfisi-230-imajdan-çıktı) — prod'un imajında 2.4.0 adayı YOK: bu sürümle senaryo kontrolleri 2.3.0'dan 2.4.0'a TARAMASIZ geçer (imajda 2.3.0 kalmadı). Önce taramak için 20.217.x'i ara sürüm olarak dağıtıp uyumluluk taramasını orada koşun; taramasız geçilecekse bilinen farkı (hiç bitmeyen Promise → ERROR) betik sahiplerine duyurun ve ilk saat senaryo alarmlarını izleyin | |
+| 20.212 – 20.217 | [k6 2.4 terfisi](#k6-24-terfisi-230-imajdan-çıktı) — dağıtımdan ÖNCE, mevcut sürümde k6 motoru → uyumluluk taramasını koşun ve gerilemeleri kapatın: bu sürümden sonra HER ortam 2.4.0 koşar ("Adayı etkin yap" yapılmış olsun olmasın); imajda karşılaştıracak / dönecek 2.3.0 yok | **ENGEL** |
 
 ### Her dağıtımda — engelleyici ön kontroller
 - [ ] **[ENGEL] Çok pod anahtarları KAPALI** (sürüm değişikliğiyle birlikte açılmaz; açmak ayrı bir karardır):
@@ -641,7 +642,8 @@ Prod 20.185'ten eskiyse geçerlidir (satırın sürümünden eskiyse o satır). 
       hiç yazılmaz, ör. zincir sağlamsa `audit-chain-restart`):
   ```sql
   SELECT patch_key, applied_at FROM schema_patch_markers
-   WHERE patch_key IN ('2026-10-30-k6-settings-normalize', '2026-10-23-audit-chain-restart',
+   WHERE patch_key IN ('2026-10-30-k6-settings-normalize', '2026-11-20-k6-24-promotion-normalize',
+                       '2026-10-23-audit-chain-restart',
                        '2026-11-06-redundant-index-cleanup', '2026-10-31-holiday-calendar-seed',
                        '2026-11-14-ad-org-role-lock-repair', '2026-10-18-tech-error-outage-sentence',
                        '2026-11-15-holiday-calendar-10y')
@@ -682,7 +684,7 @@ Prod 20.211'den eskiyse geçerlidir. Ayrıntı: [`CHANGELOG.md`](../CHANGELOG.md
       gate, Frontend E2E 1–4/4, Helm Lint, Image assets.
 - [ ] **[ENGEL] İmaj açılış testi:** `release.yml`'in `v$VERSION` koşusunda **image-boot-test** işi yeşil (yayından SONRA koşar;
       kırmızıysa sürüm yine yayınlanmıştır ama imaj prod'a gitmez). Artefakt `image-boot-log`'da: `[K6] ✅ k6 bulundu — sürüm
-      v2.3.0`, `[K6] İşlem sertleştirmesi uygulandı`, "Şema yamaları: … 0 başarısız", taşınan sayfa dosyaları (`carried`).
+      v2.4.0` (2026-11-20 terfisinden beri; `[K6] aday k6 …` satırı yok), `[K6] İşlem sertleştirmesi uygulandı`, "Şema yamaları: … 0 başarısız", taşınan sayfa dosyaları (`carried`).
 - [ ] **Trivy raporu okundu:** aynı koşunun `release` işinde "Trivy image scan" adımı (HIGH / CRITICAL, düzeltmesi olanlar;
       adım bilinçli olarak engellemez). Yeni bir CRITICAL varsa dağıtım kararı güvenlik ekibiyle verilir.
 - [ ] Prod'un şu anki sürümünden `$VERSION`'a kadar [`CHANGELOG.md`](../CHANGELOG.md) okundu; özellikle
@@ -1104,11 +1106,16 @@ k6 "desteklenmiyor" olarak koşmaz. Senaryo kontrolleri dağıtımla birlikte 2.
 
 ## k6 sürüm geçişi (2.3 → 2.4, aday ikili)
 
-Bu sürümden (2026-11-16) beri imajda İKİ k6 var: **etkin** `/usr/bin/k6` = v2.3.0 (değişmedi) ve **aday**
-`/opt/k6-candidate/k6` = v2.4.0. `site.monitor.scripted.k6-bin-candidate` varsayılanı bu yol. Dağıtım senaryo
-kontrollerini DEĞİŞTİRMEZ; 2.4.0'a geçiş aşağıdaki adımlarla, dağıtımdan sonra elle yapılır. Trivy'nin 2.3.0 ikilisinde
-gösterdiği 6 HIGH bulgu (go1.26.8, golang.org/x/net v0.58.0) bu sürümde HÂLÂ listelenir — 2.3.0 imajda kaldıkça kapanmaz;
-2. adımda (terfi sürümü) kapanır. Ayrıntı: RUNBOOK → "k6 sürüm geçişi (2.3 → 2.4, aday ikili)".
+> **TARİHÇE — yalnız 20.212 – 20.217 sürümleri için geçerlidir.** 2026-11-20'deki terfi sürümünden beri imajda aday ikili
+> yoktur ve etkin k6 2.4.0'dır; güncel sürüme geçerken aşağıdaki ["k6 2.4 terfisi"](#k6-24-terfisi-230-imajdan-çıktı)
+> bölümünü uygulayın. Bu bölümdeki "Geçiş" adımları, terfi sürümüne geçmeden ÖNCE hâlâ 20.212 – 20.217 koşan bir ortamda
+> uyumluluk taraması yapmak için kullanılır.
+
+20.212.0'dan (2026-11-16) 20.217.x'e dek imajda İKİ k6 vardı: **etkin** `/usr/bin/k6` = v2.3.0 (değişmedi) ve **aday**
+`/opt/k6-candidate/k6` = v2.4.0. `site.monitor.scripted.k6-bin-candidate` varsayılanı bu yoldu. O sürümlerin dağıtımı senaryo
+kontrollerini DEĞİŞTİRMEZ; 2.4.0'a geçiş aşağıdaki adımlarla, dağıtımdan sonra elle yapılırdı. Trivy'nin 2.3.0 ikilisinde
+gösterdiği 6 HIGH bulgu (go1.26.8, golang.org/x/net v0.58.0) o sürümlerde listelenmeye devam etti; 2. adımda (terfi sürümü,
+2026-11-20) kapandı. Ayrıntı: RUNBOOK → "k6 sürüm geçişi (2.3 → 2.4, aday ikili)".
 
 ### Öncesi
 - [ ] Prod'da k6 motoru → Ayarlar kartında "Aday ikili yolu" BOŞ görünüyorsa veritabanında `none` kayıtlı olabilir
@@ -1145,6 +1152,72 @@ gösterdiği 6 HIGH bulgu (go1.26.8, golang.org/x/net v0.58.0) bu sürümde HÂL
       bulunamadı" der. Unutulduysa 20.211.0'da k6 motoru → "Yedeğe geri dön" yine çalışır (yedek = eski etkin yol, o imajda var).
 - [ ] Geçiş YAPILMADIYSA (`k6-bin` = `k6`) geri alma k6 için güvenlidir; 20.211.0 aday varsayılanını bilmez: aday yolu kayıtlı DEĞİLSE aday "tanımlı değil" görünür; kayıtlıysa (ör. "Öncesi" adımında `none` yerine yol yazıldıysa) "Bulunamadı" görünür — zararsızdır, hiçbir izleme o ikiliyi koşmaz.
 
+## k6 2.4 terfisi (2.3.0 imajdan çıktı)
+
+Prod **≤ 20.217.x** ise geçerlidir (2026-11-20; k6 2.3 → 2.4 geçişinin 2. adımı). Bu sürümden beri imajda TEK k6 ikilisi
+var: `/usr/bin/k6` = **v2.4.0**. k6 2.3.0 imajdan çıktı, imajda aday ikili yok; `/opt/k6-candidate/k6` ve `/opt/k6-next/k6`
+etkin ikiliye sembolik bağdır. **Dağıtımdan sonra her ortam 2.4.0 koşar** — 1. adımda "Adayı etkin yap" yapılmış olsun
+olmasın — ve imajda karşılaştıracak ya da "Yedeğe geri dön" ile dönülecek bir 2.3.0 YOKTUR. Neden şimdi: yayın Trivy
+kapısında yeni bir bulguyla durdu (CVE-2026-97054, `usr/bin/k6` — k6 2.3.0 / go1.26.8); istisna eklemek yerine terfi
+seçildi. Ayrıntı: RUNBOOK → "k6 sürüm geçişi (2.3 → 2.4, aday ikili)" → "2. adım — terfi".
+
+### Öncesi (mevcut sürümde, dağıtımdan ÖNCE)
+- [ ] **[ENGEL] Prod 20.212 – 20.217 ise (imajında 2.4.0 adayı var) uyumluluk taramasını ŞİMDİ koşun:** Ayarlar → Platform →
+      k6 motoru → yan etkili betikleri (gerçek işlem yapan, e-posta / SMS tetikleyen) **Tarama dışı** listesine ekleyin →
+      **Uyumluluk taramasını başlat** → bitmesini bekleyin. **Gerileme (REGRESSION)** ve **Yeni hata (NEW_FAIL)** satırlarını
+      tek tek inceleyip kapatın (betik sahibine düzelttirin; TLS için GODEBUG kaçışı, WAF için User-Agent — RUNBOOK "Sonraki
+      k6 yükseltmesi" → 4. madde). "Dalgalı" satırları "Yeniden tara" ile doğrulayın. "Adayı etkin yap"a basmak ŞART DEĞİL —
+      önemli olan gerilemelerin dağıtımdan önce kapanmasıdır; bu sürümden sonra bu taramayı yapacak eski ikili kalmaz.
+- [ ] Aday satırı "Tanımlı değil" görünüyorsa (alan bir kez boşaltılmış, veritabanında `none` kayıtlı) taramadan önce "Aday
+      ikili yolu" alanına `/opt/k6-candidate/k6` yazıp kaydedin (yalnız 20.212 – 20.217'de; terfi sürümünde bu yol aday DEĞİLDİR).
+- [ ] **Prod ≤ 20.211.x ise** imajında 2.4.0 adayı yoktur, tarama yapılamaz: ya önce 20.217.x'i ara sürüm olarak dağıtıp
+      taramayı orada koşun, ya da taramasız geçişi kabul edin (aşağıdaki bilinen fark + ilk saat izleme).
+- [ ] **Bilinen davranış farkı — betik sahiplerine duyurun:** `default()` hiç bitmeyen (settle olmayan) bir Promise
+      döndüren betik 2.4'te `did not finish: it is still awaiting an operation that never completed` ile **ERROR** olur
+      (2.3'te PASS). Düzeltme: Promise'i `await` edin ya da döndürmeyin. Tarama bunu REGRESSION gösterir. Diğer ölçülen
+      farklar karar değiştirmez (RUNBOOK'taki liste).
+- [ ] Mevcut ayarları not edin (geri alma için):
+      ```sql
+      SELECT setting_key, setting_value FROM app_settings
+       WHERE setting_key IN ('site.monitor.scripted.k6-bin', 'site.monitor.scripted.k6-bin-rollback',
+                             'site.monitor.scripted.k6-bin-candidate');
+      ```
+      `k6-bin` beklenen değerler: satır yok / `k6`, `/opt/k6-next/k6` ya da (1. adımda geçiş yapıldıysa)
+      `/opt/k6-candidate/k6` — üçü de terfi imajında 2.4.0'dır ve dağıtım bu değere DOKUNMAZ.
+- [ ] Dağıtım sürerken senaryo betiği düzenlemeyin ve k6 motorunda "Adayı etkin yap" / "Yedeğe geri dön" kullanmayın
+      (başka sürüm koşan pod varken zaten kapalıdır).
+
+### Dağıtımdan hemen sonra
+- [ ] BÜTÜN pod'larda `[K6] ✅ k6 bulundu — sürüm v2.4.0 (…)`; `[K6] aday k6 …`, `desteklenmiyor` ya da `k6 bulunamadı`
+      satırı YOK. Parantezdeki yol kayıtlı etkin ayardır: `(k6)`, `(/opt/k6-next/k6)` ya da `(/opt/k6-candidate/k6)` — üçü de
+      aynı 2.4.0 ikilisi:
+      `kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep '\[K6\]'`
+- [ ] Dağıtım bittikten ≤ ~10 dk sonra tek pod'da ayar normalleştirmesinin 2. geçişi:
+      `[K6] Ayar normalleştirmesi tamamlandı — … [geçiş 2026-11-20-k6-24-promotion-normalize]` ya da
+      `… değiştirilecek eski yedek / aday yolu yok … [geçiş 2026-11-20-k6-24-promotion-normalize]`
+      (nişan `schema_patch_markers` `2026-11-20-k6-24-promotion-normalize`; yalnız yedek ∈ {`k6`, `/usr/bin/k6`,
+      `/opt/k6-next/k6`, `/opt/k6-candidate/k6`} ve aday = `/opt/k6-candidate/k6` kayıtlarını siler, ETKİN ayara dokunmaz):
+      `kubectl logs -n "$NS" -l app.kubernetes.io/instance="$REL" --prefix --tail=-1 | grep 'Ayar normalleştirmesi'`
+- [ ] Ayarlar → Platform → k6 motoru: Etkin = v2.4.0 "Çalışıyor" (Go sürümü: go1.26.11); Yedek ve Aday "Tanımlı değil"
+      (elle başka bir yol girilmediyse); "Adayı etkin yap" ve "Yedeğe geri dön" kapalı — beklenen.
+- [ ] Bir senaryo izlemesinde **Şimdi kontrol et** → kontrol geçmişindeki yeni satır `k6 v2.4.0`. İlk saat: senaryo alarm
+      sayısı ve "Senaryo yavaş" alarmları önceki günle aynı; yeni ERROR'larda "did not finish" arayın (bilinen fark).
+- [ ] Release koşusunda Trivy raporu: `usr/bin/k6` bulgusu 0 (`.trivyignore.yaml`'da istisna kalmadı).
+
+### Geri alma
+- [ ] **Hedef 20.212 – 20.217:** o imajlarda `/usr/bin/k6` = 2.3.0, `/opt/k6-candidate/k6` = gerçek 2.4.0 adayı. Kayıtlı etkin
+      ayar `/opt/k6-candidate/k6` ise senaryolar 2.4.0 ile koşmaya devam eder. Etkin ayar `k6` (varsayılan) ya da
+      `/opt/k6-next/k6` ise senaryolar **2.3.0'a döner** (açık CVE'li sürüm) — 2.4.0'da kalmak için geri aldıktan sonra k6
+      motoru → **Adayı etkin yap**. Yedek alanı terfide sıfırlandı; orada "Yedeğe geri dön" gerekiyorsa alana `k6` yeniden
+      yazılabilir. Bu sürümler Trivy kapısından yeniden YAYINLANAMAZ (CVE-2026-97054) — geri alma geçici olmalı.
+- [ ] **Hedef ≤ 20.211.x ve etkin ayar `/opt/k6-candidate/k6` ise: ÖNCE Ayarlar → Genel'de `site.monitor.scripted.k6-bin` =
+      `k6` yapın, SONRA `helm rollback`.** O imajlarda `/opt/k6-candidate/k6` YOK; yedek sıfırlandığı için "Yedeğe geri dön"
+      sunulmaz. Yapılmazsa hedefte bütün senaryo kontrolleri "k6 bulunamadı" ile durur (kontrol satırı yazılmaz, alarm ne
+      açılır ne kapanır). Terfi imajında `k6` da 2.4.0 olduğu için bu ayar değişikliği davranışı değiştirmez; hedefte `k6` =
+      2.3.0'dır.
+- [ ] Etkin ayar `k6` ya da `/opt/k6-next/k6` ise ≤ 20.211.x'e geri alma k6 için ek adım istemez (hedefte 2.3.0 koşar;
+      20.172.x ve öncesi için "k6 sürüm geçişi (0.49 → 2.3)" → "Geri alma").
+
 ## Geri alma
 
 **Karar ölçütü:** 15 dk içinde readiness yeşil değil **ya da** e-posta / LDAP / `decrypt failed` kanaryası
@@ -1166,9 +1239,13 @@ kırmızı → geri al. Tartışma sonra. Yalnız `helm rollback` (`kubectl roll
       kullanmamalarını duyurun; yeniden ileri gidilene dek yalnız okuma / PDF indirme.
 - [ ] **Alarm akışı açıksa:** hedef < 20.185 → akış yeniden RESOLVED satırı gönderir; < 20.179 → 7/24'e bildirilmeyen açık
       alarmlar yeniden OPEN gelir; < 20.173 → uç yok (404). Merkezi izleme ekibine haber verin.
-- [ ] **k6:** k6 motorunda "Adayı etkin yap" yapıldıysa (`site.monitor.scripted.k6-bin` = `/opt/k6-candidate/k6`) ve
-      hedef ≤ 20.211.x → ÖNCE k6 motoru → **Yedeğe geri dön** (o imajlarda `/opt/k6-candidate/k6` yok; yapılmazsa bütün
-      senaryo kontrolleri "k6 bulunamadı" ile durur — "k6 sürüm geçişi (2.3 → 2.4, aday ikili)" → "Geri alma"). Hedef
+- [ ] **k6:** etkin ayar (`site.monitor.scripted.k6-bin`) `/opt/k6-candidate/k6` ise (20.212 – 20.217'de "Adayı etkin yap"
+      yapılmış) ve hedef ≤ 20.211.x → ÖNCE Ayarlar → Genel'de `site.monitor.scripted.k6-bin` = `k6` (o imajlarda
+      `/opt/k6-candidate/k6` yok; yapılmazsa bütün senaryo kontrolleri "k6 bulunamadı" ile durur. Terfi sürümünde yedek
+      sıfırlandığı için "Yedeğe geri dön" sunulmaz — "k6 2.4 terfisi" → "Geri alma"; geri alınan sürüm 20.212 – 20.217 ise
+      yol yine "Yedeğe geri dön"dür — "k6 sürüm geçişi (2.3 → 2.4, aday ikili)" → "Geri alma"). Hedef 20.212 – 20.217 →
+      etkin ayar `/opt/k6-candidate/k6` ise 2.4.0 koşar; `k6` / `/opt/k6-next/k6` ise senaryolar 2.3.0'a döner (orada k6
+      motoru → "Adayı etkin yap" ile 2.4.0'a alın). Hedef
       20.172.x → sorun yok (etkin ayar `/opt/k6-next/k6` ise 2.3 koşar; `k6` ise 20.172.x'te k6 motoru → "Adayı etkin yap");
       hedef < 20.172 → ÖNCE `site.monitor.scripted.k6-bin` = `k6`; hedef < 20.178 → dosya okuyan senaryolar yeniden koşar
       (dosya okuma politikası eski sürümde REPORT) — "k6 sürüm geçişi (0.49 → 2.3)" → "Geri alma".

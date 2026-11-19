@@ -131,6 +131,9 @@ public class K6EngineController {
         // properties varsayılanı, SCRIPTED_K6_BIN_CANDIDATE ortam değişkeni, kayıt) — yalnız o zaman "bulunamadı" nötrdür
         // (yerel geliştirme / adayı taşımayan imaj). Ortam değişkeniyle ya da elle verilmiş BAŞKA bir yol bulunamıyorsa
         // tehlike kalır (önceden yalnız "kayıt yok" bakılıyordu: ortamdan gelen yanlış yol nötr görünüyordu).
+        // 2026-11-20 (k6 2.4 terfisi): imajda ADAY ikili yok (K6EngineSettings.CANDIDATE_IMAGE_PATH boş) → default_path HER
+        // yol için false; tanımlı bir aday yolu bulunamıyorsa bu bir yapılandırma hatasıdır (tehlike). Kural, sonraki aday
+        // imaja kendi yoluyla girdiğinde yeniden işler.
         if (cand != null) cand.put("default_path", K6EngineSettings.isImageCandidatePath(p.candidate().bin()));
         engines.put("candidate", cand);
         out.put("engines", engines);

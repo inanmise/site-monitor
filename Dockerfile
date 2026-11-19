@@ -8,31 +8,32 @@
 # Keep the Node major in step with CI (.github/workflows/ci.yml, node-version "26").
 
 # k6 binary (Senaryo İzleme / 10. tür) — sürüm-sabitli GitHub sürüm tarball'ı, sabit SHA-256 (k6-v<sürüm>-checksums.txt
-# ile aynı). Docker imajı DEĞİL: tarball go1.26.8 ile derlenmiş, Go 1.27'de kaldırılan TLS kaçışları (GODEBUG tlsrsakex /
-# tls3des) burada hâlâ çalışır. k6 0.49 → 2.3 geçişi 2026-10-30'da tamamlandı (Yayın B + C tek sürümde). Etkin ikili
-# /usr/bin/k6; 2026-11-16'dan beri imajda bir de ADAY ikili var (/opt/k6-candidate/k6, aşağıdaki K6_CANDIDATE_* — Ayarlar →
-# Platform → k6 motoru, uyumluluk taraması — docs/RUNBOOK.md "k6 sürüm geçişi"). Uygulama yalnız 2.0 ve üstünü koşar
-# (K6Profile.MIN_SUPPORTED_MAJOR). Sürüm + iki sağlama toplamı BİRLİKTE değişir.
-ARG K6_VERSION=2.3.0
-ARG K6_SHA256_AMD64=39c3117b6af817592dcd0ce4242105c0a7af10948c2a425306f0be8f7a8a8ab1
-ARG K6_SHA256_ARM64=5ca3433e8201da72a284aaa241a1bb5fb47f4abb4e384d39410ddd8062f49b90
-# ADAY k6 (2026-11-16, k6 2.3 → 2.4 geçişi, 1. adım): v2.4.0 (go1.26.11, golang.org/x/net v0.62.0 — 2.3.0'daki 6 HIGH Trivy
-# bulgusu 2.4.0'da kapalı) imaja KENDİ yolunda girer: /opt/k6-candidate/k6. Etkin ikili (/usr/bin/k6) 2.3.0 kalır — çalışan
-# izlemelerde davranış değişmez. Yönetici Ayarlar → Platform → k6 motoru'nda uyumluluk taramasını koşup "Adayı etkin yap"
-# der (site.monitor.scripted.k6-bin-candidate varsayılanı bu yol). 2.3.0 imajda kaldıkça Trivy onun bulgularını göstermeye
-# devam eder; bulgular 2. adımda (terfi sürümü: 2.4.0 /usr/bin/k6'ya, 2.3.0 çıkar, /opt/k6-candidate/k6 → /usr/bin/k6
-# sembolik bağı) kapanır — docs/RUNBOOK.md "k6 sürüm geçişi" → "2.3 → 2.4 (aday ikili)". Üç değer BİRLİKTE değişir.
-ARG K6_CANDIDATE_VERSION=2.4.0
-ARG K6_CANDIDATE_SHA256_AMD64=5a5ecf23529ccf93135bc7e5b0c1cd5126ecf5f2672e22eed1556a0ab74abb87
-ARG K6_CANDIDATE_SHA256_ARM64=7bb415f59d81ad649a86f6da6b3e1bd2e4e64e84909deef13e9bca70608abccb
+# ile aynı). Docker imajı DEĞİL: tarball go1.26.11 ile derlenmiş, Go 1.27'de kaldırılan TLS kaçışları (GODEBUG tlsrsakex /
+# tls3des) burada hâlâ çalışır. Uygulama yalnız 2.0 ve üstünü koşar (K6Profile.MIN_SUPPORTED_MAJOR). Sürüm + iki sağlama
+# toplamı BİRLİKTE değişir.
+#
+# k6 2.3 → 2.4 TERFİSİ (2026-11-20, 2. adım — kullanıcı kararı): etkin ikili /usr/bin/k6 artık v2.4.0 (go1.26.11,
+# golang.org/x/net v0.62.0); 2.3.0 imajdan ÇIKTI (go1.26.8'in HIGH Trivy bulguları onunla kapandı; .trivyignore.yaml'daki
+# k6 bloğu silindi). İmajda tek k6 ikilisi var. 1. adımın (20.212 – 20.217) aday yolu /opt/k6-candidate/k6 ve Yayın A'nın
+# yolu /opt/k6-next/k6 kayıtlı etkin ayarlarda yaşadığı için /usr/bin/k6'ya SEMBOLİK BAĞ olarak kalır (aşağıda).
+#
+# SONRAKİ k6 yükseltmesi yine iki adımdır (docs/RUNBOOK.md "k6 sürüm geçişi"): yeni sürüm ÖNCE aday olarak YENİ bir yolda
+# gelir — K6_CANDIDATE_VERSION / K6_CANDIDATE_SHA256_AMD64 / K6_CANDIDATE_SHA256_ARM64 ARG'ları, k6-bin aşamasında ikinci
+# fetch_k6 çağrısı (/k6-candidate çıktısı), çalışma imajında kendi yolu (YENİ bir yol: /opt/k6-candidate/k6 ve /opt/k6-next/k6
+# kayıtlı değerlerde etkin ikilinin takma adıdır, yeniden KULLANILMAZ), K6EngineSettings.CANDIDATE_IMAGE_PATH ve
+# application.properties aday varsayılanı (gate: K6EngineSettingsTest.candidateDefaultMatchesImage). scripts/fetch-k6-binaries.sh,
+# scripts/image-boot-check.sh ve CI (backend-k6-contract) aday ARG'ı varsa adayı kendiliğinden denetler.
+ARG K6_VERSION=2.4.0
+ARG K6_SHA256_AMD64=5a5ecf23529ccf93135bc7e5b0c1cd5126ecf5f2672e22eed1556a0ab74abb87
+ARG K6_SHA256_ARM64=7bb415f59d81ad649a86f6da6b3e1bd2e4e64e84909deef13e9bca70608abccb
 # Global (before the first FROM, or FROM lines cannot see it) — see the previous-release stage below (MP-47).
 ARG PREVIOUS_IMAGE=
 
-# k6 ikilileri (yukarıdaki notlar). Çalışma imajıyla aynı sabitlenmiş tabanda indirilir; sağlama toplamı tutmazsa ya da ikili
+# k6 ikilisi (yukarıdaki notlar). Çalışma imajıyla aynı sabitlenmiş tabanda indirilir; sağlama toplamı tutmazsa ya da ikili
 # beklenen sürümü söylemezse derleme DÜŞER (yalnız sürüm değiştirilip toplam unutulursa sessizce eski ikili gelmesin — k6
-# raporu R11). Tek aşama, İKİ çıktı (2026-11-16): /k6 = etkin (K6_VERSION), /k6-candidate = aday (K6_CANDIDATE_VERSION);
-# indirme / doğrulama adımları tek bir kabuk işlevinde (kopya yok). Aşama adı ve /k6 çıktısı scripts/fetch-k6-binaries.sh
-# ve CI (backend-k6-contract) için SABİT.
+# raporu R11). Çıktı: /k6 = etkin (K6_VERSION). İndirme / doğrulama adımları tek bir kabuk işlevinde (fetch_k6) — bir aday
+# ikili geldiğinde aynı işlev ikinci kez çağrılır (/k6-candidate çıktısı). Aşama adı ve /k6 çıktısı
+# scripts/fetch-k6-binaries.sh ve CI (backend-k6-contract) için SABİT.
 FROM eclipse-temurin:25.0.4_7-jre-alpine-3.24@sha256:2ca9adf44f5c29d28ecd26cf92d75cc0c66b7f32bfd839a4439e363a8b428af8 AS k6-bin
 # BuildKit'in otomatik değeri yalnız DEĞERSİZ ARG'a geçer (varsayılan verilirse varsayılan kazanır, arm64 derlemesi
 # amd64 ikiliyi alırdı — inceleme 2026-10-30, L4). Eski derleyicide boş kalır → amd64.
@@ -40,9 +41,6 @@ ARG TARGETARCH
 ARG K6_VERSION
 ARG K6_SHA256_AMD64
 ARG K6_SHA256_ARM64
-ARG K6_CANDIDATE_VERSION
-ARG K6_CANDIDATE_SHA256_AMD64
-ARG K6_CANDIDATE_SHA256_ARM64
 # İndirme süresi sınırlı (curl --connect-timeout 30 / --max-time 300, en çok 3 yeniden deneme) — takılan bir GitHub isteği
 # derlemeyi süresiz tutmasın.
 RUN set -eu; \
@@ -65,8 +63,7 @@ RUN set -eu; \
       "$out" version | grep -q "v${ver} " || { echo "k6: sürüm tutmuyor ($out): $("$out" version)" >&2; exit 1; }; \
       rm -rf "/tmp/${name}" "/tmp/${name}.tgz"; \
     }; \
-    fetch_k6 "$K6_VERSION" "$K6_SHA256_AMD64" "$K6_SHA256_ARM64" /k6; \
-    fetch_k6 "$K6_CANDIDATE_VERSION" "$K6_CANDIDATE_SHA256_AMD64" "$K6_CANDIDATE_SHA256_ARM64" /k6-candidate
+    fetch_k6 "$K6_VERSION" "$K6_SHA256_AMD64" "$K6_SHA256_ARM64" /k6
 
 # Previous releases' page files (2026-10-23, multi-pod release 2b · MP-47). During a rolling update old and new pods
 # serve together: an old pod's index.html asks for its own hashed /assets/* files and the request may land on a new
@@ -150,31 +147,31 @@ ARG GIT_COMMIT
 # Senaryo İzleme (10. tür): sabitlenmiş sürümlü k6 binary'si — yukarıdaki named stage'den kopyalanır (statik Go
 # binary'si, alpine/musl'da çalışır). Her kontrolde kısa ömürlü sandboxlu alt süreç olarak çalışır.
 COPY --from=k6-bin /k6 /usr/bin/k6
-# ADAY k6 (2026-11-16, k6 2.3 → 2.4 geçişi, 1. adım): v2.4.0 KENDİ yolunda. site.monitor.scripted.k6-bin-candidate
-# varsayılanı bu yol (application.properties); uyumluluk taraması bunu koşar, "Adayı etkin yap" etkin ayarı bu yola yazar.
-# TERFİ SÜRÜMÜNDE (2. adım: 2.4.0 /usr/bin/k6'ya geçer, 2.3.0 imajdan çıkar) bu yol /usr/bin/k6'ya SEMBOLİK BAĞ olarak
-# KALMALI — kayıtlı etkin değer bu yol olacak (/opt/k6-next/k6 ile aynı desen); bağı kaldırma kararı KAYITLI DEĞERE bakar.
-COPY --from=k6-bin /k6-candidate /opt/k6-candidate/k6
-# Uyumluluk (2026-10-30): 20.172.x'te "Adayı etkin yap" etkin ikili ayarını /opt/k6-next/k6'ya yazıyordu. Dağıtım sürerken
-# eski ve yeni pod aynı ayarı okur; yol yeni imajda da çalışsın diye /usr/bin/k6'ya sembolik bağ. O kayıtlı etkin değer
-# BİLEREK korunur (K6SettingsNormalizer yalnız yedek / aday yolunu sıfırlar): 20.172.x'e helm rollback'te aynı ayar gerçek
-# 2.3'ü gösterir. Bu yüzden bağ, kayıtlı bir /opt/k6-next/k6 değerini ÖNCE taşıyan bir sürüme dek kalır — kaldırma kararı
-# KAYITLI DEĞERE bakmalı. Aday ikili KENDİ yolunda (/opt/k6-candidate/k6) — bu yolda değil.
-RUN mkdir -p /opt/k6-next && ln -s /usr/bin/k6 /opt/k6-next/k6
-# İkililer beklenen sürümü söylemeli (yanlış imaj / katman sessizce geçmesin); uyumluluk yolu etkin ikiliye çıkmalı.
+# Uyumluluk yolları — ikisi de /usr/bin/k6'ya SEMBOLİK BAĞ; KAYITLI etkin ikili ayarı (site.monitor.scripted.k6-bin) bu
+# yollardan biri olabilir ve o değer BİLEREK korunur (K6SettingsNormalizer yalnız yedek / aday yolunu sıfırlar):
+#   /opt/k6-next/k6       20.172.x'te "Adayı etkin yap"ın yazdığı yol (2026-10-30). 20.172.x'e helm rollback'te aynı ayar
+#                         gerçek 2.3'ü gösterir.
+#   /opt/k6-candidate/k6  20.212 – 20.217'de (k6 2.3 → 2.4 geçişi, 1. adım) "Adayı etkin yap"ın yazdığı yol. O sürümlere
+#                         helm rollback'te aynı ayar gerçek 2.4.0 adayını gösterir (2026-11-20, 2. adım — terfi).
+# Bir bağ, kayıtlı o değeri ÖNCE taşıyan bir sürüme dek kalır — kaldırma kararı nişana değil KAYITLI DEĞERE bakmalı.
+# Gelecekteki bir aday ikili YENİ bir yola konur (bu iki yol yeniden kullanılmaz).
+RUN mkdir -p /opt/k6-next /opt/k6-candidate \
+    && ln -s /usr/bin/k6 /opt/k6-next/k6 \
+    && ln -s /usr/bin/k6 /opt/k6-candidate/k6
+# İkili beklenen sürümü söylemeli (yanlış imaj / katman sessizce geçmesin); uyumluluk yolları etkin ikiliye çıkmalı.
 ARG K6_VERSION
-ARG K6_CANDIDATE_VERSION
 RUN /usr/bin/k6 version | grep -q "v${K6_VERSION} " \
     && /opt/k6-next/k6 version | grep -q "v${K6_VERSION} " \
-    && /opt/k6-candidate/k6 version | grep -q "v${K6_CANDIDATE_VERSION} " \
-    || { echo "k6 sürümü tutmuyor: $(/usr/bin/k6 version) / $(/opt/k6-next/k6 version) / aday $(/opt/k6-candidate/k6 version)" >&2; exit 1; }
+    && /opt/k6-candidate/k6 version | grep -q "v${K6_VERSION} " \
+    && [ "$(readlink /opt/k6-next/k6)" = /usr/bin/k6 ] && [ "$(readlink /opt/k6-candidate/k6)" = /usr/bin/k6 ] \
+    || { echo "k6 sürümü / uyumluluk bağı tutmuyor: $(/usr/bin/k6 version) / $(/opt/k6-next/k6 version) / $(/opt/k6-candidate/k6 version)" >&2; exit 1; }
 # İşlem sertleştirmesi (2026-10-31, k6 inceleme A2): k6 ikilisi root sahipli ve YALNIZ ÇALIŞTIRILIR (0111 — okunamaz).
 # Linux okunamayan bir ikiliyi execve eden süreci dump-edilemez yapar: her k6 sürecinin /proc/<pid>/environ dosyası root
 # sahipli olur ve AYNI kullanıcıdaki kardeş k6 süreçleri (başka takımların çözülmüş gizli değerleri) birbirini okuyamaz.
-# JVM'in kendisi açılışta prctl(PR_SET_DUMPABLE, 0) ile aynı korumayı alır (ScriptedProcessHardening). Sembolik bağ
-# (/opt/k6-next/k6) izinleri hedeften alır. Aday ikili (uyumluluk taraması aynı betikleri aynı gizli değerlerle koşar) AYNI
-# korumayı alır. scripts/image-boot-check.sh adım 9 doğrular.
-RUN chown root:root /usr/bin/k6 /opt/k6-candidate/k6 && chmod 0111 /usr/bin/k6 /opt/k6-candidate/k6
+# JVM'in kendisi açılışta prctl(PR_SET_DUMPABLE, 0) ile aynı korumayı alır (ScriptedProcessHardening). Sembolik bağlar
+# (/opt/k6-next/k6, /opt/k6-candidate/k6) izinleri hedeften alır. Bir aday ikili geldiğinde (uyumluluk taraması aynı
+# betikleri aynı gizli değerlerle koşar) AYNI korumayı almalı. scripts/image-boot-check.sh adım 9 doğrular.
+RUN chown root:root /usr/bin/k6 && chmod 0111 /usr/bin/k6
 
 LABEL org.opencontainers.image.title="Site Monitor" \
       org.opencontainers.image.description="SSL/TLS Certificate Monitoring System" \

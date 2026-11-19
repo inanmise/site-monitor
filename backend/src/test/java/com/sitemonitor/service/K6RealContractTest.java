@@ -34,13 +34,18 @@ import static org.mockito.Mockito.when;
 
 /**
  * GERÇEK k6 SÖZLEŞME TESTLERİ (2026-10-29, k6 0.49 → 2.3 geçişi, A13). Diğer bütün senaryo testleri k6'yı taklit eder;
- * bu sınıf imajdaki gerçek ikiliyi ({@code K6_BIN}; 2026-10-30'dan beri tek ikili, 2.3) yerel bir HTTP sunucusuna karşı
- * koşturur ve motorun dayandığı sözleşmeyi doğrular: bayraklar, {@code --summary-export} biçimi, çıkış kodları, çökme ve
- * "Request Failed" satırları, sözdizimi hatasının satır:sütunu, tek iterasyon kuralı, eklenti engeli, API portu, User-Agent.
+ * bu sınıf imajdaki gerçek ikiliyi ({@code K6_BIN}; imajda tek ikili var — 2026-11-20 terfisinden beri 2.4.0, öncesinde
+ * 2.3.0) yerel bir HTTP sunucusuna karşı koşturur ve motorun dayandığı sözleşmeyi doğrular: bayraklar,
+ * {@code --summary-export} biçimi, çıkış kodları, çökme ve "Request Failed" satırları, sözdizimi hatasının satır:sütunu,
+ * tek iterasyon kuralı, eklenti engeli, API portu, User-Agent.
+ *
+ * <p>Sürüme bağlı tek beklenti {@link #pendingPromiseDiffersByVersion}: ikilinin KENDİ sürümüne bakar (2.4+ ERROR, daha
+ * eski 2.x PASS) — yerelde eski bir ikiliyle ({@code K6_BIN} = 2.3.x) koşulursa da geçer; CI yalnız imajın ikilisini koşar.
  *
  * <p>Yalnız {@code -Pk6-real} ile koşar (CI işi "backend-k6-contract"); ikili tanımlı değilse atlanır,
  * {@code K6_REAL_REQUIRED=true} iken eksik ikili TESTİ DÜŞÜRÜR. İsteğe bağlı {@code K6_BIN_LEGACY} (ör. eski 0.49
- * ikilisi) verilirse "desteklenmeyen sürüm" kuralı da gerçek ikiliyle denetlenir (CI'da yok, atlanır).
+ * ikilisi) verilirse "desteklenmeyen sürüm" kuralı da gerçek ikiliyle denetlenir (CI'da yok, atlanır). Bir ADAY ikili
+ * imaja girdiğinde CI aynı sınıfı {@code K6_BIN} = aday ile ikinci kez koşar.
  */
 @Tag("k6-real")
 class K6RealContractTest {
@@ -455,7 +460,8 @@ class K6RealContractTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
     @DisplayName("ÖLÇÜM (2026-11-16): default() hiç bitmeyen bir Promise döndürür — 2.4+ 'did not finish' level=error basar "
-            + "→ ERROR; 2.3 sessiz geçer → PASS (2.3 → 2.4 geçişinin bilinen davranış farkı; gölge tarama REGRESSION gösterir)")
+            + "→ ERROR; 2.3 sessiz geçer → PASS (2.3 → 2.4 geçişinin bilinen davranış farkı; imajın etkin ikilisi 2026-11-20'den "
+            + "beri 2.4 — beklenti ikilinin kendi sürümüne göre seçilir)")
     void pendingPromiseDiffersByVersion(Engine e) {
         ScriptedCheckerService svc = service(e);
         K6Profile p = svc.profiles().active();

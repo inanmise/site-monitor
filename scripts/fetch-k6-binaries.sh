@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# k6 sözleşme testleri için GERÇEK ikilileri getirir (2026-10-29, k6 0.49 → 2.3 geçişi, A13; 2026-11-16'dan beri imajda
-# etkin + ADAY ikili — k6 2.3 → 2.4 geçişi). Docker gerekir.
+# k6 sözleşme testleri için GERÇEK ikilileri getirir (2026-10-29, k6 0.49 → 2.3 geçişi, A13). Docker gerekir.
 #
 # Kullanım:  bash scripts/fetch-k6-binaries.sh <çıkış-dizini>
 #   → <çıkış-dizini>/k6            etkin ikili (Dockerfile ARG K6_VERSION — imajda /usr/bin/k6)
-#   → <çıkış-dizini>/k6-candidate  aday ikili (Dockerfile ARG K6_CANDIDATE_VERSION — imajda /opt/k6-candidate/k6)
-# Dockerfile'ın `k6-bin` aşaması DERLENİR (tarball indirme + SHA-256 + sürüm denetimi orada) ve iki ikili oradan çıkarılır —
+#   → <çıkış-dizini>/k6-candidate  aday ikili — YALNIZ Dockerfile'da ARG K6_CANDIDATE_VERSION varsa (imajdaki yolu
+#                                  Dockerfile'ın COPY satırında)
+# Dockerfile'ın `k6-bin` aşaması DERLENİR (tarball indirme + SHA-256 + sürüm denetimi orada) ve ikili(ler) oradan çıkarılır —
 # prod imajının kopyaladığı aşamayla aynı adımlar, aynı sağlama toplamları.
 #
-# Sürümlerin ve sağlama toplamlarının TEK kaynağı Dockerfile'dır: sürüm değişince bu betik değişmez. Dockerfile'da aday ARG'ı
-# yoksa (terfi sürümünden sonra) yalnız etkin ikili çıkarılır.
+# Sürümlerin ve sağlama toplamlarının TEK kaynağı Dockerfile'dır: sürüm değişince bu betik değişmez. BUGÜN (2026-11-20, k6
+# 2.3 → 2.4 terfisinden beri) Dockerfile'da aday ARG'ı YOK: imajda tek ikili var (/usr/bin/k6 = 2.4.0) ve yalnız o çıkarılır.
+# 20.212 – 20.217'de (1. adım) aday 2.4.0 /opt/k6-candidate/k6'daydı; o yol artık etkin ikiliye sembolik bağ. Sonraki aday
+# YENİ bir yolla geldiğinde bu betik onu kendiliğinden çıkarır.
 set -euo pipefail
 
 OUT="${1:?kullanım: fetch-k6-binaries.sh <çıkış-dizini>}"

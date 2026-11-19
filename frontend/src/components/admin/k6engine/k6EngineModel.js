@@ -196,7 +196,8 @@ export function engineState(p) {
  * Durum rozeti tonu. Bulunamayan ADAY yalnız imajın VARSAYILAN aday yolundaysa nötrdür (2026-11-16; sunucu
  * `default_path: true`): yerel geliştirmede ya da adayı taşımayan bir imajda o dosya yoktur ve hiçbir izleme etkilenmez.
  * Elle yazılmış (bağlı birim, yazım hatası) bulunamayan aday yolu ve bulunamayan etkin / yedek ikili tehlikedir. Alan yoksa
- * (eski sunucu) eski kural: tehlike.
+ * (eski sunucu) eski kural: tehlike. 2026-11-20 (k6 2.4 terfisi): imajda aday ikili YOK — sunucu her aday yolu için
+ * `default_path: false` yollar (bulunamayan tanımlı aday = tehlike); kural, sonraki aday imaja girdiğinde yeniden işler.
  */
 export function engineTone(role, state, profile) {
   if (state === 'running') return 'success'

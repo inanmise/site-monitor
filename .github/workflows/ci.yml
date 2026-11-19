@@ -171,8 +171,10 @@ jobs:
 
   # k6 sözleşme testleri (2026-10-29, k6 0.49 → 2.3 geçişi): diğer bütün senaryo testleri k6'yı TAKLİT eder; bu iş imajdaki
   # GERÇEK ikilileri (Dockerfile'ın k6-bin aşaması — PR'da bu aşama yalnız burada derlenir) yerel bir HTTP sunucusuna karşı
-  # koşar: önce ETKİN ikili (/usr/bin/k6), sonra (2026-11-16, k6 2.3 → 2.4 geçişi) ADAY ikili (/opt/k6-candidate/k6) — aynı
-  # sözleşme, ayrı rapor. Kaynak: Dockerfile (scripts/fetch-k6-binaries.sh); Dockerfile'da aday yoksa ikinci koşu atlanır.
+  # koşar: önce ETKİN ikili (/usr/bin/k6), sonra — Dockerfile'da ARG K6_CANDIDATE_VERSION varsa — ADAY ikili: aynı sözleşme,
+  # ayrı rapor. Kaynak: Dockerfile (scripts/fetch-k6-binaries.sh). BUGÜN (2026-11-20, k6 2.3 → 2.4 terfisinden beri)
+  # Dockerfile'da aday YOK: yalnız etkin ikili (2.4.0) koşar, aday adımı bir bildirimle atlanır. Sonraki k6 yükseltmesinde
+  # aday ARG'ı geri gelince ikinci koşu kendiliğinden yeniden çalışır.
   backend-k6-contract:
     name: Backend k6 contract (real k6 binaries)
     runs-on: ubuntu-latest
@@ -206,7 +208,7 @@ jobs:
           </settings>
           SETTINGS
 
-      - name: Fetch the real k6 binaries (the Dockerfile k6-bin stage — active + candidate)
+      - name: Fetch the real k6 binaries (the Dockerfile k6-bin stage — active, plus the candidate when the Dockerfile has one)
         id: fetch
         working-directory: .
         run: bash scripts/fetch-k6-binaries.sh "$RUNNER_TEMP/k6"
@@ -231,7 +233,8 @@ jobs:
 
       # Aday ikili (Dockerfile K6_CANDIDATE_VERSION) aynı sözleşmeyi geçmeli. Etkin koşu düşse de koşar (iki sonuç birlikte
       # görünsün); getirme adımı düştüyse koşmaz. Rapor klasörü önce temizlenir — etkin koşunun raporu yukarıda yüklendi.
-      - name: k6 contract tests (candidate binary — /opt/k6-candidate/k6 in the image)
+      # Dockerfile'da aday yoksa (bugün — 2026-11-20 terfisinden beri) adım bir bildirimle biter.
+      - name: k6 contract tests (candidate binary — skipped when the Dockerfile has no candidate)
         if: ${{ !cancelled() && steps.fetch.outcome == 'success' }}
         env:
           MAVEN_OPTS: >-

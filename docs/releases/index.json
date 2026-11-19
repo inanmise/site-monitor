@@ -1,9 +1,58 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-19T18:11:16Z",
+  "generatedAt": "2026-11-19T23:45:27Z",
   "repo": "inanmise/site-monitor",
-  "count": 864,
+  "count": 865,
   "releases": [
+    {
+      "version": "20.218.0",
+      "tag": "v20.218.0",
+      "releasedAt": "2026-11-19T23:45:19Z",
+      "commit": "ae5817804403bf72f8ee55a5c965c18cee8c8f1f",
+      "prevVersion": "20.217.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ae581780",
+          "subject": "teknik hata raporu — görsel kutusu eylemleri her kutuda aynı; ekrandan al canlı kipte faresiz kaydırma"
+        },
+        {
+          "type": "feat",
+          "scope": "k6",
+          "breaking": false,
+          "sha": "4e3b7710",
+          "subject": "k6 2.4.0 terfisi — imajda tek ikili, 2.3.0 çıktı (Trivy CVE-2026-97054)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "81fe3d5a",
+          "subject": "ekrandan al canlı kip — bağımsız inceleme düzeltmeleri"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "8363db0e",
+          "subject": "ekrandan al — sekme paylaşımında canlı görüntü ve buradan kaydırma"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.217.1",
       "tag": "v20.217.1",

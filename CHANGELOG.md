@@ -15,6 +15,43 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.218.0] — 2026-11-19
+
+### Changed
+- **⚠ Davranış — k6 2.4.0 etkin ikili oldu (k6 2.3 → 2.4 geçişinin 2. adımı: terfi; kullanıcı kararı 2026-11-20).** İmajda
+  artık TEK k6 ikilisi var: `/usr/bin/k6` = **v2.4.0** (go1.26.11, golang.org/x/net v0.62.0). k6 2.3.0 imajdan çıktı ve
+  imajda aday ikili yok. Dağıtımdan sonra BÜTÜN senaryo izlemeleri 2.4.0 ile koşar — 20.212 – 20.217'de "Adayı etkin yap"
+  yapılmış olsun olmasın; imajda karşılaştıracak ya da "Yedeğe geri dön" ile dönülecek 2.3.0 yoktur.
+  - **Dağıtımdan ÖNCE:** prod 20.212 – 20.217 ise mevcut sürümde Ayarlar → Platform → k6 motoru → uyumluluk taramasını
+    koşup gerilemeleri kapatın (`docs/PROD_DEPLOY_CHECKLIST.md` → "k6 2.4 terfisi"). **Bilinen fark:** `default()` hiç
+    bitmeyen bir Promise döndüren betik 2.4'te `did not finish …` ile **ERROR** olur (2.3'te PASS).
+  - `/opt/k6-candidate/k6` (20.212 – 20.217'nin aday yolu) ve `/opt/k6-next/k6` (20.172.x) imajda `/usr/bin/k6`'ya sembolik
+    bağdır: kayıtlı etkin ikili ayarı (`site.monitor.scripted.k6-bin`) bu yollardan biriyse çalışmaya devam eder ve
+    BİLEREK değiştirilmez.
+  - **Yeni yapılandırma:** `site.monitor.scripted.k6-bin-candidate` varsayılanı yeniden BOŞ (aday yok; env
+    `SCRIPTED_K6_BIN_CANDIDATE`). k6 motoru sayfasında Aday "Tanımlı değil" görünür; tanımlı bir aday yolu bulunamazsa her
+    zaman tehlike tonundadır (API'de `default_path` artık hep `false` — imaj aday taşımıyor). Örnek yol ve yer tutucular
+    `/opt/k6-new/k6` oldu; sayfanın giriş metni tek ikiliyi anlatır.
+  - **Tek seferlik ayar geçişi (kendiliğinden):** `K6SettingsNormalizer`'ın 2. geçişi (nişan
+    `2026-11-20-k6-24-promotion-normalize`; bütün pod'lar bu sürümdeyken, açılıştan ≥ 3 dk sonra) kayıtlı yedek ikili yolunu
+    ∈ {`k6`, `/usr/bin/k6`, `/opt/k6-next/k6`, `/opt/k6-candidate/k6`} ve kayıtlı aday yolu `/opt/k6-candidate/k6`'yı siler —
+    bu yollar artık etkin ikilinin kendisidir. Etkin ikili ayarına dokunmaz; etkin ayar elle girilmiş başka bir yolsa yedeği
+    korur. Değişiklik denetime `K6_ENGINE_SETTINGS_NORMALIZE` olarak yazılır (`marker` = geçişin nişanı). 1. geçiş (nişan
+    `2026-10-30-k6-settings-normalize`) aynen duruyor.
+  - **Geri alma:** 20.212 – 20.217'ye `helm rollback`'te etkin ayar `/opt/k6-candidate/k6` ise 2.4.0 koşmaya devam eder;
+    `k6` ise senaryolar 2.3.0'a döner. ≤ 20.211.x'e dönülecekse ve etkin ayar `/opt/k6-candidate/k6` ise ÖNCE
+    `site.monitor.scripted.k6-bin` = `k6` yapın (o imajlarda yol yok). Ayrıntı: `docs/RUNBOOK.md` "k6 sürüm geçişi
+    (2.3 → 2.4, aday ikili)" → "2. adım — terfi".
+  - **CI:** gerçek k6 sözleşme testleri (`backend-k6-contract`) yalnız etkin ikiliyle (2.4.0) koşar; aday adımı ve imaj
+    açılış denetiminin aday kısmı Dockerfile'da aday olmadığı için kendiliğinden atlanır. Sonraki k6 yükseltmesi adayını
+    YENİ bir yolla getirir (Dockerfile `K6_CANDIDATE_*`, `K6EngineSettings.CANDIDATE_IMAGE_PATH`, aday varsayılanı birlikte).
+
+### Security
+- **k6 2.3.0'ın Trivy bulguları kapandı:** yayın kapısını durduran yeni bulgu **CVE-2026-97054** (`usr/bin/k6` — go1.26.8,
+  Go `net/http` HTTP/1 sunucusunda `MaxBytesReader` yarışı; go 1.26.11'de düzeltildi) ve 20.212.0'dan beri istisnayla
+  taşınan 5 CVE (6 HIGH bulgu), 2.3.0 imajdan çıkınca kapandı. İstisna EKLENMEDİ; `.trivyignore.yaml`'daki k6 2.3.0 bloğu
+  silindi — dosyada şu an istisna yok.
+
 ## [20.214.0] — 2026-11-18
 
 ### Added
@@ -3621,7 +3658,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.214.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.218.0...HEAD
+[20.218.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.218.0
 [20.214.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.214.0
 [20.213.5]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.5
 [20.213.4]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.4

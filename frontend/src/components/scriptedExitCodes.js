@@ -3,7 +3,7 @@
  *
  * Backend `error` alanına zaten insan-okur bir açıklama koyuyor ama repo standardı gereği
  * o metin Türkçe; bu katman aynı bilgiyi arayüz diline çevirir. Kaynak: k6 `errext/exitcodes/codes.go`
- * (v0.49.0'da 97–109; v1.x/2.x 110'u ekledi — imajdaki sürüm 2.3.0) — tahmin değil.
+ * (v0.49.0'da 97–109; v1.x/2.x 110'u ekledi — imajdaki sürüm 2.4.0) — tahmin değil.
  *
  * Saf fonksiyon: `t` dışarıdan gelir, bileşene bağımlı değil, test edilebilir.
  */
