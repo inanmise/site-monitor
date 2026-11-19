@@ -23,6 +23,25 @@ import { domainLife, eppKey, eppLabel } from '../../utils/domainEpp.js'
 import { localDayKey } from '../../utils/localDay.js'
 import { dateLocale } from '../../i18n/dateLocale.js'
 
+/**
+ * Kartın "sorgulanan sayfa" bağlantısı (2026-11-19, kullanıcı isteği: SiteMonitor'ün sorguladığı sayfayı açıp çevrimiçi
+ * sorguyla karşılaştırmak). Yalnız http(s) ve bilgi (userinfo) içermeyen adres bağlantı olur; port-43 sunucusu metin.
+ * @returns {{ kind: 'url', url: string, host: string } | { kind: 'server', server: string } | null}
+ */
+export function queryRefOf(m) {
+  const raw = typeof m?.query_url === 'string' ? m.query_url.trim() : ''
+  if (raw && raw.length <= 500) {
+    try {
+      const u = new URL(raw)
+      if ((u.protocol === 'https:' || u.protocol === 'http:') && !u.username && !u.password && u.hostname) {
+        return { kind: 'url', url: u.href, host: u.hostname }
+      }
+    } catch { /* geçersiz adres — bağlantı yok */ }
+  }
+  const server = typeof m?.query_server === 'string' ? m.query_server.trim() : ''
+  return server ? { kind: 'server', server } : null
+}
+
 /** Sayfanın "yakında dolacak" süzgeci / istatistik kartı ve kartın plan kısayolu için TEK kaynak (gün). */
 export const SOON_DAYS = 30
 

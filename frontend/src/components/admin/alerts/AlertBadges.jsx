@@ -1,4 +1,5 @@
-import { OctagonAlert, TriangleAlert, CircleAlert, CheckCircle2, Clock, RefreshCcw, MailX, ExternalLink, Bot, Siren, CloudLightning, Headset, FileUp } from 'lucide-react'
+import { OctagonAlert, TriangleAlert, CircleAlert, CheckCircle2, Clock, RefreshCcw, MailX, ExternalLink, Bot, Siren, CloudLightning, Headset, FileUp, Radar } from 'lucide-react'
+import { createContext, useContext } from 'react'
 import { useT, useDateLocale } from '../../../i18n/index.jsx'
 import { alertTypeMeta, alertTypeLabel } from '../../../utils/alertTypeMeta.js'
 import { formatDuration } from '../../../utils/incidentMeta.js'
@@ -8,7 +9,7 @@ import ToneBadge from '../ToneBadge.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
-import { levelClass, alertHref, alertSourceTab, closesAutomatically } from './alertHistoryModel.js'
+import { levelClass, alertHref, alertSourceTab, closesAutomatically, monitorNameShown } from './alertHistoryModel.js'
 import { clockTime, fullTime } from './nocCallModel.js'
 import { monitorTypeOfAlert } from '../../../utils/monitorAlertTypes.js'
 import { MONITOR_TYPE_ICON } from '../../incidents/incidentsModel.js'
@@ -193,17 +194,55 @@ export function NocSentBadge({ sentAt, viaStorm = false, className, long = false
   )
 }
 
+/**
+ * İzleme sayfası içi gezinme (2026-11-19): sayfanın Alarmlar görünümü, aynı sayfadaki bir izlemeyi tam sayfa yüklemeden
+ * açabilsin diye bir işleyici verir — `(alert) => true` döndürürse bağlantının varsayılanı (tam gezinme) engellenir.
+ * Sağlayıcı yokken (Alarm Geçmişi, detay pencereleri) bağlantı her zamanki gibi çalışır.
+ */
+export const AlertSourceNavContext = createContext(null)
+
+/** Bağlantı tıklaması: sayfa içi işleyici üstlenirse tam gezinme olmaz (yeni sekme / orta tık hep tarayıcıda kalır). */
+export function useAlertSourceNav() {
+  const nav = useContext(AlertSourceNavContext)
+  return nav
+}
+
 /** Kaynağa git — izleme sekmesi + arama ya da Tüm Sertifikalar + alan adı. Kart tıklamasına SIZMAZ. */
 export function AlertSourceLink({ alert: a, className, iconOnly = false, variant = 'outline', size = 'sm', ariaLabel }) {
   const t = useT()
+  const nav = useAlertSourceNav()
   const label = alertSourceTab(a?.alert_type) ? t('alh.openMonitor') : t('alh.openCerts')
+  const onClick = (e) => {
+    e.stopPropagation()
+    if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+    if (nav && nav(a) === true) e.preventDefault()
+  }
   return (
     // Preflight yok: <a> tarayıcı varsayılanı (mavi + altı çizili) çizilirdi → renk ve çizgi açıkça verilir.
     <Button asChild variant={variant} size={size} className={cn('no-underline', variant === 'outline' && 'text-foreground', className)}>
-      <a href={alertHref(a)} title={label} aria-label={ariaLabel ?? (iconOnly ? label : undefined)} onClick={(e) => e.stopPropagation()}>
+      <a href={alertHref(a)} title={label} aria-label={ariaLabel ?? (iconOnly ? label : undefined)} onClick={onClick}>
         <ExternalLink aria-hidden="true" />{iconOnly ? null : label}
       </a>
     </Button>
+  )
+}
+
+/**
+ * Alarmı üreten İZLEMENİN adı (2026-11-19, sunucu `monitor_ref` — takım duyarlı çözülür): alan adından farklıysa
+ * "İzleme: <ad>" satırı. Ad SARAR, kesilmez (proje kuralı); eski sunucu / sertifika satırında çizilmez.
+ */
+export function AlertMonitorName({ alert: a, className }) {
+  const t = useT()
+  const name = monitorNameShown(a)
+  if (!name) return null
+  return (
+    <span data-slot="alert-monitor-name"
+      className={cn('flex min-w-0 items-start gap-1 text-xs text-muted-foreground', className)}>
+      <Radar aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+      <span className="min-w-0 [overflow-wrap:anywhere]">
+        <span className="font-medium">{t('alh.monitorNameLabel')}</span> {name}
+      </span>
+    </span>
   )
 }
 

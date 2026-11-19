@@ -310,6 +310,7 @@ public final class AuditEventCatalog {
             "STORM_SETTINGS_SAVE",
             "SYSTEM_DELETED_RECORDS_PURGE",   // eski çöp kutusunun tek seferlik kalıcı temizliği (2026-10-07, DeletedRecordsPurge)
             "SYSTEM_DEPLOYMENT_BACKFILL",
+            "SYSTEM_DERIVED_ORPHAN_CLEANUP",  // envanter kaydı olmayan türev Port/DNS kalıntıları (2026-11-19, tek seferlik)
             "SYSTEM_DEPLOYMENT_DELETE",
             "SYSTEM_DEPLOYMENT_EXPORT",
             "SYSTEM_DEPLOYMENT_MANUAL",

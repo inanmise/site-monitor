@@ -1,6 +1,6 @@
 import { alertTypeLabel } from '../../../utils/alertTypeMeta.js'
 import { parseUtc } from '../../../utils/incidentMeta.js'
-import { MONITOR_ALERT_TYPES, alertTypesFor } from '../../../utils/monitorAlertTypes.js'
+import { PAGE_ALERT_TYPES, pageAlertTypesFor } from '../../../utils/monitorAlertTypes.js'
 import { stormPushTimelineItems } from './stormPushModel.js'
 
 /**
@@ -78,8 +78,11 @@ export const URL_KEYS = { type: 'type', q: 'q', level: 'level', team: 'team', ac
 /** "7/24'e gidenler" süzgecinin tek değeri (URL `noc=sent`, sunucu parametresi aynı). */
 export const NOC_SENT = 'sent'
 
-/** Kategori süzgeci (URL `src`, 2026-09-30 — İzleme menüsü rozetleri): izleme türü → o türün TÜM alarm tipleri. */
-export const SRC_KEYS = Object.keys(MONITOR_ALERT_TYPES)
+/**
+ * Kategori süzgeci (URL `src`, 2026-09-30 — İzleme menüsü rozetleri): izleme SAYFASI → o sayfanın alarm tipleri. 2026-11-19:
+ * sayfa kategorisi — `http` ACCESSIBILITY'siz, `uptime` (Erişilebilirlik) yalnız ACCESSIBILITY (menü rozetiyle aynı küme).
+ */
+export const SRC_KEYS = Object.keys(PAGE_ALERT_TYPES)
 export const isSrcKey = (v) => SRC_KEYS.includes(String(v || ''))
 
 export function filtersFromUrl(read) {
@@ -207,7 +210,7 @@ export function listParams({ tab, filters, page, pageSize, domain, typesParam, n
   if (domain) params.domain = domain
   if (typesParam) params.alertTypes = typesParam
   // Kategori süzgeci (2026-09-30): gömülü `types` verilmediyse izleme türünün alarm tipleri sunucuya gider.
-  else if (filters.src && isSrcKey(filters.src)) params.alertTypes = alertTypesFor(filters.src).join(',')
+  else if (filters.src && isSrcKey(filters.src)) params.alertTypes = pageAlertTypesFor(filters.src).join(',')
   if (filters.type) params.alertType = filters.type
   if (filters.q.trim()) params.q = filters.q.trim()
   if (filters.level) params.level = filters.level
@@ -425,7 +428,9 @@ export const closesAutomatically = (type) => !!type && !MANUAL_CLOSE_TYPES.has(S
 /** Alarm tipi → izleme sekmesi; sertifika tipleri (EXPIRY, CHAIN_BROKEN…) null döner. */
 // DOMAIN_EXPIRY (2026-10-22, UIM-33): HTTP izlemesinin kayıt süresi alarmı — HTTP ailesi (monitorAlertTypes.http);
 // eskiden kural yoktu → "Sertifikaları aç" + olay kategorisi CERTIFICATE.
+// ACCESSIBILITY (2026-11-19): envanter erişilebilirlik izlemesi — Erişilebilirlik sekmesi (`uptime`, `q` ile aranır).
 const TYPE_TAB = [
+  [/^ACCESSIBILITY$/, 'uptime'],
   [/^HTTP_/, 'http'], [/^DOMAIN_EXPIRY$/, 'http'], [/^DNS_/, 'dns'], [/^PORT_/, 'port'], [/^PING_/, 'ping'], [/^KEYWORD/, 'keyword'],
   [/^PAGESPEED_/, 'pagespeed'], [/^PAGE_/, 'page'], [/^SCRIPTED_/, 'scripted'], [/^DOMAINMON_/, 'domain'], [/^DBQUERY_/, 'dbquery'],
 ]
@@ -436,14 +441,39 @@ export function alertSourceTab(type) {
 }
 
 /**
- * Kaynağa git: izleme alarmı ilgili sekme + arama (`q` — izleme sayfaları bu anahtarı okur; alarm satırında
- * izleme kimliği YOK), sertifika alarmı Tüm Sertifikalar + alan adı süzgeci.
+ * Kaynağa git: izleme alarmı ilgili sekme + arama (`q` — izleme sayfaları bu anahtarı okur), sertifika alarmı Tüm
+ * Sertifikalar + alan adı süzgeci. 2026-11-19: satır sunucudan izleme kimliği taşıyorsa (`monitor_ref.monitor_id` —
+ * takım duyarlı çözülür, yalnız izleyici izlemeyi açabiliyorsa yazılır) doğrudan o izleme açılır (`?monitor=` — on
+ * izleme sayfasının ortak derin bağlantısı).
  */
 export function alertHref(a) {
   const dom = a?.domain || ''
   const tab = alertSourceTab(a?.alert_type)
+  const ref = monitorRefOf(a)
+  if (tab && ref?.monitorId != null && ref.tab === tab) return `?tab=${tab}&monitor=${encodeURIComponent(ref.monitorId)}`
   if (tab) return `?tab=${tab}${dom ? `&q=${encodeURIComponent(dom)}` : ''}`
   return `?tab=all${dom ? `&domain=${encodeURIComponent(dom)}` : ''}`
+}
+
+/**
+ * Satırın izleme referansı (2026-11-19, sunucu `monitor_ref`): `{ name, type, tab, monitorId }` ya da null (sertifika /
+ * Erişilebilirlik / çözülemeyen satır, eski sunucu). `monitorId` yalnız açma izni varken dolu.
+ */
+export function monitorRefOf(a) {
+  const r = a?.monitor_ref
+  if (!r || typeof r !== 'object' || !r.name) return null
+  const id = r.monitor_id
+  return {
+    name: String(r.name), type: r.type ? String(r.type) : null, tab: r.tab ? String(r.tab) : null,
+    monitorId: id == null || id === '' || !Number.isFinite(Number(id)) ? null : Number(id),
+  }
+}
+
+/** Satırda izleme ADI gösterilsin mi: ad alan adından farklıysa (aynıysa tekrar yazılmaz). */
+export function monitorNameShown(a) {
+  const ref = monitorRefOf(a)
+  if (!ref) return null
+  return ref.name.trim() && ref.name.trim() !== String(a?.domain || '').trim() ? ref.name.trim() : null
 }
 
 /**

@@ -452,6 +452,55 @@ class DnsChangeDurabilityTest {
         assertThat(dnsChangedAlarms()).isZero();
     }
 
+    @Test
+    @DisplayName("taban başka alan adının kaydıysa (izleme düzenlendi / envanter yeniden adlandırıldı) kıyas yok: "
+            + "sahte DNS_CHANGED açılmaz, bu kayıt yeni taban olur (2026-11-19)")
+    void baselineOfAnotherDomain_isNotCompared() {
+        base.setCheckedDomain("old-name.example.com");
+        MonitoringMultiPodKit.PodWithMos a = MonitoringMultiPodKit.podWithMos(mp, 1);
+        a.scheduler().runDnsChecks();
+        assertThat(lastRow(5L)).containsExactly(false, false);
+        assertThat(state(5L)).isNull();
+        assertThat(mp.jdbc().queryForObject("SELECT previous_value FROM dns_records WHERE monitor_id = 5 ORDER BY id DESC LIMIT 1",
+                String.class)).as("taban yok").isNull();
+        assertThat(dnsChangedAlarms()).isZero();
+    }
+
+    @Test
+    @DisplayName("taban başka kayıt tipinin kaydıysa kıyas yok; aynı alan adı (harf farkı dahil) ise değişiklik yine algılanır")
+    void baselineTargetRules() {
+        base.setRecordType("AAAA");
+        MonitoringMultiPodKit.PodWithMos a = MonitoringMultiPodKit.podWithMos(mp, 1);
+        a.scheduler().runDnsChecks();
+        assertThat(lastRow(5L)).as("tip değişti: kıyas yok").containsExactly(false, false);
+
+        base.setRecordType("A");
+        base.setCheckedDomain(DOMAIN.toUpperCase(java.util.Locale.ROOT));
+        mp.advance(600_000);
+        a.scheduler().runDnsChecks();
+        assertThat(lastRow(5L)).as("aynı hedef: gerçek değişiklik").containsExactly(true, false);
+        assertThat(state(5L)).isEqualTo(ChangeStates.PENDING);
+    }
+
+    @Test
+    @DisplayName("sameDnsTarget doğruluk tablosu: eski kayıt (checked_domain / tip NULL) kıyaslanır, farklı ad ya da tip kıyaslanmaz")
+    void sameDnsTargetTable() {
+        DnsMonitor m = monitor(5L, "A");
+        DnsRecord r = new DnsRecord();
+        assertThat(SchedulerService.sameDnsTarget(r, m)).as("eski kayıt").isTrue();
+        r.setRecordType("a");
+        assertThat(SchedulerService.sameDnsTarget(r, m)).as("tip harf farkı").isTrue();
+        r.setCheckedDomain(DOMAIN.toUpperCase(java.util.Locale.ROOT));
+        assertThat(SchedulerService.sameDnsTarget(r, m)).isTrue();
+        r.setCheckedDomain("other.example.com");
+        assertThat(SchedulerService.sameDnsTarget(r, m)).isFalse();
+        r.setCheckedDomain(DOMAIN);
+        r.setRecordType("MX");
+        assertThat(SchedulerService.sameDnsTarget(r, m)).isFalse();
+        assertThat(SchedulerService.sameDnsTarget(null, m)).isFalse();
+        assertThat(SchedulerService.sameDnsTarget(r, null)).isFalse();
+    }
+
     void insertPending(long monitorId, String type, String prev, String value, String at) {
         mp.jdbc().update("INSERT INTO dns_records (monitor_id, record_type, \"value\", changed, rotated, previous_value, "
                         + "checked_at, manual, change_state) VALUES (?, ?, ?, TRUE, FALSE, ?, ?, FALSE, ?)",

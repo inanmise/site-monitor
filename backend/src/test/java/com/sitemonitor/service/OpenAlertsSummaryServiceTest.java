@@ -116,9 +116,13 @@ class OpenAlertsSummaryServiceTest {
         assertThat(items.get(0).keySet()).containsExactly("id", "domain", "alert_type", "alert_level", "created_at", "acknowledged",
                 "team_id", "team_name", "storm_id");
         assertThat(items.get(1)).containsEntry("acknowledged", true);
-        assertThat(tabs.get("http").get("count")).isEqualTo(3L);   // HTTP_DOWN + ACCESSIBILITY aynı sekme
+        // 2026-11-19: sayfa sekmeleri — HTTP sayfası yalnız kendi alarmları; ACCESSIBILITY Erişilebilirlik (uptime) sekmesinde
+        assertThat(tabs.get("http").get("count")).isEqualTo(2L);
         assertThat((List<Map<String, Object>>) tabs.get("http").get("items")).extracting(m -> m.get("team_name"))
-                .containsExactly("SY-Kurumsal Mimari", null, null);
+                .containsExactly("SY-Kurumsal Mimari", null);
+        assertThat(tabs.get("uptime").get("count")).isEqualTo(1L);
+        assertThat((List<Map<String, Object>>) tabs.get("uptime").get("items")).extracting(m -> m.get("id")).containsExactly(298L);
+        assertThat(new java.util.ArrayList<>(tabs.keySet())).isEqualTo(MonitorTypeCatalog.PAGE_ORDER);
         assertThat(tabs.get("ping").get("count")).isEqualTo(0L);
         assertThat(((List<?>) tabs.get("ping").get("items"))).isEmpty();
         // Satır sorgusu yalnız katalogdaki (görülen) tipleri ister — bilinmeyen tip pencereyi işgal etmez

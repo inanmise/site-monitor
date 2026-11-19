@@ -12,6 +12,7 @@ import { useFormErrors } from '../hooks/useFormErrors.js'
 import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
+import { MonitorPageBody, MonitorViewSwitch, useMonitorAlarmsView } from './monitoring/alarms/MonitorAlarms.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import TagInput from './ui/TagInput.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
@@ -96,6 +97,7 @@ const emptyForm = { name: '', host: '', ipVersion: 'auto', groupName: '', tags: 
 const NO_TEAMS = Object.freeze([])
 export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams = NO_TEAMS, globalAdmin = false }) {
   const t = useT()
+  const alarmsView = useMonitorAlarmsView('ping')   // İzlemeler | Alarmlar görünümü (2026-11-19)
   const toast = useToast()
   const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
@@ -758,11 +760,14 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
 
   return (
     <div className="upt-page">
-      <MonitorPageHeader type="ping" title={t('ping.title')} subtitle={t('ping.subtitle')}
+      <MonitorPageHeader showActions={!alarmsView.active} type="ping" title={t('ping.title')} subtitle={t('ping.subtitle')}
         count={loading ? null : monitors.length} down={counts.down}
         refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
-        canWrite={canWrite} onNew={openNew} newLabel={t('ping.addMonitor')} />
+        canWrite={canWrite} onNew={openNew} newLabel={t('ping.addMonitor')}>
+        <MonitorViewSwitch view={alarmsView} />
+      </MonitorPageHeader>
+      <MonitorPageBody view={alarmsView}>
 
       <MonitorHowBox bullets={[t('ping.how1'), t('ping.how2'), t('ping.how3')]} />
 
@@ -936,6 +941,7 @@ export default function PingMonitorPage({ systemRole, teamId, teamName, myTeams 
       )}
       <MonitorCheckRunModal run={checkRun.run} type="ping"
         onCancel={checkRun.cancel} onClose={checkRun.close} />
+      </MonitorPageBody>
     </div>
   )
 }

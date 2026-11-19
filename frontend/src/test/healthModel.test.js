@@ -107,6 +107,26 @@ describe('healthModel — entegrasyonlar', () => {
   })
 })
 
+describe('healthModel — Alan Adı Süre Kaynağı (2026-11-19)', () => {
+  it('DEGRADED (son sorgu başarısız, art arda eşiğin altında) uyarıdır, kesinti değil; sebep ardışık sayıyı taşır', () => {
+    const d = { source: 'DEGRADED', alarm: false, consecutive_failures: 2, outage_after: 3 }
+    const list = integrationList({ health: { ...CLEAN, domain_expiry: d }, pushKpi: PUSH_OK, smtpPeriod: '7d' })
+    expect(list.find((i) => i.key === 'domain').level).toBe('warn')
+    const o = deriveOverall({ health: { ...CLEAN, domain_expiry: d }, httpMetrics: HTTP_OK, pushKpi: PUSH_OK })
+    const r = o.reasons.find((x) => x.code === 'domDegraded')
+    expect(r).toBeTruthy()
+    expect(r.args).toEqual([2, 3])
+    expect(o.reasons.map((x) => x.code)).not.toContain('domAlarm')
+  })
+
+  it('NONE + alarm (art arda eşik) kesintidir; eski sunucunun NONE yükü de kesinti kalır', () => {
+    const o = deriveOverall({ health: { ...CLEAN, domain_expiry: { source: 'NONE', alarm: true, consecutive_failures: 3 } }, httpMetrics: HTTP_OK, pushKpi: PUSH_OK })
+    expect(o.reasons.map((x) => x.code)).toContain('domAlarm')
+    const old = integrationList({ health: { ...CLEAN, domain_expiry: { source: 'NONE', alarm: true } }, pushKpi: PUSH_OK, smtpPeriod: '7d' })
+    expect(old.find((i) => i.key === 'domain').level).toBe('down')
+  })
+})
+
 describe('healthModel — KPI sayıları', () => {
   it('sekiz KPI: uptime/heartbeat, zamanlayıcı, yürütücü, DB, HTTP süre+hata (seri), bellek (seri), entegrasyon sayımı', () => {
     const k = deriveKpis({ health: CLEAN, httpMetrics: HTTP_OK, metrics: [{ heap_pct: 40 }, { heap_pct: 45 }], pushKpi: PUSH_OK })

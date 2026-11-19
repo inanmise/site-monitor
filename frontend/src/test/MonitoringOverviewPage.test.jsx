@@ -363,22 +363,74 @@ describe('İzleme Panosu — KPI özet pencereleri', () => {
     const { container } = render(<MonitoringOverviewPage />)
     await waitFor(() => expect(rowsOf(container).length).toBe(6))
     await expandAll()
-    expect(kpiButton(container, 'paused').textContent).toMatch(/1 out of inventory/)
+    expect(kpiButton(container, 'paused').textContent).toMatch(/1 inventory paused/)
     // Tür kartı: sayfa ile eşleşen sayım (aktif 1 + duraklatılmış 0) + envanter dışı çipi
     const dns = container.querySelector('[data-slot="mo-type-card"][data-type="dns"]')
     expect(dns.textContent).toMatch(/1 active · 0 paused/)
-    expect(dns.querySelector('[data-slot="mo-type-inv"]').textContent).toMatch(/1 out of inventory/)
+    expect(dns.querySelector('[data-slot="mo-type-inv"]').textContent).toMatch(/1 inventory paused/)
     fireEvent.click(kpiButton(container, 'paused'))
     await waitFor(() => expect(dialog('paused')).not.toBeNull())
     const body = dialog('paused')
     expect(body.textContent).toMatch(/Paused \(1\)/)
     const orphans = body.querySelector('[data-slot="mo-dlg-orphans"]')
-    expect(orphans.textContent).toMatch(/Old monitors of hosts removed from the inventory \(1\)/)
-    expect(orphans.textContent).toMatch(/the sweep skips it and the monitor page does not list it/)
+    expect(orphans.textContent).toMatch(/Monitors whose inventory record is paused \(1\)/)
+    expect(orphans.textContent).toMatch(/the sweep skips this monitor and the monitor page does not list it/)
     expect(orphans.querySelector('[data-slot="mo-dlg-twin"]').textContent).toMatch(/Real check: IVR \(bağımsız\)/)
     fireEvent.click(within(orphans).getByRole('button', { name: /IVR \(bağımsız\) — open the standalone monitor/i }))
     expect(events.at(-1)).toEqual({ tab: 'dns', params: { q: 'ivr.example.com' } })
     window.removeEventListener('sm:navigate', onNav)
+  })
+
+  it('Duraklatılmış (2026-11-19): envanter kaydı duraklatılmış satır envanter kaydına götürür; sahipsiz kalıntılar ayrı, sayılmaz, düğmesiz', async () => {
+    const data = {
+      success: true,
+      data: {
+        ...ORPHAN_DATA.data,
+        totals: { ...ORPHAN_DATA.data.totals, orphans: 2 },
+        monitors: ORPHAN_DATA.data.monitors.map((m) => (m.id === 7 && m.type === 'dns' ? { ...m, standalone_twin: undefined } : m)),
+        orphans: [
+          { type: 'port', id: 31, name: 'eski-ad.example.com:443', target: 'eski-ad.example.com', team_id: 14, team_name: 'SY', last_checked_at: null },
+          { type: 'dns', id: 32, name: 'yazim-hatasi.example.com', target: 'yazim-hatasi.example.com', team_id: null, team_name: null, last_checked_at: '2026-08-01T10:00:00' },
+        ],
+      },
+    }
+    api.monitoring.getOverview.mockResolvedValue(data)
+    const events = []
+    const onNav = (e) => events.push(e.detail)
+    window.addEventListener('sm:navigate', onNav)
+    const { container } = render(<MonitoringOverviewPage />)
+    await waitFor(() => expect(rowsOf(container).length).toBe(6))
+    await expandAll()
+    expect(kpiButton(container, 'paused').textContent).toMatch(/1 inventory paused · 2 leftovers not counted/)
+    fireEvent.click(kpiButton(container, 'paused'))
+    await waitFor(() => expect(dialog('paused')).not.toBeNull())
+    const body = dialog('paused')
+    const invPaused = body.querySelector('[data-slot="mo-dlg-orphans"]')
+    expect(invPaused.textContent).toMatch(/Resuming the inventory record restarts this monitor by itself/)
+    fireEvent.click(within(invPaused).getByRole('button', { name: /ivr\.example\.com — open the inventory record/i }))
+    expect(events.at(-1)).toEqual({ tab: 'domains', params: { domain: 'ivr.example.com', i_scope: 'all' } })
+    const residue = body.querySelector('[data-slot="mo-dlg-residue"]')
+    expect(residue.textContent).toMatch(/Orphaned leftovers \(2\)/)
+    expect(residue.textContent).toMatch(/They are not counted and there is no monitor to open/)
+    expect(residue.querySelectorAll('[data-slot="mo-dlg-residue-item"]')).toHaveLength(2)
+    expect(residue.textContent).toMatch(/eski-ad\.example\.com:443/)
+    // açılacak izleme yok: "Aç" / envanter düğmesi çizilmez (takım rozeti üyeleri açar — o ayrı)
+    expect(within(residue).queryAllByRole('button', { name: /open|inventory record/i })).toHaveLength(0)
+    window.removeEventListener('sm:navigate', onNav)
+  })
+
+  it('Duraklatılmış: yalnız sahipsiz kalıntı varsa "duraklatılmış izleme yok" yerine kalıntı listesi görünür', async () => {
+    api.monitoring.getOverview.mockResolvedValue({ success: true, data: { ...DATA.data, totals: { ...DATA.data.totals, paused: 0, orphans: 1 },
+      monitors: DATA.data.monitors.filter((m) => m.status !== 'paused'),
+      orphans: [{ type: 'port', id: 41, name: 'gone:443', target: 'gone.example.com', team_id: 14, team_name: 'SY', last_checked_at: null }] } })
+    const { container } = render(<MonitoringOverviewPage />)
+    await waitFor(() => expect(rowsOf(container).length).toBeGreaterThan(0))
+    await expandAll()
+    fireEvent.click(kpiButton(container, 'paused'))
+    await waitFor(() => expect(dialog('paused')).not.toBeNull())
+    const body = dialog('paused')
+    expect(body.querySelector('[data-slot="mo-dlg-residue"]')).not.toBeNull()
+    expect(body.textContent).not.toMatch(/No paused monitors/)
   })
 
   it('URL mo_dlg=stale ile açılış: pencere açık gelir; Escape kapatır ve URL\'den düşer', async () => {

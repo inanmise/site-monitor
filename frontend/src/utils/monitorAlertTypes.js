@@ -33,9 +33,35 @@ export function alertTypesFor(monitorType) {
   return MONITOR_ALERT_TYPES[monitorType] ?? []
 }
 
-/** Alarm tipi → izleme türü (MONITOR_ALERT_TYPES'ın TERSİ, tek kaynaktan türetilir). */
+/**
+ * İzleme SAYFASI kategorisi (2026-11-19, kullanıcı isteği: izleme sayfasında o türün alarmları + HTTP / Erişilebilirlik
+ * ayrımı). Rapor kümesi (MONITOR_ALERT_TYPES) DEĞİŞMEZ; sayfa düzeyinde HTTP sayfası YALNIZ kendi izlemelerinin
+ * alarmlarını gösterir, ACCESSIBILITY (envanter durum izlemesi) Erişilebilirlik sayfasının (`uptime`) alarmıdır. Menü
+ * rozetleri (sunucu `/me/open-alerts` sekmeleri), Alarm Geçmişi'nin `src` süzgeci ve sayfaların Alarmlar görünümü bunu
+ * kullanır. Sunucu aynası: `MonitorTypeCatalog.pageAlertTypes` / `PAGE_ORDER` (monitorTypeSurfaces.test.jsx karşılaştırır).
+ */
+export const UPTIME_PAGE = 'uptime'
+export const UPTIME_ALERT_TYPE = 'ACCESSIBILITY'
+export const PAGE_ALERT_TYPES = Object.freeze(Object.fromEntries(
+  Object.entries(MONITOR_ALERT_TYPES).flatMap(([type, list]) => {
+    const own = Object.freeze(list.filter((a) => a !== UPTIME_ALERT_TYPE))
+    return type === 'cert'
+      ? [[type, own], [UPTIME_PAGE, Object.freeze([UPTIME_ALERT_TYPE])]]   // sunucu PAGE_ORDER: sertifikanın hemen ardından
+      : [[type, own]]
+  }),
+))
+
+/** Sayfanın alarm tipleri; bilinmeyen sayfa → boş dizi. */
+export function pageAlertTypesFor(page) {
+  return PAGE_ALERT_TYPES[page] ?? []
+}
+
+/**
+ * Alarm tipi → izleme SAYFASI türü (PAGE_ALERT_TYPES'ın TERSİ, tek kaynaktan türetilir) — 2026-11-19'dan beri Erişilebilirlik
+ * (ACCESSIBILITY) kendi sayfasıyla (`uptime`) rozetlenir, HTTP değil (sayfanın Alarmlar görünümüyle tutarlı).
+ */
 const MONITOR_TYPE_OF_ALERT = Object.freeze(Object.fromEntries(
-  Object.entries(MONITOR_ALERT_TYPES).flatMap(([type, list]) => list.map((alertType) => [alertType, type])),
+  Object.entries(PAGE_ALERT_TYPES).flatMap(([type, list]) => list.map((alertType) => [alertType, type])),
 ))
 
 /**

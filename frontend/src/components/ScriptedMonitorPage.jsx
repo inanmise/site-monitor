@@ -10,6 +10,7 @@ import { useFormErrors } from '../hooks/useFormErrors.js'
 import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
+import { MonitorPageBody, MonitorViewSwitch, useMonitorAlarmsView } from './monitoring/alarms/MonitorAlarms.jsx'
 import CodeEditor from './ui/CodeEditor.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
@@ -46,7 +47,6 @@ import { CHECK_CONCURRENCY_BY_TYPE } from './check/monitorCheckColumns.jsx'
 import { useCheckRun } from '../hooks/useCheckRun.js'
 import ScriptedVersionsTab from './scripted/ScriptedVersionsTab.jsx'
 import ScriptedTemplatesTab from './scripted/ScriptedTemplatesTab.jsx'
-import SegmentedControl from './ui/SegmentedControl.jsx'
 import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import PaginationBar from './ui/PaginationBar.jsx'
 import CardDensityToggle from './ui/CardDensityToggle.jsx'
@@ -355,6 +355,8 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
   // bu sayfanın kendi iç durumudur, monitör detay sekmeleriyle karışmaz.
   const [view, setView] = useState('monitors')
   const canViewTemplates = canView('monitoring.scripted_templates')
+  // İzlemeler | Şablonlar | Alarmlar (2026-11-19): Alarmlar görünümü ortak modülden — URL `mal`
+  const alarmsView = useMonitorAlarmsView('scripted')
   const [k6, setK6] = useState({ available: true, version: null, canManage: false })
   // Kaydetme sonrası doğrulama koşumunun durumu: null | {state:'running'|'queued'|'skipped'|'cooldown'}
   const [smoke, setSmoke] = useState(null)
@@ -1484,23 +1486,25 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
             </HintPopover>
           )}
         </>}
-        showActions={view === 'monitors'}
+        showActions={view === 'monitors' && !alarmsView.active}
         count={loading ? null : monitors.length} down={counts.down}
         refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
         canWrite={k6.canManage && k6.available} onNew={openNew} newLabel={t('scripted.addMonitor')}>
-        {/* Görünüm anahtarı: monitörler ↔ şablon kütüphanesi — bir EYLEM değil görünüm seçicisi, yeri başlığın
-            altı. Şablon izni yoksa HİÇ çizilmez (403 yiyecek bir düğme yerine yüzey yok). */}
-        {canViewTemplates && (
-          <div>
-            <SegmentedControl value={view} onChange={setView} ariaLabel={t('tpl.viewSwitch')}
-              options={[
-                { value: 'monitors', label: t('tpl.viewMonitors'), icon: LayoutDashboard },
-                { value: 'templates', label: t('tpl.viewTemplates'), icon: FileCode2 },
-              ]} />
-          </div>
-        )}
+        {/* Görünüm anahtarı: monitörler ↔ şablon kütüphanesi ↔ alarmlar — bir EYLEM değil görünüm seçicisi, yeri başlığın
+            altı. Şablon seçeneği yalnız şablon izniyle (403 yiyecek bir düğme yerine yüzey yok). */}
+        <MonitorViewSwitch view={alarmsView} monitorsLabel={t('tpl.viewMonitors')}
+          extraOptions={canViewTemplates ? [{ value: 'templates', label: t('tpl.viewTemplates'), icon: FileCode2 }] : []}
+          value={alarmsView.active ? 'alarms' : view}
+          onChange={(v) => {
+            // Alarmlar'a geçerken alttaki görünüm İzlemeler olur: "İzlemeyi aç" Alarmlar'ı kapatınca izleme ayrıntısı
+            // (İzlemeler dalında yaşar) görünür — Şablonlar'dan gelindiyse kütüphaneye dönülmez.
+            if (v === 'alarms') { setView('monitors'); alarmsView.open(); return }
+            alarmsView.close()
+            setView(v)
+          }} />
       </MonitorPageHeader>
+      <MonitorPageBody view={alarmsView}>
 
       {view === 'templates' ? (
         <ScriptedTemplatesTab t={t} lang={lang} teams={teams} teamName={teamName}
@@ -1799,6 +1803,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
       )}
       <MonitorCheckRunModal run={checkRun.run} type="scripted"
         onCancel={checkRun.cancel} onClose={checkRun.close} />
+      </MonitorPageBody>
     </div>
   )
 }

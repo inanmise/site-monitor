@@ -352,4 +352,222 @@ class PermanentDeletionServiceTest {
         verify(baselineConfigService).removeInOwnTransaction("port", standalonePort.getId());
         verify(baselineConfigService).removeInOwnTransaction("dns", solo.getId());
     }
+
+    // ── 2026-11-19: envanter yeniden adlandırma türev izlemeyi taşır + sahipsiz kalıntı temizliği ─────────────
+
+    private CertificateInventory pausedInventory(String domain, int port) {
+        CertificateInventory i = inventory(domain, port, 5L, null);
+        i.setActive(false);
+        return inventoryRepo.save(i);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("yeniden adlandırma: türev Port + DNS yeni ada taşınır (geçmiş korunur), bağımsız izlemeye dokunulmaz")
+    void retarget_movesDerivedRowsKeepsHistory() {
+        PortMonitor dp = port("old.example.com", 443, false);
+        DnsMonitor dd = dns("old.example.com", "A", false);
+        PortMonitor sp = port("old.example.com", 9000, true);
+        DnsMonitor sd = dns("old.example.com", "MX", true);
+
+        int moved = service.retargetDerivedMonitors("old.example.com", 443, "new.example.com", 443);
+
+        assertThat(moved).isEqualTo(2);
+        PortMonitor p = portRepo.findById(dp.getId()).orElseThrow();
+        assertThat(p.getHost()).isEqualTo("new.example.com");
+        assertThat(p.getName()).as("ad host'a eşitse o da değişir").isEqualTo("new.example.com");
+        assertThat(count("port_checks", "monitor_id = ?", dp.getId())).as("kontrol geçmişi korunur").isEqualTo(1);
+        DnsMonitor d = dnsRepo.findById(dd.getId()).orElseThrow();
+        assertThat(d.getDomain()).isEqualTo("new.example.com");
+        assertThat(portRepo.findById(sp.getId()).orElseThrow().getHost()).isEqualTo("old.example.com");
+        assertThat(dnsRepo.findById(sd.getId()).orElseThrow().getDomain()).isEqualTo("old.example.com");
+        verify(escalationService, never()).resolveOpenAlertsSilently(anyString(), any(), eq(PermanentDeletionService.RESOLVED_BY_ORPHAN), any());
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("yeniden adlandırma: hedefteki BAYAT türev satır önce kalıcı silinir (alarmı sessizce kapanır); özel ad korunur")
+    void retarget_purgesStaleTargetRow() {
+        PortMonitor dp = port("old.example.com", 443, false);
+        dp.setName("Ödeme portu");
+        portRepo.save(dp);
+        PortMonitor stale = port("new.example.com", 443, false);   // eski bir yeniden adlandırmanın kalıntısı
+        DnsMonitor staleDns = dns("new.example.com", "A", false);
+        DnsMonitor dd = dns("old.example.com", "A", false);
+
+        service.retargetDerivedMonitors("old.example.com", 443, "new.example.com", 443);
+
+        assertThat(portRepo.findById(stale.getId())).isEmpty();
+        assertThat(count("port_checks", "monitor_id = ?", stale.getId())).isZero();
+        assertThat(dnsRepo.findById(staleDns.getId())).isEmpty();
+        PortMonitor p = portRepo.findById(dp.getId()).orElseThrow();
+        assertThat(p.getHost()).isEqualTo("new.example.com");
+        assertThat(p.getName()).isEqualTo("Ödeme portu");
+        assertThat(dnsRepo.findById(dd.getId()).orElseThrow().getDomain()).isEqualTo("new.example.com");
+        verify(escalationService).resolveOpenAlertsSilently(eq("new.example.com"), eq(PermanentDeletionService.PORT_ALERT_TYPES),
+                eq(PermanentDeletionService.RESOLVED_BY_ORPHAN), argThat(c -> stale.getId().equals(c.get("monitor_id"))));
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("yeniden adlandırma: harf farkıyla kalmış ESKİ kalıntı varken adı birebir eşleşen canlı satır korunur ve taşınır")
+    void retarget_keepsExactNameRowOverOlderCaseVariant() {
+        PortMonitor orphan = port("Old.Example.com", 443, false);   // eski (küçük kimlik), harf farkıyla kalmış kalıntı
+        DnsMonitor orphanDns = dns("Old.Example.com", "A", false);
+        PortMonitor live = port("old.example.com", 443, false);     // canlı satır (envanterin adı)
+        DnsMonitor liveDns = dns("old.example.com", "A", false);
+
+        service.retargetDerivedMonitors("old.example.com", 443, "new.example.com", 443);
+
+        assertThat(portRepo.findById(live.getId()).orElseThrow().getHost()).isEqualTo("new.example.com");
+        assertThat(count("port_checks", "monitor_id = ?", live.getId())).as("canlı satırın geçmişi korunur").isEqualTo(1);
+        assertThat(portRepo.findById(orphan.getId())).as("kalıntı silinir").isEmpty();
+        assertThat(dnsRepo.findById(liveDns.getId()).orElseThrow().getDomain()).isEqualTo("new.example.com");
+        assertThat(dnsRepo.findById(orphanDns.getId())).isEmpty();
+        verify(escalationService, never()).resolveOpenAlertsSilently(anyString(), any(), eq(PermanentDeletionService.RESOLVED_BY_ORPHAN),
+                argThat(c -> live.getId().equals(c.get("monitor_id")) || liveDns.getId().equals(c.get("monitor_id"))));
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("yalnız port değişti: Port satırı yeni porta taşınır, DNS'e dokunulmaz; değişiklik yoksa hiçbir şey olmaz")
+    void retarget_portOnly_andNoop() {
+        PortMonitor dp = port("svc.example.com", 443, false);
+        DnsMonitor dd = dns("svc.example.com", "A", false);
+        assertThat(service.retargetDerivedMonitors("svc.example.com", 443, "svc.example.com", 443)).isZero();
+        assertThat(service.retargetDerivedMonitors("svc.example.com", 443, "svc.example.com", 8443)).isEqualTo(1);
+        assertThat(portRepo.findById(dp.getId()).orElseThrow().getPort()).isEqualTo(8443);
+        assertThat(dnsRepo.findById(dd.getId()).orElseThrow().getDomain()).isEqualTo("svc.example.com");
+        assertThat(service.retargetDerivedMonitors("svc.example.com", null, "svc.example.com", null)).as("null = 443").isZero();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("envanter silme büyük/küçük harf duyarsız: harf farkıyla kalmış türev satır da gider")
+    void deleteInventory_caseInsensitiveDerived() {
+        CertificateInventory inv = inventory("case.example.com", 443, 5L, null);
+        PortMonitor dp = port("Case.Example.com", 443, false);
+        DnsMonitor dd = dns("CASE.example.com", "A", false);
+        service.deleteInventory(inv);
+        assertThat(portRepo.findById(dp.getId())).isEmpty();
+        assertThat(dnsRepo.findById(dd.getId())).isEmpty();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("sahipsiz kalıntı: envanterde kaydı yoksa silinir (alarmı sessizce kapanır); duraklatılmış envanter, bağımsız izleme kalır")
+    void deleteOrphanDerived_rules() {
+        pausedInventory("paused.example.com", 443);
+        inventory("live.example.com", 443, 5L, null);
+        CertificateInventory manual = inventory("manual-key", 443, 5L, null);
+        manual.setCertSource("MANUAL");
+        inventoryRepo.save(manual);
+        PortMonitor orphanPort = port("gone.example.com", 443, false);
+        DnsMonitor orphanDns = dns("gone.example.com", "A", false);
+        PortMonitor pausedPort = port("paused.example.com", 443, false);
+        PortMonitor otherPort = port("live.example.com", 8443, false);    // envanter portu farklı: host yetiyor -> kalıntı DEĞİL
+        PortMonitor manualPort = port("manual-key", 443, false);          // elle yüklenen kayıt ağ hedefi değildir -> kalıntı
+        PortMonitor standalone = port("gone.example.com", 9000, true);
+
+        assertThat(service.deleteOrphanDerivedPort(orphanPort.getId())).isTrue();
+        assertThat(service.deleteOrphanDerivedDns(orphanDns.getId())).isTrue();
+        assertThat(service.deleteOrphanDerivedPort(pausedPort.getId())).isFalse();
+        assertThat(service.deleteOrphanDerivedPort(otherPort.getId())).isFalse();
+        assertThat(service.deleteOrphanDerivedPort(manualPort.getId())).isTrue();
+        assertThat(service.deleteOrphanDerivedPort(standalone.getId())).isFalse();
+        assertThat(service.deleteOrphanDerivedPort(999_999L)).isFalse();
+
+        assertThat(portRepo.findById(orphanPort.getId())).isEmpty();
+        assertThat(count("port_checks", "monitor_id = ?", orphanPort.getId())).isZero();
+        assertThat(dnsRepo.findById(orphanDns.getId())).isEmpty();
+        assertThat(portRepo.findById(pausedPort.getId())).isPresent();
+        assertThat(portRepo.findById(otherPort.getId())).isPresent();
+        assertThat(portRepo.findById(standalone.getId())).isPresent();
+        verify(escalationService).resolveOpenAlertsSilently(eq("gone.example.com"), eq(PermanentDeletionService.PORT_ALERT_TYPES),
+                eq(PermanentDeletionService.RESOLVED_BY_ORPHAN), argThat(c -> orphanPort.getId().equals(c.get("monitor_id"))));
+        verify(escalationService).resolveOpenAlertsSilently(eq("gone.example.com"), eq(PermanentDeletionService.DNS_ALERT_TYPES),
+                eq(PermanentDeletionService.RESOLVED_BY_ORPHAN), argThat(c -> orphanDns.getId().equals(c.get("monitor_id"))));
+    }
+
+    private DerivedMonitorOrphanCleanup cleanupJob(List<Map<String, String>> otherVersions, AuditService audit) {
+        return cleanupJob(otherVersions, audit, false);
+    }
+
+    @SuppressWarnings("unchecked")
+    private DerivedMonitorOrphanCleanup cleanupJob(List<Map<String, String>> otherVersions, AuditService audit, boolean stopping) {
+        DeploymentHistoryService history = org.mockito.Mockito.mock(DeploymentHistoryService.class);
+        when(history.liveOtherVersions()).thenReturn(otherVersions);
+        SchedulerService scheduler = org.mockito.Mockito.mock(SchedulerService.class);
+        when(scheduler.sideJobsStopping()).thenReturn(stopping);
+        when(scheduler.callWithSchedulerLock(eq(DerivedMonitorOrphanCleanup.LOCK), any(java.util.function.Supplier.class)))
+                .thenAnswer(i -> java.util.Optional.ofNullable(((java.util.function.Supplier<?>) i.getArgument(1)).get()));
+        return new DerivedMonitorOrphanCleanup(jdbc, provider(scheduler), provider(history), provider(audit), provider(service));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> org.springframework.beans.factory.ObjectProvider<T> provider(T value) {
+        org.springframework.beans.factory.ObjectProvider<T> p = org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+        when(p.getIfAvailable()).thenReturn(value);
+        when(p.getObject()).thenReturn(value);
+        return p;
+    }
+
+    private void clearMarker() {
+        jdbc.execute(StandaloneMonitorDeletionBackfill.MARKERS_DDL);
+        jdbc.update("DELETE FROM schema_patch_markers WHERE patch_key = ?", DerivedMonitorOrphanCleanup.KEY);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("tek seferlik temizlik: yalnız kalıntılar gider, nişan yazılır, ikinci tur hiçbir şey yapmaz; tek denetim kaydı")
+    void orphanCleanupJob_runsOnce() {
+        clearMarker();
+        pausedInventory("paused.example.com", 443);
+        PortMonitor orphanPort = port("gone.example.com", 443, false);
+        DnsMonitor orphanDns = dns("renamed-typo.example.com", "A", false);
+        PortMonitor keep = port("paused.example.com", 443, false);
+        AuditService audit = org.mockito.Mockito.mock(AuditService.class);
+        DerivedMonitorOrphanCleanup job = cleanupJob(List.of(), audit);
+
+        job.run();
+
+        assertThat(portRepo.findById(orphanPort.getId())).isEmpty();
+        assertThat(dnsRepo.findById(orphanDns.getId())).isEmpty();
+        assertThat(portRepo.findById(keep.getId())).isPresent();
+        assertThat(count("schema_patch_markers", "patch_key = ?", DerivedMonitorOrphanCleanup.KEY)).isEqualTo(1);
+        verify(audit).recordSystemEvent(eq("SYSTEM_DERIVED_ORPHAN_CLEANUP"), eq("MONITOR"), eq("derived-orphans"),
+                argThat(d -> d.contains("gone.example.com") && d.contains("renamed-typo.example.com")));
+
+        PortMonitor later = port("later.example.com", 443, false);   // nişandan SONRA oluşan kalıntıya dokunulmaz
+        job.run();
+        assertThat(portRepo.findById(later.getId())).isPresent();
+        clearMarker();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("tek seferlik temizlik: başka sürüm koşan canlı pod varken ya da sürümler okunamazken bekler")
+    void orphanCleanupJob_waitsForSingleVersion() {
+        clearMarker();
+        PortMonitor orphanPort = port("gone.example.com", 443, false);
+        cleanupJob(List.of(Map.of("version", "20.213.0")), null).run();
+        cleanupJob(null, null).run();
+        assertThat(portRepo.findById(orphanPort.getId())).isPresent();
+        assertThat(count("schema_patch_markers", "patch_key = ?", DerivedMonitorOrphanCleanup.KEY)).isZero();
+        clearMarker();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("tek seferlik temizlik: pod kapanıyorsa yeni satıra başlanmaz, nişan yazılmaz (sonraki açılış sürdürür)")
+    void orphanCleanupJob_stopsAtShutdown() {
+        clearMarker();
+        PortMonitor orphanPort = port("gone.example.com", 443, false);
+        DnsMonitor orphanDns = dns("renamed-typo.example.com", "A", false);
+        cleanupJob(List.of(), null, true).run();
+        assertThat(portRepo.findById(orphanPort.getId())).isPresent();
+        assertThat(dnsRepo.findById(orphanDns.getId())).isPresent();
+        assertThat(count("schema_patch_markers", "patch_key = ?", DerivedMonitorOrphanCleanup.KEY)).isZero();
+        clearMarker();
+    }
 }

@@ -39,12 +39,18 @@ const rows = [
   { ...base, id: 4, name: 'unknown', domain: 'unknown.com', registrar: null, source: 'NONE', expiry_date: null, days_remaining: null },
 ]
 const cards = () => [...document.querySelectorAll('.upt-grid [data-monitor-open]')].map((b) => b.textContent.trim()).sort()
-const combo = (name) => screen.getByRole('combobox', { name })
-function pick(name, optionText) {
-  fireEvent.mouseDown(combo(name))
-  const opt = [...document.querySelectorAll('[role="listbox"] [role="option"]')].find((o) => optionText.test(o.textContent))
-  if (!opt) throw new Error(`seçenek yok: ${optionText}`)
-  fireEvent.mouseDown(opt)
+// Faset düğmeleri (2026-11-19): kesikli kenarlı düğme → Popover + Command listesi (role=option), sayı ayrı sütunda
+const facetBtn = (name) => screen.getByRole('button', { name: new RegExp('^' + name) })
+const facetOptions = () => [...document.querySelectorAll('[role="listbox"] [role="option"]')]
+const optText = (o) => [o.querySelector('span:not([data-slot])')?.textContent ?? o.textContent, o.querySelector('[data-slot="facet-count"]')?.textContent]
+function openFacet(name) { pressMenuTrigger(facetBtn(name)) }
+function closeFacet() { fireEvent.keyDown(document.activeElement, { key: 'Escape' }) }
+function pick(name, label) {
+  openFacet(name)
+  const opt = facetOptions().find((o) => label.test(optText(o)[0]))
+  if (!opt) throw new Error(`seçenek yok: ${label}`)
+  fireEvent.click(opt)
+  closeFacet()
 }
 
 beforeEach(() => {
@@ -67,47 +73,58 @@ describe('DomainMonitorPage — C1 ek süzgeçler', () => {
   it('registrar Türkçe katlanır ve sayılır; kaynak RDAP ailesi; süre durumu; Süzgeçleri temizle hepsini sıfırlar', async () => {
     render(<DomainMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await screen.findByText('godaddy-1.com')
-    fireEvent.mouseDown(combo('Registrar'))
-    const labels = [...document.querySelectorAll('[role="listbox"] [role="option"]')].map((o) => o.textContent)
-    expect(labels).toContain('All registrars (4)')
-    expect(labels.some((l) => /GoDaddy\.com, LLC \(2\)/i.test(l))).toBe(true)
-    expect(labels.at(-1)).toBe('Registrar unknown (1)')
-    fireEvent.mouseDown([...document.querySelectorAll('[role="listbox"] [role="option"]')].find((o) => /GoDaddy/i.test(o.textContent)))
+    openFacet('Registrar')
+    const labels = facetOptions().map(optText)
+    expect(labels.some(([l, n]) => /GoDaddy\.com, LLC/i.test(l) && n === '2')).toBe(true)
+    expect(labels.at(-1)).toEqual(['Registrar unknown', '1'])
+    fireEvent.click(facetOptions().find((o) => /GoDaddy/i.test(o.textContent)))
+    closeFacet()
     await waitFor(() => expect(cards()).toEqual(['godaddy-1.com', 'godaddy-2.com']))
-    pick('Expiry state', /^Expired \(1\)$/)
+    expect(facetBtn('Registrar').querySelector('[data-slot="badge"]')).toHaveTextContent('1')
+    pick('Expiry state', /^Expired$/)
     await waitFor(() => expect(cards()).toEqual(['godaddy-1.com']))
     // kaynak sayımı öteki iki ek süzgeç uygulanmış listeden
-    fireEvent.mouseDown(combo('Data source'))
-    const src = [...document.querySelectorAll('[role="listbox"] [role="option"]')].map((o) => o.textContent)
-    expect(src).toEqual(['All sources (1)', 'Source: RDAP (1)', 'Source: WHOIS (0)', 'Source unknown (0)'])
-    fireEvent.keyDown(document.activeElement, { key: 'Escape' })
+    openFacet('Data source')
+    expect(facetOptions().map(optText)).toEqual([['RDAP', '1'], ['WHOIS', '0'], ['Source unknown', '0']])
+    closeFacet()
     fireEvent.click(document.querySelector('[data-slot="domain-filter-clear"]'))
     await waitFor(() => expect(cards()).toHaveLength(4))
     expect(document.querySelector('[data-slot="domain-filter-clear"]')).toBeNull()
   })
 
-  it('LOW 6: uzun registrar adı kırpılmaz — seçenekler ve seçili değer sarar (registrar / kaynak / süre durumu)', async () => {
+  it('LOW 6 + sade düğme (2026-11-19): tetik kısa başlık ("Registrar", sayı rozeti); uzun registrar adı listede SARAR, kesilmez', async () => {
     const long = 'Tucows Domains Inc. dba OpenSRS Reseller Services (Toronto / Canada Registrar Operations)'
     api.monitoring.getDomainMonitors.mockResolvedValue({ success: true, data: [...rows, { ...base, id: 9, name: 'uzun', domain: 'uzun.com',
       registrar: long, source: 'RDAP', expiry_date: day(200), days_remaining: 200 }] })
     render(<DomainMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
     await screen.findByText('godaddy-1.com')
     for (const name of ['Registrar', 'Data source', 'Expiry state']) {
-      const trig = combo(name)
-      expect(trig.className, name).toMatch(/whitespace-normal/)
-      expect(trig.querySelector('span').className, name).toMatch(/overflow-wrap:anywhere/)
-      expect(trig.querySelector('span').className, name).not.toMatch(/\btruncate\b/)
+      const trig = facetBtn(name)
+      expect(trig.textContent, name).toBe(name)   // "Tüm kayıt kuruluşları (4)" gibi uzun metin YOK
+      expect(trig.className, name).toMatch(/border-dashed/)
+      expect(trig.className, name).toMatch(/pointer-coarse:h-10/)
     }
-    fireEvent.mouseDown(combo('Registrar'))
-    const opt = [...document.querySelectorAll('[role="listbox"] [role="option"]')].find((o) => o.textContent.includes('Tucows'))
-    expect(opt).toHaveTextContent(`${long} (1)`)
-    // seçeneğin metin taşıyan EN İÇTEKİ span'i (sarmalayıcı flex sütunu değil)
+    openFacet('Registrar')
+    const opt = facetOptions().find((o) => o.textContent.includes('Tucows'))
+    expect(optText(opt)).toEqual([long, '1'])
     const label = [...opt.querySelectorAll('span')].find((x) => !x.querySelector('span') && x.textContent.includes('Tucows'))
     expect(label.className).toMatch(/overflow-wrap:anywhere/)
     expect(label.className).not.toMatch(/\btruncate\b/)
-    fireEvent.mouseDown(opt)
+    fireEvent.click(opt)
+    closeFacet()
     await waitFor(() => expect(cards()).toEqual(['uzun.com']))
-    expect(combo('Registrar')).toHaveTextContent(long)
+    expect(facetBtn('Registrar')).toHaveAttribute('title', long)   // seçili ad ipucunda
+  })
+
+  it('çoklu seçim URL\'ye `|` ile yazılır ve geri okunur; eski tek değerli bağlantı çalışır', async () => {
+    render(<DomainMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+    await screen.findByText('godaddy-1.com')
+    openFacet('Data source')
+    fireEvent.click(facetOptions().find((o) => /^WHOIS/.test(optText(o)[0])))
+    fireEvent.click(facetOptions().find((o) => /^Source unknown/.test(optText(o)[0])))
+    closeFacet()
+    await waitFor(() => expect(cards()).toEqual(['unknown.com', 'whois-tr.com.tr']))
+    await waitFor(() => expect(new URL(window.location.href).searchParams.get('ds')).toBe('whois|unknown'), { timeout: 3000 })
   })
 
   it('URL\'den okunur (kayıtlı görünüm / paylaşılan bağlantı): ?dx=unknown&ds=unknown', async () => {

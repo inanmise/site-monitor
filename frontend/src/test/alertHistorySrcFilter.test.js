@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { filtersFromUrl, listParams, activeAlertFilters, FILTER_DEFAULTS, isSrcKey, SRC_KEYS } from '../components/admin/alerts/alertHistoryModel.js'
-import { MONITOR_ALERT_TYPES } from '../utils/monitorAlertTypes.js'
+import { PAGE_ALERT_TYPES } from '../utils/monitorAlertTypes.js'
 
 /**
  * Alarm Geçmişi kategori süzgeci (URL `src`, 2026-09-30): İzleme menüsündeki rozet Alarm Geçmişi'ni o izleme türüne
@@ -10,7 +10,9 @@ describe('Alarm Geçmişi — kategori süzgeci (src)', () => {
   it('URL src geçerli izleme türü ise süzgece girer; bilinmeyen değer düşer', () => {
     expect(filtersFromUrl((k) => (k === 'src' ? 'scripted' : '')).src).toBe('scripted')
     expect(filtersFromUrl((k) => (k === 'src' ? 'bogus' : '')).src).toBe('')
-    expect(SRC_KEYS).toEqual(Object.keys(MONITOR_ALERT_TYPES))
+    // 2026-11-19: anahtarlar SAYFA kategorileri (Erişilebilirlik kendi sayfası `uptime`, HTTP'den ayrı)
+    expect(SRC_KEYS).toEqual(Object.keys(PAGE_ALERT_TYPES))
+    expect(isSrcKey('uptime')).toBe(true)
     expect(isSrcKey('http')).toBe(true)
     expect(isSrcKey('')).toBe(false)
   })

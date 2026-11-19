@@ -38,6 +38,7 @@ import {
 import SegmentedControl from './ui/SegmentedControl.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
+import { MonitorPageBody, MonitorViewSwitch, useMonitorAlarmsView } from './monitoring/alarms/MonitorAlarms.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { Trash2, Gauge, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Frame, Type, Download, Link2, Wand2, Inbox, Copy, Stethoscope } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
@@ -255,6 +256,7 @@ function pageSpeedHistoryExtra(c, t) {
 const NO_TEAMS = Object.freeze([])
 export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myTeams = NO_TEAMS, globalAdmin = false }) {
   const t = useT()
+  const alarmsView = useMonitorAlarmsView('pagespeed')   // İzlemeler | Alarmlar görünümü (2026-11-19)
   const toast = useToast()
   const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
@@ -1382,11 +1384,14 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
 
   return (
     <div className="upt-page">
-      <MonitorPageHeader type="pagespeed" title={t('pspd.title')} subtitle={t('pspd.subtitle')}
+      <MonitorPageHeader showActions={!alarmsView.active} type="pagespeed" title={t('pspd.title')} subtitle={t('pspd.subtitle')}
         count={loading ? null : monitors.length} down={counts.down}
         refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
-        canWrite={canWrite} onNew={openNew} newLabel={t('pspd.addMonitor')} />
+        canWrite={canWrite} onNew={openNew} newLabel={t('pspd.addMonitor')}>
+        <MonitorViewSwitch view={alarmsView} />
+      </MonitorPageHeader>
+      <MonitorPageBody view={alarmsView}>
 
       <MonitorHowBox bullets={[t('pspd.how1'), t('pspd.how2'), t('pspd.how3'), t('pspd.how4'),
         t('pspd.how5'), t('pspd.how6'), t('pspd.how7')]} />
@@ -1777,6 +1782,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
       )}
       <MonitorCheckRunModal run={checkRun.run} type="pagespeed"
         onCancel={checkRun.cancel} onClose={checkRun.close} />
+      </MonitorPageBody>
     </div>
   )
 }

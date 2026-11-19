@@ -76,14 +76,22 @@ for (const vp of VIEWPORTS) {
       await page.goto('/?tab=domain')
       await page.locator('.upt-grid [data-slot="card"]').first().waitFor({ timeout: 20_000 })
 
-      // Süzgeçler: üç seçici araç çubuğunda; registrar katlanır (GoDaddy iki yazımı tek seçenek, 2 kayıt)
-      const reg = page.getByRole('combobox', { name: /^(Registrar)$/ })
-      await expect(reg).toBeVisible()
+      // Süzgeçler (2026-11-19): üç sade faset düğmesi (kısa başlık, kesikli kenar); registrar katlanır (GoDaddy iki yazımı
+      // tek seçenek, 2 kayıt); sayı ayrı sütunda, çoklu seçim, liste seçimde açık kalır → Escape kapatır
+      for (const name of [/^(Registrar)/, /^(Veri kaynağı|Data source)/, /^(Süre durumu|Expiry state)/]) {
+        const b = page.getByRole('button', { name })
+        await expect(b).toBeVisible()
+        if (touch) expect((await b.boundingBox()).height, `@${vp.name}: süzgeç düğmesi dokunma hedefi`).toBeGreaterThanOrEqual(39.5)
+      }
+      const reg = page.getByRole('button', { name: /^(Registrar)/ })
       await (touch ? reg.tap() : reg.click())
-      const godaddy = page.getByRole('option', { name: /GoDaddy\.com, LLC \(2\)/i })
+      const godaddy = page.getByRole('option', { name: /GoDaddy\.com, LLC/i })
       await expect(godaddy).toBeVisible()
+      await expect(godaddy.locator('[data-slot="facet-count"]')).toHaveText('2')
       await (touch ? godaddy.tap() : godaddy.click())
+      await page.keyboard.press('Escape')
       await expect(page.locator('.upt-grid [data-slot="card"]')).toHaveCount(2)
+      await expect(reg.locator('[data-slot="badge"]')).toHaveText('1')
       // URL yazımı debounce'lu (useUrlQuerySync) — kayıtlı görünüm / paylaşılan bağlantı için `dr` adres çubuğunda
       await expect.poll(() => page.evaluate(() => new URL(location.href).searchParams.get('dr'))).toBeTruthy()
       const clear = page.locator('[data-slot="domain-filter-clear"]')

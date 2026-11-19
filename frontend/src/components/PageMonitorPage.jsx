@@ -24,6 +24,7 @@ import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
+import { MonitorPageBody, MonitorViewSwitch, useMonitorAlarmsView } from './monitoring/alarms/MonitorAlarms.jsx'
 import TagInput from './ui/TagInput.jsx'
 import { Trash2, ScanSearch, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, Image, FileCode, Link2, Frame, Type, ShieldAlert, Download, EyeOff, Inbox, Copy, Stethoscope } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
@@ -142,6 +143,7 @@ const emptyForm = { name: '', url: '', groupName: '', notificationGroupId: '', n
 const NO_TEAMS = Object.freeze([])
 export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams = NO_TEAMS, globalAdmin = false }) {
   const t = useT()
+  const alarmsView = useMonitorAlarmsView('page')   // İzlemeler | Alarmlar görünümü (2026-11-19)
   const toast = useToast()
   const { showPrompt, showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
@@ -1073,11 +1075,14 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
 
   return (
     <div className="upt-page">
-      <MonitorPageHeader type="page" title={t('page.title')} subtitle={t('page.subtitle')}
+      <MonitorPageHeader showActions={!alarmsView.active} type="page" title={t('page.title')} subtitle={t('page.subtitle')}
         count={loading ? null : monitors.length} down={counts.down}
         refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
-        canWrite={canWrite} onNew={openNew} newLabel={t('page.addMonitor')} />
+        canWrite={canWrite} onNew={openNew} newLabel={t('page.addMonitor')}>
+        <MonitorViewSwitch view={alarmsView} />
+      </MonitorPageHeader>
+      <MonitorPageBody view={alarmsView}>
 
       <MonitorHowBox bullets={[t('page.how1'), t('page.how2'), t('page.how2b'), t('page.how3'), t('page.how4'), t('page.how5'), t('page.how6'), t('page.how7'), t('page.how8')]} />
 
@@ -1419,6 +1424,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
       )}
       <MonitorCheckRunModal run={checkRun.run} type="page"
         onCancel={checkRun.cancel} onClose={checkRun.close} />
+      </MonitorPageBody>
     </div>
   )
 }

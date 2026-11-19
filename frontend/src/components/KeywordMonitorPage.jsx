@@ -12,6 +12,7 @@ import { useFormErrors } from '../hooks/useFormErrors.js'
 import { useDialog } from './ui/Dialog.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
+import { MonitorPageBody, MonitorViewSwitch, useMonitorAlarmsView } from './monitoring/alarms/MonitorAlarms.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
@@ -204,6 +205,7 @@ function requestDetailRows(m, t) {
 const NO_TEAMS = Object.freeze([])
 export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTeams = NO_TEAMS, globalAdmin = false }) {
   const t = useT()
+  const alarmsView = useMonitorAlarmsView('keyword')   // İzlemeler | Alarmlar görünümü (2026-11-19)
   const toast = useToast()
   const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
@@ -1118,13 +1120,16 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
 
   return (
     <div className="upt-page">
-      <MonitorPageHeader type="keyword" title={t('keyword.title')} subtitle={t('keyword.subtitle')}
+      <MonitorPageHeader showActions={!alarmsView.active} type="keyword" title={t('keyword.title')} subtitle={t('keyword.subtitle')}
         // "Arızalı" = kartı kırmızı olan her izleme: yanlış kod (down) + yanıt alınamayan (error: zaman aşımı / DNS / TLS)
         // — statusKey ikisini de 'down' çizer ve önce sıralar (2026-10-22, UIM-22)
         count={loading ? null : monitors.length} down={counts.down + counts.error}
         refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
-        canWrite={canWrite} onNew={openNew} newLabel={t('keyword.addMonitor')} />
+        canWrite={canWrite} onNew={openNew} newLabel={t('keyword.addMonitor')}>
+        <MonitorViewSwitch view={alarmsView} />
+      </MonitorPageHeader>
+      <MonitorPageBody view={alarmsView}>
 
       <MonitorHowBox bullets={[t('keyword.how1'), t('keyword.how2'), t('keyword.how3')]} />
 
@@ -1354,6 +1359,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
       )}
       <MonitorCheckRunModal run={checkRun.run} type="keyword"
         onCancel={checkRun.cancel} onClose={checkRun.close} />
+      </MonitorPageBody>
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import {
-  Globe, Radio, EthernetPort, Waypoints, CalendarClock, TextSearch, FileCheck, Gauge, Workflow, ShieldCheck, DatabaseSearch,
+  Globe, Radio, EthernetPort, Waypoints, CalendarClock, TextSearch, FileCheck, Gauge, Workflow, ShieldCheck, DatabaseSearch, MonitorCheck,
 } from 'lucide-react'
 import { parseUtc, formatIncidentTime } from '../../utils/incidentMeta.js'
 
@@ -17,6 +17,7 @@ import { parseUtc, formatIncidentTime } from '../../utils/incidentMeta.js'
 export const MONITOR_TYPE_ICON = {
   http: Globe, ping: Radio, port: EthernetPort, dns: Waypoints, domain: CalendarClock,
   keyword: TextSearch, page: FileCheck, pagespeed: Gauge, scripted: Workflow, dbquery: DatabaseSearch, cert: ShieldCheck,
+  uptime: MonitorCheck,   // Erişilebilirlik (Durum İzleme) — Alarm Geçmişi tür rozeti (2026-11-19)
 }
 export const MONITOR_TYPE_LABEL_KEY = {
   http: 'nav.http', ping: 'nav.ping', port: 'nav.port', dns: 'nav.dns', domain: 'nav.domainmon',

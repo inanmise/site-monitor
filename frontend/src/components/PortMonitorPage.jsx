@@ -26,6 +26,7 @@ import { useCardDensity } from '../hooks/useCardDensity.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
+import { MonitorPageBody, MonitorViewSwitch, useMonitorAlarmsView } from './monitoring/alarms/MonitorAlarms.jsx'
 import SearchableSelect from './ui/SearchableSelect.jsx'
 import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
@@ -106,6 +107,7 @@ const emptyForm = { name: '', host: '', port: '', protocol: 'TCP', useProxy: 'OF
 const NO_TEAMS = Object.freeze([])
 export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams = NO_TEAMS, globalAdmin = false }) {
   const t = useT()
+  const alarmsView = useMonitorAlarmsView('port')   // İzlemeler | Alarmlar görünümü (2026-11-19)
   const toast = useToast()
   const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
@@ -818,11 +820,14 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
 
   return (
     <div className="mon-page">
-      <MonitorPageHeader type="port" title={t('port.title')} subtitle={t('port.subtitle')}
+      <MonitorPageHeader showActions={!alarmsView.active} type="port" title={t('port.title')} subtitle={t('port.subtitle')}
         count={loading ? null : monitors.length} down={portCounts.down}
         refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
-        canWrite={canWrite} onNew={openNew} newLabel={t('port.addMonitor')} />
+        canWrite={canWrite} onNew={openNew} newLabel={t('port.addMonitor')}>
+        <MonitorViewSwitch view={alarmsView} />
+      </MonitorPageHeader>
+      <MonitorPageBody view={alarmsView}>
 
       <MonitorHowBox bullets={[t('port.how1'), t('port.how2'), t('port.how3')]} />
 
@@ -1005,6 +1010,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
       )}
       <MonitorCheckRunModal run={checkRun.run} type="port"
         onCancel={checkRun.cancel} onClose={checkRun.close} />
+      </MonitorPageBody>
     </div>
   )
 }

@@ -45,6 +45,14 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     @Query("SELECT c.domain FROM CertificateInventory c WHERE c.active = true AND c.domain IS NOT NULL"
             + " AND (c.certSource IS NULL OR c.certSource <> 'MANUAL')")
     List<String> findActiveDomains();
+    /**
+     * Envanterdeki TÜM ağ kayıtlarının alan adları — etkin YA DA duraklatılmış, silinmemiş, elle yüklenen (MANUAL) hariç
+     * (2026-11-19, İzleme Panosu kalıntı ayrımı): türev Port / DNS satırının host'u burada yoksa satır SAHİPSİZ kalıntıdır
+     * (envanter kaydı duraklatılmış satır ise "duraklatılmış" kalır). Ham; taramayla aynı birebir karşılaştırma.
+     */
+    @Query("SELECT c.domain FROM CertificateInventory c WHERE c.domain IS NOT NULL AND c.deletedAt IS NULL"
+            + " AND (c.certSource IS NULL OR c.certSource <> 'MANUAL')")
+    List<String> findNetworkDomains();
 
     // ── Elle yüklenen sertifikalar (2026-10-06) ─────────────────────────────────────────────────
     /** Kaynağa göre silinmemiş kayıtlar (manuel sertifika listesi). */

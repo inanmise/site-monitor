@@ -227,6 +227,10 @@ export default function MonitoringOverviewPage() {
   const viewCounts = useMemo(() => quickViewCounts(rows, nowMs), [rows, nowMs])
   const activeView = favActive ? 'favorites' : matchQuickView(filters)
   const invInactive = Number(totals.inventory_inactive ?? 0)
+  // Envanterde kaydı olmayan türev kalıntılar (2026-11-19): sayılara dahil değil — yalnız bilgi olarak alt satırda
+  const residue = Number(totals.orphans ?? 0)
+  const pausedSub = [invInactive > 0 && t('mo.kpi.invSub', invInactive), residue > 0 && t('mo.kpi.residueSub', residue)]
+    .filter(Boolean).join(' · ') || undefined
 
   // Liste görünümü KABIN genişliğine göre: ≥ 720 px tablo, daha dar kartlar; ölçüm yoksa (jsdom) telefon eşiği.
   const [measureRef, listWidth] = useElementWidth()
@@ -323,7 +327,7 @@ export default function MonitoringOverviewPage() {
     { key: 'down',    Icon: CircleAlert, label: t('mo.kpi.down'),    value: totals.down ?? 0,    cls: 'critical', tip: kpiTip(t('mo.kpi.down')), onClick: () => setKpi('down') },
     { key: 'stale',   Icon: Clock,       label: t('mo.kpi.stale'),   value: totals.stale ?? 0,   cls: 'warning',  hint: t('mo.kpi.staleHint'), tip: kpiTip(t('mo.kpi.stale')), onClick: () => setKpi('stale') },
     { key: 'paused',  Icon: PauseCircle, label: t('mo.kpi.paused'),  value: totals.paused ?? 0,  cls: 'paused',
-      sub: invInactive > 0 ? t('mo.kpi.invSub', invInactive) : undefined, tip: kpiTip(t('mo.kpi.paused')), onClick: () => setKpi('paused') },
+      sub: pausedSub, tip: kpiTip(t('mo.kpi.paused')), onClick: () => setKpi('paused') },
     // Açık alarmlar okunamadıysa sayı "—" (0 değil) ve özet penceresi açılmaz — "alarm yok" listesi yanıltırdı
     alertsUnknown
       ? { key: 'alerts', Icon: BellRing, label: t('mo.kpi.alerts'), value: '—', cls: 'alert', hint: t('mo.unavailable.kpiAlerts'),
@@ -576,7 +580,7 @@ export default function MonitoringOverviewPage() {
           </section>
 
           {/* Alarmlar okunamadıysa (?mo_dlg=alerts derin bağlantısı da) alarm özeti AÇILMAZ — boş "alarm yok" listesi yalan olurdu */}
-          <OverviewKpiDialog kind={kpi === 'alerts' && alertsUnknown ? '' : kpi} rows={rows} totals={totals} nowMs={nowMs} onClose={() => setKpi('')} onFilter={onKpiFilter} />
+          <OverviewKpiDialog kind={kpi === 'alerts' && alertsUnknown ? '' : kpi} rows={rows} orphans={data?.orphans} totals={totals} nowMs={nowMs} onClose={() => setKpi('')} onFilter={onKpiFilter} />
         </div>
       )}
     </div>

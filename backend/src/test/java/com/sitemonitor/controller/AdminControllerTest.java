@@ -36,6 +36,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -55,6 +56,7 @@ class AdminControllerTest {
     @MockitoBean com.sitemonitor.service.ThresholdPreviewService thresholdPreviewService;   // tier eşik önizleme (2026-09-20)
     @MockitoBean com.sitemonitor.service.AdminHistoryService adminHistoryService;             // sekme değişiklik geçmişi (2026-09-20)
     @MockitoBean com.sitemonitor.service.AdminActivityFeedService activityFeedService;       // çapraz değişiklik akışı (2026-11-13)
+    @MockitoBean com.sitemonitor.service.MonitorRefResolver monitorRefs;                     // alarm → izleme (2026-11-19)
     @MockitoBean com.sitemonitor.service.UserPushRecipientResolver userPushRecipientResolver;
     @MockitoBean com.sitemonitor.service.WebhookService webhookService;
     @MockitoBean com.sitemonitor.service.InboxService inboxServiceMemo;          // zil belleği (performans 2026-11-06)
@@ -4215,6 +4217,187 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.data[0].user_active").value(false))
                 .andExpect(jsonPath("$.data[1].user_active").doesNotExist())
                 .andExpect(jsonPath("$.data[2].user_active").doesNotExist());
+    }
+
+    // ── İzleme sayfası Alarmlar görünümü (2026-11-19): type-summary + satır izleme referansı ───────────────────
+
+    private static AlertEvent alarmRow(long id, String domain, String type, Long teamId) {
+        AlertEvent e = new AlertEvent();
+        e.setId(id);
+        e.setDomain(domain);
+        e.setAlertType(type);
+        e.setAlertLevel("CRITICAL");
+        e.setResolved(false);
+        e.setAcknowledged(false);
+        e.setCreatedAt("2026-11-18T10:00:00");
+        e.setTeamId(teamId);
+        return e;
+    }
+
+    @Test
+    @DisplayName("type-summary: açık sayılar tip kapsamlı; en çok alarm üreten izlemeler takım duyarlı ad, aynı izlemeye düşen gruplar birleşir, çözülmeyen alan adıyla kalır")
+    void alertTypeSummary_countsAndTopMonitors() throws Exception {
+        List<String> types = List.of("HTTP_DOWN", "HTTP_SLOW");
+        when(alertEventRepo.countFacets(eq(Boolean.FALSE), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(),
+                eq(true), eq(types), isNull(), isNull(), eq(false), any()))
+                .thenReturn(List.of(new Object[]{"CRITICAL", false, 2L}, new Object[]{"WARNING", true, 1L}));
+        when(alertEventRepo.countStale(eq(Boolean.FALSE), any(), isNull(), isNull(), eq(true), eq(types), isNull(), isNull(),
+                eq(false), any())).thenReturn(1L);
+        when(alertEventRepo.topDomainsByAlertCount(eq(types), any(), eq(false), any(), any(Pageable.class))).thenReturn(List.of(
+                new Object[]{"https://a.example.com", 5L, 6L, 90L, 1L},
+                new Object[]{"https://b.example.com", 5L, 4L, 80L, 0L},
+                new Object[]{"https://a.example.com", 7L, 3L, 70L, 0L}));   // aynı izleme, eski damga (takım taşıması)
+        when(alertEventRepo.findAllById(any())).thenReturn(List.of(
+                alarmRow(90L, "https://a.example.com", "HTTP_DOWN", 5L), alarmRow(80L, "https://b.example.com", "HTTP_SLOW", 5L),
+                alarmRow(70L, "https://a.example.com", "HTTP_DOWN", 7L)));
+        when(monitorRefs.pick(any(), any())).thenReturn(Map.of(
+                90L, new com.sitemonitor.service.MonitorRefResolver.Pick("Ana site", "http", "http", 11L, 5L),
+                80L, new com.sitemonitor.service.MonitorRefResolver.Pick("https://b.example.com", "http", "http", null, null),
+                70L, new com.sitemonitor.service.MonitorRefResolver.Pick("Ana site", "http", "http", 11L, 5L)));
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.read"), eq("view"))).thenReturn(true);
+
+        mvc.perform(get("/api/admin/alerts/type-summary").param("alertTypes", "HTTP_DOWN,http_slow").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.alert_types.length()").value(2))
+                .andExpect(jsonPath("$.data.open.total").value(3))
+                .andExpect(jsonPath("$.data.open.unacked").value(2))
+                .andExpect(jsonPath("$.data.open.stale").value(1))
+                .andExpect(jsonPath("$.data.open.stale_hours").value(24))
+                .andExpect(jsonPath("$.data.open.level_counts.CRITICAL").value(2))
+                .andExpect(jsonPath("$.data.open.level_counts.WARNING").value(1))
+                .andExpect(jsonPath("$.data.top.days").value(7))
+                .andExpect(jsonPath("$.data.top.items.length()").value(2))
+                .andExpect(jsonPath("$.data.top.items[0].count").value(9))
+                .andExpect(jsonPath("$.data.top.items[0].open").value(1))
+                .andExpect(jsonPath("$.data.top.items[0].last_alert_id").value(90))
+                .andExpect(jsonPath("$.data.top.items[0].monitor.name").value("Ana site"))
+                .andExpect(jsonPath("$.data.top.items[0].monitor.monitor_id").value(11))
+                .andExpect(jsonPath("$.data.top.items[0].monitor.tab").value("http"))
+                .andExpect(jsonPath("$.data.top.items[1].domain").value("https://b.example.com"))
+                .andExpect(jsonPath("$.data.top.items[1].count").value(4))
+                .andExpect(jsonPath("$.data.top.items[1].monitor").doesNotExist());
+        // Şerit grup sorgusu sınırlı: varsayılan 5 × 3 grup
+        ArgumentCaptor<Pageable> page = ArgumentCaptor.forClass(Pageable.class);
+        verify(alertEventRepo).topDomainsByAlertCount(eq(types), any(), eq(false), any(), page.capture());
+        assertThat(page.getValue().getPageSize()).isEqualTo(15);
+    }
+
+    @Test
+    @DisplayName("type-summary: geçerli tip yoksa 400 (alan alertTypes); gün ve adet tavanlı")
+    void alertTypeSummary_validationAndCaps() throws Exception {
+        mvc.perform(get("/api/admin/alerts/type-summary").param("alertTypes", " , ;drop").session(authSession()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("alertTypes"));
+        mvc.perform(get("/api/admin/alerts/type-summary").session(authSession()))
+                .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/admin/alerts/type-summary").param("alertTypes", "PING_DOWN").param("days", "999").param("limit", "999")
+                        .session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.top.days").value(30));
+        ArgumentCaptor<Pageable> page = ArgumentCaptor.forClass(Pageable.class);
+        verify(alertEventRepo).topDomainsByAlertCount(any(), any(), anyBoolean(), any(), page.capture());
+        assertThat(page.getValue().getPageSize()).isEqualTo(30);   // 10 × 3
+    }
+
+    @Test
+    @DisplayName("type-summary: kapsamlı kullanıcı kendi takımlarıyla sorgular; izlemenin takımını göremiyorsa referans (ad + kimlik) YOK, satır alan adıyla")
+    void alertTypeSummary_scopedViewerNoMonitorIdOutsideScope() throws Exception {
+        when(alertEventRepo.topDomainsByAlertCount(any(), any(), eq(true), eq(List.of(2L)), any(Pageable.class))).thenReturn(List.<Object[]>of(
+                new Object[]{"https://c.example.com", 9L, 2L, 50L, 1L}));
+        when(alertEventRepo.findAllById(any())).thenReturn(List.of(alarmRow(50L, "https://c.example.com", "HTTP_DOWN", 9L)));
+        when(monitorRefs.pick(any(), any())).thenReturn(Map.of(
+                50L, new com.sitemonitor.service.MonitorRefResolver.Pick("Başka takımın sitesi", "http", "http", 33L, 9L)));
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.read"), eq("view"))).thenReturn(true);
+
+        mvc.perform(get("/api/admin/alerts/type-summary").param("alertTypes", "HTTP_DOWN").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.top.items[0].domain").value("https://c.example.com"))
+                .andExpect(jsonPath("$.data.top.items[0].monitor").doesNotExist());
+        verify(alertEventRepo).countFacets(eq(Boolean.FALSE), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(),
+                eq(true), any(), isNull(), isNull(), eq(true), eq(List.of(2L)));
+    }
+
+    @Test
+    @DisplayName("type-summary: kendi takımının izlemesi, izleme okuma izni yok → ad var, açma kimliği YOK")
+    void alertTypeSummary_ownTeamWithoutMonitoringRead_nameOnly() throws Exception {
+        when(alertEventRepo.topDomainsByAlertCount(any(), any(), eq(true), eq(List.of(2L)), any(Pageable.class))).thenReturn(List.<Object[]>of(
+                new Object[]{"https://d.example.com", 2L, 3L, 60L, 0L}));
+        when(alertEventRepo.findAllById(any())).thenReturn(List.of(alarmRow(60L, "https://d.example.com", "HTTP_DOWN", 2L)));
+        when(monitorRefs.pick(any(), any())).thenReturn(Map.of(
+                60L, new com.sitemonitor.service.MonitorRefResolver.Pick("Kendi sitemiz", "http", "http", 44L, 2L)));
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.read"), eq("view"))).thenReturn(false);
+
+        mvc.perform(get("/api/admin/alerts/type-summary").param("alertTypes", "HTTP_DOWN").session(userSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.top.items[0].monitor.name").value("Kendi sitemiz"))
+                .andExpect(jsonPath("$.data.top.items[0].monitor.monitor_id").doesNotExist());
+    }
+
+    @Autowired AdminController adminController;
+
+    @Test
+    @DisplayName("type-summary: kısa ömürlü bellek — aynı kapsam + parametre ikinci çağrıda sorgusuz; fresh yeniden hesaplar; başka tip ayrı anahtar")
+    void alertTypeSummary_memoisedPerScopeAndParams() throws Exception {
+        org.springframework.test.util.ReflectionTestUtils.setField(adminController, "typeSummaryCacheMs", 60_000L);
+        try {
+            when(alertEventRepo.topDomainsByAlertCount(any(), any(), anyBoolean(), any(), any(Pageable.class))).thenReturn(List.of());
+            for (int i = 0; i < 3; i++) {
+                mvc.perform(get("/api/admin/alerts/type-summary").param("alertTypes", "PING_DOWN").session(authSession()))
+                        .andExpect(status().isOk()).andExpect(jsonPath("$.data.top.days").value(7));
+            }
+            verify(alertEventRepo, times(1)).topDomainsByAlertCount(any(), any(), anyBoolean(), any(), any(Pageable.class));
+            mvc.perform(get("/api/admin/alerts/type-summary").param("alertTypes", "PING_DOWN").param("fresh", "true").session(authSession()))
+                    .andExpect(status().isOk());
+            verify(alertEventRepo, times(2)).topDomainsByAlertCount(any(), any(), anyBoolean(), any(), any(Pageable.class));
+            mvc.perform(get("/api/admin/alerts/type-summary").param("alertTypes", "PORT_DOWN").session(authSession()))
+                    .andExpect(status().isOk());
+            verify(alertEventRepo, times(3)).topDomainsByAlertCount(any(), any(), anyBoolean(), any(), any(Pageable.class));
+            // başka kapsam (kendi takımı) ayrı anahtar
+            mvc.perform(get("/api/admin/alerts/type-summary").param("alertTypes", "PING_DOWN").session(userSession()))
+                    .andExpect(status().isOk());
+            verify(alertEventRepo, times(4)).topDomainsByAlertCount(any(), any(), anyBoolean(), any(), any(Pageable.class));
+        } finally {
+            org.springframework.test.util.ReflectionTestUtils.setField(adminController, "typeSummaryCacheMs", 0L);
+        }
+    }
+
+    @Test
+    @DisplayName("type-summary: kapsamsız kullanıcı — sorgusuz sıfır (liste ucuyla aynı kural)")
+    void alertTypeSummary_noScopeNoQuery() throws Exception {
+        MockHttpSession s = userSession();
+        s.setAttribute("viewTeamIds", new java.util.ArrayList<Long>());
+        mvc.perform(get("/api/admin/alerts/type-summary").param("alertTypes", "HTTP_DOWN").session(s))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.open.total").value(0))
+                .andExpect(jsonPath("$.data.top.items.length()").value(0));
+        verify(alertEventRepo, never()).topDomainsByAlertCount(any(), any(), anyBoolean(), any(), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("Alarm listesi satırı monitor_ref taşır (ad + açma kimliği izleme okuma izniyle); sertifika satırında yok")
+    void listAlerts_rowsCarryMonitorRef() throws Exception {
+        AlertEvent http = alarmRow(7L, "https://a.example.com", "HTTP_DOWN", 5L);
+        AlertEvent cert = alarmRow(8L, "a.example.com", "EXPIRY", null);
+        when(alertEventRepo.findFiltered(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(http, cert)));
+        when(monitorRefs.pick(any(), any())).thenReturn(Map.of(
+                7L, new com.sitemonitor.service.MonitorRefResolver.Pick("Ana site", "http", "http", 11L, 5L),
+                8L, new com.sitemonitor.service.MonitorRefResolver.Pick("a.example.com", "cert", "dashboard", null, null)));
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.read"), eq("view"))).thenReturn(true);
+
+        mvc.perform(get("/api/admin/alerts").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].monitor_ref.name").value("Ana site"))
+                .andExpect(jsonPath("$.data[0].monitor_ref.type").value("http"))
+                .andExpect(jsonPath("$.data[0].monitor_ref.monitor_id").value(11))
+                .andExpect(jsonPath("$.data[1].monitor_ref").doesNotExist());
+
+        // İzleme okuma izni yok → ad kalır, açma kimliği yok
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.read"), eq("view"))).thenReturn(false);
+        mvc.perform(get("/api/admin/alerts").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].monitor_ref.name").value("Ana site"))
+                .andExpect(jsonPath("$.data[0].monitor_ref.monitor_id").doesNotExist());
     }
 
     private MockHttpSession authSession() {

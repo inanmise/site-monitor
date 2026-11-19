@@ -92,6 +92,48 @@ public final class MonitorTypeCatalog {
         return alertType == null ? null : TYPE_OF_ALERT.get(alertType);
     }
 
+    // ── İzleme SAYFASI kategorisi (2026-11-19, kullanıcı isteği: izleme sayfasında o türün alarmları) ─────────────────
+    // Raporlama kümeleri (ALERT_TYPES — haftalık şerit, PDF, push aileleri, yeniden uyarı aralıkları) DEĞİŞMEZ: orada
+    // "HTTP/Website" envanterin erişilebilirlik alarmını da kapsar. Sayfa düzeyinde ise HTTP sayfası YALNIZ kendi
+    // izlemelerinin alarmlarını gösterir; ACCESSIBILITY (envanter durum izlemesi) kendi sayfasında — Erişilebilirlik
+    // (sekme `uptime`). Menü rozetleri, Alarm Geçmişi'nin `src` süzgeci ve sayfanın Alarmlar görünümü bu eşlemeyi kullanır.
+    // Frontend aynası: utils/monitorAlertTypes.js PAGE_ALERT_TYPES (monitorTypeSurfaces.test.jsx karşılaştırır).
+
+    /** Erişilebilirlik sayfasının sekme anahtarı. */
+    public static final String UPTIME_PAGE = "uptime";
+    /** Erişilebilirlik sayfasına ait TEK alarm tipi (raporlamada `http` ailesindedir). */
+    public static final String UPTIME_ALERT_TYPE = "ACCESSIBILITY";
+
+    /** Sayfa sırası: rapor sırası + Erişilebilirlik (sertifika envanterinin ardından). */
+    public static final List<String> PAGE_ORDER = buildPageOrder();
+
+    private static List<String> buildPageOrder() {
+        List<String> out = new java.util.ArrayList<>();
+        for (String type : ORDER) {
+            out.add(type);
+            if ("cert".equals(type)) out.add(UPTIME_PAGE);
+        }
+        return List.copyOf(out);
+    }
+
+    /** Alarm tipinin İZLEME SAYFASI; bilinmeyen tip için {@code null}. */
+    public static String pageOfAlert(String alertType) {
+        if (UPTIME_ALERT_TYPE.equals(alertType)) return UPTIME_PAGE;
+        return typeOfAlert(alertType);
+    }
+
+    /** Sayfanın alarm tipleri; bilinmeyen sayfa → boş küme. */
+    public static Set<String> pageAlertTypes(String page) {
+        if (page == null) return Set.of();
+        if (UPTIME_PAGE.equals(page)) return Set.of(UPTIME_ALERT_TYPE);
+        Set<String> base = ALERT_TYPES.get(page);
+        if (base == null) return Set.of();
+        if (!base.contains(UPTIME_ALERT_TYPE)) return base;
+        Set<String> out = new java.util.LinkedHashSet<>(base);
+        out.remove(UPTIME_ALERT_TYPE);
+        return Set.copyOf(out);
+    }
+
     /** Tür etiketi; bilinmeyen tür için anahtarın kendisi (çökmek yerine ham anahtar görünür). */
     public static String label(String type) {
         return LABELS_TR.getOrDefault(type, type == null ? "—" : type);

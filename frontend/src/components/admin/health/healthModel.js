@@ -91,7 +91,8 @@ export function integrationList({ health, pushKpi, smtpPeriod = '7d', configChec
   if (h.domain_expiry) {
     const d = h.domain_expiry
     const src = d.source || 'IDLE'
-    const level = d.alarm || src === 'NONE' ? 'down' : src === 'RDAP' ? 'ok' : src === 'FALLBACK' ? 'warn' : 'unknown'
+    // DEGRADED (2026-11-19): son sorgu başarısız ama ardışık kaynak hatası kesinti eşiğine ulaşmadı — uyarı, kesinti değil
+    const level = d.alarm || src === 'NONE' ? 'down' : src === 'RDAP' ? 'ok' : (src === 'FALLBACK' || src === 'DEGRADED') ? 'warn' : 'unknown'
     out.push({ key: 'domain', level, data: d })
   }
   if (h.network) out.push({ key: 'network', level: h.network.alarm ? 'down' : 'ok', data: h.network })
@@ -175,7 +176,11 @@ export function deriveOverall({ health, httpMetrics, pushKpi, smtpPeriod = '7d',
     if (it.key === 'smtp') add(it.level, 'smtpAlarm', s, [smtpPeriod])
     else if (it.key === 'push') add(it.level, 'push', s, [it.data.rate])
     else if (it.key === 'weekly') add(it.level, 'weeklyFailed', s, [it.data.last_run_failed])
-    else if (it.key === 'domain') add(it.level, it.level === 'down' ? 'domAlarm' : 'domFallback', s)
+    else if (it.key === 'domain') {
+      if (it.level === 'down') add(it.level, 'domAlarm', s)
+      else if (it.data?.source === 'DEGRADED') add(it.level, 'domDegraded', s, [it.data.consecutive_failures, it.data.outage_after])
+      else add(it.level, 'domFallback', s)
+    }
     else if (it.key === 'ldap') add(it.level, 'ldap', s, [it.data.detail])
     else if (it.key === 'cleanup') add(it.level, 'cleanup', s)
     else add(it.level, it.key, s)

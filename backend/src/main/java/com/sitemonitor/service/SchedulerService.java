@@ -1461,6 +1461,10 @@ public class SchedulerService {
         patch("ALTER TABLE domain_checks ADD COLUMN failure_detail TEXT");
         // Alan adı düzenlenince eski alan adının satırı değişiklik tabanı olmasın (2026-11-15, DomainCheck.checkedDomain).
         patch("ALTER TABLE domain_checks ADD COLUMN checked_domain VARCHAR(255)");
+        // Sorgulanan adres / port-43 sunucusu (2026-11-19, alan adı kartı bağlantısı)
+        patch("ALTER TABLE domain_checks ADD COLUMN query_url VARCHAR(500)");
+        patch("ALTER TABLE domain_checks ADD COLUMN query_server VARCHAR(255)");
+        patch("ALTER TABLE dns_records ADD COLUMN checked_domain VARCHAR(255)");
         // Sertifika geçmişi: checker'ın hesaplayıp attığı aşama + çözümlenen IP'ler (yalnız hatalı kontrolde dolu).
         patch("ALTER TABLE certificate_checks ADD COLUMN error_stage VARCHAR(32)");
         patch("ALTER TABLE certificate_checks ADD COLUMN resolved_ips TEXT");
@@ -12211,6 +12215,17 @@ public class SchedulerService {
                         boolean rotated, String checkedAt) {}
 
     /**
+     * Değişiklik tabanı bu izlemenin ŞİMDİKİ hedefine mi ait (2026-11-19): kayıt tipi aynı ve (kayıtta varsa) alan adı aynı
+     * (harf duyarsız). NULL alanlar eski kayıttır → o parça kıyaslanmaz (bugünkü kural).
+     */
+    public static boolean sameDnsTarget(DnsRecord prev, DnsMonitor m) {
+        if (prev == null || m == null) return false;
+        if (prev.getRecordType() != null && m.getRecordType() != null
+                && !prev.getRecordType().equalsIgnoreCase(m.getRecordType())) return false;
+        return prev.getCheckedDomain() == null || m.getDomain() == null || prev.getCheckedDomain().equalsIgnoreCase(m.getDomain());
+    }
+
+    /**
      * Taban okuma + {@code dns_records} kaydı ({@code change_state} dahil) + etkinlik — klasik 2. aşamanın kalıcılaştırma
      * bölümü (ayrıştırıldı; dağıtık işte işçi pod'da koşar). Kayıt hatası FIRLATIR (klasik: o izleme kalem üretmez).
      */
@@ -12229,6 +12244,10 @@ public class SchedulerService {
         DnsRecord prevOk = success
                 ? dnsRecordRepo.findLatestScheduledSuccessful(m.getId()).orElse(null)
                 : null;
+        // Taban BAŞKA bir alan adının / kayıt tipinin kaydıysa (izleme düzenlendi ya da envanter yeniden adlandırıldı)
+        // karşılaştırma yok (2026-11-19): eski adın değerleri yeni adın değerleriyle sahte DNS_CHANGED açıyordu. Bu kayıt
+        // sonraki turun tabanı olur. checked_domain NULL = eski kayıt → yalnız kayıt tipi kıyaslanır (o hep yazılıyordu).
+        if (prevOk != null && !sameDnsTarget(prevOk, m)) prevOk = null;
         String prevValue = prevOk != null ? prevOk.getValue() : null;
         // CDN rotasyonu (2026-11-18): eski + yeni değerlerin tamamı aynı CDN'in yayımlanmış aralığındaysa ROTATED (alarm yok).
         DnsCheckerService.ChangeKind kind = success
@@ -12240,6 +12259,7 @@ public class SchedulerService {
         DnsRecord record = new DnsRecord();
         record.setMonitorId(m.getId());
         record.setRecordType(m.getRecordType());
+        record.setCheckedDomain(m.getDomain());
         record.setValue(valueStr);
         record.setChanged(changed);
         record.setRotated(rotated);

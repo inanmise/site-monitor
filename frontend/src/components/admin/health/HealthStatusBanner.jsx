@@ -37,6 +37,7 @@ const REASON_TEXT = {
   weeklyFailed: (t, [n]) => t('health.reasonWeeklyFailed', n),
   domAlarm: (t) => t('health.domAlarm'),
   domFallback: (t) => t('health.reasonDomFallback'),
+  domDegraded: (t, [n, max]) => t('health.reasonDomDegraded', n ?? 1, max ?? 3),
   ldap: (t, [detail]) => t('health.reasonLdap', cfgDetailText(detail, t)),
   cleanup: (t) => t('health.reasonCleanup'),
   watchdog: (t, [label]) => t('wd.reason', label),

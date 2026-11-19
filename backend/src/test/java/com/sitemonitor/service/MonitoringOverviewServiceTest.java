@@ -198,6 +198,8 @@ class MonitoringOverviewServiceTest {
         // Tek sütunluk projeksiyon (2026-10-01): ham alan adı — tarama gibi BİREBİR karşılaştırılır (normalizasyon yok;
         // harf büyüklüğü farkı ayrı testte: inventoryInactive_exactMatchLikeSweep).
         when(inventoryRepo.findActiveDomains()).thenReturn(List.of("live.example.com"));
+        // Envanter kaydı VAR ama duraklatılmış (2026-11-19: kaydı hiç olmayan satır ayrı — sahipsiz kalıntı)
+        when(inventoryRepo.findNetworkDomains()).thenReturn(List.of("live.example.com", "gone.example.com"));
         PortMonitor gone = new PortMonitor(); gone.setId(1L); gone.setName("p-gone"); gone.setHost("gone.example.com"); gone.setPort(443); gone.setTeamId(14L); gone.setActive(true); gone.setStandalone(false); gone.setIntervalSeconds(300);
         PortMonitor alone = new PortMonitor(); alone.setId(2L); alone.setName("p-alone"); alone.setHost("gone.example.com"); alone.setPort(443); alone.setTeamId(14L); alone.setActive(true); alone.setStandalone(true); alone.setIntervalSeconds(300);
         PortMonitor live = new PortMonitor(); live.setId(3L); live.setName("p-live"); live.setHost("live.example.com"); live.setPort(443); live.setTeamId(14L); live.setActive(true); live.setStandalone(false); live.setIntervalSeconds(300);
@@ -230,6 +232,7 @@ class MonitoringOverviewServiceTest {
         org.springframework.test.util.ReflectionTestUtils.setField(svc, "inventoryRepo", inventoryRepo);
         // SchedulerService: activeDomains.contains(m.getDomain()) — "OutboundIVR.example.com" ≠ "outboundivr.example.com"
         when(inventoryRepo.findActiveDomains()).thenReturn(List.of("OutboundIVR.example.com", "exact.example.com"));
+        when(inventoryRepo.findNetworkDomains()).thenReturn(List.of("OutboundIVR.example.com", "exact.example.com"));
         com.sitemonitor.model.DnsMonitor caseOnly = new com.sitemonitor.model.DnsMonitor(); caseOnly.setId(1L); caseOnly.setName("d-case"); caseOnly.setDomain("outboundivr.example.com");
         caseOnly.setTeamId(14L); caseOnly.setActive(true); caseOnly.setStandalone(false); caseOnly.setIntervalSeconds(300);
         com.sitemonitor.model.DnsMonitor exact = new com.sitemonitor.model.DnsMonitor(); exact.setId(2L); exact.setName("d-exact"); exact.setDomain("exact.example.com");
@@ -245,14 +248,16 @@ class MonitoringOverviewServiceTest {
 
         List<Map<String, Object>> rows = (List<Map<String, Object>>) out.get("monitors");
         java.util.function.Function<String, Map<String, Object>> row = n -> rows.stream().filter(r -> n.equals(r.get("name"))).findFirst().orElseThrow();
-        assertThat(row.apply("d-case")).containsEntry("status", "paused").containsEntry("inventory_inactive", true).containsEntry("active", false);
         assertThat(row.apply("d-exact")).containsEntry("status", "up").containsEntry("inventory_inactive", false);
-        assertThat(row.apply("d-null")).containsEntry("status", "paused").containsEntry("inventory_inactive", true);   // contains(null) → atlanır
+        // Harf farkıyla ya da adsız kalan türev satırın envanterde BİREBİR kaydı yok → sahipsiz kalıntı: gecikmiş değil,
+        // duraklatılmış da değil; satırlara ve sayılara girmez, ayrı listede (2026-11-19)
+        assertThat(rows).noneMatch(r -> "d-case".equals(r.get("name")) || "d-null".equals(r.get("name")));
+        List<Map<String, Object>> orphans = (List<Map<String, Object>>) out.get("orphans");
+        assertThat(orphans).extracting(o -> o.get("name")).containsExactlyInAnyOrder("d-case", "d-null");
         Map<String, Object> dns = ((List<Map<String, Object>>) out.get("types")).stream().filter(x -> "dns".equals(x.get("type"))).findFirst().orElseThrow();
-        // Kart "aktif" = taramanın gerçekten kontrol ettiği; gecikmiş SAYILMAZ; envanter-dışı paused'un alt kümesi
-        assertThat(dns).containsEntry("total", 3L).containsEntry("active", 1L).containsEntry("stale", 0L)
-                .containsEntry("paused", 2L).containsEntry("inventory_inactive", 2L);
-        assertThat((Map<String, Object>) out.get("totals")).containsEntry("stale", 0L).containsEntry("inventory_inactive", 2L);
+        assertThat(dns).containsEntry("total", 1L).containsEntry("active", 1L).containsEntry("stale", 0L)
+                .containsEntry("paused", 0L).containsEntry("inventory_inactive", 0L).containsEntry("orphans", 2L);
+        assertThat((Map<String, Object>) out.get("totals")).containsEntry("stale", 0L).containsEntry("orphans", 2L);
         assertThat(MonitoringOverviewService.inventoryInactive(java.util.Set.of("A.example.com"), false, "a.example.com")).isTrue();
         assertThat(MonitoringOverviewService.inventoryInactive(java.util.Set.of("a.example.com"), false, "a.example.com")).isFalse();
         assertThat(MonitoringOverviewService.inventoryInactive(java.util.Set.of(), true, "a.example.com")).isFalse();    // standalone baypas
@@ -267,6 +272,7 @@ class MonitoringOverviewServiceTest {
                 org.mockito.Mockito.mock(com.sitemonitor.repository.CertificateInventoryRepository.class);
         org.springframework.test.util.ReflectionTestUtils.setField(svc, "inventoryRepo", inventoryRepo);
         when(inventoryRepo.findActiveDomains()).thenReturn(List.of("other.example.com"));
+        when(inventoryRepo.findNetworkDomains()).thenReturn(List.of("other.example.com", "outboundivrtahprod.example.com"));
         PortMonitor orphan = new PortMonitor(); orphan.setId(1L); orphan.setName("outboundivrtahprod.example.com"); orphan.setHost("outboundivrtahprod.example.com");
         orphan.setPort(443); orphan.setTeamId(14L); orphan.setActive(true); orphan.setStandalone(false); orphan.setIntervalSeconds(300);
         PortMonitor twin = new PortMonitor(); twin.setId(2L); twin.setName("IVR tah prod"); twin.setHost("OUTBOUNDIVRTAHPROD.example.com");
@@ -415,6 +421,52 @@ class MonitoringOverviewServiceTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    @DisplayName("Sahipsiz kalıntı (2026-11-19): envanterde kaydı HİÇ olmayan türev satır sayılmaz (toplam / duraklatılmış dışı), "
+            + "ayrı listede; envanter kaydı duraklatılmış satır 'duraklatılmış' kalır; envanter okunamazsa eski görünüm")
+    void orphanDerivedRows_excludedFromCounts() {
+        com.sitemonitor.repository.CertificateInventoryRepository inventoryRepo =
+                org.mockito.Mockito.mock(com.sitemonitor.repository.CertificateInventoryRepository.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "inventoryRepo", inventoryRepo);
+        when(inventoryRepo.findActiveDomains()).thenReturn(List.of("live.example.com"));
+        when(inventoryRepo.findNetworkDomains()).thenReturn(List.of("live.example.com", "paused.example.com"));
+        PortMonitor live = new PortMonitor(); live.setId(1L); live.setName("p-live"); live.setHost("live.example.com"); live.setPort(443); live.setTeamId(14L); live.setActive(true); live.setStandalone(false); live.setIntervalSeconds(300);
+        PortMonitor paused = new PortMonitor(); paused.setId(2L); paused.setName("p-paused"); paused.setHost("paused.example.com"); paused.setPort(443); paused.setTeamId(14L); paused.setActive(true); paused.setStandalone(false); paused.setIntervalSeconds(300);
+        PortMonitor gone = new PortMonitor(); gone.setId(3L); gone.setName("p-gone"); gone.setHost("gone.example.com"); gone.setPort(443); gone.setTeamId(14L); gone.setActive(true); gone.setStandalone(false); gone.setIntervalSeconds(300);
+        PortMonitor alone = new PortMonitor(); alone.setId(4L); alone.setName("p-alone"); alone.setHost("gone.example.com"); alone.setPort(9000); alone.setTeamId(14L); alone.setActive(true); alone.setStandalone(true); alone.setIntervalSeconds(300);
+        PortMonitor otherTeam = new PortMonitor(); otherTeam.setId(5L); otherTeam.setName("p-other"); otherTeam.setHost("x.example.com"); otherTeam.setPort(443); otherTeam.setTeamId(99L); otherTeam.setActive(true); otherTeam.setStandalone(false); otherTeam.setIntervalSeconds(300);
+        when(portMonitorRepo.findAllByOrderByNameAsc()).thenReturn(List.of(live, paused, gone, alone, otherTeam));
+
+        Map<String, Object> out = svc.build(team -> Long.valueOf(14L).equals(team), false, 24);
+
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) out.get("monitors");
+        assertThat(rows).extracting(r -> r.get("name")).containsExactlyInAnyOrder("p-live", "p-paused", "p-alone");
+        assertThat(rows.stream().filter(r -> "p-paused".equals(r.get("name"))).findFirst().orElseThrow())
+                .containsEntry("status", "paused").containsEntry("inventory_inactive", true);
+        List<Map<String, Object>> orphans = (List<Map<String, Object>>) out.get("orphans");
+        assertThat(orphans).hasSize(1);
+        assertThat(orphans.get(0)).containsEntry("type", "port").containsEntry("id", 3L).containsEntry("name", "p-gone")
+                .containsEntry("target", "gone.example.com").containsEntry("team_id", 14L).containsEntry("team_name", "SY");
+        Map<String, Object> port = ((List<Map<String, Object>>) out.get("types")).stream().filter(x -> "port".equals(x.get("type"))).findFirst().orElseThrow();
+        assertThat(port).containsEntry("total", 3L).containsEntry("active", 2L).containsEntry("paused", 1L)
+                .containsEntry("inventory_inactive", 1L).containsEntry("orphans", 1L);
+        assertThat((Map<String, Object>) out.get("totals")).containsEntry("total", 3L).containsEntry("paused", 1L).containsEntry("orphans", 1L);
+
+        // Envanter ağ kayıtları okunamazsa: kalıntı bilinmez → eski "duraklatılmış · envanter dışı" görünümü
+        when(inventoryRepo.findNetworkDomains()).thenThrow(new RuntimeException("db"));
+        Map<String, Object> out2 = svc.build(team -> Long.valueOf(14L).equals(team), false, 24);
+        assertThat((List<Map<String, Object>>) out2.get("orphans")).isEmpty();
+        assertThat(((List<Map<String, Object>>) out2.get("monitors")).stream().filter(r -> "p-gone".equals(r.get("name"))).findFirst().orElseThrow())
+                .containsEntry("status", "paused").containsEntry("inventory_inactive", true);
+
+        assertThat(MonitoringOverviewService.orphanDerived(java.util.Set.of("a.example.com"), false, "a.example.com")).isFalse();
+        assertThat(MonitoringOverviewService.orphanDerived(java.util.Set.of("A.example.com"), false, "a.example.com")).isTrue();
+        assertThat(MonitoringOverviewService.orphanDerived(java.util.Set.of(), true, "a.example.com")).isFalse();
+        assertThat(MonitoringOverviewService.orphanDerived(null, false, "a.example.com")).isFalse();
+        assertThat(MonitoringOverviewService.orphanDerived(java.util.Set.of(), false, null)).isTrue();
+    }
+
+    @Test
     @DisplayName("Performans (2026-10-01): tam alarm/envanter entity'si yüklenmez — gruplu sayım + tek sütunluk envanter projeksiyonu")
     void noFullEntityLoads() {
         com.sitemonitor.repository.CertificateInventoryRepository inventoryRepo =
@@ -425,6 +477,7 @@ class MonitoringOverviewServiceTest {
         verify(alertEventRepo).countRecoveredSinceByTypeAndTeam(anyString());
         verify(alertEventRepo, never()).findByResolvedAtGreaterThanEqual(anyString());
         verify(inventoryRepo).findActiveDomains();
+        verify(inventoryRepo).findNetworkDomains();
         verify(inventoryRepo, never()).findByActiveTrueOrderByDomainAsc();
     }
 

@@ -151,4 +151,15 @@ public class DomainCheck {
     @com.fasterxml.jackson.annotation.JsonIgnore
     @Column(name = "checked_domain")
     private String checkedDomain;
+
+    /**
+     * SiteMonitor'ün bu kontrolde sorguladığı adres (2026-11-19, kullanıcı isteği: kartta bağlantı — çevrimiçi sorguyla
+     * karşılaştırma): RDAP sorgusu ya da .tr web-whois sayfası; yalnız http(s). NULL = eski satır / bilinmiyor.
+     */
+    @Column(name = "query_url", length = 500)
+    private String queryUrl;
+
+    /** Port-43 WHOIS sunucusu ("whois.example:43") — bağlantı değil, metin olarak gösterilir. NULL = yok / eski satır. */
+    @Column(name = "query_server", length = 255)
+    private String queryServer;
 }

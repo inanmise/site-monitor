@@ -419,6 +419,27 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
                                         @Param("resolvedUntil") String resolvedUntil,
                                         @Param("scoped") boolean scoped, @Param("scope") List<Long> scope);
 
+    /**
+     * İzleme sayfasının Alarmlar görünümü — "en çok alarm üreten izlemeler" (2026-11-19): {@code since} sonrasında açılan
+     * alarmlar alan adı × damgalı takım başına {@code [domain, teamId, adet, en yeni id, açık adet]}, adede göre azalan;
+     * tavan {@code pageable}. Takım kapsamı {@link #ALERT_LIST_FIND} ile AYNI yüklem. İndeks: {@code idx_ae_created_at}
+     * aralığı + tip süzgeci.
+     */
+    @Query("""
+            SELECT e.domain, e.teamId, COUNT(e), MAX(e.id), SUM(CASE WHEN e.resolved = false THEN 1 ELSE 0 END)
+              FROM AlertEvent e
+             WHERE e.alertType IN :types AND e.createdAt >= :since AND e.domain IS NOT NULL
+               AND (:scoped = FALSE OR e.teamId IN :scope OR EXISTS (
+                       SELECT 1 FROM CertificateInventory i
+                        WHERE i.domain = e.domain
+                          AND (i.teamId IN :scope OR i.ugTeamId IN :scope)))
+             GROUP BY e.domain, e.teamId
+             ORDER BY COUNT(e) DESC, MAX(e.id) DESC
+            """)
+    List<Object[]> topDomainsByAlertCount(@Param("types") Collection<String> types, @Param("since") String since,
+                                          @Param("scoped") boolean scoped, @Param("scope") List<Long> scope,
+                                          Pageable pageable);
+
     // ── Alarm Geçmişi listesinin dört sorgusu — gövdeler SABİTTE (2026-10-04) ────────────────────────────────────
     // Metinler önceki @Query dizeleriyle BİREBİR aynı; tek fark: "7/24'e gidenler" süzgecinin (…Noc ikizleri) aynı
     // gövdeyi paylaşabilmesi. İkizler YALNIZ {@link #NOC_SENT_FILTER} ekler — ayrışamazlar

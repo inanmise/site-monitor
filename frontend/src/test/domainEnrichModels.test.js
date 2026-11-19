@@ -3,7 +3,7 @@ import { domainDaysUntil, liveDays, liveRow, withLiveDays } from '../components/
 import { javaStringTable, readJavaTest } from './helpers/javaTable.js'
 import {
   DEFAULT_DOMAIN_FILTERS, NO_REGISTRAR, domainFacets, expiryKind, hasDomainFilters, matchesDomainFilters,
-  normalizeDomainFilters, registrarKey, sourceKind,
+  domainFilterParam, normalizeDomainFilters, registrarKey, sourceKind,
 } from '../components/domain/domainFilterModel.js'
 import { domainExpiring, domainRowState } from '../components/mydash/domainExpiringModel.js'
 import { bulkPlanPreview, DOMAIN_PLAN_BULK_MAX } from '../components/domain/DomainBulkPlanDialog.jsx'
@@ -87,7 +87,7 @@ describe('C1 — alan adı ek süzgeçleri', () => {
     expect(rows.map((m) => expiryKind(m, NOW))).toEqual(['expired', 'valid', 'unknown', 'valid'])
   })
   it('facet sayımları dürüst: her seçenek öteki ek süzgeçler uygulanmış listeden; bilinmeyen ayrı sayılır', () => {
-    const f = { ...DEFAULT_DOMAIN_FILTERS, source: 'rdap' }
+    const f = { ...DEFAULT_DOMAIN_FILTERS, source: ['rdap'] }
     const facets = domainFacets(rows, f, NOW)
     expect(facets.source).toEqual({ all: 4, rdap: 2, whois: 1, unknown: 1 })   // kendi süzgeci sayıma girmez
     expect(facets.expiry).toEqual({ all: 2, expired: 1, valid: 1, unknown: 0 })   // kaynak = rdap uygulanmış
@@ -97,13 +97,30 @@ describe('C1 — alan adı ek süzgeçleri', () => {
     const all = domainFacets(rows, DEFAULT_DOMAIN_FILTERS, NOW)
     expect(all.registrars.at(-1).key).toBe(NO_REGISTRAR)   // bilinmeyen en sonda
   })
-  it('seçili registrar listede yoksa 0 sayımla görünür kalır; normalize bilinmeyen değeri varsayılana çevirir', () => {
+  it('seçili registrar listede yoksa 0 sayımla görünür kalır; normalize bilinmeyen değeri düşürür, eski tek değerli bağlantıyı okur', () => {
     const f = normalizeDomainFilters({ registrar: 'yok kuruluş', source: 'ftp', expiry: 'expired' })
-    expect(f).toEqual({ registrar: 'yok kuruluş', source: 'all', expiry: 'expired' })
+    expect(f).toEqual({ registrar: ['yok kuruluş'], source: [], expiry: ['expired'] })
     expect(domainFacets(rows, f, NOW).registrars.find((r) => r.key === 'yok kuruluş').count).toBe(0)
     expect(hasDomainFilters(DEFAULT_DOMAIN_FILTERS)).toBe(false)
     expect(hasDomainFilters(f)).toBe(true)
-    expect(rows.filter((m) => matchesDomainFilters(m, { registrar: 'all', source: 'all', expiry: 'unknown' }, null, NOW)).map((m) => m.id)).toEqual([3])
+    expect(rows.filter((m) => matchesDomainFilters(m, { registrar: [], source: [], expiry: ['unknown'] }, null, NOW)).map((m) => m.id)).toEqual([3])
+    // eski bağlantı: "all" = seçim yok; virgüllü registrar adı TEK değer (ayraç `|`)
+    expect(normalizeDomainFilters({ registrar: 'all', source: 'all', expiry: 'all' })).toEqual({ registrar: [], source: [], expiry: [] })
+    expect(normalizeDomainFilters({ registrar: registrarKey(rows[0]) }).registrar).toEqual([registrarKey(rows[0])])
+  })
+
+  it('çoklu seçim (2026-11-19): bir süzgeçte birden çok değer VEYA; süzgeçler arası VE; URL `|` ile, tekrar yok, sınırlı', () => {
+    const f = normalizeDomainFilters({ source: 'rdap|whois|rdap|ftp', expiry: ['valid', 'unknown'] })
+    expect(f.source).toEqual(['rdap', 'whois'])
+    expect(rows.filter((m) => matchesDomainFilters(m, f, null, NOW)).map((m) => m.id)).toEqual([2, 3])
+    expect(domainFilterParam(f.source)).toBe('rdap|whois')
+    expect(domainFilterParam([])).toBeNull()
+    expect(normalizeDomainFilters({ registrar: Array.from({ length: 80 }, (_, i) => 'r' + i) }).registrar).toHaveLength(50)
+    const reg = normalizeDomainFilters({ registrar: [registrarKey(rows[0]), NO_REGISTRAR] })
+    expect(rows.filter((m) => matchesDomainFilters(m, reg, null, NOW)).map((m) => m.id)).toEqual([1, 2, 4])
+    // facet: seçili iki registrar, biri listede yok → 0 sayımla görünür
+    const missing = normalizeDomainFilters({ registrar: ['yok 1', 'yok 2'] })
+    expect(domainFacets(rows, missing, NOW).registrars.filter((r) => r.key.startsWith('yok')).map((r) => r.count)).toEqual([0, 0])
   })
 })
 

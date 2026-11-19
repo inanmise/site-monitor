@@ -101,6 +101,25 @@ public class DomainCheckerService {
      */
     private static final ThreadLocal<DomainCheck> LAST_PERSISTED = new ThreadLocal<>();
 
+    /**
+     * Sorgu adresi yalnız http(s) ve ≤ 500 karakter ise saklanır / gösterilir (bağlantı olarak açılır); başka şema, bilgi
+     * (userinfo) içeren ya da okunamayan adres null. Sorgu dizesi alan adını taşır (isimtescil), kişisel veri içermez.
+     */
+    public static String safeQueryUrl(Object raw) {
+        if (!(raw instanceof String s) || s.isBlank() || s.length() > 500) return null;
+        try {
+            java.net.URI u = java.net.URI.create(s.trim());
+            String scheme = u.getScheme();
+            if (scheme == null || !(scheme.equalsIgnoreCase("https") || scheme.equalsIgnoreCase("http"))) return null;
+            if (u.getRawUserInfo() != null || u.getHost() == null) return null;
+            // Yapılandırılmış sorgu adresi (RDAP yedeği, isimtescil) bir erişim anahtarı taşıyabilir (`?token=…`); izlemeyi
+            // okuyan herkes görür → hassas adlı parametrelerin değeri maskelenir, alan adı parametresi görünür kalır.
+            return SecretMask.maskUrlQuery(u.toString());
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     /** Test (kaydetmeden) — persist yok, değişiklik tespiti yok. */
     public Map<String, Object> test(String domainInput, int warningDays, int criticalDays) {
         return evaluate(domainInput, warningDays, criticalDays, null, null, null, false);
@@ -229,6 +248,10 @@ public class DomainCheckerService {
         out.put("domain", reg);
         out.put("source", source);
         out.put("whois_provider", info.get("whois_provider"));   // .tr web-whois'te hangi kaynak (isimtescil/trabis/trabis43)
+        // SiteMonitor'ün sorguladığı adres (2026-11-19): kart bağlantısı — çevrimiçi sorguyla karşılaştırmak için.
+        // Yalnız http(s) adres bağlantı olur; port-43 sunucusu metin. Veri gelmese de (UNKNOWN) son denenen adres yazılır.
+        out.put("query_url", safeQueryUrl(info.get("query_url")));
+        out.put("query_server", info.get("query_server") instanceof String qs && !qs.isBlank() ? qs : null);
         out.put("status", status);
         out.put("days_remaining", days);
         out.put("expiry_date", expiry);
@@ -290,6 +313,8 @@ public class DomainCheckerService {
             dc.setCheckedDomain(out.get("domain") instanceof String d ? d : null);   // değişiklik tabanının kimliği (2026-11-15)
             dc.setSource((String) out.get("source"));
             dc.setWhoisProvider((String) out.get("whois_provider"));
+            dc.setQueryUrl((String) out.get("query_url"));
+            dc.setQueryServer((String) out.get("query_server"));
             dc.setStatus((String) out.get("status"));
             dc.setDaysRemaining((Integer) out.get("days_remaining"));
             dc.setExpiryDate((String) out.get("expiry_date"));

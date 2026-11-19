@@ -27,6 +27,7 @@ import NotifyChannels from './ui/NotifyChannels.jsx'
 import SegmentedControl from './ui/SegmentedControl.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
+import { MonitorPageBody, MonitorViewSwitch, useMonitorAlarmsView } from './monitoring/alarms/MonitorAlarms.jsx'
 import TagInput from './ui/TagInput.jsx'
 import {
   Trash2, DatabaseZap, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, Inbox, Copy, Cable,
@@ -199,6 +200,7 @@ const SCHEDULE_ERROR_KEYS = ['schedule', 'schedule_mode', 'interval_seconds', 'c
 const NO_TEAMS = Object.freeze([])
 export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTeams = NO_TEAMS, globalAdmin = false }) {
   const t = useT()
+  const alarmsView = useMonitorAlarmsView('dbquery')   // İzlemeler | Alarmlar görünümü (2026-11-19)
   const toast = useToast()
   const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
@@ -1137,7 +1139,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
 
   return (
     <div className="upt-page">
-      <MonitorPageHeader type="dbquery" title={t('dbq.page.title')} subtitle={t('dbq.page.subtitle')}
+      <MonitorPageHeader showActions={!alarmsView.active} type="dbquery" title={t('dbq.page.title')} subtitle={t('dbq.page.subtitle')}
         count={loading ? null : monitors.length} down={counts.down}
         refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
@@ -1154,7 +1156,10 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
             <LibraryBig aria-hidden="true" className="size-4" />{t('dbq.page.templates')}
           </Button>
         </>}
-        canWrite={canWrite} onNew={() => openNew()} newLabel={t('dbq.page.add')} />
+        canWrite={canWrite} onNew={() => openNew()} newLabel={t('dbq.page.add')}>
+        <MonitorViewSwitch view={alarmsView} />
+      </MonitorPageHeader>
+      <MonitorPageBody view={alarmsView}>
 
       <MonitorHowBox bullets={[t('dbq.page.how1'), t('dbq.page.how2'), t('dbq.page.how3'), t('dbq.page.how4'),
         t('dbq.page.how5'), t('dbq.page.how6')]} />
@@ -1355,6 +1360,7 @@ export default function DbQueryMonitorPage({ systemRole, teamId, teamName, myTea
       )}
       <MonitorCheckRunModal run={checkRun.run} type="dbquery"
         onCancel={checkRun.cancel} onClose={checkRun.close} />
+      </MonitorPageBody>
     </div>
   )
 }

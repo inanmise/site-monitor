@@ -75,6 +75,18 @@ public class RdapDomainClient {
     private volatile long bootstrapAttemptedAt;       // son DENEME (başarılı/başarısız) — negatif-cache
 
     // ── Veri kaynağı durum izleme (Sistem Sağlığı kartı için) ──────────────────
+    /** Araya başarı girmeden bu kadar ardışık KAYNAK hatası → kart "Kesinti" (NONE); daha azı "DEGRADED" (uyarı). */
+    public static final int SOURCE_OUTAGE_STREAK = 3;
+    /** Sonuç haritasında RDAP HTTP durum kodu (200 dışı) — yalnız iç sınıflandırma için. */
+    static final String HTTP_STATUS_KEY = "rdap_http_status";
+    /**
+     * Sonuçta SiteMonitor'ün sorguladığı RDAP adresi (2026-11-19, kullanıcı isteği: kart bağlantısıyla çevrimiçi sorguyla
+     * karşılaştırma). Yalnız üst veri — karar yolu okumaz.
+     */
+    static final String QUERY_URL_KEY = "query_url";
+    /** IANA listesinde RDAP sunucusu olmayan TLD'nin hata metni (+ TLD) — CheckFailureClassifier rdap_registry=false ile sınıflar. */
+    static final String NO_PUBLIC_RDAP = "no public rdap for .";
+    private final java.util.concurrent.atomic.AtomicInteger sourceFailureStreak = new java.util.concurrent.atomic.AtomicInteger();
     private volatile Instant lastSuccessAt;
     private volatile Instant lastErrorAt;
     private volatile String  lastReason;
@@ -252,13 +264,25 @@ public class RdapDomainClient {
         boolean viaFallback = false;
 
         String base = bootstrapBase(tld);   // IANA bootstrap
+        if (base == null && tld != null && bootstrap != null) {
+            // IANA listesi okunmuş ve TLD orada YOK (ör. .tr) — 2026-11-19, prod: rdap.org yalnız IANA'ya kayıtlı RDAP
+            // sunucularını bilir (about.rdap.org) ve bu TLD'lere HER ZAMAN "404 — No RDAP service is available" döner.
+            // Sorgu yapılmaz (boşuna istek), sonuç WHOIS'e kalır ve kaynak sağlığına YAZILMAZ: bu bir kaynak arızası
+            // değildir; eskiden tek bir .tr sorgusu Sistem Sağlığı'ndaki "Alan Adı Süre Kaynağı" kartını "Kesinti"ye
+            // çeviriyor, elle tetiklenen sağlam bir alan adı onu geri düzeltiyordu.
+            Map<String, Object> out = err(NO_PUBLIC_RDAP + tld);
+            out.put("rdap_registry", Boolean.FALSE);
+            out.put("rdap_unsupported", Boolean.TRUE);
+            return out;
+        }
         if (base != null) res = tryRdap(base + "domain/" + enc(registrableDomain), registrableDomain, timeoutMs);
 
-        if (res == null || res.get("error") != null) {   // rdap.org aggregator fallback
+        // rdap.org yedeği — kayıt sunucusunun 404'ü KESİN yanıttır (alan orada yok); yedek aynı sunucuya yönlendirirdi.
+        if (res == null || (res.get("error") != null && !isNotFound(res))) {
             String fb = appSettings.getString("site.monitor.domain.rdap-fallback-url", "https://rdap.org/domain/");
             Map<String, Object> res2 = tryRdap(fb + enc(registrableDomain), registrableDomain, timeoutMs);
             if (res2.get("error") == null) { res = res2; viaFallback = true; }
-            else if (res == null) res = res2;
+            else if (res == null) { res = res2; viaFallback = true; }   // hata — yalnız 404 ise kaynak durumunda kullanılır
         }
         if (res == null) res = err("no rdap");
         // Hata teşhisi (2026-10-05): TLD'nin herkese açık bir RDAP sunucusu var mı — bootstrap yüklüyken listede yoksa
@@ -279,32 +303,48 @@ public class RdapDomainClient {
         return Math.max(1000, Math.min(ms, 30000));
     }
 
-    /** Son lookup sonucunu durum kartı için kaydet (başarı/hata + kaynak: primary vs fallback). */
+    /** Kayıt sunucusu / rdap.org "bu alan yok" dedi (HTTP 404): alanın bulgusu, kaynak YANIT VERDİ — kaynak hatası değil. */
+    static boolean isNotFound(Map<String, Object> res) {
+        return res != null && Integer.valueOf(404).equals(res.get(HTTP_STATUS_KEY));
+    }
+
+    /**
+     * Son lookup sonucunu durum kartı için kaydet (başarı/hata + kaynak: primary vs fallback). 404 (alan bulunamadı) kaynak
+     * için BAŞARI sayılır — sunucu yanıt verdi; yalnız kaynağın kendisine ulaşılamadığı / bozuk yanıt verdiği durumlar
+     * (zaman aşımı, bağlantı / TLS, 5xx, 429, diğer 4xx, ayrıştırılamayan gövde) ardışık hata sayacını artırır.
+     */
     private void recordOutcome(Map<String, Object> res, boolean viaFallback) {
-        if (res.get("error") == null) {
-            lastSuccessAt = Instant.now();
+        if (res.get("error") == null || isNotFound(res)) {
+            sourceFailureStreak.set(0);
             lastUsedFallback = viaFallback;
             lastReason = null;
+            lastSuccessAt = Instant.now();
         } else {
-            lastErrorAt = Instant.now();
+            sourceFailureStreak.incrementAndGet();
             lastReason = String.valueOf(res.get("error"));
+            lastErrorAt = Instant.now();
         }
     }
 
     /**
      * Domain-expiry veri kaynağının anlık durumu (Sistem Sağlığı kartı).
-     * source: RDAP (birincil OK) / FALLBACK (rdap.org ile OK, birincil bozuk) / NONE (son sorgu başarısız) / IDLE (henüz sorgu yok).
+     * source: RDAP (birincil OK) / FALLBACK (rdap.org ile OK, birincil bozuk) / DEGRADED (son sorgu başarısız ama art arda
+     * {@link #SOURCE_OUTAGE_STREAK} hataya ulaşmadı — uyarı, kesinti DEĞİL) / NONE (art arda en az {@link #SOURCE_OUTAGE_STREAK}
+     * kaynak hatası — kesinti) / IDLE (henüz sorgu yok). 2026-11-19 öncesi tek başarısız sorgu doğrudan NONE idi.
      */
     public Map<String, Object> getSourceStatus() {
         Map<String, Object> m = new LinkedHashMap<>();
         Instant ok = lastSuccessAt, er = lastErrorAt;
+        int streak = sourceFailureStreak.get();
         boolean lastWasSuccess = ok != null && (er == null || ok.isAfter(er));
         String source; boolean alarm;
         if (lastWasSuccess) {
             source = lastUsedFallback ? "FALLBACK" : "RDAP";
             alarm  = lastUsedFallback;               // fallback çalışıyor ama birincil/bootstrap bozuk → uyarı
         } else if (er != null) {
-            source = "NONE"; alarm = true;           // son sorgu başarısız
+            boolean outage = streak >= SOURCE_OUTAGE_STREAK;
+            source = outage ? "NONE" : "DEGRADED";
+            alarm  = outage;                         // tek / iki hata uyarıdır; kesinti yalnız ardışık hatalarda
         } else {
             source = "IDLE"; alarm = false;          // henüz sorgu koşmadı
         }
@@ -313,6 +353,8 @@ public class RdapDomainClient {
         m.put("reason", lastWasSuccess ? null : lastReason);
         m.put("last_success", ok != null ? ok.toString() : null);
         m.put("last_error", er != null ? er.toString() : null);
+        m.put("consecutive_failures", lastWasSuccess ? 0 : streak);
+        m.put("outage_after", SOURCE_OUTAGE_STREAK);
         m.put("bootstrap_loaded", bootstrapLoaded);
         m.put("bootstrap_tld_count", bootstrapTldCount);
         return m;
@@ -333,8 +375,15 @@ public class RdapDomainClient {
                 Resp resp = send(req, host);
                 int sc = resp.statusCode();
                 if (sc == 429 && attempts < 2) { attempts++; sleep(backoff); backoff *= 2; continue; }
-                if (sc != 200) return err("rdap http " + sc);
-                return parse(resp.body(), domain);
+                if (sc != 200) {
+                    Map<String, Object> out = err("rdap http " + sc);
+                    out.put(HTTP_STATUS_KEY, sc);   // 404 = alan bulunamadı (kaynak sağlam) ile kaynak hatasını ayırır
+                    out.put(QUERY_URL_KEY, url);
+                    return out;
+                }
+                Map<String, Object> parsed = parse(resp.body(), domain);
+                parsed.put(QUERY_URL_KEY, url);
+                return parsed;
             } catch (Exception e) {
                 if (attempts < 1) { attempts++; sleep(backoff); backoff *= 2; continue; }
                 log.debug("RDAP {} başarısız: {}", domain, e.getMessage());

@@ -10,7 +10,7 @@ import { ProgressBar } from '../ui/Progress.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
-import { STATUS_META, TYPE_META } from './overviewMeta.js'
+import { STATUS_META, TYPE_META, overviewRowTarget } from './overviewMeta.js'
 import { rowUptime, uptimeTone, isSlow, formatMs, formatAge, fullTime } from './overviewModel.js'
 
 export function StatusBadge({ status, className }) {
@@ -160,7 +160,8 @@ export function LastCheck({ row, nowMs, className, icon = false }) {
  */
 export function RowActions({ row, labels = false, className }) {
   const t = useT()
-  const meta = TYPE_META[row.type]
+  const target = overviewRowTarget(row)
+  const openLabel = target.inventory ? t('mo.row.openInventory', row.name) : t('mo.row.open', row.name)
   return (
     <div className={cn('flex shrink-0 items-center gap-1.5', className)}>
       {Number(row.open_alerts) > 0 && (
@@ -171,9 +172,10 @@ export function RowActions({ row, labels = false, className }) {
         </Button>
       )}
       <Button type="button" variant="outline" size={labels ? 'sm' : 'icon-sm'} className={cn('pointer-coarse:h-10', labels ? 'flex-1 sm:flex-none' : 'pointer-coarse:w-10')}
-        aria-label={t('mo.row.open', row.name)} title={t('mo.row.open', row.name)}
-        onClick={() => navigateTo(meta?.tab || 'http', { q: row.target })}>
-        <ExternalLink aria-hidden="true" />{labels && t('mo.row.openShort')}
+        data-slot={target.inventory ? 'mo-open-inventory' : undefined}
+        aria-label={openLabel} title={openLabel}
+        onClick={() => navigateTo(target.tab, target.params)}>
+        <ExternalLink aria-hidden="true" />{labels && (target.inventory ? t('mo.row.openInventoryShort') : t('mo.row.openShort'))}
       </Button>
     </div>
   )

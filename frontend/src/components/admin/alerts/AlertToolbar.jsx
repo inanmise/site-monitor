@@ -34,6 +34,7 @@ const ALL = '__all__'
 const SRC_NAV_KEY = {
   http: 'nav.http', ping: 'nav.ping', port: 'nav.port', dns: 'nav.dns', domain: 'nav.domainmon', keyword: 'nav.keyword',
   page: 'nav.page', pagespeed: 'nav.pagespeed', scripted: 'nav.scripted', dbquery: 'nav.dbquery', cert: 'nav.groupCertificates',
+  uptime: 'nav.uptime',   // Erişilebilirlik (2026-11-19): ACCESSIBILITY ayrı sayfa kategorisi
 }
 /** Dönem çipi / dönem seçicisi etiketi (hızlı dönem belirteci → i18n). */
 export const presetLabel = (t, p) => t(`alh.quick.${p}`)
