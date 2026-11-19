@@ -2736,6 +2736,8 @@ export const api = {
   // ── Monitoring ───────────────────────────────────────────────────────────
 
   monitoring: {
+    /** Genişletilmiş toplu düzenleme (2026-11-19): aralık / alarm seviyesi / kanallar + grup / etiketler — TEK istek, satır satır sonuç. */
+    bulkEdit: (body) => request('/monitoring/bulk-edit', { method: 'POST', body: JSON.stringify(body) }),
     /** İzleme Panosu (2026-09-30): 9 türün tek ekranda özeti + izleme satırları; pencere saat (24 | 168).
      *  `fresh` (2026-10-01, sayfanın Yenile düğmesi): sunucunun 30 sn'lik belleğini atlar (sunucu en fazla 5 sn'de bir izin verir). */
     getOverview: (hours = 24, fresh = false) =>

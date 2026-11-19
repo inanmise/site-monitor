@@ -1,5 +1,5 @@
-import { useEffect, useId, useState } from 'react'
-import { Pause, Play, Users, FolderInput, Trash2, X, CheckSquare, Square, Headset, BellRing, BellOff, Info } from 'lucide-react'
+import { Suspense, lazy, useEffect, useId, useState } from 'react'
+import { Pause, Play, Users, FolderInput, Trash2, X, CheckSquare, Square, Headset, BellRing, BellOff, Info, SlidersHorizontal } from 'lucide-react'
 import { api as client } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from './Toast.jsx'
@@ -14,6 +14,10 @@ import { bulkToast, chunk, mergeBulkResults } from '../noc/forms/nocFormModel.js
 import { markMonitorDeleted } from '../../utils/recentlyDeleted.js'
 import { namesPreview } from '../../utils/deleteInventory.js'
 import { isRoutingLockedRow } from '../../hooks/useMonitorTeamPick.js'
+import { TYPE_OF_NOC } from '../monitoring/bulkedit/monitorBulkEditModel.js'
+
+// Genişletilmiş toplu düzenleme penceresi (2026-11-19) — yalnız açılınca yüklenir
+const MonitorBulkEditDialog = lazy(() => import('../monitoring/bulkedit/MonitorBulkEditDialog.jsx'))
 
 /**
  * Toplu işlem çubuğu (2026-09-12, zenginleştirme #13) — izleme sayfalarında çoklu seçim:
@@ -39,6 +43,10 @@ import { isRoutingLockedRow } from '../../hooks/useMonitorTeamPick.js'
  *
  * `extra` (2026-11-15, isteğe bağlı): `(chosen, { busy }) => node` — sayfaya özgü ek toplu işlem (ör. alan adı yenileme
  * planı). Yalnız GÖRÜNÜR seçili satırları alır, silme düğmesinden önce çizilir. Verilmezse çubuk birebir aynı.
+ *
+ * "Toplu düzenle" (2026-11-19): `nocType` bir izleme türüne eşlenirse (TYPE_OF_NOC) kontrol aralığı / alarm seviyesi /
+ * bildirim kanalları + grup / etiketler için önizlemeli pencere açılır — TEK istek `POST /api/monitoring/bulk-edit`, sonuç satır
+ * satır. Pencere tembel yüklenir; kapanınca seçim temizlenir ve liste yeniden okunur.
  */
 export default function BulkActionBar({ selected, items, onClear, onDone, api, teams = [], canDelete = () => false, onToggleAll, nocType, onPrune,
   teamChange = true, teamChangeNote = null, extra = null }) {
@@ -48,7 +56,9 @@ export default function BulkActionBar({ selected, items, onClear, onDone, api, t
   const [busy, setBusy] = useState(null)   // 'pause' | 'resume' | 'team' | 'group' | 'delete'
   const [teamId, setTeamId] = useState('')
   const [group, setGroup] = useState('')
+  const [editOpen, setEditOpen] = useState(false)
   const nocLabelId = useId()
+  const editType = nocType ? TYPE_OF_NOC[nocType] : null
   // Görünmeyen seçimleri buda — kimlik listesi değişmedikçe hiçbir şey yazılmaz (sonsuz yeniden çizim olmaz)
   const visibleKey = items.map((m) => m.id).join(',')
   useEffect(() => {
@@ -188,6 +198,12 @@ export default function BulkActionBar({ selected, items, onClear, onDone, api, t
             <Button type="button" variant="secondary" size="sm" className="pointer-coarse:h-10" disabled={!!busy || !group.trim()} onClick={() => run('group', (m) => api.update(m.id, { groupName: group.trim() }))}>{t('bulk.apply')}</Button>
           </ButtonGroup>
         </span>
+        {editType && (
+          <Button type="button" variant="secondary" size="sm" className="pointer-coarse:h-10" disabled={!!busy}
+            data-slot="bulk-edit-open" onClick={() => setEditOpen(true)}>
+            <SlidersHorizontal size={13} aria-hidden="true" /> {t('mbe.open')}
+          </Button>
+        )}
         {extra?.(chosen, { busy: !!busy })}
         <Button type="button" variant="destructive" size="sm" className="pointer-coarse:h-10" disabled={!!busy} onClick={del}>
           {busy === 'delete' ? <Spinner size={12} inline decorative /> : <Trash2 size={13} />} {t('bulk.delete')}
@@ -197,6 +213,12 @@ export default function BulkActionBar({ selected, items, onClear, onDone, api, t
         onClick={onClear} aria-label={t('bulk.clear')}>
         <X size={14} />
       </Button>
+      {editType && editOpen && (
+        <Suspense fallback={null}>
+          <MonitorBulkEditDialog open={editOpen} onClose={() => setEditOpen(false)} type={editType} rows={chosen} teams={teams}
+            onFinished={() => { onClear?.(); onDone?.() }} />
+        </Suspense>
+      )}
     </div>
   )
 }
