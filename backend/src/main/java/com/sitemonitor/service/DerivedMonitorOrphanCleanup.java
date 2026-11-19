@@ -84,6 +84,12 @@ public class DerivedMonitorOrphanCleanup {
         if (!singleVersion()) return;
         SchedulerService s = scheduler.getIfAvailable();
         if (s == null || deletion.getIfAvailable() == null) return;
+        // Yüzlerce satırı silebilen uzun gövde paylaşılan 8 iş parçacıklı zamanlayıcıyı tutmasın — pod'un yan iş koşucusu
+        // (SideJobRunner); koşucu yoksa / almazsa satır içi (testler, elle kurulmuş servis).
+        if (!s.offloadSideJob(com.sitemonitor.service.schedule.SideJob.heavy(LOCK, () -> runLocked(s)))) runLocked(s);
+    }
+
+    private void runLocked(SchedulerService s) {
         try {
             if (s.callWithSchedulerLock(LOCK, this::cleanLocked).isPresent()) failures.set(0);
         } catch (RuntimeException e) {
@@ -133,12 +139,14 @@ public class DerivedMonitorOrphanCleanup {
         List<String> names = new ArrayList<>();
         int deleted = 0;
         for (Map<String, Object> row : ports.size() > BATCH ? ports.subList(0, BATCH) : ports) {
+            if (stopping()) { more = true; break; }   // kapanış: yeni satıra başlanmaz, nişan yazılmaz (sonraki açılış sürdürür)
             long id = ((Number) row.get("id")).longValue();
             if (!d.deleteOrphanDerivedPort(id)) continue;   // arada envantere eklendi / bağımsız oldu — dokunma
             deleted++;
             if (names.size() < AUDIT_NAMES_MAX) names.add("port " + row.get("host") + ":" + row.get("port") + " #" + id);
         }
         for (Map<String, Object> row : dns.size() > BATCH ? dns.subList(0, BATCH) : dns) {
+            if (stopping()) { more = true; break; }
             long id = ((Number) row.get("id")).longValue();
             if (!d.deleteOrphanDerivedDns(id)) continue;
             deleted++;
@@ -154,6 +162,12 @@ public class DerivedMonitorOrphanCleanup {
         markerSeen = true;
         log.info("Türev izleme kalıntı temizliği tamamlandı — envanter kaydı olmayan {} türev Port/DNS izlemesi kalıcı silindi", deleted);
         return deleted;
+    }
+
+    /** Pod kapanıyor mu ({@code ContextClosedEvent} / kilit almayı durdurdu) — zamanlayıcı yoksa hayır. */
+    private boolean stopping() {
+        SchedulerService s = scheduler.getIfAvailable();
+        return s != null && s.sideJobsStopping();
     }
 
     private void audit(int deleted, List<String> names) {

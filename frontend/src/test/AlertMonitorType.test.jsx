@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { render, screen } from './test-utils.jsx'
 import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
-import { MONITOR_ALERT_TYPES, monitorTypeOfAlert } from '../utils/monitorAlertTypes.js'
+import { PAGE_ALERT_TYPES, monitorTypeOfAlert } from '../utils/monitorAlertTypes.js'
 import { AlertMonitorTypeBadge } from '../components/admin/alerts/AlertBadges.jsx'
 import { AlertRowsList } from '../components/admin/alerts/AlertLists.jsx'
 
@@ -11,18 +11,19 @@ import { AlertRowsList } from '../components/admin/alerts/AlertLists.jsx'
  * geldiği direkt net bir şekilde görünmüyor"). Tür, alarm tipinden TEK KAYNAKLA (MONITOR_ALERT_TYPES) türetilir; dosyadan
  * yüklenen sertifika sunucunun `cert_source=MANUAL` işaretiyle "Manuel sertifika" olur.
  */
-describe('monitorTypeOfAlert — MONITOR_ALERT_TYPES tersi', () => {
-  it('her alarm tipi kendi izleme türüne döner; bilinmeyen → null', () => {
-    for (const [type, list] of Object.entries(MONITOR_ALERT_TYPES)) {
+describe('monitorTypeOfAlert — PAGE_ALERT_TYPES tersi (2026-11-19: Erişilebilirlik kendi sayfası)', () => {
+  it('her alarm tipi kendi izleme sayfasına döner; ACCESSIBILITY → uptime; bilinmeyen → null', () => {
+    for (const [type, list] of Object.entries(PAGE_ALERT_TYPES)) {
       for (const alertType of list) expect(monitorTypeOfAlert(alertType), alertType).toBe(type)
     }
+    expect(monitorTypeOfAlert('ACCESSIBILITY')).toBe('uptime')
     expect(monitorTypeOfAlert('http_down')).toBe('http')
     expect(monitorTypeOfAlert('YENI_TIP')).toBeNull()
     expect(monitorTypeOfAlert(null)).toBeNull()
   })
 
   it('her izleme türünün kısa etiketi TR + EN sözlükte (dinamik anahtar: alh.mtype.<tür>)', () => {
-    const keys = [...Object.keys(MONITOR_ALERT_TYPES).map((t) => `alh.mtype.${t}`), 'alh.mtype.manualCert', 'alh.mtype.title', 'alh.fact.monitorType']
+    const keys = [...Object.keys(PAGE_ALERT_TYPES).map((t) => `alh.mtype.${t}`), 'alh.mtype.manualCert', 'alh.mtype.title', 'alh.fact.monitorType']
     expect(keys.filter((k) => !TR[k] || !EN[k])).toEqual([])
   })
 })

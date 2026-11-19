@@ -410,6 +410,26 @@ class PermanentDeletionServiceTest {
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("yeniden adlandırma: harf farkıyla kalmış ESKİ kalıntı varken adı birebir eşleşen canlı satır korunur ve taşınır")
+    void retarget_keepsExactNameRowOverOlderCaseVariant() {
+        PortMonitor orphan = port("Old.Example.com", 443, false);   // eski (küçük kimlik), harf farkıyla kalmış kalıntı
+        DnsMonitor orphanDns = dns("Old.Example.com", "A", false);
+        PortMonitor live = port("old.example.com", 443, false);     // canlı satır (envanterin adı)
+        DnsMonitor liveDns = dns("old.example.com", "A", false);
+
+        service.retargetDerivedMonitors("old.example.com", 443, "new.example.com", 443);
+
+        assertThat(portRepo.findById(live.getId()).orElseThrow().getHost()).isEqualTo("new.example.com");
+        assertThat(count("port_checks", "monitor_id = ?", live.getId())).as("canlı satırın geçmişi korunur").isEqualTo(1);
+        assertThat(portRepo.findById(orphan.getId())).as("kalıntı silinir").isEmpty();
+        assertThat(dnsRepo.findById(liveDns.getId()).orElseThrow().getDomain()).isEqualTo("new.example.com");
+        assertThat(dnsRepo.findById(orphanDns.getId())).isEmpty();
+        verify(escalationService, never()).resolveOpenAlertsSilently(anyString(), any(), eq(PermanentDeletionService.RESOLVED_BY_ORPHAN),
+                argThat(c -> live.getId().equals(c.get("monitor_id")) || liveDns.getId().equals(c.get("monitor_id"))));
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     @DisplayName("yalnız port değişti: Port satırı yeni porta taşınır, DNS'e dokunulmaz; değişiklik yoksa hiçbir şey olmaz")
     void retarget_portOnly_andNoop() {
         PortMonitor dp = port("svc.example.com", 443, false);
@@ -469,11 +489,16 @@ class PermanentDeletionServiceTest {
                 eq(PermanentDeletionService.RESOLVED_BY_ORPHAN), argThat(c -> orphanDns.getId().equals(c.get("monitor_id"))));
     }
 
-    @SuppressWarnings("unchecked")
     private DerivedMonitorOrphanCleanup cleanupJob(List<Map<String, String>> otherVersions, AuditService audit) {
+        return cleanupJob(otherVersions, audit, false);
+    }
+
+    @SuppressWarnings("unchecked")
+    private DerivedMonitorOrphanCleanup cleanupJob(List<Map<String, String>> otherVersions, AuditService audit, boolean stopping) {
         DeploymentHistoryService history = org.mockito.Mockito.mock(DeploymentHistoryService.class);
         when(history.liveOtherVersions()).thenReturn(otherVersions);
         SchedulerService scheduler = org.mockito.Mockito.mock(SchedulerService.class);
+        when(scheduler.sideJobsStopping()).thenReturn(stopping);
         when(scheduler.callWithSchedulerLock(eq(DerivedMonitorOrphanCleanup.LOCK), any(java.util.function.Supplier.class)))
                 .thenAnswer(i -> java.util.Optional.ofNullable(((java.util.function.Supplier<?>) i.getArgument(1)).get()));
         return new DerivedMonitorOrphanCleanup(jdbc, provider(scheduler), provider(history), provider(audit), provider(service));
@@ -528,6 +553,20 @@ class PermanentDeletionServiceTest {
         cleanupJob(List.of(Map.of("version", "20.213.0")), null).run();
         cleanupJob(null, null).run();
         assertThat(portRepo.findById(orphanPort.getId())).isPresent();
+        assertThat(count("schema_patch_markers", "patch_key = ?", DerivedMonitorOrphanCleanup.KEY)).isZero();
+        clearMarker();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    @DisplayName("tek seferlik temizlik: pod kapanıyorsa yeni satıra başlanmaz, nişan yazılmaz (sonraki açılış sürdürür)")
+    void orphanCleanupJob_stopsAtShutdown() {
+        clearMarker();
+        PortMonitor orphanPort = port("gone.example.com", 443, false);
+        DnsMonitor orphanDns = dns("renamed-typo.example.com", "A", false);
+        cleanupJob(List.of(), null, true).run();
+        assertThat(portRepo.findById(orphanPort.getId())).isPresent();
+        assertThat(dnsRepo.findById(orphanDns.getId())).isPresent();
         assertThat(count("schema_patch_markers", "patch_key = ?", DerivedMonitorOrphanCleanup.KEY)).isZero();
         clearMarker();
     }

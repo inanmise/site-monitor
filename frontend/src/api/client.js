@@ -2421,6 +2421,17 @@ export const api = {
       return `${BASE}/admin/alerts/export${s ? `?${s}` : ''}`
     },
 
+    /**
+     * İzleme sayfasının Alarmlar görünümü özeti (2026-11-19): sayfanın alarm tiplerinde açık sayılar + son N günde en çok
+     * alarm üreten izlemeler. Eski sunucu 404 / 405 / 400 (`/alerts/{id}` sayısal kimlik) döner — çağıran "desteklenmiyor"
+     * der, görünümün listesi yine çalışır.
+     */
+    getAlertTypeSummary: ({ alertTypes, days = 7, limit = 5, fresh = false } = {}, opts = {}) => {
+      const qs = new URLSearchParams({ alertTypes: (alertTypes || []).join(','), days: String(days), limit: String(limit) })
+      if (fresh) qs.set('fresh', 'true')   // sunucu belleğini (15 sn) atlar — elle yenile / alarm değişti
+      return request(`/admin/alerts/type-summary?${qs.toString()}`, opts)
+    },
+
     getAlerts: (params = {}) => {
       const opts = typeof params === 'object' && params !== null ? params : { onlyOpen: params }
       const qs = new URLSearchParams()

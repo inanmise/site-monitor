@@ -98,6 +98,30 @@ class MonitorTypeCatalogTest {
     }
 
     @Test
+    @DisplayName("Sayfa kategorisi (2026-11-19): HTTP sayfası ACCESSIBILITY'siz, Erişilebilirlik yalnız ACCESSIBILITY; diğer türler rapor kümesiyle aynı; her tip TEK sayfada")
+    void pageCategoriesSplitAccessibility() {
+        assertThat(MonitorTypeCatalog.pageAlertTypes("http"))
+                .containsExactlyInAnyOrder("HTTP_DOWN", "HTTP_SSL", "HTTP_SLOW", "DOMAIN_EXPIRY");
+        assertThat(MonitorTypeCatalog.pageAlertTypes("uptime")).containsExactly("ACCESSIBILITY");
+        assertThat(MonitorTypeCatalog.ALERT_TYPES.get("http")).contains("ACCESSIBILITY");   // rapor kümesi DEĞİŞMEDİ
+        assertThat(MonitorTypeCatalog.pageOfAlert("ACCESSIBILITY")).isEqualTo("uptime");
+        assertThat(MonitorTypeCatalog.pageOfAlert("HTTP_DOWN")).isEqualTo("http");
+        assertThat(MonitorTypeCatalog.pageOfAlert("BOYLE_YOK")).isNull();
+        assertThat(MonitorTypeCatalog.pageAlertTypes("yok")).isEmpty();
+        assertThat(MonitorTypeCatalog.pageAlertTypes(null)).isEmpty();
+        assertThat(MonitorTypeCatalog.PAGE_ORDER).containsSubsequence("cert", "uptime", "domain");
+        Set<String> seen = new LinkedHashSet<>();
+        for (String page : MonitorTypeCatalog.PAGE_ORDER) {
+            if (!"uptime".equals(page)) assertThat(MonitorTypeCatalog.ORDER).contains(page);
+            for (String t : MonitorTypeCatalog.pageAlertTypes(page)) {
+                assertThat(seen.add(t)).as("alarm tipi %s iki sayfada", t).isTrue();
+                assertThat(MonitorTypeCatalog.pageOfAlert(t)).isEqualTo(page);
+            }
+        }
+        assertThat(seen).isEqualTo(MonitorTypeCatalog.allAlertTypes());
+    }
+
+    @Test
     @DisplayName("Bilinmeyen alarm tipi çökertmez, null döner (çağıran 'Diğer'e düşürür)")
     void unknownTypeDoesNotThrow() {
         assertThat(MonitorTypeCatalog.typeOfAlert("BOYLE_BIR_TIP_YOK")).isNull();

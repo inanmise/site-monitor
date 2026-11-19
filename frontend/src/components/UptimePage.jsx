@@ -12,6 +12,7 @@ import { usePermissions } from '../contexts/PermissionsProvider.jsx'
 import MonitorModalActions from './ui/MonitorModalActions.jsx'
 import { MON_ACT, MON_ACT_TONE } from './ui/CheckRunning.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
+import { MonitorPageBody, MonitorViewSwitch, useMonitorAlarmsView } from './monitoring/alarms/MonitorAlarms.jsx'
 import DateTimeRangePicker from './ui/DateTimeRangePicker.jsx'
 import CheckHistoryTab from './history/CheckHistoryTab.jsx'
 import { CheckFailureCell, CheckFailurePanel } from './checks/CheckFailurePanel.jsx'
@@ -70,6 +71,11 @@ export default function UptimePage() {
   // Grup / etiket filtresi (2026-09-18): izleme sayfalarıyla aynı sözleşme ('all' / '__none__' / değer).
   const [groupFilter, setGroupFilter]   = useState(() => readUrlParam('group', 'all'))
   const [tagFilter, setTagFilter]       = useState(() => readUrlParam('tag', 'all'))
+  // İzlemeler | Alarmlar görünümü (2026-11-19): Erişilebilirlik alarmları (ACCESSIBILITY); alarm satırındaki "İzlemeyi aç"
+  // sayfayı o adresle arar — durum / takım / grup / etiket süzgeçleri sıfırlanır ki hedef gizlenmesin.
+  const alarmsView = useMonitorAlarmsView('uptime', { onSearch: (q) => {
+    setFilterStatus('all'); setTeamFilter('all'); setGroupFilter('all'); setTagFilter('all'); setSearch(q)
+  } })
   // Kapsam: URL (scope) > localStorage > takımlarım; anahtar yalnız sunucu `visible_to_all` derse çizilir.
   const [scope, setScopeRaw]            = useState(() => normalizeScope(readUrlParam('scope', readStoredScope())))
   const [visibleToAll, setVisibleToAll] = useState(false)
@@ -287,10 +293,13 @@ export default function UptimePage() {
   return (
     <div className="upt-page">
       {/* Ortak izleme sayfası başlığı (2026-09-27). Uptime salt okunur bir özet: toplu kontrol ve "Yeni" yok. */}
-      <MonitorPageHeader type="uptime" title={t('uptime.title')} subtitle={t('uptime.subtitle')}
+      <MonitorPageHeader showActions={!alarmsView.active} type="uptime" title={t('uptime.title')} subtitle={t('uptime.subtitle')}
         count={loading ? null : items.length} countUnit="sites"
         down={loading ? null : items.filter((i) => i.status === 'down').length}
-        refreshEvery={REFRESH_INTERVAL} refreshResetKey={fetchNonce} onRefresh={fetchOverview} refreshing={loading} />
+        refreshEvery={REFRESH_INTERVAL} refreshResetKey={fetchNonce} onRefresh={fetchOverview} refreshing={loading}>
+        <MonitorViewSwitch view={alarmsView} monitorsLabel={t('mal.switch.sites')} />
+      </MonitorPageHeader>
+      <MonitorPageBody view={alarmsView}>
 
       {!loading && (items.length > 0 || visibleToAll) && (
         <div className="upt-toolbar">
@@ -521,6 +530,7 @@ export default function UptimePage() {
       {!selected && diag && (
         <DiagnosticsModal domain={diag.domain} port={diag.port} onClose={() => setDiag(null)} />
       )}
+      </MonitorPageBody>
     </div>
   )
 }

@@ -79,12 +79,12 @@ public class RdapDomainClient {
     public static final int SOURCE_OUTAGE_STREAK = 3;
     /** Sonuç haritasında RDAP HTTP durum kodu (200 dışı) — yalnız iç sınıflandırma için. */
     static final String HTTP_STATUS_KEY = "rdap_http_status";
-    /** IANA listesinde RDAP sunucusu olmayan TLD'nin hata metni (+ TLD) — CheckFailureClassifier rdap_registry=false ile sınıflar. */
     /**
      * Sonuçta SiteMonitor'ün sorguladığı RDAP adresi (2026-11-19, kullanıcı isteği: kart bağlantısıyla çevrimiçi sorguyla
      * karşılaştırma). Yalnız üst veri — karar yolu okumaz.
      */
     static final String QUERY_URL_KEY = "query_url";
+    /** IANA listesinde RDAP sunucusu olmayan TLD'nin hata metni (+ TLD) — CheckFailureClassifier rdap_registry=false ile sınıflar. */
     static final String NO_PUBLIC_RDAP = "no public rdap for .";
     private final java.util.concurrent.atomic.AtomicInteger sourceFailureStreak = new java.util.concurrent.atomic.AtomicInteger();
     private volatile Instant lastSuccessAt;

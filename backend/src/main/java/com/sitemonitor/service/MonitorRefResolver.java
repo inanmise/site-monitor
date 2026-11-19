@@ -109,6 +109,83 @@ public class MonitorRefResolver {
         return out;
     }
 
+    /**
+     * Takım duyarlı seçimin sonucu (2026-11-19): {@code teamId} seçilen izleme SATIRININ takımı (izleyicinin o izlemeyi
+     * açıp açamayacağı buna göre karar verilir); çözülemeyen olayda {@code monitorId} / {@code teamId} null, ad = alan adı.
+     */
+    public record Pick(String name, String family, String tab, Long monitorId, Long teamId) {}
+
+    /**
+     * Olaylar ekranı ve Alarm Geçmişi'nin ORTAK takım duyarlı çözümlemesi (2026-11-19 — iki kopya yerine tek yer; kural
+     * 2026-11-13 Olaylar zenginleştirmesinden): her olay için bir {@link Pick}. Sertifika ailesi (ACCESSIBILITY dahil)
+     * izleme satırına çözülmez. Dar okuma ({@link #candidates}); seçim {@link #pickMonitor}. {@code em} yoksa (elle kurulan
+     * birim testi) {@code null} — çağıran kendi eski yoluna düşer.
+     *
+     * @param inventoryTeams alan adı → envanter SY / UG takımları (damgasız olayın seçimi için; null → boş)
+     */
+    public Map<Long, Pick> pick(List<AlertEvent> events, Function<String, Set<Long>> inventoryTeams) {
+        if (em == null) return null;
+        Map<Long, Pick> out = new HashMap<>();
+        if (events == null || events.isEmpty()) return out;
+        Map<String, Set<String>> keys = new HashMap<>();
+        for (AlertEvent e : events) {
+            String fam = family(e.getAlertType());
+            if (!"cert".equals(fam) && e.getDomain() != null) keys.computeIfAbsent(fam, k -> new java.util.HashSet<>()).add(e.getDomain());
+        }
+        Map<String, Map<String, List<Object[]>>> idx = keys.isEmpty() ? Map.of() : candidates(keys);
+        for (AlertEvent e : events) {
+            if (e.getId() == null) continue;
+            String fam = family(e.getAlertType());
+            Map<String, List<Object[]>> byKey = idx == null ? null : idx.get(fam);
+            Set<Long> inv = inventoryTeams == null || e.getDomain() == null ? Set.of() : inventoryTeams.apply(e.getDomain());
+            Object[] ref = byKey == null ? null
+                    : pickMonitor(byKey.get(e.getDomain()), contextMonitorId(e.getContextJson()), e.getTeamId(), inv);
+            Long id = ref != null && ref[1] instanceof Number n ? Long.valueOf(n.longValue()) : null;
+            Long team = ref != null && ref.length > 2 && ref[2] instanceof Number t ? Long.valueOf(t.longValue()) : null;
+            out.put(e.getId(), new Pick(ref != null ? (String) ref[0] : e.getDomain(), fam, tabFor(fam), id, team));
+        }
+        return out;
+    }
+
+    /**
+     * Aday seçimi — {@code cands}: kimlik sıralı {@code [ad, id, teamId]}. Önce alarm bağlamının {@code monitor_id}'si
+     * (aynı anahtarlı adaylar arasında KESİN eşleşme — izleme takım değiştirse de olayı açan izleme odur), sonra takım
+     * kuralı: damgalı olay YALNIZ kendi takımının izlemesini alır (başka takımın izlemesi asla); damgasız olay envanter
+     * takımının izlemesini, o da yoksa ilk adayı (kimlik sırası — eski davranış).
+     */
+    public static Object[] pickMonitor(List<Object[]> cands, Long contextMonitorId, Long stampedTeam, Set<Long> inventoryTeams) {
+        if (cands == null || cands.isEmpty()) return null;
+        if (contextMonitorId != null) {
+            for (Object[] c : cands) if (contextMonitorId.equals(c[1] instanceof Number n ? Long.valueOf(n.longValue()) : null)) return c;
+        }
+        if (stampedTeam != null) {
+            for (Object[] c : cands) if (stampedTeam.equals(c[2])) return c;
+            return null;
+        }
+        if (inventoryTeams != null && !inventoryTeams.isEmpty()) {
+            for (Object[] c : cands) if (c[2] != null && inventoryTeams.contains(c[2])) return c;
+        }
+        return cands.get(0);
+    }
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper CTX_MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /** Alarm bağlamındaki izleme kimliği (sayı ya da 1–18 haneli sayısal metin); yoksa / okunamazsa null. Sınırlı: yalnız
+     *  alan adı geçen metin ayrıştırılır. */
+    public static Long contextMonitorId(String contextJson) {
+        if (contextJson == null || contextJson.isBlank() || !contextJson.contains("monitor_id")) return null;
+        try {
+            com.fasterxml.jackson.databind.JsonNode v = CTX_MAPPER.readTree(contextJson).get("monitor_id");
+            if (v == null || v.isNull()) return null;
+            if (v.isNumber()) return v.longValue();
+            if (v.isTextual()) {
+                String s = v.asText();
+                if (s.length() >= 1 && s.length() <= 18 && s.chars().allMatch(c -> c >= '0' && c <= '9')) return Long.valueOf(s);
+            }
+        } catch (Exception ignored) { /* bağlam yok / bozuk */ }
+        return null;
+    }
+
     /** @param family cert | http | port | … ; {@code tab} arayüz sekmesi; {@code monitorId} çözülemezse null */
     public record Ref(String name, String family, String tab, Long monitorId) {}
 

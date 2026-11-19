@@ -143,6 +143,14 @@ public class AdminController {
     private com.sitemonitor.service.noc.NocAlertFacts nocAlertFacts;
 
     /**
+     * Alarm → izleme çözümleyicisi (2026-11-19, Olaylar ile ORTAK — takım duyarlı): Alarm Geçmişi satırlarına izleme adı +
+     * açma bağlantısı ({@code monitor_ref}) ve izleme sayfasının Alarmlar görünümünün "en çok alarm üreten izlemeler"
+     * şeridi. Alan enjeksiyonu: elle kurulan dilimli testler değişmesin; yokken alan yazılmaz.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.MonitorRefResolver monitorRefs;
+
+    /**
      * 7/24 operatör kümesi (2026-11-12, dizin zenginleştirme) — isteğe bağlı: Kullanıcılar dizininin "7/24 ekibi" süzgeci
      * ile satır rozetleri için operatör takım id'leri. Dilimli/birim testte yokken NOC süzgeci "herhangi" davranır.
      */
@@ -2456,6 +2464,7 @@ public class AdminController {
         if (nocCallLog != null) nocCallLog.decorate(result.getContent());   // noc_call_count / noc_last_call — tek sorgu
         maskGrantOnlyNocCalls(result.getContent(), session);   // paylaşımla okunan satırda aranan kişi yok (2026-10-12)
         if (nocAlertFacts != null) nocAlertFacts.decorate(result.getContent());   // noc_sent_at / noc_via_storm — tek sorgu
+        decorateMonitorRefs(result.getContent(), session);   // monitor_ref: izleme adı + açma bağlantısı (2026-11-19)
         // Tip filtre pill'lerinin canlı sayıları — tip filtresinden bağımsız
         Map<String, Long> typeCounts = new LinkedHashMap<>();
         for (Object[] row : nocOnly
@@ -3385,6 +3394,221 @@ public class AdminController {
                     "This alert belongs to another team's standalone monitor — only that team can acknowledge, resolve or re-notify it"));
         }
         throw new SecurityException("Bu alarm sizin takım(lar)ınıza ait değil");
+    }
+
+    /**
+     * Alarm satırına izleme referansı (2026-11-19, kullanıcı isteği: Alarm Geçmişi'nde izleme adı + "İzlemeyi aç"):
+     * {@code monitor_ref = {name, type, tab, monitor_id?}} — Olaylar ekranıyla AYNI takım duyarlı seçim
+     * ({@code MonitorRefResolver.pick}). Ad her çözülen satırda; {@code monitor_id} yalnız izleyici izleme okuma iznine
+     * ({@code monitoring.read/view}) sahip ve izlemenin TAKIMINI okuyabiliyorsa ({@code SessionScope.canViewMonitoring}) —
+     * aksi halde bağlantı açılamayan bir sayfaya götürürdü (Olaylar'ın "başka ekibin olayında iç kimlik yok" kuralı).
+     * Sertifika / Erişilebilirlik ve çözülemeyen (silinmiş izleme) satırda alan yazılmaz. Sayfa başına sabit sorgu (aile
+     * başına ⌈n/500⌉ dar okuma); hata listeyi düşürmez (alan yazılmaz, DEBUG).
+     */
+    private void decorateMonitorRefs(List<AlertEvent> events, HttpSession session) {
+        if (events == null || events.isEmpty()) return;
+        for (AlertEvent ev : events) ev.setMonitorRef(null);   // önceki bir görüntüleyicinin değeri aynı nesnede kalmasın
+        if (monitorRefs == null) return;
+        Map<String, Set<Long>> invTeams = new HashMap<>();
+        for (AlertEvent ev : events) {
+            if (ev.getDomain() == null) continue;
+            Set<Long> s = invTeams.computeIfAbsent(ev.getDomain(), k -> new HashSet<>());
+            if (ev.getSyTeamId() != null) s.add(ev.getSyTeamId());
+            if (ev.getUgTeamId() != null) s.add(ev.getUgTeamId());
+        }
+        Map<Long, com.sitemonitor.service.MonitorRefResolver.Pick> picks;
+        try {
+            picks = monitorRefs.pick(events, d -> invTeams.getOrDefault(d, Set.of()));
+        } catch (RuntimeException ex) {
+            log.debug("Alarm satırları izlemeye çözülemedi: {}", ex.toString());
+            return;
+        }
+        if (picks == null) return;
+        boolean monitoringRead = permissionService.allows(session, "monitoring.read", "view");
+        for (AlertEvent ev : events) {
+            Map<String, Object> ref = monitorRefMap(picks.get(ev.getId()), session, monitoringRead);
+            if (ref != null) ev.setMonitorRef(ref);
+        }
+    }
+
+    /**
+     * {@link #decorateMonitorRefs} ve {@link #alertTypeSummary} ORTAK biçimi; izlemeye çözülmeyen seçim → null. Seçilen
+     * izleme izleyicinin OKUYAMADIĞI bir takımdaysa (damgasız alarmda ilk aday, bağlamdaki izleme sonradan başka takıma
+     * taşınmış) referans hiç yazılmaz — başka takımın izleme adı sızmaz; satır yalnız alan adıyla görünür.
+     */
+    private static Map<String, Object> monitorRefMap(com.sitemonitor.service.MonitorRefResolver.Pick p, HttpSession session,
+                                                     boolean monitoringRead) {
+        if (p == null || p.monitorId() == null || "cert".equals(p.family())) return null;
+        boolean teamVisible = SessionScope.canViewMonitoring(session, p.teamId());
+        if (p.teamId() != null && !teamVisible) return null;
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("name", p.name());
+        m.put("type", p.family());
+        m.put("tab", p.tab());
+        if (monitoringRead && teamVisible) m.put("monitor_id", p.monitorId());
+        return m;
+    }
+
+    /** "En çok alarm üreten izlemeler" şeridinin sınırları — tavanlı, istek başına sabit maliyet. */
+    static final int TYPE_SUMMARY_MAX_DAYS = 30;
+    static final int TYPE_SUMMARY_MAX_LIMIT = 10;
+
+    /**
+     * Alarmlar görünümü özetinin kısa ömürlü belleği (her açık görünüm dakikada bir + alarm değişince yoklar). Anahtar
+     * sonucu TAM belirler: alarm kapsamı + izleme okuma kapsamı ({@code monitor_ref} kapısı) + izin + tipler + gün + sınır.
+     * {@code ≤ 0} → kapalı (elle kurulan testler). Pod yeniden başlayınca boş.
+     */
+    @org.springframework.beans.factory.annotation.Value("${site.monitor.alerts.type-summary-cache-ms:15000}")
+    private long typeSummaryCacheMs;
+    private final com.sitemonitor.util.TtlMemo<Map<String, Object>> typeSummaryMemo = new com.sitemonitor.util.TtlMemo<>(512);
+
+    /**
+     * İzleme sayfasının Alarmlar görünümü özeti (2026-11-19, kullanıcı isteği: "izleme sayfası üzerinden o izleme tipinden
+     * açılmış alarmlara hızlıca erişmek"): verilen alarm tiplerinde (sayfanın türü) görüş kapsamındaki AÇIK alarmların
+     * seviye kırılımı ({@code level_counts}, liste ucuyla aynı anahtarlar) + sahiplenilmemiş + uzun süredir açık sayısı, ve
+     * son {@code days} günde açılan alarmlara göre EN ÇOK alarm üreten {@code limit} izleme. Kapı ve takım kapsamı
+     * {@link #listAlerts} ile AYNI (alerts.read + damgalı takım ya da envanter SY/UG; 7/24 operatörü ve global görüntüleyici
+     * tümü). İzleme adı takım duyarlı çözülür; aynı izlemeye düşen gruplar (takım taşıması sonrası eski damga) birleşir.
+     * Sabit sorgu: iki sayım + bir gruplu sorgu (en çok {@code limit × 3} grup) + temsil satırları + envanter + adaylar.
+     */
+    @GetMapping("/alerts/type-summary")
+    public ResponseEntity<Map<String, Object>> alertTypeSummary(
+            @RequestParam(required = false) String alertTypes,
+            @RequestParam(defaultValue = "7") int days,
+            @RequestParam(defaultValue = "5") int limit,
+            @RequestParam(defaultValue = "false") boolean fresh,
+            HttpSession session) {
+        requirePerm(session, "alerts.read", "view");
+        List<String> types = parseAlertTypes(alertTypes);
+        if (types.isEmpty()) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("alertTypes",
+                    com.sitemonitor.util.Msg.t("En az bir geçerli alarm tipi gerekli.", "At least one valid alert type is required."));
+        }
+        int d = Math.max(1, Math.min(days, TYPE_SUMMARY_MAX_DAYS));
+        int lim = Math.max(1, Math.min(limit, TYPE_SUMMARY_MAX_LIMIT));
+        boolean allAlerts = seesAllAlerts(session);
+        String key = com.sitemonitor.util.TtlMemo.scopeKey(allAlerts, allAlerts ? null : SessionScope.viewTeamIdsWithGrants(session))
+                + "|" + TodayPanelController.monitoringScopeKey(session)
+                + "|" + permissionService.allows(session, "monitoring.read", "view")
+                + "|" + String.join(",", new java.util.TreeSet<>(types)) + "|" + d + "|" + lim;
+        // Zarf: {success, data:{alert_types, open, top}} — istemci `res.data`'yı okur (monitorAlarmsModel.summaryFrom)
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("data", typeSummaryMemo.get(key, typeSummaryCacheMs, fresh, () -> computeTypeSummary(types, d, lim, allAlerts, session)));
+        return ok(resp);
+    }
+
+    private Map<String, Object> computeTypeSummary(List<String> types, int d, int lim, boolean allAlerts, HttpSession session) {
+        Instant now = Instant.now();
+        String since = ISO.format(now.minus(java.time.Duration.ofDays(d)));
+
+        Map<String, Object> open = new LinkedHashMap<>();
+        Map<String, Object> top = new LinkedHashMap<>();
+        top.put("days", d);
+        top.put("since", since);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("alert_types", types);
+        body.put("open", open);
+        body.put("top", top);
+
+        List<Long> scope = allAlerts ? null : SessionScope.viewTeamIdsWithGrants(session);
+        boolean scoped = scope != null;
+        if (scoped && scope.isEmpty()) {   // kapsamsız kullanıcı → hiçbir alarm (liste ucuyla aynı)
+            open.put("total", 0L);
+            open.put("level_counts", Map.of());
+            open.put("unacked", 0L);
+            open.put("stale", 0L);
+            open.put("stale_hours", ALERT_STALE_HOURS);
+            top.put("items", List.of());
+            return body;
+        }
+        List<Long> scopeList = scoped ? scope : List.of(-1L);
+
+        Map<String, Long> levelCounts = new LinkedHashMap<>();
+        long total = 0L, unacked = 0L;
+        for (Object[] row : alertEventRepo.countFacets(Boolean.FALSE, null, null, null, null, null, null, null,
+                true, types, null, null, scoped, scopeList)) {
+            long n = row[2] instanceof Number num ? num.longValue() : 0L;
+            levelCounts.merge(String.valueOf(row[0]), n, Long::sum);
+            total += n;
+            if (!Boolean.TRUE.equals(row[1])) unacked += n;
+        }
+        String staleBefore = ISO.format(now.minus(java.time.Duration.ofHours(ALERT_STALE_HOURS)));
+        long stale = alertEventRepo.countStale(Boolean.FALSE, staleBefore, null, null, true, types, null, null, scoped, scopeList);
+        open.put("total", total);
+        open.put("level_counts", levelCounts);
+        open.put("unacked", unacked);
+        open.put("stale", stale);
+        open.put("stale_hours", ALERT_STALE_HOURS);
+
+        top.put("items", topMonitors(types, since, scoped, scopeList, lim, session));
+        return body;
+    }
+
+    /** {@link #alertTypeSummary} şeridi: gruplu sayım → temsil satırı → takım duyarlı izleme adı → birleştir → ilk {@code limit}. */
+    private List<Map<String, Object>> topMonitors(List<String> types, String since, boolean scoped, List<Long> scopeList,
+                                                  int limit, HttpSession session) {
+        List<Object[]> groups = alertEventRepo.topDomainsByAlertCount(types, since, scoped, scopeList, PageRequest.of(0, limit * 3));
+        if (groups.isEmpty()) return List.of();
+        List<Long> repIds = new ArrayList<>();
+        for (Object[] g : groups) if (g[3] instanceof Number n) repIds.add(n.longValue());
+        Map<Long, AlertEvent> reps = new HashMap<>();
+        for (AlertEvent e : alertEventRepo.findAllById(repIds)) reps.put(e.getId(), e);
+        Map<String, Set<Long>> invTeams = new HashMap<>();
+        Set<String> domains = new HashSet<>();
+        for (AlertEvent e : reps.values()) if (e.getDomain() != null) domains.add(e.getDomain());
+        if (!domains.isEmpty()) {
+            for (CertificateInventory inv : inventoryRepo.findByDomainIn(domains)) {
+                Set<Long> s = invTeams.computeIfAbsent(inv.getDomain(), k -> new HashSet<>());
+                if (inv.getTeamId() != null) s.add(inv.getTeamId());
+                if (inv.getUgTeamId() != null) s.add(inv.getUgTeamId());
+            }
+        }
+        Map<Long, com.sitemonitor.service.MonitorRefResolver.Pick> picks = null;
+        if (monitorRefs != null && !reps.isEmpty()) {
+            try {
+                picks = monitorRefs.pick(new ArrayList<>(reps.values()), dom -> invTeams.getOrDefault(dom, Set.of()));
+            } catch (RuntimeException ex) {
+                log.debug("En çok alarm üreten izlemeler çözülemedi: {}", ex.toString());
+            }
+        }
+        boolean monitoringRead = permissionService.allows(session, "monitoring.read", "view");
+        Map<String, Map<String, Object>> merged = new LinkedHashMap<>();
+        for (Object[] g : groups) {
+            String domain = g[0] == null ? null : String.valueOf(g[0]);
+            long count = g[2] instanceof Number n ? n.longValue() : 0L;
+            long lastId = g[3] instanceof Number n ? n.longValue() : 0L;
+            long openN = g[4] instanceof Number n ? n.longValue() : 0L;
+            AlertEvent rep = reps.get(lastId);
+            com.sitemonitor.service.MonitorRefResolver.Pick p = picks == null ? null : picks.get(lastId);
+            Map<String, Object> ref = monitorRefMap(p, session, monitoringRead);
+            String key = ref != null ? p.family() + ":" + p.monitorId() : "d:" + domain;
+            Map<String, Object> item = merged.get(key);
+            if (item == null) {
+                item = new LinkedHashMap<>();
+                item.put("domain", domain);
+                item.put("count", count);
+                item.put("open", openN);
+                item.put("last_alert_id", lastId);
+                item.put("last_alert_type", rep == null ? null : rep.getAlertType());
+                item.put("last_alert_at", rep == null ? null : rep.getCreatedAt());
+                if (ref != null) item.put("monitor", ref);
+                merged.put(key, item);
+            } else {
+                item.put("count", ((Number) item.get("count")).longValue() + count);
+                item.put("open", ((Number) item.get("open")).longValue() + openN);
+                if (lastId > ((Number) item.get("last_alert_id")).longValue()) {
+                    item.put("last_alert_id", lastId);
+                    item.put("last_alert_type", rep == null ? null : rep.getAlertType());
+                    item.put("last_alert_at", rep == null ? null : rep.getCreatedAt());
+                }
+            }
+        }
+        List<Map<String, Object>> out = new ArrayList<>(merged.values());
+        out.sort((a, b) -> {
+            int c = Long.compare(((Number) b.get("count")).longValue(), ((Number) a.get("count")).longValue());
+            return c != 0 ? c : Long.compare(((Number) b.get("last_alert_id")).longValue(), ((Number) a.get("last_alert_id")).longValue());
+        });
+        return out.size() > limit ? new ArrayList<>(out.subList(0, limit)) : out;
     }
 
     /**

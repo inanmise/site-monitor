@@ -30,6 +30,7 @@ import { useCardDensity } from '../hooks/useCardDensity.js'
 import { useSparklines, useSla } from '../hooks/useSparklines.js'
 import MonitorCardActions from './MonitorCardActions.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
+import { MonitorPageBody, MonitorViewSwitch, useMonitorAlarmsView } from './monitoring/alarms/MonitorAlarms.jsx'
 import { ChevronDown, Info, Network, AlertTriangle, FlaskConical, Check, Pause, BellDot, ArrowLeftRight, Copy, Inbox, X } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import DnsDetailModal from './DnsDetailModal.jsx'
@@ -100,6 +101,7 @@ const emptyForm = { name: '', domain: '', recordType: 'A', intervalSeconds: 300,
 const NO_TEAMS = Object.freeze([])
 export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams = NO_TEAMS, globalAdmin = false }) {
   const t = useT()
+  const alarmsView = useMonitorAlarmsView('dns')   // İzlemeler | Alarmlar görünümü (2026-11-19)
   const toast = useToast()
   const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
@@ -845,11 +847,14 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
 
   return (
     <div className="dns-page">
-      <MonitorPageHeader type="dns" title={t('dns.title')} subtitle={t('dns.subtitle')}
+      <MonitorPageHeader showActions={!alarmsView.active} type="dns" title={t('dns.title')} subtitle={t('dns.subtitle')}
         count={loading ? null : monitors.length}
         refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
-        canWrite={canWrite} onNew={openNew} newLabel={t('dns.addMonitor')} />
+        canWrite={canWrite} onNew={openNew} newLabel={t('dns.addMonitor')}>
+        <MonitorViewSwitch view={alarmsView} />
+      </MonitorPageHeader>
+      <MonitorPageBody view={alarmsView}>
 
       <MonitorHowBox bullets={[t('dns.how1'), t('dns.how2'), t('dns.how3'), t('dns.how4'), t('dns.how5')]} />
 
@@ -985,6 +990,7 @@ export default function DnsMonitorPage({ systemRole, teamId, teamName, myTeams =
       )}
       <MonitorCheckRunModal run={checkRun.run} type="dns"
         onCancel={checkRun.cancel} onClose={checkRun.close} />
+      </MonitorPageBody>
     </div>
   )
 }

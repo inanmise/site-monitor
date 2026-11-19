@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { MONITOR_GUIDES } from '../components/monitorGuides.js'
-import { MONITOR_ALERT_TYPES } from '../utils/monitorAlertTypes.js'
+import { MONITOR_ALERT_TYPES, PAGE_ALERT_TYPES, UPTIME_ALERT_TYPE, UPTIME_PAGE } from '../utils/monitorAlertTypes.js'
 import { monitorCheckColumns, CHECK_CONCURRENCY_BY_TYPE } from '../components/check/monitorCheckColumns.jsx'
 
 /**
@@ -213,6 +213,41 @@ describe('İzleme türü yüzeyleri — yeni tür eklenince hepsi güncellenmeli
       expect([...MONITOR_ALERT_TYPES[type]].sort(), `${type}: alarm tipleri katalogla ayrismis`)
         .toEqual([...types].sort())
     }
+  })
+
+  it('PAGE_ALERT_TYPES (sayfa kategorisi, 2026-11-19) backend kuralının aynası: http ACCESSIBILITY\'siz, uptime yalnız ACCESSIBILITY', () => {
+    const src = readFileSync(CATALOG, 'utf8')
+    const page = /UPTIME_PAGE\s*=\s*"(\w+)"/.exec(src)?.[1]
+    const acc = /UPTIME_ALERT_TYPE\s*=\s*"(\w+)"/.exec(src)?.[1]
+    expect(page, 'MonitorTypeCatalog.UPTIME_PAGE okunamadı').toBe(UPTIME_PAGE)
+    expect(acc, 'MonitorTypeCatalog.UPTIME_ALERT_TYPE okunamadı').toBe(UPTIME_ALERT_TYPE)
+    const catalog = catalogAlertTypes()
+    expect(Object.keys(PAGE_ALERT_TYPES).sort()).toEqual([...Object.keys(catalog), page].sort())
+    for (const [type, types] of Object.entries(catalog)) {
+      expect([...PAGE_ALERT_TYPES[type]].sort(), `${type}: sayfa tipleri`).toEqual(types.filter((x) => x !== acc).sort())
+    }
+    expect(PAGE_ALERT_TYPES[page]).toEqual([acc])
+    // her alarm tipi TEK sayfada
+    const all = Object.values(PAGE_ALERT_TYPES).flat()
+    expect(new Set(all).size).toBe(all.length)
+  })
+
+  it('Her izleme sayfası İzlemeler | Alarmlar görünümünü KENDİ sayfa kategorisiyle taşır (2026-11-19)', () => {
+    const PAGES = {
+      http: 'components/HttpMonitorPage.jsx', ping: 'components/PingMonitorPage.jsx', port: 'components/PortMonitorPage.jsx',
+      dns: 'components/DnsMonitorPage.jsx', domain: 'components/DomainMonitorPage.jsx', keyword: 'components/KeywordMonitorPage.jsx',
+      page: 'components/PageMonitorPage.jsx', pagespeed: 'components/PageSpeedMonitorPage.jsx',
+      scripted: 'components/ScriptedMonitorPage.jsx', dbquery: 'components/DbQueryMonitorPage.jsx',
+      uptime: 'components/UptimePage.jsx', cert: 'App.jsx',
+    }
+    for (const [type, file] of Object.entries(PAGES)) {
+      const src = read(file)
+      expect(src, `${file}: görünüm hook'u yok ya da başka kategori`).toMatch(new RegExp(`useMonitorAlarmsView\\('${type}'`))
+      expect(src, `${file}: görünüm anahtarı yok`).toContain('<MonitorViewSwitch view=')
+      expect(src, `${file}: gövde sarmalayıcısı yok`).toContain('<MonitorPageBody view=')
+    }
+    // Her izleme türü (katalog) + Erişilebilirlik + sertifika kapsandı
+    expect(Object.keys(PAGES).sort()).toEqual(Object.keys(PAGE_ALERT_TYPES).sort())
   })
 
   it('Her izleme sayfasi Alarmlar sekmesine KENDI tip kumesini geciyor', () => {

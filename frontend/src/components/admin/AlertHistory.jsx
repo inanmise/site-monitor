@@ -24,6 +24,7 @@ import AlertToolbar from './alerts/AlertToolbar.jsx'
 import ReNotifyConfirmModal from './alerts/ReNotifyConfirmModal.jsx'
 import { OpenAlertCard, OpenAlertList, AlertRowsList, ListSkeleton } from './alerts/AlertLists.jsx'
 import { AlertDetailSheet, AlertDetailModal } from './alerts/AlertDetail.jsx'
+import { useAlertSourceNav } from './alerts/AlertBadges.jsx'
 import { NocCallQuickSheet } from './alerts/NocCallLog.jsx'   // 7/24 arama kaydı — telefonda alttan hızlı giriş (2026-09-27)
 import ActionNoteDialog from '../incidents/ActionNoteDialog.jsx'   // gerekçeli sahiplen / çöz penceresi (2026-09-28)
 import { contextFromAlert } from '../incidents/actionNoteModel.js'
@@ -86,8 +87,11 @@ const ACTION_FIELDS = ['acknowledged', 'acknowledged_by', 'acknowledged_at', 'ac
  * @param domain  GÖMÜLÜ kullanım (izleme/sertifika penceresinin "Alarm Geçmişi" sekmesi): yalnız bu hedef.
  * @param types   GÖMÜLÜ kullanım: yalnız bu alarm tipleri (sunucuda süzülür).
  * @param urlSync bağımsız sayfa (?tab=alerthistory): başlık, istatistikler, paneller, araç çubuğu ve URL eşlemesi.
+ * @param initialTab   GÖMÜLÜ kullanım (2026-11-19, izleme sayfasının Alarmlar görünümü): ilk görünüm (open | closed | all)
+ * @param onTabChange  GÖMÜLÜ kullanım: görünüm değişince çağrılır (sayfa kendi URL anahtarına yazar)
  */
-export default function AlertHistory({ domain = null, urlSync = false, types = null, globalViewer = false, myTeamIds = null }) {
+export default function AlertHistory({ domain = null, urlSync = false, types = null, globalViewer = false, myTeamIds = null,
+  initialTab = null, onTabChange = null }) {
   // Dizi kimliği her render'da değişir; yükleme bağımlılığına DİZİ koymak sonsuz döngü demek → tek dize.
   const typesParam = Array.isArray(types) && types.length > 0 ? types.join(',') : null
   const embedded = !urlSync
@@ -98,7 +102,12 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   const phone = useIsMobile()
   const bulkAllId = useId()
 
-  const [tab, setTab] = useState(() => (urlSync ? tabFromUrl(readUrlParam('view', null)) : 'open'))
+  const [tab, setTab] = useState(() => (urlSync ? tabFromUrl(readUrlParam('view', null)) : (TABS.includes(initialTab) ? initialTab : 'open')))
+  // Gömülü görünüm değişimi sayfaya bildirilir (URL anahtarı sayfanın; ilk değer de bildirilir — sayfa eşitse yazmaz)
+  const onTabChangeRef = useRef(onTabChange)
+  onTabChangeRef.current = onTabChange
+  useEffect(() => { if (!urlSync) onTabChangeRef.current?.(tab) }, [tab, urlSync])
+  const sourceNav = useAlertSourceNav()   // izleme sayfası içi "İzlemeyi aç" (2026-11-19); yoksa tam gezinme
   const [filters, setFilters] = useState(() => (urlSync ? filtersFromUrl(readUrlParam) : { ...FILTER_DEFAULTS }))
   const patch = useCallback((p) => setFilters((f) => ({ ...f, ...p })), [])
   const resetFilters = useCallback(() => setFilters({ ...FILTER_DEFAULTS }), [])
@@ -515,7 +524,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   const menuItems = (a, { card = false } = {}) => [
     { label: t('alh.openDetail'), icon: <Eye aria-hidden="true" />, onClick: () => openDetail(a) },
     { label: alertSourceTab(a.alert_type) ? t('alh.openMonitor') : t('alh.openCerts'), icon: <ExternalLink aria-hidden="true" />,
-      onClick: () => window.location.assign(alertHref(a)), hidden: card },
+      onClick: () => { if (!(sourceNav && sourceNav(a) === true)) window.location.assign(alertHref(a)) }, hidden: card },
     { label: t('alh.ack'), icon: <UserCheck aria-hidden="true" />, onClick: () => ack(a), hidden: card || a.resolved || a.acknowledged || actBlocked(a) },
     { label: t('alh.resolveAction'), icon: <CheckCircle2 aria-hidden="true" />, onClick: () => resolve(a), hidden: card || a.resolved || actBlocked(a) },
     { label: t('share.copyLink'), icon: <Link2 aria-hidden="true" />, onClick: () => copyLink(a) },

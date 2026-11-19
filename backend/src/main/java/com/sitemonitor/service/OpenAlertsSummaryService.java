@@ -71,7 +71,7 @@ public class OpenAlertsSummaryService {
     public Map<String, Object> build(boolean seesAll, List<Long> viewTeamIds) {
         Map<String, Object> out = new LinkedHashMap<>();
         Map<String, Map<String, Object>> tabs = new LinkedHashMap<>();
-        for (String type : MonitorTypeCatalog.ORDER) tabs.put(type, emptyTab());
+        for (String type : MonitorTypeCatalog.PAGE_ORDER) tabs.put(type, emptyTab());   // sayfa sekmeleri: Erişilebilirlik (uptime) ayrı, 2026-11-19
         out.put("tabs", tabs);
         out.put("total", 0L);
         out.put("sampled", false);   // 2026-10-01: kırılım artık kesin — alan geriye uyum için hep false
@@ -87,7 +87,7 @@ public class OpenAlertsSummaryService {
         for (Object[] row : alertEventRepo.countOpenByTypeLevelAck(scoped, scopeList)) {
             if (row == null || row.length < 4 || row[0] == null) continue;
             String alertType = String.valueOf(row[0]);
-            String family = MonitorTypeCatalog.typeOfAlert(alertType);
+            String family = MonitorTypeCatalog.pageOfAlert(alertType);
             long n = row[3] instanceof Number num ? num.longValue() : 0L;
             if (family == null || n <= 0) continue;
             Map<String, Object> tab = tabs.computeIfAbsent(family, k -> emptyTab());
@@ -118,7 +118,7 @@ public class OpenAlertsSummaryService {
         List<Object[]> window = alertEventRepo.findOpenSummaryItems(knownTypes, scoped, scopeList, PageRequest.of(0, ITEMS_WINDOW));
         Map<String, List<Object[]>> byFamily = new LinkedHashMap<>();
         for (Object[] r : window) {
-            String family = r == null || r.length < 9 || r[2] == null ? null : MonitorTypeCatalog.typeOfAlert(String.valueOf(r[2]));
+            String family = r == null || r.length < 9 || r[2] == null ? null : MonitorTypeCatalog.pageOfAlert(String.valueOf(r[2]));
             if (family == null) continue;
             List<Object[]> l = byFamily.computeIfAbsent(family, k -> new ArrayList<>());
             if (l.size() < TOP) l.add(r);

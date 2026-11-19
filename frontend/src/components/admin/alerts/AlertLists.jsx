@@ -23,7 +23,7 @@ import {
 } from '@/components/shadcn/dropdown-menu'
 import { cn } from '@/lib/utils'
 import {
-  AlertLevelBadge, AlertStateBadge, AlertTypeIcon, AlertTypeChip, AlertSourceLink, AlertResolvedBy, OpenDurationBadge,
+  AlertLevelBadge, AlertStateBadge, AlertTypeIcon, AlertTypeChip, AlertSourceLink, AlertResolvedBy, OpenDurationBadge, AlertMonitorName,
   RepeatBadge, SendFailedBadge, WhyOpenChips, ActBlockedNote, StormBadge, NocSentBadge, AlertMonitorTypeBadge,
 } from './AlertBadges.jsx'
 import { levelClass, alertRowName } from './alertHistoryModel.js'
@@ -201,6 +201,7 @@ export function OpenAlertCard({
         <AlertTypeIcon type={a.alert_type} className="mt-px" />
         <span className="line-clamp-2 min-w-0 pt-0.5 [overflow-wrap:anywhere]">{a.domain}</span>
       </Button>
+      <AlertMonitorName alert={a} className="mt-0.5 px-3 sm:px-4" />
 
       {a.message && <p className="mt-1 line-clamp-2 px-3 text-[13px] text-muted-foreground [overflow-wrap:anywhere] sm:px-4" title={a.message}>{a.message}</p>}
 
@@ -382,6 +383,7 @@ export function AlertRowsList({
                         <AlertTypeIcon type={a.alert_type} className="mt-px" />
                         <span className="line-clamp-2 min-w-0 pt-0.5 [overflow-wrap:anywhere]">{a.domain}</span>
                       </Button>
+                      <AlertMonitorName alert={a} className="mt-0.5 px-3" />
                       <div data-slot="alert-card-types" className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-3 text-xs">
                         <AlertMonitorTypeBadge alert={a} />
                         <AlertTypeChip type={a.alert_type} />
@@ -460,6 +462,7 @@ export function AlertRowsList({
                           <RepeatBadge count={a.repeat_count} />
                           <NocSentBadge sentAt={a.noc_sent_at} viaStorm={a.noc_via_storm} />
                         </div>
+                        <AlertMonitorName alert={a} className="mt-0.5" />
                         <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
                           <AlertTypeChip type={a.alert_type} />
                           {a.message && <span className="line-clamp-1 [overflow-wrap:anywhere]" title={a.message}>{a.message}</span>}

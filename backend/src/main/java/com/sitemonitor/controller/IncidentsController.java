@@ -849,13 +849,26 @@ public class IncidentsController {
                                                            Map<Long, Long> teamsOut) {
         Map<Long, Map<String, Object>> byEvent = new HashMap<>();
         if (events.isEmpty()) return byEvent;
-        Map<String, Set<String>> keys = new HashMap<>();
-        for (AlertEvent e : events) {
-            String fam = family(e.getAlertType());
-            if (!"cert".equals(fam) && e.getDomain() != null) keys.computeIfAbsent(fam, k -> new HashSet<>()).add(e.getDomain());
+        // Ortak takım duyarlı çözümleme (2026-11-19): Alarm Geçmişi de aynı yoldan geçer — MonitorRefResolver.pick
+        Map<Long, com.sitemonitor.service.MonitorRefResolver.Pick> picks =
+                monitorRefs != null ? monitorRefs.pick(events, d -> inventoryTeams(inv, d)) : null;
+        if (picks != null) {
+            for (AlertEvent e : events) {
+                com.sitemonitor.service.MonitorRefResolver.Pick p = picks.get(e.getId());
+                if (p == null) continue;
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("name", p.name());
+                m.put("type", p.family());
+                m.put("tab",  p.tab());
+                m.put("monitor_id", p.monitorId());
+                byEvent.put(e.getId(), m);
+                if (teamsOut != null && p.monitorId() != null && p.teamId() != null) teamsOut.put(e.getId(), p.teamId());
+            }
+            return byEvent;
         }
-        Map<String, Map<String, List<Object[]>>> idx = monitorRefs != null ? monitorRefs.candidates(keys) : null;
-        if (idx == null) idx = legacyCandidates(keys.keySet());
+        // Çözümleyici yokken (dilimli test) eski tam liste yolu — aynı seçim kuralıyla
+        Map<String, Map<String, List<Object[]>>> idx = legacyCandidates(events.stream()
+                .map(e -> family(e.getAlertType())).filter(f -> !"cert".equals(f)).collect(java.util.stream.Collectors.toSet()));
         for (AlertEvent e : events) {
             String fam = family(e.getAlertType());
             Map<String, List<Object[]>> byKey = idx.get(fam);
@@ -872,43 +885,18 @@ public class IncidentsController {
         return byEvent;
     }
 
-    /**
-     * Aday seçimi — paket görünür (birim testi). {@code cands}: kimlik sıralı {@code [ad, id, teamId]}. Damgalı olay yalnız
-     * kendi takımının izlemesini alır; damgasız olay envanter takımının izlemesini, o yoksa ilk adayı.
-     */
+    /** Aday seçimi — kural {@link com.sitemonitor.service.MonitorRefResolver#pickMonitor}'ta (paket görünür: birim testi). */
     static Object[] pickMonitor(List<Object[]> cands, Long stampedTeam, Set<Long> inventoryTeams) {
         return pickMonitor(cands, null, stampedTeam, inventoryTeams);
     }
 
-    /**
-     * Önce alarm bağlamının {@code monitor_id}'si (aynı anahtarlı aday arasında KESİN eşleşme — izleme takım değiştirse de
-     * olayı açan izleme odur), sonra takım kuralı (2026-11-13 inceleme: damgalı takımın izlemesi taşınmışsa bağ kayboluyordu).
-     */
     static Object[] pickMonitor(List<Object[]> cands, Long contextMonitorId, Long stampedTeam, Set<Long> inventoryTeams) {
-        if (cands == null || cands.isEmpty()) return null;
-        if (contextMonitorId != null) {
-            for (Object[] c : cands) if (contextMonitorId.equals(c[1] instanceof Number n ? Long.valueOf(n.longValue()) : null)) return c;
-        }
-        if (stampedTeam != null) {
-            for (Object[] c : cands) if (stampedTeam.equals(c[2])) return c;
-            return null;
-        }
-        if (inventoryTeams != null && !inventoryTeams.isEmpty()) {
-            for (Object[] c : cands) if (c[2] != null && inventoryTeams.contains(c[2])) return c;
-        }
-        return cands.get(0);
+        return com.sitemonitor.service.MonitorRefResolver.pickMonitor(cands, contextMonitorId, stampedTeam, inventoryTeams);
     }
 
-    /** Alarm bağlamındaki izleme kimliği (sayı ya da sayısal metin); yoksa / okunamazsa null. */
+    /** Alarm bağlamındaki izleme kimliği — kural {@link com.sitemonitor.service.MonitorRefResolver#contextMonitorId}'de. */
     private Long contextMonitorId(AlertEvent e) {
-        try {
-            Map<String, Object> ctx = deserialize(e.getContextJson());
-            if (ctx == null) return null;
-            Object v = ctx.get("monitor_id");
-            if (v instanceof Number n) return Long.valueOf(n.longValue());
-            if (v instanceof String s && s.matches("\\d{1,18}")) return Long.valueOf(s);
-        } catch (Exception ignored) { /* bağlam yok / bozuk */ }
-        return null;
+        return com.sitemonitor.service.MonitorRefResolver.contextMonitorId(e.getContextJson());
     }
 
     private static Set<Long> inventoryTeams(Map<String, List<com.sitemonitor.model.CertificateInventory>> inv, String domain) {

@@ -194,5 +194,10 @@ class RdapSourceStatusTest {
         assertThat(DomainCheckerService.safeQueryUrl("ht tp://bozuk")).isNull();
         assertThat(DomainCheckerService.safeQueryUrl(null)).isNull();
         assertThat(DomainCheckerService.safeQueryUrl(42)).isNull();
+        // Yapılandırılmış adresteki erişim anahtarı herkese gösterilmez; alan adı parametresi kalır
+        assertThat(DomainCheckerService.safeQueryUrl("https://rdap.example/domain/a.com?token=s3cr3t&lang=tr"))
+                .isEqualTo("https://rdap.example/domain/a.com?token=" + SecretMask.MASK + "&lang=tr");
+        assertThat(DomainCheckerService.safeQueryUrl("https://whois.example/q?domainname=a.com.tr&api_key=k1"))
+                .isEqualTo("https://whois.example/q?domainname=a.com.tr&api_key=" + SecretMask.MASK);
     }
 }

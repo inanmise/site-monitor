@@ -94,6 +94,7 @@ import { LoadingBlock, Spinner } from './components/ui/Progress.jsx'
 import StatusBlock from './components/ui/StatusBlock.jsx'
 import CollapsibleSection from './components/ui/CollapsibleSection.jsx'
 import PageHeader from './components/ui/PageHeader.jsx'
+import { MonitorPageBody, MonitorViewSwitch, useMonitorAlarmsView } from './components/monitoring/alarms/MonitorAlarms.jsx'
 import { isTvModeActive, onTvModeChange } from './utils/tvMode.js'
 import { TAB_META } from './components/palette/paletteModel.js'   // sekme başlığı ikonu = kenar çubuğundaki ikon
 // Markalı 404 + sayfa meta'sı (2026-10-08): sekme anahtarları tek kaynakta; bilinmeyen/kapalı sekmede panel
@@ -452,6 +453,16 @@ export default function App() {
   const inactivityRef = useRef(null)
   const [inactivityH, setInactivityH] = useState(0)
   const [tab, setTab] = useState('dashboard')
+  // Sertifika Panosu "Sertifikalar | Alarmlar" görünümü (2026-11-19): App'te yaşar → URL'e yalnız pano açıkken yazar,
+  // başka sekmeye geçince kapanır (o sekmenin kendi `mal` anahtarına dokunmaz). Ağır görünüm tembel yüklenir.
+  const dashAlarms = useMonitorAlarmsView('cert', { enabled: tab === 'dashboard' })
+  const closeDashAlarms = dashAlarms.close
+  const syncDashAlarms = dashAlarms.syncFromUrl
+  // Panoya dönüşte (Geri tuşu dahil) görünüm URL'den yeniden okunur; başka sekmenin `mal`'ı panoyu açmaz.
+  useEffect(() => {
+    if (tab === 'dashboard' && (tabFromSearch(window.location.search) || 'dashboard') === 'dashboard') syncDashAlarms()
+    else closeDashAlarms()
+  }, [tab, closeDashAlarms, syncDashAlarms])
   const tabRef = useRef(tab)
   tabRef.current = tab
   // Açılış sekmesi kararı oturum (giriş) başına bir kez: uygun mu (adreste derin bağlantı yok) + uygulandı mı.
@@ -2158,7 +2169,7 @@ export default function App() {
               Meta çipleri: sertifika sayısı + son güncelleme — kullanıcı "veri ne kadar taze" sorusunu başlıkta görür. */}
           {tab === 'dashboard' && (
             <PageHeader icon={LayoutDashboard} title={t('app.dashTitle')} description={t('app.dashDesc')}
-              meta={(
+              meta={dashAlarms.active ? null : (
                 <>
                   <Badge variant="secondary" data-slot="dash-cert-count">
                     {/* Pasif kart varsa ayrı sayılır (2026-10-08); yoksa bugünkü metin */}
@@ -2169,7 +2180,7 @@ export default function App() {
                   </span>
                 </>
               )}
-              actions={(
+              actions={dashAlarms.active ? null : (
                 <>
                   <Button type="button" variant="outline" onClick={loadData} disabled={refreshing}
                     title={t('app.refresh')} aria-label={t('app.refresh')}>
@@ -2190,7 +2201,9 @@ export default function App() {
                       onAddFromFile={() => handleTabChange('manualcerts', { mc_upload: '1' })} />
                   )}
                 </>
-              )} />
+              )}>
+              <MonitorViewSwitch view={dashAlarms} monitorsLabel={t('mal.switch.certs')} />
+            </PageHeader>
           )}
           {/* Tüm Sertifikalar / Domain Envanteri: eski üst kontrol satırı (.controls — Şimdi Kontrol Et + SSL Checker) kalktı
               (2026-09-27, iki başlık üst üste). Şimdi Kontrol Et her iki sayfanın kendi PageHeader'ında; SSL Checker Tüm
@@ -2208,9 +2221,9 @@ export default function App() {
 
           {/* 7/24 kapsam şeridi (2026-09-27): kapsamdaki aktif izlemelerden 7/24 izleme ekibine GİTMEYENLER varsa sakin uyarı +
               "İncele" → 7/24 Kapsamı. Pano damgasıyla (lastUpdate) tazelenir — kendi yoklaması yok; oturumluk kapatılabilir. */}
-          {tab === 'dashboard' && <NocCoverageBanner globalAdmin={globalAdmin} refreshKey={lastUpdate} />}
+          {tab === 'dashboard' && !dashAlarms.active && <NocCoverageBanner globalAdmin={globalAdmin} refreshKey={lastUpdate} />}
 
-          {tab === 'dashboard' && (
+          {tab === 'dashboard' && !dashAlarms.active && (
             <div className="stats-section" data-tour="dash-stats">
               {/* shadcn Collapsible (ui/CollapsibleSection) — eski el yapımı div.stats-collapse-bar[role=button] */}
               <CollapsibleSection open={statsVisible} onOpenChange={setStatsVisible}
@@ -2237,7 +2250,8 @@ export default function App() {
            {/* Anahtar sekme + görünüm sayacı: kayıtlı görünüm uygulanınca sayfa yeniden bağlanır ve URL'den okur (öneri 23) */}
            <ErrorBoundary key={viewNonce ? `${tab}#${viewNonce}` : tab} onReload={() => setTab(tab)}>
             <Suspense fallback={<LoadingBlock label={t('tbl.loading')} fullWidth />}>
-            {tab === 'dashboard' && (
+            {tab === 'dashboard' && dashAlarms.active && <MonitorPageBody view={dashAlarms} />}
+            {tab === 'dashboard' && !dashAlarms.active && (
               <div className="tab-content active">
                 {/* "Sizin için — bugün" paneli artık yukarıda, İstatistikler'in altında (stats-section içinde). */}
                 {/* Başlangıç listesi (ürün turu, 2026-09-13): yeni kullanıcıya ilk adımlar; biter ya da kapatılırsa kaybolur */}

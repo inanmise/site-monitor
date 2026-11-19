@@ -27,6 +27,7 @@ import NotifyChannels from './ui/NotifyChannels.jsx'
 import IntervalSlider from './ui/IntervalSlider.jsx'
 import MonitorHowBox from './ui/MonitorHowBox.jsx'
 import MonitorPageHeader from './monitoring/MonitorPageHeader.jsx'
+import { MonitorPageBody, MonitorViewSwitch, useMonitorAlarmsView } from './monitoring/alarms/MonitorAlarms.jsx'
 import { Trash2, CalendarClock, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, HelpCircle, ShieldAlert, Activity, Inbox, LockOpen, ShieldOff, ServerCrash, Ban, CalendarX, Download, ChevronDown, CalendarPlus, Copy, CalendarRange, FilterX, Building2, Database } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import AlertHistory from './admin/AlertHistory.jsx'
@@ -156,6 +157,7 @@ const SERVER_FIELDS = ['domain', 'thresholdsCsv']
 const NO_TEAMS = Object.freeze([])
 export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeams = NO_TEAMS, globalAdmin = false }) {
   const t = useT()
+  const alarmsView = useMonitorAlarmsView('domain')   // İzlemeler | Alarmlar görünümü (2026-11-19)
   const toast = useToast()
   const { showConfirm } = useDialog()
   const isAdmin = systemRole === 'ADMIN'
@@ -1012,7 +1014,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
 
   return (
     <div className="upt-page">
-      <MonitorPageHeader type="domain" title={t('dom.title')} subtitle={t('dom.subtitle')}
+      <MonitorPageHeader showActions={!alarmsView.active} type="domain" title={t('dom.title')} subtitle={t('dom.subtitle')}
         count={loading ? null : monitors.length}
         refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
@@ -1043,7 +1045,10 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        )} />
+        )}>
+        <MonitorViewSwitch view={alarmsView} />
+      </MonitorPageHeader>
+      <MonitorPageBody view={alarmsView}>
 
       <MonitorHowBox bullets={[t('dom.how1'), t('dom.how2'), t('dom.how3'), t('dom.how4'), t('dom.how5'), t('dom.how6'), t('dom.how7'), t('dom.how8')]} />
 
@@ -1248,6 +1253,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
       )}
       <MonitorCheckRunModal run={checkRun.run} type="domain"
         onCancel={checkRun.cancel} onClose={checkRun.close} />
+      </MonitorPageBody>
     </div>
   )
 }

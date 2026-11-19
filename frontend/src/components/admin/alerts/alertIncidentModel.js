@@ -28,11 +28,12 @@ export function severityFromAlertLevel(level) {
 
 /** Alarm türü → olay kategorisi. */
 export function categoryFromAlertType(type) {
+  if (type === 'ACCESSIBILITY') return 'NETWORK'   // Erişilebilirlik sayfası (2026-11-19, `uptime`) — kategori değişmez
   const tab = alertSourceTab(type)
   if (tab === 'dns' || tab === 'port' || tab === 'ping') return 'NETWORK'
   if (tab === 'domain') return 'INFRASTRUCTURE'
   if (tab) return 'APPLICATION'
-  return type === 'ACCESSIBILITY' ? 'NETWORK' : 'CERTIFICATE'
+  return 'CERTIFICATE'
 }
 
 /** Sunucu zaman damgası → formun UTC ISO biçimi (`yyyy-MM-ddTHH:mm:ss`, ek yok); ayrıştırılamazsa ''. */

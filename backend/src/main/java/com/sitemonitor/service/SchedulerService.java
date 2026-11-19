@@ -12215,10 +12215,6 @@ public class SchedulerService {
                         boolean rotated, String checkedAt) {}
 
     /**
-     * Taban okuma + {@code dns_records} kaydı ({@code change_state} dahil) + etkinlik — klasik 2. aşamanın kalıcılaştırma
-     * bölümü (ayrıştırıldı; dağıtık işte işçi pod'da koşar). Kayıt hatası FIRLATIR (klasik: o izleme kalem üretmez).
-     */
-    /**
      * Değişiklik tabanı bu izlemenin ŞİMDİKİ hedefine mi ait (2026-11-19): kayıt tipi aynı ve (kayıtta varsa) alan adı aynı
      * (harf duyarsız). NULL alanlar eski kayıttır → o parça kıyaslanmaz (bugünkü kural).
      */
@@ -12229,6 +12225,10 @@ public class SchedulerService {
         return prev.getCheckedDomain() == null || m.getDomain() == null || prev.getCheckedDomain().equalsIgnoreCase(m.getDomain());
     }
 
+    /**
+     * Taban okuma + {@code dns_records} kaydı ({@code change_state} dahil) + etkinlik — klasik 2. aşamanın kalıcılaştırma
+     * bölümü (ayrıştırıldı; dağıtık işte işçi pod'da koşar). Kayıt hatası FIRLATIR (klasik: o izleme kalem üretmez).
+     */
     DnsPersisted persistDnsRecord(DnsMonitor m, Map<String, Object> r, String now) {
         boolean success = Boolean.TRUE.equals(r.get("success"));
         @SuppressWarnings("unchecked")

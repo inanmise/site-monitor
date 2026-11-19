@@ -157,8 +157,11 @@ public class PermanentDeletionService {
                 .withZone(java.time.ZoneOffset.UTC).format(java.time.Instant.now());
         int moved = 0;
         Map<String, Integer> rows = new LinkedHashMap<>();
+        // Korunan satır: adı BİREBİR eşleşen (canlı) satır önce, sonra en eski — harf farkıyla kalmış bayat kalıntı tutulup
+        // canlı satır (ve geçmişi) silinmesin.
         List<Long> ports = jdbc.queryForList("SELECT id FROM port_monitors WHERE LOWER(host) = LOWER(?) AND port = ? "
-                + "AND (standalone IS NULL OR standalone = FALSE) ORDER BY id", Long.class, oldDomain, op);
+                + "AND (standalone IS NULL OR standalone = FALSE) ORDER BY CASE WHEN host = ? THEN 0 ELSE 1 END, id",
+                Long.class, oldDomain, op, oldDomain);
         if (!ports.isEmpty()) {
             Long keep = ports.get(0);
             List<Long> stale = new ArrayList<>(jdbc.queryForList("SELECT id FROM port_monitors WHERE host = ? AND port = ? "
@@ -171,7 +174,8 @@ public class PermanentDeletionService {
         }
         if (hostChanged) {
             List<Long> dns = jdbc.queryForList("SELECT id FROM dns_monitors WHERE LOWER(domain) = LOWER(?) "
-                    + "AND (standalone IS NULL OR standalone = FALSE) ORDER BY id", Long.class, oldDomain);
+                    + "AND (standalone IS NULL OR standalone = FALSE) ORDER BY CASE WHEN domain = ? THEN 0 ELSE 1 END, id",
+                    Long.class, oldDomain, oldDomain);
             if (!dns.isEmpty()) {
                 Long keep = dns.get(0);
                 List<Long> stale = new ArrayList<>(jdbc.queryForList("SELECT id FROM dns_monitors WHERE domain = ? "

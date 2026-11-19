@@ -27,6 +27,10 @@ vi.mock('../contexts/PermissionsProvider.jsx', () => ({
   usePermissions: () => ({ perms: {}, canView: () => true, canEdit: () => true, canExecute: () => true, refresh: () => {} }),
 }))
 vi.mock('../api/client', async () => (await import('./helpers/scriptedHarness.jsx')).apiClientMock())
+// Alarmlar görünümünün ağır parçası (2026-11-19) — vekil: sayfa içi "İzlemeyi aç" Alarmlar'ı kapatır (view.close).
+vi.mock('../components/monitoring/alarms/MonitorAlarmsView.jsx', () => ({
+  default: ({ view }) => <button type="button" data-testid="alarms-view" onClick={() => view.close()}>alarms</button>,
+}))
 
 import { api } from '../api/client'
 import { resetScriptedMocks } from './helpers/scriptedHarness.jsx'
@@ -62,5 +66,22 @@ describe('ScriptedMonitorPage — başlık eylemleri görünüme göre', () => {
     expect(container.querySelector('[data-slot="page-title"] [data-slot="k6-title"]')).not.toBeNull()
     // Görünüm anahtarının kendisi kalır — kullanıcı geri dönebilmeli.
     expect(screen.getByRole('button', { name: /monitörler|monitors/i })).toBeInTheDocument()
+  })
+
+  it('Şablonlar → Alarmlar → sayfa içi "İzlemeyi aç": şablon kütüphanesine DEĞİL İzlemeler görünümüne dönülür (2026-11-19)', async () => {
+    window.history.replaceState({}, '', '/?tab=scripted')
+    try {
+      render(<ScriptedMonitorPage systemRole="ADMIN" teamId={5} teamName="SY-A" />)
+      await waitFor(() => expect(api.monitoring.getScriptedMonitors).toHaveBeenCalled())
+      fireEvent.click(screen.getByRole('button', { name: /şablonlar|templates/i }))
+      expect(await screen.findByTestId('templates-tab')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: /^(alarmlar|alarms)$/i }))
+      fireEvent.click(await screen.findByTestId('alarms-view'))
+      await waitFor(() => expect(screen.queryByTestId('alarms-view')).toBeNull())
+      expect(screen.queryByTestId('templates-tab')).toBeNull()
+      expect(screen.getByRole('button', { name: /^(yenile|refresh)$/i })).toBeInTheDocument()   // İzlemeler görünümünün eylemleri
+    } finally {
+      window.history.replaceState({}, '', '/')
+    }
   })
 })

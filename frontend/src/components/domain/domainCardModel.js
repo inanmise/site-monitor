@@ -23,7 +23,6 @@ import { domainLife, eppKey, eppLabel } from '../../utils/domainEpp.js'
 import { localDayKey } from '../../utils/localDay.js'
 import { dateLocale } from '../../i18n/dateLocale.js'
 
-/** Sayfanın "yakında dolacak" süzgeci / istatistik kartı ve kartın plan kısayolu için TEK kaynak (gün). */
 /**
  * Kartın "sorgulanan sayfa" bağlantısı (2026-11-19, kullanıcı isteği: SiteMonitor'ün sorguladığı sayfayı açıp çevrimiçi
  * sorguyla karşılaştırmak). Yalnız http(s) ve bilgi (userinfo) içermeyen adres bağlantı olur; port-43 sunucusu metin.
@@ -43,6 +42,7 @@ export function queryRefOf(m) {
   return server ? { kind: 'server', server } : null
 }
 
+/** Sayfanın "yakında dolacak" süzgeci / istatistik kartı ve kartın plan kısayolu için TEK kaynak (gün). */
 export const SOON_DAYS = 30
 
 const num = (v) => {

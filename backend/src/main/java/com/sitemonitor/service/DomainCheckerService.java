@@ -112,7 +112,9 @@ public class DomainCheckerService {
             String scheme = u.getScheme();
             if (scheme == null || !(scheme.equalsIgnoreCase("https") || scheme.equalsIgnoreCase("http"))) return null;
             if (u.getRawUserInfo() != null || u.getHost() == null) return null;
-            return u.toString();
+            // Yapılandırılmış sorgu adresi (RDAP yedeği, isimtescil) bir erişim anahtarı taşıyabilir (`?token=…`); izlemeyi
+            // okuyan herkes görür → hassas adlı parametrelerin değeri maskelenir, alan adı parametresi görünür kalır.
+            return SecretMask.maskUrlQuery(u.toString());
         } catch (RuntimeException e) {
             return null;
         }

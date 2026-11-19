@@ -230,6 +230,16 @@ public class AlertEvent {
     @Transient private String actBlock;
 
     /**
+     * Alarmı üreten İZLEME (2026-11-19, kullanıcı isteği: alarm satırında izleme adı + "İzlemeyi aç"): {@code {name, type,
+     * tab, monitor_id?}} — Alarm Geçmişi liste ucunda toplu çözülür ({@code MonitorRefResolver.pick}, takım duyarlı). Yalnız
+     * izleme satırına çözülen olayda yazılır (sertifika / Erişilebilirlik ve çözülemeyen olayda yok). {@code monitor_id}
+     * yalnız izleyici o izlemenin takımını okuyabiliyorsa (yoksa bağlantı çıkmaz sokak olurdu). Kalıcı DEĞİL.
+     * JSON: {@code monitor_ref}.
+     */
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    @Transient private java.util.Map<String, Object> monitorRef;
+
+    /**
      * Alarm ACILIRKEN damgalanan Bildirim Grubu ({@code teamId} emsali).
      *
      * <p>Neden damga, neden canli cozum degil: alarm surerken monitorun grubu degisirse
