@@ -399,7 +399,7 @@ export function tn(t, key, n, ...rest) {
   return Number(n) === 1 ? t(`${key}.one`, n, ...rest) : t(key, n, ...rest)
 }
 
-const ALARM_ACTIONS = new Set(['ALERT_TRIGGERED', 'ALERT_ESCALATED', 'ALERT_ACKNOWLEDGED', 'ALERT_RESOLVED'])
+const ALARM_ACTIONS = new Set(['ALERT_TRIGGERED', 'ALERT_ESCALATED', 'ALERT_ACKNOWLEDGED', 'ALERT_RESOLVED', 'ALERT_ACK_EXPIRED'])
 /** Alarm olayı satırı mı (rozet + "Alarm #id"). */
 export const isAlarmAction = (action) => ALARM_ACTIONS.has(String(action || ''))
 

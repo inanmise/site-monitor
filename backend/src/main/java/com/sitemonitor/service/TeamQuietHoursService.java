@@ -40,7 +40,8 @@ import java.util.*;
 public class TeamQuietHoursService {
 
     /** Ertelenebilen e-posta tetikleri. MANUAL (elle yeniden gönderim) ve çözüm ertelenmez. */
-    public static final List<String> DEFERRABLE_TRIGGERS = List.of("INITIAL", "ESCALATION", "DAILY_REALERT");
+    public static final List<String> DEFERRABLE_TRIGGERS = List.of("INITIAL", "ESCALATION", "DAILY_REALERT",
+            "ACK_EXPIRED");   // süresi dolan onayın hatırlatması da bir hatırlatmadır (2026-11-19)
     /** Eskalasyon adımı ertelemesinin kayıt tetiği (adım pencere sonrasına bekletilir). */
     public static final String STEP_TRIGGER = "ESCALATION_STEP";
     static final Duration CACHE_TTL = Duration.ofSeconds(60);

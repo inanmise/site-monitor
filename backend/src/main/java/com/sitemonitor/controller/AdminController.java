@@ -2844,12 +2844,22 @@ public class AdminController {
         // Gerekçe ZORUNLU ve sunucuda doğrulanıyor: kural yalnız arayüzde kalsaydı API'den
         // notsuz geçilebilir, "her manuel onayın gerekçesi vardır" garantisi çökerdi.
         String note = AlertActionNote.require(body == null ? null : str(body.get("note")));
+        // Süreli onay (2026-11-19): boş / 0 = süresiz (bugünkü çağrı aynen); değer listesi AckDurations'ta
+        Integer duration = com.sitemonitor.service.AckDurations.parse(
+                body == null ? null : body.get(com.sitemonitor.service.AckDurations.FIELD));
         String by = resolveDisplayName(session);
-        AlertEvent event = escalationService.acknowledge(id, by, note);
+        AlertEvent event = duration == null ? escalationService.acknowledge(id, by, note)
+                : escalationService.acknowledge(id, by, note, duration);
         alarmViewsChanged();
+        Map<String, Object> ackAudit = new LinkedHashMap<>();
+        ackAudit.put("domain", nz(event.getDomain()));
+        ackAudit.put("note", note);
+        if (duration != null) {
+            ackAudit.put("duration_minutes", duration);
+            ackAudit.put("expires_at", event.getAckExpiresAt());
+        }
         auditService.recordAction("ALERT_ACKNOWLEDGE", session, request,
-                "ALERT_EVENT", id.toString(),
-                auditDetail(Map.of("domain", nz(event.getDomain()), "note", note)));
+                "ALERT_EVENT", id.toString(), auditDetail(ackAudit));
         // paylaşımla (EXECUTE) sahiplenen kişi alıcıları görmez (2026-10-22) — yanıt KOPYADA maskelenir
         return ok(Map.of("data", maskGrantOnlyPeople(event, session), "message", "Alert acknowledged"));
     }
@@ -2984,6 +2994,9 @@ public class AdminController {
         // herkes o yolu kullanırdı. Tek not seçilen bütün alarmlara yazılır.
         boolean needsNote = "acknowledge".equals(action) || "resolve".equals(action);
         String note = needsNote ? AlertActionNote.require(str(body.get("note"))) : null;
+        // Süreli onay (2026-11-19): yalnız onaylamada; seçilen süre her alarma aynı yazılır (boş = süresiz)
+        Integer ackDuration = "acknowledge".equals(action)
+                ? com.sitemonitor.service.AckDurations.parse(body.get(com.sitemonitor.service.AckDurations.FIELD)) : null;
 
         String by = resolveDisplayName(session);
         int processed = 0, skipped = 0, failed = 0;
@@ -3001,7 +3014,10 @@ public class AdminController {
             }
             try {
                 switch (action) {
-                    case "acknowledge" -> escalationService.acknowledge(id, by, note);
+                    case "acknowledge" -> {
+                        if (ackDuration == null) escalationService.acknowledge(id, by, note);
+                        else escalationService.acknowledge(id, by, note, ackDuration);
+                    }
                     case "resolve"     -> escalationService.resolve(id, by, note);
                     case "re-notify"   -> escalationService.reNotify(id);
                 }
@@ -3026,6 +3042,7 @@ public class AdminController {
         detail.put("skipped", skipped);
         detail.put("failed", failed);
         if (note != null) detail.put("note", note);
+        if (ackDuration != null) detail.put("duration_minutes", ackDuration);
         auditService.recordAction(auditAction, session, request, "ALERT_EVENT",
                 processed + " alert", auditDetail(detail));
         Map<String, Object> data = new LinkedHashMap<>();

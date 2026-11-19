@@ -630,6 +630,30 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     List<AlertEvent> findOpenOrResolvedSince(@Param("since") String since, Pageable pageable);
 
     /**
+     * Takım kesinti takvimi (2026-11-19): {@code types} (kesinti ailesi) alarmlarından ayın {@code [start, end)} penceresiyle
+     * KESİŞENLER — açılış &lt; bitiş VE (pencerede açıldı YA DA hâlâ açık YA DA başlangıçta/sonrasında çözüldü). Damgalar UTC
+     * ISO metni, sözlüksel karşılaştırma. DAR sütunlar: {@code [id, domain, alertType, alertLevel, teamId, createdAt,
+     * resolvedAt, resolved, contextJson]} — bağlam YALNIZ {@code contextTypes} türlerinde okunur (sahipliği bağlamdaki
+     * bağımsızlık işaretine bağlı türler: envanter türevi olabilen Port / DNS / Erişilebilirlik); diğerlerinde NULL. Kararlı
+     * sıra (id), tavan {@code pageable}. İndeks: {@code idx_ae_created_at} + {@code idx_ae_resolved_at} (BitmapOr).
+     */
+    // Sorgu sınırı 15 sn: aşılırsa takvim 503 "okunamadı" der (havuzun uzun soket sınırına kalmaz).
+    @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(
+            name = "jakarta.persistence.query.timeout", value = "15000"))
+    @Query("""
+            SELECT e.id, e.domain, e.alertType, e.alertLevel, e.teamId, e.createdAt, e.resolvedAt, e.resolved,
+                   CASE WHEN e.alertType IN :contextTypes THEN e.contextJson ELSE NULL END
+              FROM AlertEvent e
+             WHERE e.alertType IN :types
+               AND e.createdAt < :end
+               AND (e.createdAt >= :start OR e.resolved = false OR e.resolvedAt >= :start)
+             ORDER BY e.id
+            """)
+    List<Object[]> findOutageCalendarRows(@Param("types") Collection<String> types,
+                                          @Param("contextTypes") Collection<String> contextTypes,
+                                          @Param("start") String start, @Param("end") String end, Pageable pageable);
+
+    /**
      * Alarm Geçmişi listesi. {@code activeFrom} (2026-09-28, "aralıkta aktif olanlar" kipi): verilirse alarm, o andan
      * SONRA hâlâ açıksa ya da o anda/sonrasında çözüldüyse girer — {@code until} ile birlikte "pencereyle KESİŞEN"
      * (açılış ≤ bitiş VE (açık YA DA çözüm ≥ başlangıç)) koşulunu kurar; önceki haftadan devredenler de listelenir.
@@ -1237,5 +1261,28 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     @Query("SELECT e.notificationGroupId, COUNT(e) FROM AlertEvent e "
          + "WHERE e.resolved = false AND e.notificationGroupId IS NOT NULL GROUP BY e.notificationGroupId")
     List<Object[]> countOpenByNotificationGroup();
+
+    /**
+     * Süreli onay (2026-11-19): süresi dolmuş açık onaylar — {@code [id, ack_expires_at]}, en eski önce, en çok {@code limit}.
+     * Koşul PostgreSQL kısmi indeksiyle ({@code idx_ae_ack_expires}, {@code DeferredIndexBuilder}) aynı metin: yalnız süreli
+     * onaylı açık alarmları taşır, dakikada bir tarama tabloyu okumaz.
+     */
+    @Query(value = "SELECT e.id, e.ack_expires_at, e.last_re_alert_at FROM alert_events e "
+         + "WHERE e.ack_expires_at IS NOT NULL AND e.acknowledged = true AND e.resolved = false "
+         + "AND e.ack_expires_at <= :now ORDER BY e.ack_expires_at, e.id LIMIT :limit", nativeQuery = true)
+    List<Object[]> findDueAckExpiries(@Param("now") String now, @Param("limit") int limit);
+
+    /**
+     * Süresi dolan onayı SAHİPLENİR ve düşürür (2026-11-19): yalnız hâlâ açık, onaylı ve okunan süreyi taşıyan satır — iki pod
+     * ya da süre ile elle yeni onay yarışında tek kazanan. Aynı ifadede yeniden uyarı damgası {@code now}'a çekilir: hemen giden
+     * hatırlatmanın ardından günlük takvim buradan sayar, araya giren tarama aynı anda ikinci bildirim göndermez. Gerekçe
+     * ({@code acknowledged_note}) terfinin onay düşürmesindeki gibi kalır.
+     */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE alert_events SET acknowledged = false, acknowledged_by = NULL, acknowledged_at = NULL, "
+         + "ack_expires_at = NULL, last_re_alert_at = :now "
+         + "WHERE id = :id AND resolved = false AND acknowledged = true AND ack_expires_at = :seen", nativeQuery = true)
+    int expireAck(@Param("id") Long id, @Param("seen") String seen, @Param("now") String now);
 
 }

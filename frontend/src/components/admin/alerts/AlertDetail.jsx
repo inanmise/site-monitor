@@ -160,7 +160,7 @@ export function AlertDetailBody({
       <div className="flex flex-wrap items-center gap-1.5">
         <AlertStateBadge resolved={a.resolved} />
         <AlertLevelBadge level={a.alert_level} />
-        {open && a.acknowledged && <AckBadge />}
+        {open && a.acknowledged && <AckBadge expiresAt={a.ack_expires_at} />}
         <MaintenanceBadge target={a.domain} />
         <RepeatBadge count={a.repeat_count} />
         <SendFailedBadge count={a.email_failed_count} />

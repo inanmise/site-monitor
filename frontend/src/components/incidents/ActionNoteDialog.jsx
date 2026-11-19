@@ -9,6 +9,7 @@ import { Textarea } from '@/components/shadcn/textarea'
 import { Toggle } from '@/components/shadcn/toggle'
 import { Label } from '@/components/shadcn/label'
 import { Kbd, KbdGroup } from '@/components/shadcn/kbd'
+import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { cn } from '@/lib/utils'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
@@ -21,6 +22,7 @@ import {
   NOTE_RULE, noteRuleState, normalizeAction, chipsFor, hasTemplate, applyTemplate, levelMix, BULK_PREVIEW,
   isLongMessage, focusReturnPlan, returnFocus,
 } from './actionNoteModel.js'
+import { ACK_DURATION_OPTIONS, optionValue, minutesOf, durationLabel, plannedExpiry } from './ackDurationModel.js'
 
 /**
  * Gerekçeli SAHİPLEN / ÇÖZ penceresi (2026-09-28 yeniden tasarım, shadcn) — Olaylar konsolu ve Alarm Geçmişi (tekli +
@@ -49,7 +51,9 @@ import {
  * @param action   'ack' | 'resolve'
  * @param subject  'alert' | 'incident' — tekil başlık metni ("Alarmı onayla" / "Olayı onayla")
  * @param items    ActionContext[] (actionNoteModel.contextFromAlert / contextFromIncident); 2+ = toplu görünüm
- * @param onSubmit async (note) => ({ ok: true }) | ({ ok: false, error }) — sunucu çağrısı ÇAĞIRANDA (toast, yenileme)
+ * @param onSubmit async (note, { durationMinutes }) => ({ ok: true }) | ({ ok: false, error }) — sunucu çağrısı ÇAĞIRANDA
+ *                 (toast, yenileme). `durationMinutes` yalnız sahiplenmede: null = süresiz (varsayılan), aksi halde süreli onay
+ *                 (2026-11-19 — süre dolunca alarm hâlâ açıksa onay kalkar, alıcılara hatırlatma gider).
  * @param onClose  (reason: 'submitted' | 'cancel') => void — çağıran pencereyi kaldırır
  *
  * Test kancaları: pencere `data-action-note` + `data-action` + `data-bulk`; `data-slot="action-note-context|action-note-target|
@@ -291,6 +295,8 @@ export default function ActionNoteDialog({ action = 'ack', subject = 'alert', it
   const single = list[0] ?? null
 
   const [note, setNote] = useState('')
+  const [duration, setDuration] = useState(null)   // süreli onay (2026-11-19): null = süresiz
+  const dateLocale = useDateLocale()
   const [touched, setTouched] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -308,6 +314,8 @@ export default function ActionNoteDialog({ action = 'ack', subject = 'alert', it
   const rulesId = `${uid}-rules`
   const hintId = `${uid}-hint`
   const discardId = `${uid}-discard`
+  const durationLabelId = `${uid}-duration`
+  const durationHintId = `${uid}-duration-hint`
 
   const rule = noteRuleState(note)
   const showErrors = touched && !rule.valid
@@ -387,7 +395,7 @@ export default function ActionNoteDialog({ action = 'ack', subject = 'alert', it
     setBusy(true)
     let res
     try {
-      res = await onSubmit?.(state.trimmed)
+      res = await onSubmit?.(state.trimmed, { durationMinutes: resolve ? null : duration })
     } catch (e) {
       res = { ok: false, error: e?.message }
     } finally {
@@ -528,6 +536,30 @@ export default function ActionNoteDialog({ action = 'ack', subject = 'alert', it
               <p id={hintId} className="m-0 text-xs text-muted-foreground">
                 {bulk ? t('actnote.note.hintBulk', n) : t('actnote.note.hint')}
               </p>
+
+              {/* Süreli onay (2026-11-19): yalnız sahiplenmede. Varsayılan süresiz (bugünkü davranış). */}
+              {!resolve && (
+                <div data-slot="action-note-ack-duration" className="mt-1 flex flex-col gap-1.5">
+                  <span id={durationLabelId} className="text-sm font-medium">{t('ackdur.label')}</span>
+                  <ToggleGroup type="single" variant="outline" size="sm" spacing={2} value={optionValue(duration)}
+                    onValueChange={(v) => { if (v) setDuration(minutesOf(v)) }}
+                    aria-labelledby={durationLabelId} aria-describedby={durationHintId} disabled={busy}
+                    className="grid w-full grid-cols-3 sm:flex sm:w-fit sm:flex-wrap">
+                    {ACK_DURATION_OPTIONS.map((m) => (
+                      <ToggleGroupItem key={optionValue(m)} value={optionValue(m)} data-duration={optionValue(m)}
+                        className="h-10 px-3 text-xs sm:h-8 sm:pointer-coarse:h-10">
+                        {durationLabel(m, t)}
+                      </ToggleGroupItem>
+                    ))}
+                  </ToggleGroup>
+                  <p id={durationHintId} data-slot="action-note-ack-duration-hint" className="m-0 text-xs text-muted-foreground">
+                    {duration
+                      ? t(bulk ? 'ackdur.hintTimedBulk' : 'ackdur.hintTimed', plannedExpiry(duration, nowMs)?.toLocaleString(dateLocale,
+                        { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) ?? '—')
+                      : t('ackdur.hintNone')}
+                  </p>
+                </div>
+              )}
               {/* Kural sağlandığı AN bir kez duyurulur (her tuşta değil). */}
               <span role="status" className="sr-only">{rule.valid ? t('actnote.rule.ready') : ''}</span>
             </div>

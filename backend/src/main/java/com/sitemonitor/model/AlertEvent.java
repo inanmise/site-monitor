@@ -69,6 +69,15 @@ public class AlertEvent {
     private String acknowledgedAt;
 
     /**
+     * Süreli onay (2026-11-19, kullanıcı kararı): onayın kendiliğinden düşeceği an (UTC {@code yyyy-MM-ddTHH:mm:ss});
+     * null = süresiz (bugünkü davranış). Yalnız onay yazımı ({@code EscalationService.acknowledge}) ve süre bitimi işi
+     * ({@code AckExpirySweeper}) yazar; terfi onayı düşürdüğünde bu değer kalır — süre işi yalnız {@code acknowledged = true}
+     * satırlara baktığından zararsızdır, terfi geri alınırsa (onay geri gelir) süre de geçerli kalır.
+     */
+    @Column(name = "ack_expires_at", length = 30)
+    private String ackExpiresAt;
+
+    /**
      * Alarmın NEDEN onaylandığı — kullanıcının yazdığı gerekçe.
      *
      * <p>Onay eskiden yalnız "kim" ve "ne zaman" bırakıyordu; haftalar sonra bakan kişi sorunun

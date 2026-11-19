@@ -72,6 +72,13 @@ describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme gra
     expect(hasDynamic('components/admin/AlertHistory.jsx', /AlertNoisePanel\.jsx$/)).toBe(true)
   })
 
+  it('Alarm Geçmişi kesinti takvimini (2026-11-19) yalnız Takvim görünümünde tembel yükler; başka yerde statik içe aktarılmaz', () => {
+    expect(hasStatic('components/admin/AlertHistory.jsx', /alerts\/OutageCalendar(\.jsx)?$/)).toBe(false)
+    expect(hasDynamic('components/admin/AlertHistory.jsx', /alerts\/OutageCalendar\.jsx$/)).toBe(true)
+    const staticUsers = FILES.filter(({ src }) => staticImports(src).some((s) => /(^|\/)OutageCalendar(\.jsx)?$/.test(s))).map((x) => x.rel)
+    expect(staticUsers).toEqual([])
+  })
+
   it('Sertifika penceresi: Alarm geçmişi, tanılama ve envanter sekmesi yalnız kendi sekmesinde/düğmesinde yüklenir', () => {
     const modal = 'components/CertificateModal.jsx'
     expect(hasStatic(modal, /admin\/AlertHistory(\.jsx)?$|admin\/DiagnosticsModal(\.jsx)?$|inventory\/InventoryDetails(\.jsx)?$/)).toBe(false)

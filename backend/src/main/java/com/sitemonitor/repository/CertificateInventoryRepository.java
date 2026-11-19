@@ -78,6 +78,14 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
      */
     @Query("SELECT c.domain, c.teamId, c.ugTeamId FROM CertificateInventory c WHERE c.domain IS NOT NULL")
     List<Object[]> findDomainOwners();
+
+    /**
+     * Takım kesinti takvimi (2026-11-19): YALNIZ verilen alan adlarının SY / UG takımı — envanter gibi yönlenen kesinti
+     * alarmlarının sahipliği ({@code AlertOwnership}, pasif envanter dahil — {@code findByDomain} gibi). Sütunlar
+     * {@code [domain, teamId, ugTeamId]}; çağıran ≤ 500'lük parçalarla ve boş olmayan koleksiyonla çağırır.
+     */
+    @Query("SELECT c.domain, c.teamId, c.ugTeamId FROM CertificateInventory c WHERE c.domain IN :domains")
+    List<Object[]> findDomainOwnersIn(@Param("domains") Collection<String> domains);
     List<CertificateInventory> findByTeamIdAndActiveTrueOrderByDomainAsc(Long teamId);
     List<CertificateInventory> findByTeamIdOrderByDomainAsc(Long teamId);
     /** Takımın UG olarak bağlı olduğu TÜM kayıtlar (pasif/silinmiş dahil) — takım taşıma/silme etkisi (2026-09-28). */

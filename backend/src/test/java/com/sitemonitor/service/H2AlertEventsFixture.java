@@ -37,11 +37,13 @@ final class H2AlertEventsFixture {
             + "acknowledged_at VARCHAR(40), acknowledged_by VARCHAR(255), "
             + "resolved BOOLEAN NOT NULL DEFAULT FALSE, resolved_at VARCHAR(40), resolved_by VARCHAR(255), "
             + "created_at VARCHAR(40), last_re_alert_at VARCHAR(40), realert_count INT, storm_id BIGINT, "
-            + "notification_group_id BIGINT, resolution_notify VARCHAR(16), resolution_notify_at VARCHAR(30))";
+            + "notification_group_id BIGINT, resolution_notify VARCHAR(16), resolution_notify_at VARCHAR(30), "
+            + "ack_expires_at VARCHAR(40))";
 
     private static final String COLS = "id, domain, alert_level, alert_type, message, days_remaining, not_after, team_id, "
             + "notified_contacts, context_json, acknowledged, acknowledged_at, acknowledged_by, resolved, resolved_at, resolved_by, "
-            + "created_at, last_re_alert_at, realert_count, storm_id, notification_group_id, resolution_notify, resolution_notify_at";
+            + "created_at, last_re_alert_at, realert_count, storm_id, notification_group_id, resolution_notify, resolution_notify_at, "
+            + "ack_expires_at";
 
     private static final RowMapper<AlertEvent> MAPPER = (rs, i) -> {
         AlertEvent e = new AlertEvent();
@@ -73,6 +75,7 @@ final class H2AlertEventsFixture {
         e.setNotificationGroupId(rs.wasNull() ? null : g);
         e.setResolutionNotify(rs.getString("resolution_notify"));
         e.setResolutionNotifyAt(rs.getString("resolution_notify_at"));
+        e.setAckExpiresAt(rs.getString("ack_expires_at"));
         return e;
     };
 
@@ -108,8 +111,8 @@ final class H2AlertEventsFixture {
             jdbc.update(con -> {
                 PreparedStatement ps = con.prepareStatement("INSERT INTO alert_events(domain, alert_level, alert_type, message, "
                         + "days_remaining, not_after, team_id, notified_contacts, context_json, acknowledged, resolved, resolved_at, "
-                        + "resolved_by, created_at, last_re_alert_at, realert_count, storm_id, notification_group_id) "
-                        + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", Statement.RETURN_GENERATED_KEYS);
+                        + "resolved_by, created_at, last_re_alert_at, realert_count, storm_id, notification_group_id, ack_expires_at) "
+                        + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", Statement.RETURN_GENERATED_KEYS);
                 bindCommon(ps, e);
                 return ps;
             }, kh);
@@ -119,11 +122,12 @@ final class H2AlertEventsFixture {
                     + "not_after = ?, team_id = ?, notified_contacts = ?, context_json = ?, acknowledged = ?, acknowledged_at = ?, "
                     + "acknowledged_by = ?, resolved = ?, "
                     + "resolved_at = ?, resolved_by = ?, created_at = ?, last_re_alert_at = ?, realert_count = ?, storm_id = ?, "
-                    + "notification_group_id = ? WHERE id = ?",
+                    + "notification_group_id = ?, ack_expires_at = ? WHERE id = ?",
                     e.getDomain(), e.getAlertLevel(), e.getAlertType(), e.getMessage(), e.getDaysRemaining(), e.getNotAfter(),
                     e.getTeamId(), e.getNotifiedContacts(), e.getContextJson(), Boolean.TRUE.equals(e.getAcknowledged()),
                     e.getAcknowledgedAt(), e.getAcknowledgedBy(), Boolean.TRUE.equals(e.getResolved()), e.getResolvedAt(), e.getResolvedBy(), e.getCreatedAt(),
-                    e.getLastReAlertAt(), e.getRealertCount(), e.getStormId(), e.getNotificationGroupId(), e.getId());
+                    e.getLastReAlertAt(), e.getRealertCount(), e.getStormId(), e.getNotificationGroupId(), e.getAckExpiresAt(),
+                    e.getId());
         }
         return e;
     }
@@ -147,6 +151,7 @@ final class H2AlertEventsFixture {
         ps.setObject(16, e.getRealertCount());
         ps.setObject(17, e.getStormId());
         ps.setObject(18, e.getNotificationGroupId());
+        ps.setString(19, e.getAckExpiresAt());
     }
 
     private void bind() {

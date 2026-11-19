@@ -1,9 +1,72 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-19T07:55:59Z",
+  "generatedAt": "2026-11-19T10:36:22Z",
   "repo": "inanmise/site-monitor",
-  "count": 861,
+  "count": 862,
   "releases": [
+    {
+      "version": "20.216.0",
+      "tag": "v20.216.0",
+      "releasedAt": "2026-11-19T10:36:10Z",
+      "commit": "2b09ddf0f4bce253b62b2c00179e33b7772b6802",
+      "prevVersion": "20.215.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 3,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 1,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "2b09ddf0",
+          "subject": "süreli onay ve kesinti takvimi — bağımsız inceleme düzeltmeleri"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "5605c69b",
+          "subject": "kesinti takvimi sorgusuna 15 sn sorgu sınırı"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "be5f134a",
+          "subject": "kesinti takvimi — takım seçici başlıkta taşmaz, gün tıklaması açıklaması"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "09c75ca1",
+          "subject": "takım kesinti takvimi — Alarm Geçmişi'nde \"Takvim\" görünümü"
+        },
+        {
+          "type": "docs",
+          "scope": null,
+          "breaking": false,
+          "sha": "94906c7b",
+          "subject": "süreli onay — eskalasyon adımı notu netleştirildi"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "3a34a6ce",
+          "subject": "süreli alarm onayı — süre dolunca onay kalkar ve hatırlatma gider"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.215.1",
       "tag": "v20.215.1",

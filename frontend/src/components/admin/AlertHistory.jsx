@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo, useId, lazy, Suspense } from 'react'
 import {
   History, RefreshCcw, Download, Siren, OctagonAlert, TriangleAlert, CircleAlert, BellRing, UserCheck, Clock,
-  CheckCircle2, RotateCcw, FilterX, Eye, Link2, ExternalLink, Inbox, PhoneCall, CalendarSearch, CalendarRange,
+  CheckCircle2, RotateCcw, FilterX, Eye, Link2, ExternalLink, Inbox, PhoneCall, CalendarSearch, CalendarRange, List, CalendarDays,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -34,6 +34,8 @@ import {
 } from './alerts/alertHistoryModel.js'
 import { presetLabel } from './alerts/AlertToolbar.jsx'
 import { ALERT_TYPES, alertTypeLabel } from '../../utils/alertTypeMeta.js'
+import SegmentedControl from '../ui/SegmentedControl.jsx'
+import { CAL_KEY, CAL_MONTH_KEY, clampMonth, currentMonth, dayListFilters } from './alerts/outageCalendarModel.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Checkbox } from '@/components/shadcn/checkbox'
@@ -48,6 +50,8 @@ export { groupPushRows, statusLabel } from './alerts/alertHistoryModel.js'
 // Gürültü analizi (2026-09-12, #18) grafik kitaplığını (shadcn/chart → recharts) çeker ve yalnız tam sayfada (urlSync)
 // çizilir — tembel yüklenir (2026-10-09): sertifika penceresinin "Alarmlar" sekmesi ve izleme ayrıntıları onu taşımaz.
 const AlertNoisePanel = lazy(() => import('./AlertNoisePanel.jsx'))
+// Takım kesinti takvimi (2026-11-19) — yalnız "Takvim" görünümünde çizilir; açılış ve liste parçasına girmez.
+const OutageCalendar = lazy(() => import('./alerts/OutageCalendar.jsx'))
 
 /** İstatistik şeridi yer tutucusu — MonitorStatsBar ile AYNI kap + 8 kart ölçüsü (veri gelince içerik zıplamaz). */
 function StatsBarSkeleton() {
@@ -67,7 +71,7 @@ function NoisePanelSkeleton() {
 }
 
 /** Onay/çözüm yanıtından detaya taşınan alanlar (zenginleştirme alanları sunucu yanıtında yok — ezilmesin). */
-const ACTION_FIELDS = ['acknowledged', 'acknowledged_by', 'acknowledged_at', 'acknowledged_note', 'resolved', 'resolved_by', 'resolved_at', 'resolved_note']
+const ACTION_FIELDS = ['acknowledged', 'acknowledged_by', 'acknowledged_at', 'acknowledged_note', 'ack_expires_at', 'resolved', 'resolved_by', 'resolved_at', 'resolved_note']
 
 /**
  * Alarm Geçmişi (2026-09-27 yeniden tasarım, shadcn) — takım kapsamlı alarm listesi, inceleme odaklı:
@@ -89,9 +93,14 @@ const ACTION_FIELDS = ['acknowledged', 'acknowledged_by', 'acknowledged_at', 'ac
  * @param urlSync bağımsız sayfa (?tab=alerthistory): başlık, istatistikler, paneller, araç çubuğu ve URL eşlemesi.
  * @param initialTab   GÖMÜLÜ kullanım (2026-11-19, izleme sayfasının Alarmlar görünümü): ilk görünüm (open | closed | all)
  * @param onTabChange  GÖMÜLÜ kullanım: görünüm değişince çağrılır (sayfa kendi URL anahtarına yazar)
+ * @param primaryTeamId bağımsız sayfa (2026-11-19): oturumun birincil takımı — kesinti takviminin varsayılan takımı
+ *
+ * Takvim görünümü (2026-11-19, takım kesinti takvimi): yalnız bağımsız sayfada "Liste | Takvim" anahtarı; URL `cal=1`
+ * (+ `calm=yyyy-MM`, yok = bu ay), takım listeyle ortak `team` anahtarında. Güne basınca liste o takım + o günle
+ * (`range=active`, Tümü) açılır. Gömülü kullanımda anahtar yok.
  */
 export default function AlertHistory({ domain = null, urlSync = false, types = null, globalViewer = false, myTeamIds = null,
-  initialTab = null, onTabChange = null }) {
+  initialTab = null, onTabChange = null, primaryTeamId = null }) {
   // Dizi kimliği her render'da değişir; yükleme bağımlılığına DİZİ koymak sonsuz döngü demek → tek dize.
   const typesParam = Array.isArray(types) && types.length > 0 ? types.join(',') : null
   const embedded = !urlSync
@@ -109,6 +118,9 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   useEffect(() => { if (!urlSync) onTabChangeRef.current?.(tab) }, [tab, urlSync])
   const sourceNav = useAlertSourceNav()   // izleme sayfası içi "İzlemeyi aç" (2026-11-19); yoksa tam gezinme
   const [filters, setFilters] = useState(() => (urlSync ? filtersFromUrl(readUrlParam) : { ...FILTER_DEFAULTS }))
+  // Takvim görünümü (2026-11-19) — yalnız bağımsız sayfada; ay URL'den doğrulanır (geçersiz / aralık dışı → bu ay)
+  const [calView, setCalView] = useState(() => urlSync && readUrlParam(CAL_KEY, null) === '1')
+  const [calMonth, setCalMonth] = useState(() => clampMonth(urlSync ? readUrlParam(CAL_MONTH_KEY, null) : null))
   const patch = useCallback((p) => setFilters((f) => ({ ...f, ...p })), [])
   const resetFilters = useCallback(() => setFilters({ ...FILTER_DEFAULTS }), [])
 
@@ -121,6 +133,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   const [summaryLoading, setSummaryLoading] = useState(urlSync)
   const [updatedAt, setUpdatedAt] = useState(null)
   const [teams, setTeams] = useState([])
+  const [teamsState, setTeamsState] = useState('loading')   // takvimin takım seçicisi: 'loading' | 'ok' | 'failed'
   const [selected, setSelected] = useState(() => new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
   const [detail, setDetail] = useState(null)
@@ -151,7 +164,11 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
     url: urlSync ? { pageKey: 'page', sizeKey: 'ps' } : null, apiBase: 0 })
   const { apiPage: page, pageSize, setTotal, reset: resetPage } = sp
 
-  useUrlQuerySync(filtersToUrl(filters, tab), { enabled: urlSync })
+  useUrlQuerySync({
+    ...filtersToUrl(filters, tab),
+    [CAL_KEY]: calView ? '1' : null,
+    [CAL_MONTH_KEY]: calView && calMonth !== currentMonth() ? calMonth : null,
+  }, { enabled: urlSync })
 
   // Fetch yarışı: yalnız EN SON başlatılan isteğin yanıtı uygulanır (bayat sayfa listeyi ezmesin).
   const loadSeq = useRef(0)
@@ -230,7 +247,9 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   useEffect(() => {
     if (!urlSync) return
     Promise.resolve().then(() => api.admin.getTeams())
-      .then((res) => { if (res?.success) setTeams(res.data ?? []) }).catch(() => {})
+      .then((res) => {
+        if (res?.success) { setTeams(res.data ?? []); setTeamsState('ok') } else setTeamsState('failed')
+      }).catch(() => setTeamsState('failed'))
   }, [urlSync])
 
   // Liste bağlamı değişince seçim sıfırlansın — bayat id'ler seçili kalmasın.
@@ -261,7 +280,10 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       setTab(tabFromUrl(p.view))
       // Yeni bir bildirim niyeti: kalan süzgeçler sıfırlanır, yoksa aranan alarm eleniyor olabilir.
       setFilters({ ...FILTER_DEFAULTS, type: p.type ? String(p.type) : '', q: p.q ? String(p.q) : '',
-        src: p.src && isSrcKey(p.src) ? String(p.src) : '' })   // İzleme menüsü rozeti (2026-09-30): kategori süzgeci
+        src: p.src && isSrcKey(p.src) ? String(p.src) : '',   // İzleme menüsü rozeti (2026-09-30): kategori süzgeci
+        team: p.team != null && p.team !== '' ? String(p.team) : '' })   // takım bağlantısı / takvim (2026-11-19)
+      setCalView(p[CAL_KEY] != null && String(p[CAL_KEY]) === '1')
+      setCalMonth(clampMonth(p[CAL_MONTH_KEY] != null ? String(p[CAL_MONTH_KEY]) : null))
       resetPage()
       linkOpenedRef.current = null
       linkFetchedRef.current = null
@@ -272,7 +294,8 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       setLinkedNocCall(p.n_call != null && String(p.n_call) === '1')
     }
     const onNav = (e) => { if (e?.detail?.tab === 'alerthistory') apply(e.detail.params || {}) }
-    const onPop = () => apply({ view: readUrlParam('view', null), type: readUrlParam('type', ''), q: readUrlParam('q', ''), src: readUrlParam('src', ''), alert: readUrlParam('alert', null), n_call: readUrlParam('n_call', null) })
+    const onPop = () => apply({ view: readUrlParam('view', null), type: readUrlParam('type', ''), q: readUrlParam('q', ''), src: readUrlParam('src', ''), alert: readUrlParam('alert', null), n_call: readUrlParam('n_call', null),
+      team: readUrlParam('team', ''), [CAL_KEY]: readUrlParam(CAL_KEY, null), [CAL_MONTH_KEY]: readUrlParam(CAL_MONTH_KEY, null) })
     window.addEventListener('sm:navigate', onNav)
     window.addEventListener('popstate', onPop)
     return () => { window.removeEventListener('sm:navigate', onNav); window.removeEventListener('popstate', onPop) }
@@ -369,13 +392,18 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
 
   function ack(a) {
     if (!a || actBlocked(a)) return   // başka takımın uyarısı / eylem izni yok — düğme zaten çizilmez (savunma)
-    setNoteDialog({ action: 'ack', items: [noteContext(a)], submit: (note) => submitAck(a, note) })
+    setNoteDialog({ action: 'ack', items: [noteContext(a)], submit: (note, opts) => submitAck(a, note, opts?.durationMinutes) })
   }
-  async function submitAck(a, note) {
+  async function submitAck(a, note, durationMinutes) {
     let r
-    try { r = await api.admin.acknowledgeAlert(a.id, note) } catch { r = null }
+    try { r = await (durationMinutes ? api.admin.acknowledgeAlert(a.id, note, durationMinutes) : api.admin.acknowledgeAlert(a.id, note)) } catch { r = null }
     if (r == null || r.success === false) return { ok: false, error: r?.error || t('alh.note.error') }
-    toast.success(t('alh.ackSuccess'))
+    // Süreli onay (2026-11-19): eski sunucu süreyi tanımaz (yanıtta `ack_expires_at` hiç yok) — süresiz onaylandığını söyle
+    if (durationMinutes && r.data && typeof r.data === 'object' && !('ack_expires_at' in r.data)) {
+      toast.info(t('ackdur.ignored'))
+    } else {
+      toast.success(t('alh.ackSuccess'))
+    }
     mergeDetail(a.id, r.data, { acknowledged: true, acknowledged_note: note, acknowledged_at: nowIso() })
     refreshAll()
     announceAlertsChanged()   // İzleme menüsü rozetleri (sahiplenilmemiş sayısı) hemen tazelensin
@@ -473,7 +501,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       if (items.length === 0) return
       // Gönderilen = pencerenin GÖSTERDİĞİ (listede olmayan seçim sessizce isteğe girmesin)
       const shownIds = items.map((i) => i.id)
-      setNoteDialog({ action: action === 'resolve' ? 'resolve' : 'ack', items, submit: (note) => runBulk(action, shownIds, note) })
+      setNoteDialog({ action: action === 'resolve' ? 'resolve' : 'ack', items, submit: (note, opts) => runBulk(action, shownIds, note, opts?.durationMinutes) })
       return
     }
     const ok = await showConfirm({ title: t('alh.bulk.renotifyTitle'), message: t('alh.bulk.renotifyMsg', ids.length), variant: 'warning',
@@ -483,10 +511,10 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   }
 
   /** Toplu uç — `{ ok, error }` döner (gerekçeli pencere hatayı satır içi gösterir; tekrar bildirde pencere yok → tost). */
-  async function runBulk(action, ids, note) {
+  async function runBulk(action, ids, note, durationMinutes) {
     setBulkBusy(true)
     let res
-    try { res = await api.admin.bulkAlertAction(action, ids, note) } catch { res = null } finally { setBulkBusy(false) }
+    try { res = await (durationMinutes ? api.admin.bulkAlertAction(action, ids, note, durationMinutes) : api.admin.bulkAlertAction(action, ids, note)) } catch { res = null } finally { setBulkBusy(false) }
     if (res?.success) {
       const { processed = 0, skipped = 0, failed = 0 } = res.data ?? {}
       let msg = t('alh.bulk.done', processed)
@@ -573,6 +601,14 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   const sort = useMemo(() => sortParts(filters.sort, tab), [filters.sort, tab])
   const onSort = useCallback((key) => patch({ sort: toggleSort(filters.sort, key, tab) }), [patch, filters.sort, tab])
   const pickTeam = useCallback((id) => { if (id != null) patch({ team: String(id) }) }, [patch])
+  // Takvimde güne basma (2026-11-19): liste görünümü, o takım + o gün; tarih kipi "aralıkta aktif" (önceki günden devreden
+  // kesinti de görünsün), görünüm Tümü (kapananlar da). Kalan süzgeçler sıfırlanır — günün alarmlarını gizlemesinler.
+  const pickCalendarDay = useCallback((teamId, day) => {
+    setTab('all')
+    setFilters({ ...FILTER_DEFAULTS, ...dayListFilters(teamId, day) })
+    setCalView(false)
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch { /* jsdom */ }
+  }, [])
   const groups = useMemo(() => groupByDay(alerts, tab, new Date(nowMs), sort.key), [alerts, tab, nowMs, sort.key])
   // Sütun başlığı süzgeçleri — araç çubuğuyla AYNI durum (çipler + URL tek kaynak); yalnız bağımsız sayfada.
   const columnFilters = useMemo(() => {
@@ -715,25 +751,47 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
             <>
               {/* Kayıtlı görünümler (2026-10-02, öneri 23) — tercihler hazır değilse çizilmez */}
               <SavedViewsMenu listKey="alerthistory" tab="alerthistory" {...VIEW_SPECS.alerthistory} size="default" />
-              <Button type="button" variant="outline" onClick={refreshAll} aria-busy={loading || undefined}>
-                <RefreshCcw aria-hidden="true" className={cn(loading && 'motion-safe:animate-spin')} />{t('alh.refresh')}
-              </Button>
+              {/* Yenile ve CSV LİSTENİN eylemleri — takvimin kendi yenile düğmesi var */}
+              {!calView && (
+                <Button type="button" variant="outline" onClick={refreshAll} aria-busy={loading || undefined}>
+                  <RefreshCcw aria-hidden="true" className={cn(loading && 'motion-safe:animate-spin')} />{t('alh.refresh')}
+                </Button>
+              )}
               {/* CSV: EKRANDAKİ süzgeçlerin aynısıyla — ayrı yüzey "ekranda 12, dosyada 800" sürprizi üretirdi */}
-              <Button asChild variant="outline" className="text-foreground no-underline">
-                <a href={api.admin.getAlertsCsvUrl(csvParams({ tab, filters, domain, typesParam }))} title={t('alh.csvTip')} download>
-                  <Download aria-hidden="true" />{t('alh.exportCsv')}
-                </a>
-              </Button>
+              {!calView && (
+                <Button asChild variant="outline" className="text-foreground no-underline">
+                  <a href={api.admin.getAlertsCsvUrl(csvParams({ tab, filters, domain, typesParam }))} title={t('alh.csvTip')} download>
+                    <Download aria-hidden="true" />{t('alh.exportCsv')}
+                  </a>
+                </Button>
+              )}
             </>
           )} />
       )}
 
+      {/* Görünüm anahtarı (2026-11-19): Liste | Takvim — yalnız bağımsız sayfada */}
+      {urlSync && (
+        <div data-slot="alert-history-view-switch" className="flex min-w-0 flex-wrap">
+          <SegmentedControl value={calView ? 'calendar' : 'list'} ariaLabel={t('alh.view.label')}
+            options={[{ value: 'list', label: t('alh.view.list'), icon: List }, { value: 'calendar', label: t('alh.view.calendar'), icon: CalendarDays }]}
+            onChange={(v) => setCalView(v === 'calendar')} />
+        </div>
+      )}
+
+      {urlSync && calView && (
+        <Suspense fallback={<Skeleton aria-hidden="true" data-slot="outage-calendar-loading" className="h-96 w-full rounded-xl" />}>
+          <OutageCalendar teams={teams} teamsState={teamsState} teamId={filters.team} primaryTeamId={primaryTeamId} myTeamIds={myTeamIds}
+            month={calMonth} onMonthChange={(m) => setCalMonth(clampMonth(m))} onTeamChange={(id) => patch({ team: String(id) })}
+            onPickDay={pickCalendarDay} />
+        </Suspense>
+      )}
+
       {/* İstatistikler EN ÜSTTE (2026-09-27 kullanıcı isteği) — kapsamdaki açık küme; kartlar süzgeç */}
-      {urlSync && (tiles.length > 0
+      {urlSync && !calView && (tiles.length > 0
         ? <MonitorStatsBar items={tiles} activeFilter={activeTile} onStatClick={onStatClick} />
         : summaryLoading && <StatsBarSkeleton />)}
 
-      {urlSync && (
+      {urlSync && !calView && (
         <div className="flex min-w-0 flex-col gap-2">
           <AlertTeamStatsPanel activeTeamId={filters.team}
             onPickTeam={(id) => patch({ team: String(id) })}
@@ -746,7 +804,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
         </div>
       )}
 
-      <Tabs value={tab} onValueChange={(v) => { if (TABS.includes(v)) setTab(v) }} className="min-w-0 gap-3">
+      {!calView && <Tabs value={tab} onValueChange={(v) => { if (TABS.includes(v)) setTab(v) }} className="min-w-0 gap-3">
         <TabsList aria-label={t('alh.tabs')} className="w-full group-data-[orientation=horizontal]/tabs:h-10 pointer-coarse:group-data-[orientation=horizontal]/tabs:h-auto sm:w-fit">
           <TabsTrigger value="open" className="gap-1.5 px-3 pointer-coarse:h-10">
             <Siren aria-hidden="true" />{t('alh.tab.open')}
@@ -775,7 +833,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
         {TABS.map((v) => (
           <TabsContent key={v} value={v} className="min-w-0">{v === tab && listBody}</TabsContent>
         ))}
-      </Tabs>
+      </Tabs>}
 
       {detail && (embedded
         ? <AlertDetailModal key={detail.id} alert={detail} onClose={closeDetail} {...detailProps} />

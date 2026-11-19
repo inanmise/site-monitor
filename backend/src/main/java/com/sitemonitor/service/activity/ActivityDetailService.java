@@ -90,7 +90,7 @@ public class ActivityDetailService {
     /** Alarm olayı eylemleri ({@code alert_info} taşır). */
     static final Set<String> ALERT_ACTIONS = Set.of(ActivityLogService.ACTION_ALERT_TRIGGERED,
             ActivityLogService.ACTION_ALERT_ESCALATED, ActivityLogService.ACTION_ALERT_ACKNOWLEDGED,
-            ActivityLogService.ACTION_ALERT_RESOLVED);
+            ActivityLogService.ACTION_ALERT_RESOLVED, ActivityLogService.ACTION_ALERT_ACK_EXPIRED);
 
     /** Kontrol satırı taşıyan eylemler. */
     static final Set<String> CHECK_ACTIONS =

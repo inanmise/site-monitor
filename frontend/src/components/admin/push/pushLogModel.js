@@ -18,7 +18,9 @@ export const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 
   // 2026-11-05: alarm iletimi bilgi bildirimi (iletime eklenen alıcı takıma / üyelere tek seferlik push)
   'ALERT_FORWARD_ADDED',
   // 2026-11-15: haftalık nöbet bildirimi (takım üyelerine push)
-  'ONCALL_WEEKLY']
+  'ONCALL_WEEKLY',
+  // 2026-11-19: süreli onayın süresi doldu — alarm hâlâ açık, hatırlatma
+  'ACK_EXPIRED']
 export const LEVELS = ['CRITICAL', 'HIGH', 'WARNING', 'INFO']
 export const ERROR_CLASSES = ['AUTH', 'NOT_FOUND', 'RATE', 'SERVER', 'CLIENT', 'CONFIG', 'TIMEOUT', 'CONNECT', 'OTHER']
 /** Sunucunun kabul ettiği sıralama alanları (PushLogController). */

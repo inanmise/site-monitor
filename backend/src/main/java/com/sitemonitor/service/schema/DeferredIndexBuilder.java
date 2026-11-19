@@ -269,6 +269,10 @@ public final class DeferredIndexBuilder {
             // onları taşır, id sırası LIMIT'i dizinden karşılar. PostgreSQL'e özgü.
             Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ae_resolution_notify_open ON alert_events(id)"
                     + " WHERE resolution_notify IN ('PENDING', 'SENDING')"),
+            // Süreli onay süpürücüsü (AckExpirySweeper, dakikada bir; 2026-11-19): süresi dolan onaylar — yalnız süreli onaylı açık
+            // alarmlar (birkaç satır). Sorgudaki koşul (AlertEventRepository.findDueAckExpiries) indeks koşuluyla aynı metin.
+            Spec.postgresOnly("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ae_ack_expires ON alert_events(ack_expires_at)"
+                    + " WHERE ack_expires_at IS NOT NULL AND acknowledged = true AND resolved = false"),
             // Kontrol Geçmişi "yalnız hatalar" sayfası + HER geçmiş açılışındaki hata sayacı (countBy…OpenFalse / OkFalse /
             // UpFalse, DNS boş değer): planlayıcı izlemenin hata oranını bilmediğinden tekil checked_at dizinini tarayıp
             // monitor_id + hata bayrağını SÜZGEÇLE eliyordu (yerel port_checks: aktif izlemenin 30 günlük hata sayacı

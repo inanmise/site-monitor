@@ -182,7 +182,7 @@ describe('ActionNoteDialog — klavye ve kapanış', () => {
     expect(rules(dlg)).toEqual(['error', 'error'])
     type(note, '  known issue being tracked  ')
     fireEvent.keyDown(note, { key: 'Enter', metaKey: true })
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('known issue being tracked'))
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('known issue being tracked', { durationMinutes: null }))
     await waitFor(() => expect(onClose).toHaveBeenCalledWith('submitted'))
   })
 

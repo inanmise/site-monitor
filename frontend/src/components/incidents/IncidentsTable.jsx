@@ -190,7 +190,7 @@ const IncidentRow = memo(function IncidentRow({
       <TableCell>
         <span className="flex flex-wrap gap-1">
           <IncidentStatusBadge status={inc.status} />
-          {open && isAcked(inc) && <AckBadge />}
+          {open && isAcked(inc) && <AckBadge expiresAt={inc.ack_expires_at} />}
         </span>
       </TableCell>
       {/* Takım rozeti kendi tıklamasını durdurur (üye penceresi); hücrenin BOŞ alanı satır gibi detayı açar —

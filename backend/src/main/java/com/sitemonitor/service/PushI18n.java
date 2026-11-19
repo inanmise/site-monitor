@@ -52,6 +52,14 @@ public final class PushI18n {
             "degraded", "{seviye}: {ad} - problem detected (not an outage). {neden} Started {baslangic}.",
             "test",     "Test: SiteMonitor webhook test - {saat}");
 
+    /**
+     * Süresi dolan onayın hatırlatma push'u öneki (2026-11-19) — alarm metninin önüne gelir; telefonda bildirimin neden
+     * yeniden geldiğini söyler. Push güvenli (yalnız Latin-5 harfleri ve iki nokta).
+     */
+    public static String ackExpiredPrefix(String lang) {
+        return isEn(lang) ? "Acknowledgement expired: " : "Onay süresi doldu: ";
+    }
+
     /** Seviye sözcüğü — tr: e-posta/NOC ile tek sözlük ({@link EscalationService#levelWordTr}). */
     public static String levelWord(String level, String lang) {
         if (!isEn(lang)) return EscalationService.levelWordTr(level);

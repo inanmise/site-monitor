@@ -39,6 +39,7 @@ const PUSH_KEYS = {
   SCRIPTED_DISABLED: 'userpush.trigger.SCRIPTED_DISABLED',
   OVERFLOW_SUMMARY: 'userpush.trigger.OVERFLOW_SUMMARY',
   ESCALATION_STEP: 'userpush.trigger.ESCALATION_STEP',
+  ACK_EXPIRED: 'userpush.trigger.ACK_EXPIRED',
 }
 
 /** Her iki günlükte de aynı anlamdaki tetikleyiciler. */
@@ -62,6 +63,7 @@ const COMMON_KEYS = {
   INCIDENT_NOTIFY: 'logtrig.INCIDENT_NOTIFY',
   NEW_DEVICE: 'logtrig.NEW_DEVICE',
   NETWORK_OUTAGE: 'logtrig.NETWORK_OUTAGE',
+  ACK_EXPIRED: 'logtrig.ACK_EXPIRED',   // süreli onayın süresi doldu — hatırlatma (2026-11-19): e-posta + push
   TLS_GRADE_DROP: 'userpush.trigger.TLS_GRADE_DROP',
   ONCALL_WEEKLY: 'userpush.trigger.ONCALL_WEEKLY',   // haftalık nöbet bildirimi (2026-11-15): e-posta + push
   DOMAIN_EXPIRY_REMINDER: 'userpush.trigger.DOMAIN_EXPIRY_REMINDER',

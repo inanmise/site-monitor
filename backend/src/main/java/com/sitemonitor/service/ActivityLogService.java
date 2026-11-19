@@ -85,6 +85,8 @@ public class ActivityLogService {
     public static final String ACTION_ALERT_ESCALATED = "ALERT_ESCALATED";
     public static final String ACTION_ALERT_ACKNOWLEDGED = "ALERT_ACKNOWLEDGED";
     public static final String ACTION_ALERT_RESOLVED = "ALERT_RESOLVED";
+    /** Süreli onayın süresi doldu, onay düştü (2026-11-19) — alarm hâlâ açık; hatırlatma gönderildi. */
+    public static final String ACTION_ALERT_ACK_EXPIRED = "ALERT_ACK_EXPIRED";
 
     /** Satırın aktörü bilinemediğinde (zamanlanmış iş, alarm motoru). */
     public static final String SYSTEM_ACTOR = "system";
