@@ -15,6 +15,8 @@ Yardım → Yenilikler ya da `docs/releases/index.json`. Prod dağıtımı: `doc
 
 ## [Unreleased]
 
+## [20.218.0] — 2026-11-19
+
 ### Changed
 - **⚠ Davranış — k6 2.4.0 etkin ikili oldu (k6 2.3 → 2.4 geçişinin 2. adımı: terfi; kullanıcı kararı 2026-11-20).** İmajda
   artık TEK k6 ikilisi var: `/usr/bin/k6` = **v2.4.0** (go1.26.11, golang.org/x/net v0.62.0). k6 2.3.0 imajdan çıktı ve
@@ -3656,7 +3658,8 @@ ya yalnız ekleme ya da varsayılanı kapalı; ayar yapılmazsa bildirimler, ekr
 
 ---
 
-[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.214.0...HEAD
+[Unreleased]: https://github.com/inanmise/site-monitor/compare/v20.218.0...HEAD
+[20.218.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.218.0
 [20.214.0]: https://github.com/inanmise/site-monitor/releases/tag/v20.214.0
 [20.213.5]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.5
 [20.213.4]: https://github.com/inanmise/site-monitor/releases/tag/v20.213.4
