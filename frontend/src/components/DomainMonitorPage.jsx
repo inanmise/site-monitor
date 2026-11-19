@@ -1016,7 +1016,7 @@ export default function DomainMonitorPage({ systemRole, teamId, teamName, myTeam
     <div className="upt-page">
       <MonitorPageHeader showActions={!alarmsView.active} type="domain" title={t('dom.title')} subtitle={t('dom.subtitle')}
         count={loading ? null : monitors.length}
-        refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
+        refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading} csv
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
         canWrite={canWrite} onNew={openNew} newLabel={t('dom.addMonitor')}
         extraActions={(

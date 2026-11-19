@@ -1386,7 +1386,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     <div className="upt-page">
       <MonitorPageHeader showActions={!alarmsView.active} type="pagespeed" title={t('pspd.title')} subtitle={t('pspd.subtitle')}
         count={loading ? null : monitors.length} down={counts.down}
-        refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
+        refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading} csv
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
         canWrite={canWrite} onNew={openNew} newLabel={t('pspd.addMonitor')}>
         <MonitorViewSwitch view={alarmsView} />
