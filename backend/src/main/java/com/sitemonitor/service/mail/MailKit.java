@@ -230,6 +230,15 @@ public final class MailKit {
         return "<tr><td class=\"px\" bgcolor=\"" + CARD + "\" style=\"padding:24px 24px 8px;" + font() + "color:" + FG + "\">";
     }
 
+    /**
+     * Başlık satırı ve alt bilgisi OLMAYAN kartın gövdesi ({@code MailDoc.bare()}): kartın dört köşesini de bu hücre
+     * yuvarlar (normal kartta üst köşeler başlıkta, alt köşeler alt bilgidedir).
+     */
+    public static String bodyOpenBare() {
+        return "<tr><td class=\"px\" bgcolor=\"" + CARD + "\" style=\"padding:24px 24px 8px;border-radius:" + RADIUS_CARD + "px;"
+                + font() + "color:" + FG + "\">";
+    }
+
     public static String bodyClose() {
         return "</td></tr>";
     }

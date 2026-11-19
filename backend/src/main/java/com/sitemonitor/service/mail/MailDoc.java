@@ -43,6 +43,7 @@ public final class MailDoc {
     private String preheader;
     private int width = MailTokens.WIDTH;
     private String kicker;
+    private boolean bare;
     private final StringBuilder body = new StringBuilder(8192);
     private final StringBuilder text = new StringBuilder(2048);
     private String whyHtml;
@@ -81,6 +82,17 @@ public final class MailDoc {
     /** Başlık çubuğunun sağındaki alt-sistem etiketi (ör. "Sertifika İzleme"). */
     public MailDoc kicker(String k) {
         this.kicker = k;
+        return touch();
+    }
+
+    /**
+     * Çerçevesiz belge: logo + alt-sistem etiketi taşıyan başlık satırı ve alt bilgi ("Neden bu e-postayı aldınız?" + meta
+     * satırı) ÇİZİLMEZ; kart yalnız gövdeden oluşur, belge gövdenin bittiği yerde biter (düz metinde de alt bilgi yok).
+     * Olduğu gibi üst yönetime iletilen rapor postaları için (kanal teknik hata raporu, 2026-11-19 kullanıcı isteği).
+     * Gövde {@code cid:brand-logo} taşımadığından gönderici logo ekini de iliştirmez.
+     */
+    public MailDoc bare() {
+        this.bare = true;
         return touch();
     }
 
@@ -389,11 +401,15 @@ public final class MailDoc {
     public String html() {
         if (rendered == null) {
             StringBuilder sb = new StringBuilder(body.length() + 6000);
-            sb.append(MailKit.open(title, preheader, width, extraCss))
-              .append(MailKit.header(kicker))
-              .append(MailKit.bodyOpen()).append(body).append(MailKit.bodyClose())
-              .append(MailKit.footer(whyHtml, metaHtml))
-              .append(MailKit.close());
+            sb.append(MailKit.open(title, preheader, width, extraCss));
+            if (bare) {
+                sb.append(MailKit.bodyOpenBare()).append(body).append(MailKit.bodyClose());
+            } else {
+                sb.append(MailKit.header(kicker))
+                  .append(MailKit.bodyOpen()).append(body).append(MailKit.bodyClose())
+                  .append(MailKit.footer(whyHtml, metaHtml));
+            }
+            sb.append(MailKit.close());
             rendered = sb.toString();
             MailKit.rememberText(rendered, text());
         }
@@ -402,7 +418,7 @@ public final class MailDoc {
 
     public String text() {
         StringBuilder t = new StringBuilder(text);
-        String foot = join(whyText, metaText);
+        String foot = bare ? "" : join(whyText, metaText);
         if (!foot.isBlank()) t.append("\n\n--\n").append(foot);
         return t.toString().strip() + "\n";
     }

@@ -84,20 +84,19 @@ public final class TechErrorReportMail {
         return buildFull(in, prepared, appUrl, fileName, null);
     }
 
-    /** {@link #buildFull(TechErrorPdfInput, TechErrorMailImages.Result, String, String)} + banddan sonra ek blok (null = yok). */
+    /**
+     * {@link #buildFull(TechErrorPdfInput, TechErrorMailImages.Result, String, String)} + banddan sonra ek blok (null = yok).
+     *
+     * <p>Posta ÇERÇEVESİZDİR (2026-11-19, kullanıcı isteği: "tepede Site Monitor logosu ve sağ üst köşede 'Teknik hata
+     * raporu' ibaresi olmasın"; "en altında 'bu mail neden geldi', düğme gibi ibareler olmasın — raporun bittiği yer mail de
+     * bitsin"): {@link MailDoc#bare()} — logo + etiket taşıyan başlık satırı yok, "Neden bu e-postayı aldınız?" / meta alt
+     * bilgisi yok, "Teknik hata raporlarını aç" düğmesi yok. Kart lacivert kapak bandıyla başlar, raporun kendi kapanış
+     * notuyla (PDF'in son satırıyla aynı anlam) biter. Teslim yolu (takım / yönetici / onay isteği) gövdeyi DEĞİŞTİRMEZ —
+     * onay isteğinin tek farkı baştaki onay kartıdır ({@code intro}). {@code appUrl} artık gövdede kullanılmaz (düğme
+     * kalktı); imza, çağıranlar için korunur.
+     */
     public static Built buildFull(TechErrorPdfInput in, TechErrorMailImages.Result prepared, String appUrl, String fileName,
                                   Intro intro) {
-        return buildFull(in, prepared, appUrl, fileName, intro, Audience.TEAM);
-    }
-
-    /**
-     * Alıcı kitlesi (inceleme 2026-10-17): dipnotun "bu e-postayı neden aldınız" cümlesi teslim yoluna göre — TEAM takım adresi
-     * (eski metin, bayt bayt), EXECUTIVE kanalın yönetici alıcısı (+ onaylayan PO, kimlik varsa), APPROVER onay isteği alan PO.
-     */
-    public enum Audience { TEAM, EXECUTIVE, APPROVER }
-
-    public static Built buildFull(TechErrorPdfInput in, TechErrorMailImages.Result prepared, String appUrl, String fileName,
-                                  Intro intro, Audience audience) {
         TechErrorMailImages.Result imgs = prepared == null ? TechErrorMailImages.Result.empty() : prepared;
         boolean en = in.template().en();
         String lang = in.template().lang();
@@ -105,10 +104,9 @@ public final class TechErrorReportMail {
         // PDF eki yok (onay isteğinde sınıra sığmadı): gövdenin hiçbir yeri "ekteki PDF" demez — giriş, görsel kutuları,
         // düz metin etiketleri ve trend notu "PDF Site Monitor'den indirilir" der (inceleme 2026-10-18: çelişiyordu)
         boolean attached = fileName != null;
-        MailDoc d = MailDoc.create(subject(in)).extraWide()
+        MailDoc d = MailDoc.create(subject(in)).extraWide().bare()
                 .preheader((attached ? (en ? "PDF report attached · " : "PDF rapor ektedir · ")
-                        : (en ? "PDF not attached · " : "PDF eklenmedi · ")) + period)
-                .kicker(en ? "Technical error report" : "Teknik hata raporu");
+                        : (en ? "PDF not attached · " : "PDF eklenmedi · ")) + period);
         d.raw(bandHtml(in, period, en), bandPlain(in, period, en));
         if (intro != null) intro.apply(d);
         if (!attached) {
@@ -116,11 +114,10 @@ public final class TechErrorReportMail {
             d.paragraph(en
                     ? "The PDF did not fit this e-mail's size limit, so it is not attached; the full report and its images are in Site Monitor."
                     : "PDF bu postanın boyut sınırına sığmadığından eklenmedi; tam rapor ve görseller Site Monitor'de.");
-        } else {
-            d.paragraph(en
-                    ? "The full report, with every image at full resolution, is in the attached PDF (" + fileName + ")."
-                    : "Tam rapor — görseller tam çözünürlükte — ekteki PDF'tedir (" + fileName + ").");
         }
+        // PDF ekliyken banttan sonra giriş cümlesi YOK (2026-11-19, kullanıcı isteği: "Tam rapor — görseller tam çözünürlükte —
+        // ekteki PDF'tedir" açıklaması kaldırıldı): ek postanın kendisinde görünür; gövdeye giremeyen görselin kutusu ve trend
+        // notu yerlerinde "ekteki PDF" demeyi sürdürür (eksik içeriğin nerede olduğunu söylerler)
 
         // Değeri yönetici özetinde gösterilen alanlar gösterge bölümlerinde tekrar basılmaz; bütün değerleri özette olan bölüm
         // hiç basılmaz, notları özetin sonunda — PDF ile AYNI plan (2026-10-18)
@@ -147,11 +144,7 @@ public final class TechErrorReportMail {
             d.note(en ? "Figures were entered by the team; Site Monitor does not calculate them."
                     : "Değerleri ekip girmiştir; Site Monitor bu rakamları hesaplamaz.");
         }
-        String base = appUrl == null ? "" : appUrl.replaceAll("/+$", "");
-        if (!base.isBlank()) d.button(base + "/?tab=channelreports", en ? "Open technical error reports →" : "Teknik hata raporlarını aç →");
-        String why = whyText(in, audience == null ? Audience.TEAM : audience, en);
-        d.footerWhyCustom(MailKit.esc(why), why);
-        d.footerMeta(en ? "Site Monitor — technical error report" : "Site Monitor — teknik hata raporu", "Site Monitor");
+        // Kapanış notu raporun SON satırıdır: ardından düğme, "neden aldınız" ya da meta satırı gelmez (2026-11-19)
         List<InlineImage> inline = new ArrayList<>();
         for (TechErrorMailImages.Prepared p : imgs.embedded().values()) inline.add(p.inline());
         MailDoc.Mail mail = d.build();
@@ -161,34 +154,6 @@ public final class TechErrorReportMail {
             if (zero != null) inline.add(zero);
         }
         return new Built(mail, List.copyOf(inline), imgs.embedded().size(), imgs.skipped().size() + imgs.unreadable().size());
-    }
-
-    /** Dipnot cümlesi; EXECUTIVE'de onaylayan PO ve zamanı eklenir (kimlik {@code approved} ise). */
-    static String whyText(TechErrorPdfInput in, Audience audience, boolean en) {
-        return switch (audience) {
-            case EXECUTIVE -> {
-                String base = en
-                        ? "You received this e-mail because you are a registered executive recipient of the " + nz(in.channelName())
-                                + " channel; the team address of " + nz(in.teamName()) + " is in Cc."
-                        : "Bu e-posta, " + nz(in.channelName()) + " kanalının yönetici (executive) alıcısı olarak tanımlı olduğunuz için geldi; "
-                                + nz(in.teamName()) + " takımının adresi bilgidedir.";
-                // Çıktıda kişi adı ve zaman yok (2026-11-16, kullanıcı isteği: "bunlar Site Monitor içinde kalabilir ama
-                // çıktıda olmaması lazım"): yalnız takımın PO'sunun onayladığı söylenir, kim ve ne zaman uygulamada görünür
-                TechErrorPdfInput.Provenance p = in.provenance();
-                if (p != null && p.approved()) {
-                    base += en ? " The report was approved by the team's PO before it was sent."
-                            : " Rapor gönderilmeden önce takımın PO'su tarafından onaylandı.";
-                }
-                yield base;
-            }
-            case APPROVER -> en
-                    ? "You received this e-mail because you are a PO approver of " + nz(in.teamName())
-                            + "; the report waits for your approval before it goes to the executives."
-                    : "Bu e-posta, " + nz(in.teamName()) + " takımının PO onaylayıcısı olduğunuz için geldi; rapor yöneticilere gönderilmeden önce onayınızı bekliyor.";
-            default -> en
-                    ? "You received this e-mail because it is the team address of " + nz(in.teamName()) + " and a team member sent the report from Site Monitor."
-                    : "Bu e-posta, " + nz(in.teamName()) + " takımının adresi olduğu ve bir takım üyesi raporu Site Monitor'den gönderdiği için geldi.";
-        };
     }
 
     // ── Kapak bandı ──────────────────────────────────────────────────────────────────────────────────
