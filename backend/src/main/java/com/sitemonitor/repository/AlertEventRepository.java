@@ -630,6 +630,27 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
     List<AlertEvent> findOpenOrResolvedSince(@Param("since") String since, Pageable pageable);
 
     /**
+     * Takım kesinti takvimi (2026-11-19): {@code types} (kesinti ailesi) alarmlarından ayın {@code [start, end)} penceresiyle
+     * KESİŞENLER — açılış &lt; bitiş VE (pencerede açıldı YA DA hâlâ açık YA DA başlangıçta/sonrasında çözüldü). Damgalar UTC
+     * ISO metni, sözlüksel karşılaştırma. DAR sütunlar: {@code [id, domain, alertType, alertLevel, teamId, createdAt,
+     * resolvedAt, resolved, contextJson]} — bağlam YALNIZ {@code contextTypes} türlerinde okunur (sahipliği bağlamdaki
+     * bağımsızlık işaretine bağlı türler: envanter türevi olabilen Port / DNS / Erişilebilirlik); diğerlerinde NULL. Kararlı
+     * sıra (id), tavan {@code pageable}. İndeks: {@code idx_ae_created_at} + {@code idx_ae_resolved_at} (BitmapOr).
+     */
+    @Query("""
+            SELECT e.id, e.domain, e.alertType, e.alertLevel, e.teamId, e.createdAt, e.resolvedAt, e.resolved,
+                   CASE WHEN e.alertType IN :contextTypes THEN e.contextJson ELSE NULL END
+              FROM AlertEvent e
+             WHERE e.alertType IN :types
+               AND e.createdAt < :end
+               AND (e.createdAt >= :start OR e.resolved = false OR e.resolvedAt >= :start)
+             ORDER BY e.id
+            """)
+    List<Object[]> findOutageCalendarRows(@Param("types") Collection<String> types,
+                                          @Param("contextTypes") Collection<String> contextTypes,
+                                          @Param("start") String start, @Param("end") String end, Pageable pageable);
+
+    /**
      * Alarm Geçmişi listesi. {@code activeFrom} (2026-09-28, "aralıkta aktif olanlar" kipi): verilirse alarm, o andan
      * SONRA hâlâ açıksa ya da o anda/sonrasında çözüldüyse girer — {@code until} ile birlikte "pencereyle KESİŞEN"
      * (açılış ≤ bitiş VE (açık YA DA çözüm ≥ başlangıç)) koşulunu kurar; önceki haftadan devredenler de listelenir.

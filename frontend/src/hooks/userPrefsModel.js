@@ -260,7 +260,8 @@ export const VIEW_SPECS = Object.freeze({
   /** İzleme Panosu (`mo_*`). */
   monitoring: Object.freeze({ prefix: 'mo_', exclude: ['mo_dlg'] }),
   /** Alarm Geçmişi (alertHistoryModel.URL_KEYS + görünüm sekmesi). */
-  alerthistory: Object.freeze({ keys: ['view', 'type', 'q', 'level', 'team', 'ack', 'from', 'to', 'range', 'src', 'sort', 'noc'] }),
+  /** + `cal` (takvim görünümü, 2026-11-19); gösterilen ay (`calm`) geçicidir, görünüme girmez. */
+  alerthistory: Object.freeze({ keys: ['view', 'type', 'q', 'level', 'team', 'ack', 'from', 'to', 'range', 'src', 'sort', 'noc', 'cal'] }),
   /** İstatistikler (`st_*`, 2026-11-13) — sayfa numarası / boyutu geçici, girmez. */
   stats: Object.freeze({ prefix: 'st_', exclude: ['st_page', 'st_ps'] }),
   /** Olay & Hata Geçmişi (`ih_*`). */

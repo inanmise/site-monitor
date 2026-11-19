@@ -2455,7 +2455,7 @@ export default function App() {
               <div className="tab-content active">
                 {/* Başlık AlertHistory'nin kendi ui/PageHeader'ında (2026-09-27) — burada ikinci bir <h2> çift başlık çizerdi */}
                 {/* globalViewer + myTeamIds: 7/24 operatörü başka takımın uyarısını görür ama sahiplenemez/çözemez (sunucu 403) */}
-                <AlertHistory urlSync globalViewer={globalViewer} myTeamIds={myTeamIds} />
+                <AlertHistory urlSync globalViewer={globalViewer} myTeamIds={myTeamIds} primaryTeamId={teamId} />
               </div>
             )}
 

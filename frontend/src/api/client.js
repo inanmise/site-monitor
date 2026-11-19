@@ -2432,6 +2432,15 @@ export const api = {
       return request(`/admin/alerts/type-summary?${qs.toString()}`, opts)
     },
 
+    /**
+     * Takım kesinti takvimi (2026-11-19): takımın bir ayındaki gün gün kesinti dakikaları (İstanbul günü). Eski sunucu
+     * `/alerts/{id}` sayısal kimliğine düşer (400 INVALID_PARAMETER) — çağıran "bu sürümde yok" der (outageCalendarModel).
+     */
+    getOutageCalendar: ({ team, month } = {}, opts = {}) => {
+      const qs = new URLSearchParams({ team: String(team ?? ''), month: String(month ?? '') })
+      return request(`/admin/alerts/outage-calendar?${qs.toString()}`, opts)
+    },
+
     getAlerts: (params = {}) => {
       const opts = typeof params === 'object' && params !== null ? params : { onlyOpen: params }
       const qs = new URLSearchParams()
