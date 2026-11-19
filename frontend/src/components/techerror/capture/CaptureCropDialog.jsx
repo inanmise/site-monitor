@@ -128,6 +128,14 @@ export default function CaptureCropDialog({
     return toSourcePoint({ x: e.clientX - b.left, y: e.clientY - b.top }, s)
   }, [W])
 
+  /**
+   * Klavye odağını sahneye verir: "Kaydırmayı etkinleştir", "Dondur" ve "Canlıya dön" basılınca kalkar — odak gövdeye
+   * düşmesin, oklar / Enter hemen çalışsın.
+   */
+  function focusStage() {
+    stageRef.current?.focus?.({ preventScroll: true })
+  }
+
   /** Canlıyken seçim başlamadan görüntü dondurulur: çizim eşzamanlı durur, seçilen pikseller görülen karedir. */
   function freezeIfLive() {
     if (!liveRef.current) return
@@ -210,7 +218,9 @@ export default function CaptureCropDialog({
           </Button>
         </div>
         <DialogDescription className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
-          {live ? t('te.cap.liveHelp') : t('te.cap.cropHelp')}
+          {/* Tekerlekle kaydırma yalnız GERÇEKTEN açıkken vaat edilir (izin yok / tarayıcı desteklemiyor iken durum satırı
+              tersini söylerdi) */}
+          {live ? t(scroll === 'on' ? 'te.cap.liveHelp' : 'te.cap.liveHelpPlain') : t('te.cap.cropHelp')}
         </DialogDescription>
         {showBar && (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2" data-slot="te-cap-live-bar"
@@ -228,20 +238,20 @@ export default function CaptureCropDialog({
             </p>
             <div className="flex flex-wrap gap-2">
               {canEnable && (
-                <Button type="button" className="pointer-coarse:min-h-10" disabled={busy} onClick={() => onEnableScroll?.()}
-                  data-slot="te-cap-scroll-enable">
+                <Button type="button" className="pointer-coarse:min-h-10" disabled={busy} data-slot="te-cap-scroll-enable"
+                  onClick={() => { onEnableScroll?.(); focusStage() }}>
                   <MousePointerClick aria-hidden="true" /> {t('te.cap.scrollEnable')}
                 </Button>
               )}
               {live && (
                 <Button type="button" variant="outline" className="pointer-coarse:min-h-10" disabled={busy}
-                  onClick={() => { freezeIfLive(); stageRef.current?.focus?.({ preventScroll: true }) }} data-slot="te-cap-freeze">
+                  onClick={() => { freezeIfLive(); focusStage() }} data-slot="te-cap-freeze">
                   <Pause aria-hidden="true" /> {t('te.cap.freeze')}
                 </Button>
               )}
               {!live && canLive && (
                 <Button type="button" variant="outline" className="pointer-coarse:min-h-10" disabled={busy}
-                  onClick={() => onResume?.()} data-slot="te-cap-resume">
+                  onClick={() => { onResume?.(); focusStage() }} data-slot="te-cap-resume">
                   <Play aria-hidden="true" /> {t('te.cap.resume')}
                 </Button>
               )}
@@ -263,7 +273,9 @@ export default function CaptureCropDialog({
             style={{ width: dw, height: dh }}
             onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endDrag} onPointerCancel={endDrag}
             onKeyDown={onKeyDown} onWheel={live ? () => onActivity?.() : undefined}>
-            <span id={keysId} className="sr-only">{t('te.cap.stageKeys')}</span>
+            <span id={keysId} className="sr-only">
+              {t('te.cap.stageKeys')}{live ? ` ${t('te.cap.stageKeysLive')}` : ''}
+            </span>
             <div ref={setHostEl} className="absolute inset-0" data-slot="te-cap-frame-host" />
             <div data-slot="te-cap-selection"
               className={cn('absolute border-2 border-white shadow-[0_0_0_9999px_rgb(0_0_0/0.5)] outline outline-1 outline-black/70',

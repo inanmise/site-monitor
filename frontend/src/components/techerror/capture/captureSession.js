@@ -101,6 +101,11 @@ export function createCaptureSession({
   let controller = null
   // forwardWheel çağrıları SIRAYLA işlenir: "durdur" ile "yeni öğe" çağrıları yarışmasın (son çağrı kazanır)
   let wheelQueue = Promise.resolve()
+  // Sırada bekleyen çağrıların süre sınırı zamanlayıcıları: paylaşım durunca hepsi iptal edilir (zamanlayıcı kalmaz)
+  const wheelWaits = new Set()
+  // Bu paylaşımda tarayıcıya bir ÖĞE için forwardWheel çağrısı yapıldı mı — yapılmadıysa "durdur" çağrısı da yapılmaz
+  // (izin sorulmamışken, kullanıcı hiçbir şeye basmadan tarayıcının kaydırma arayüzüne dokunulmaz)
+  let wheelIssued = false
   let idleTimer = null
   let gen = 0
   let scopes = 0
@@ -120,7 +125,10 @@ export function createCaptureSession({
     stream = null
     track = null
     controller = null
+    wheelIssued = false
     wheelQueue = Promise.resolve()
+    // Sırada bekleyenler hemen serbest kalır: zamanlayıcı kalmaz; çalışınca kuşak değiştiği için tarayıcıya çağrı yapmazlar
+    for (const w of [...wheelWaits]) w.release()
     if (s) {
       try { for (const tr of s.getTracks?.() || []) tr.stop() } catch { /* yok */ }
     }
@@ -255,14 +263,22 @@ export function createCaptureSession({
     })
   }
 
-  /** Önceki tekerlek çağrısının bitmesini EN ÇOK {@link WHEEL_QUEUE_WAIT_MS} bekler (hiç reddetmez). */
+  /**
+   * Önceki tekerlek çağrısının bitmesini EN ÇOK {@link WHEEL_QUEUE_WAIT_MS} bekler (hiç reddetmez). Paylaşım durursa
+   * bekleme hemen biter ({@link teardown}) — zamanlayıcı geride kalmaz.
+   */
   function afterPrevious(prev) {
     return new Promise((resolve) => {
-      let timer = setTimer(() => { timer = null; resolve() }, WHEEL_QUEUE_WAIT_MS)
-      prev.then(() => {
+      const wait = { release: null }
+      let timer = null
+      wait.release = () => {
+        if (!wheelWaits.delete(wait)) return
         if (timer != null) { clearTimer(timer); timer = null }
         resolve()
-      })
+      }
+      wheelWaits.add(wait)
+      timer = setTimer(() => { timer = null; wait.release() }, WHEEL_QUEUE_WAIT_MS)
+      prev.then(wait.release)
     })
   }
 
@@ -272,20 +288,25 @@ export function createCaptureSession({
    * söz yanıt gelene dek bekler — bu yüzden izin `prompt` iken çağrı yalnız kullanıcının tıklamasıyla yapılır (çağıran
    * önce {@link scrollPermission}'a bakar). Çağrılar sıraya konur ("durdur" ile "yeni öğe" yarışmasın); sıradaki çağrı
    * öncekini en çok {@link WHEEL_QUEUE_WAIT_MS} bekler, sonra beklemeden yapılır (yanıtsız kalan izin sorusu durdurmayı
-   * tutamaz — bağlı olmayan eski öğeye iletim zararsızdır: o öğe tekerlek olayı almaz).
+   * tutamaz — bağlı olmayan eski öğeye iletim zararsızdır: o öğe tekerlek olayı almaz). "Durdur" yalnız bu paylaşımda bir
+   * öğe için çağrı yapıldıysa tarayıcıya gider (hiç açılmamış iletim için tarayıcı arayüzüne dokunulmaz); paylaşım
+   * bittiyse / değiştiyse hiç gitmez.
    */
   function forwardWheel(element) {
     const c = controller
     const my = gen
     const run = async () => {
       if (element == null) {
-        // Paylaşım bittiyse denetleyici zaten geçersizdir; durdurma hatası söylenmez
+        if (my !== gen || !wheelIssued) return
+        wheelIssued = false
+        // Paylaşım bu arada bittiyse denetleyici geçersizdir; durdurma hatası söylenmez
         try { await c?.forwardWheel?.(null) } catch { /* yok */ }
         return
       }
       if (my !== gen || state.status !== 'live') throw new CaptureError('ended')
       if (!state.scroll || typeof c?.forwardWheel !== 'function') throw new CaptureError('scrollUnsupported')
       try {
+        wheelIssued = true
         await c.forwardWheel(element)
       } catch (e) {
         const name = e?.name
@@ -293,6 +314,8 @@ export function createCaptureSession({
           : name === 'NotSupportedError' ? 'scrollUnsupported' : 'scrollFailed', e)
       }
       if (my !== gen || state.status !== 'live') throw new CaptureError('ended')
+      // İletim şimdi açık: araya giren (süre sınırıyla öne geçen) bir "durdur" bayrağı indirmiş olabilir
+      wheelIssued = true
       touch()
     }
     const p = afterPrevious(wheelQueue).then(run)

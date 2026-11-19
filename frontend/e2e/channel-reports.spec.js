@@ -2397,6 +2397,61 @@ for (const vp of VIEWPORTS) {
       await editor.locator('[data-slot="te-cap-stop"]').first().click()
       await expect(editor.locator('[data-slot="te-cap-chip"]')).toHaveCount(0)
       expect(await page.evaluate(() => window.__capStopped)).toBe(true)
+
+      // 7) Görsel paneli (520 px'lik açılır pencere): kendi paylaşım oturumu, izin yeniden "sorulacak". Canlı çubuk, izin
+      //    düğmesi ve sahne dar pencereye de sığar (inceleme 2026-11-19)
+      const [panel] = await Promise.all([
+        context.waitForEvent('page'),
+        editor.locator('[data-slot="te-images-panel-open"]').click(),
+      ])
+      await panel.setViewportSize({ width: 520, height: 900 })
+      await expect(panel.locator('[data-slot="te-panel"][data-state="ready"]')).toBeVisible({ timeout: 20_000 })
+      await panel.locator('[data-slot-id="daily-errors"] [data-slot="te-image-snip"]').click()
+      const pdlg = panel.locator('[data-slot="te-cap-dialog"]')
+      await expect(pdlg).toBeVisible({ timeout: 15_000 })
+      const pstage = pdlg.locator('[data-slot="te-cap-stage"]')
+      const pbar = pdlg.locator('[data-slot="te-cap-live-bar"]')
+      const panelFits = async (what) => {
+        await panel.waitForTimeout(250)
+        const db = await pdlg.boundingBox()
+        expect(db.x, `panel penceresi solda taşmaz (${what})`).toBeGreaterThanOrEqual(-1)
+        expect(db.x + db.width, `panel penceresi sağda taşmaz (${what})`).toBeLessThanOrEqual(520 + 1)
+        expect(db.y + db.height, `panel penceresi altta taşmaz (${what})`).toBeLessThanOrEqual(900 + 1)
+        expect(await panel.evaluate(overflowX), `yatay taşma (panel, ${what})`).toBeLessThanOrEqual(1)
+        expect(await panel.evaluate(clipped, '[data-slot="te-cap-dialog"]'), `kırpılan metin (panel, ${what})`).toEqual([])
+        if (vp.touch) expect(await panel.evaluate(smallTargets, '[data-slot="te-cap-dialog"]'), `küçük hedef (panel, ${what})`).toEqual([])
+        const box = await pstage.boundingBox()
+        expect(box.height, `sahne görünür (panel, ${what})`).toBeGreaterThan(120)
+        expect(box.y + box.height, `sahne pencerenin içinde (panel, ${what})`).toBeLessThanOrEqual(db.y + db.height + 1)
+        // Çubuktaki düğmeler pencerenin içinde kalır
+        for (const b of await pbar.locator('button').all()) {
+          const bb = await b.boundingBox()
+          expect(bb.x, `çubuk düğmesi solda (${what})`).toBeGreaterThanOrEqual(db.x - 1)
+          expect(bb.x + bb.width, `çubuk düğmesi sağda (${what})`).toBeLessThanOrEqual(db.x + db.width + 1)
+        }
+      }
+      await expect(pstage).toHaveAttribute('data-live', 'true')
+      await expect(pbar).toHaveAttribute('data-scroll', 'ask')
+      // İzin sorulmadan tarayıcıya hiçbir çağrı gitmez ("durdur" dahil)
+      expect(await panel.evaluate(() => window.__capWheelCalls.slice())).toEqual([])
+      await panelFits('izin sorulacak')
+      await panel.screenshot({ path: `test-results/te-cap-live-panel-ask-${vp.name}.png` })
+      await pdlg.locator('[data-slot="te-cap-scroll-enable"]').click()
+      await expect(pbar).toHaveAttribute('data-scroll', 'asking')
+      expect(await panel.evaluate(() => window.__capAnswer('granted'))).toBe(true)
+      await expect(pbar).toHaveAttribute('data-scroll', 'on')
+      await panelFits('kaydırma açık')
+      const pb = await pstage.boundingBox()
+      await panel.mouse.move(pb.x + pb.width / 2, pb.y + pb.height / 2)
+      await panel.mouse.wheel(0, 150)
+      await expect.poll(() => panel.evaluate(() => window.__capScrollY), { timeout: 5000 }).toBe(150)
+      await pdlg.locator('[data-slot="te-cap-freeze"]').click()
+      await expect(pdlg.locator('[data-slot="te-cap-live-badge"]')).toContainText(/Donduruldu|Frozen/)
+      await panelFits('donduruldu')
+      await panel.screenshot({ path: `test-results/te-cap-live-panel-frozen-${vp.name}.png` })
+      await pdlg.locator('[data-slot="te-cap-cancel"]').click()
+      await expect(pdlg).toHaveCount(0)
+      await panel.close()
     })
 
     test('takım şablon kütüphanesi (D17) + raporun şablon sürümü (D19): yönetim penceresi, yeni kanal kaynağı, kütüphaneye kaydet, varsayılana dön; sığar, kesilmez', async ({ page }) => {

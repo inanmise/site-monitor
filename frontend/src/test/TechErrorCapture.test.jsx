@@ -635,6 +635,148 @@ describe('canlı görüntü ve kaydırma (sekme paylaşımı)', () => {
     expect(stopPaint).toHaveBeenCalledTimes(1)
     await waitFor(() => expect(stream.track.stop).toHaveBeenCalled())
   })
+
+  // ── Bağımsız inceleme (2026-11-19) ──────────────────────────────────────────────────────────────────────────────────
+  it('izin sorulmadıysa tarayıcıya "iletimi durdur" çağrısı da GİTMEZ: sor durumunda dondurma ve Vazgeç hiçbir çağrı yapmaz', async () => {
+    permState = 'prompt'
+    const { dlg } = await openLive()
+    await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'ask'))
+    fireEvent.click(within(dlg).getByRole('button', { name: /Dondur/ }))
+    await waitFor(() => expect(stage(dlg)).not.toHaveAttribute('data-live'))
+    fireEvent.click(within(dlg).getByRole('button', { name: /Canlıya dön/ }))
+    await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'ask'))
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Vazgeç' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    // Sıradaki "durdur" isteklerinin koşması için bir tur beklenir
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    // Hareketsiz bir çağrı (null dahil) izin sorusunu kendiliğinden açtırabilirdi
+    expect(fw).not.toHaveBeenCalled()
+  })
+
+  it('eski izin çağrısı geç yanıtlanırsa yeni durumu EZMEZ: dondur → canlıya dön sonrası "sor" kalır, eski iletim durdurulur', async () => {
+    permState = 'prompt'
+    let allow
+    fw.mockImplementation((el) => (el == null ? Promise.resolve() : new Promise((r) => { allow = r })))
+    const { dlg } = await openLive()
+    fireEvent.click(await within(dlg).findByRole('button', { name: /Kaydırmayı etkinleştir/ }))
+    await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'asking'))
+    const oldPad = pad(dlg)
+    await waitFor(() => expect(elementCalls()).toEqual([[oldPad]]))
+    // İzin sorusu açıkken kullanıcı dondurup canlıya döner: yeni katman, yeni tur
+    fireEvent.click(within(dlg).getByRole('button', { name: /Dondur/ }))
+    await waitFor(() => expect(stage(dlg)).not.toHaveAttribute('data-live'))
+    fireEvent.click(within(dlg).getByRole('button', { name: /Canlıya dön/ }))
+    await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'ask'))
+    expect(pad(dlg)).not.toBe(oldPad)
+    // Eski soru ŞİMDİ yanıtlandı: pencere "açık" demez (tekerlek yeni katmana bağlı değil) …
+    await act(async () => { allow() })
+    await waitFor(() => expect(fw).toHaveBeenLastCalledWith(null))
+    expect(bar(dlg)).toHaveAttribute('data-scroll', 'ask')
+    expect(status(dlg)).not.toHaveTextContent('Fare tekerleği paylaşılan sekmeyi buradan kaydırır.')
+    // … yeni katman için çağrı yalnız kullanıcının tıklamasıyla yapılır
+    expect(elementCalls()).toHaveLength(1)
+    expect(within(dlg).getByRole('button', { name: /Kaydırmayı etkinleştir/ })).toBeInTheDocument()
+  })
+
+  it('dondurma EŞZAMANLIDIR: çizim, olay işlenirken (pencere yeniden çizilmeden) durur — görülen kare = kesilen kare', async () => {
+    const { dlg } = await openLive()
+    await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'on'))
+    let padAtStop = null
+    stopPaint.mockImplementation(() => { padAtStop = !!document.querySelector('[data-slot="te-cap-pad"]') })
+    fireEvent.click(within(dlg).getByRole('button', { name: /Dondur/ }))
+    // Durdurma bir etki temizliğine (yeniden çizimden SONRA) bırakılsaydı katman çoktan kalkmış olurdu
+    expect(padAtStop).toBe(true)
+    expect(stopPaint).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(pad(dlg)).toBeNull())
+    expect(stopPaint).toHaveBeenCalledTimes(1)
+  })
+
+  it('canlı pencerede kullanıcı hareketi paylaşımın boşta sayacını yeniler (5 sn aralıkla); dondurma da yeniler', async () => {
+    const keep = vi.spyOn(captureSession, 'keepAlive')
+    try {
+      const { dlg } = await openLive()
+      await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'on'))
+      expect(keep).not.toHaveBeenCalled()
+      fireEvent.wheel(pad(dlg), { deltaY: 120 })
+      expect(keep).toHaveBeenCalledTimes(1)
+      // Her tekerlek tıkında değil: aralık dolmadan yeniden çağrılmaz
+      fireEvent.wheel(pad(dlg), { deltaY: 120 })
+      fireEvent.wheel(pad(dlg), { deltaY: 120 })
+      expect(keep).toHaveBeenCalledTimes(1)
+      const real = Date.now()
+      const now = vi.spyOn(Date, 'now').mockReturnValue(real + 5001)
+      try {
+        fireEvent.wheel(pad(dlg), { deltaY: 120 })
+      } finally {
+        now.mockRestore()
+      }
+      expect(keep).toHaveBeenCalledTimes(2)
+      fireEvent.click(within(dlg).getByRole('button', { name: /Dondur/ }))
+      expect(keep).toHaveBeenCalledTimes(3)
+    } finally {
+      keep.mockRestore()
+    }
+  })
+
+  it('paylaşım görüntü DONUKKEN biterse de pencere söyler: "Canlıya dön" kalkar, "Yeniden çek" gelir', async () => {
+    const { dlg } = await openLive()
+    await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'on'))
+    fireEvent.click(within(dlg).getByRole('button', { name: /Dondur/ }))
+    await waitFor(() => expect(status(dlg)).toHaveTextContent('Görüntü donduruldu; alanı seçip yükleyin.'))
+    expect(within(dlg).getByRole('button', { name: /Canlıya dön/ })).toBeInTheDocument()
+    act(() => stream.track.fire('ended'))
+    await waitFor(() => expect(status(dlg)).toHaveTextContent('Ekran paylaşımı sona erdi; son görüntü donduruldu.'))
+    expect(within(dlg).queryByRole('button', { name: /Canlıya dön|Dondur|Kaydırmayı etkinleştir/ })).toBeNull()
+    expect(within(dlg).getByRole('button', { name: /Yeniden çek/ })).toBeInTheDocument()
+    // Çizim yalnız bir kez durduruldu (dondurma); bitiş yeniden durdurmaz
+    expect(stopPaint).toHaveBeenCalledTimes(1)
+  })
+
+  it('paylaşım canlıyken biterse tek renk denetimi DONAN kareye yapılır (boş kare uyarısı kaçmaz)', async () => {
+    const { dlg } = await openLive()
+    await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'on'))
+    expect(frameUniform).not.toHaveBeenCalled()
+    frameUniform.mockImplementation(() => true)
+    act(() => stream.track.fire('ended'))
+    expect(await within(dlg).findByText('Görüntü boş geldi')).toBeInTheDocument()
+    expect(frameUniform).toHaveBeenCalledTimes(1)
+    // Paylaşım bitti: "Canlıya dön" önerilmez
+    expect(within(dlg).queryByText(/“Canlıya dön”e basıp yeniden deneyin/)).toBeNull()
+  })
+
+  it('canlıyken paylaşılan yüzey pencereye çevrilirse (tarayıcıdan kaynak değişimi) görüntü donar ve NEDENİ söylenir', async () => {
+    const { dlg } = await openLive()
+    await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'on'))
+    stream.track.getSettings = () => ({ displaySurface: 'window' })
+    act(() => stream.track.fire('configurationchange'))
+    await waitFor(() => expect(stage(dlg)).not.toHaveAttribute('data-live'))
+    expect(stopPaint).toHaveBeenCalledTimes(1)
+    expect(status(dlg)).toHaveTextContent('Pencere ya da tüm ekran paylaşımında görüntü buradan kaydırılamaz (tarayıcı kısıtı).')
+    // "Tarayıcınız desteklemiyor" denmez; paylaşım sürüyor: "Yeniden çek" var, "Canlıya dön" yok
+    expect(status(dlg)).not.toHaveTextContent('Bu tarayıcı paylaşılan sekmeyi buradan kaydıramıyor')
+    expect(status(dlg)).not.toHaveTextContent('Ekran paylaşımı sona erdi')
+    expect(within(dlg).getByRole('button', { name: /Yeniden çek/ })).toBeInTheDocument()
+    expect(within(dlg).queryByRole('button', { name: /Canlıya dön|Dondur/ })).toBeNull()
+    await waitFor(() => expect(fw).toHaveBeenLastCalledWith(null))
+  })
+
+  it('"Yeniden çek" sürerken pencere kapatılırsa geç gelen kare pencereyi yeniden AÇMAZ; kare bırakılır', async () => {
+    stream.track.getSettings = () => ({ displaySurface: 'window' })
+    const { dlg } = await openLive()
+    expect(stage(dlg)).not.toHaveAttribute('data-live')
+    let deliver
+    const late = { width: 800, height: 600, canvas: document.createElement('canvas'), uniform: false }
+    readVideoFrame.mockImplementationOnce(() => new Promise((r) => { deliver = () => r(late) }))
+    fireEvent.click(within(dlg).getByRole('button', { name: /Yeniden çek/ }))
+    await waitFor(() => expect(deliver).toBeTypeOf('function'))
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Vazgeç' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await act(async () => { deliver() })
+    await waitFor(() => expect(releaseFrame).toHaveBeenCalledWith(late))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(startLivePaint).not.toHaveBeenCalled()
+    expect(te().uploadImage).not.toHaveBeenCalled()
+  })
 })
 
 describe('görünürlük', () => {

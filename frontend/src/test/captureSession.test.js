@@ -246,13 +246,52 @@ describe('canlı önizleme ve paylaşılan sekmeyi kaydırma', () => {
     await expect(session.forwardWheel(null)).resolves.toBeUndefined()
     expect(fw).toHaveBeenLastCalledWith(null)
     // Durdurma hatası söylenmez (paylaşım bittiyse denetleyici zaten geçersizdir)
-    fw.mockRejectedValueOnce(Object.assign(new Error('x'), { name: 'InvalidStateError' }))
+    await session.forwardWheel(el)
+    fw.mockImplementationOnce(() => Promise.reject(Object.assign(new Error('x'), { name: 'InvalidStateError' })))
     await expect(session.forwardWheel(null)).resolves.toBeUndefined()
+    expect(fw).toHaveBeenCalledTimes(4)
     session.stop('user')
     await expect(session.forwardWheel(null)).resolves.toBeUndefined()
     await expect(session.forwardWheel(el)).rejects.toMatchObject({ kind: 'ended' })
+    expect(fw).toHaveBeenCalledTimes(4)
     // Sıra zamanlayıcısı açık kalmadı
     expect(timers.filter((h) => h.on && h.ms === WHEEL_QUEUE_WAIT_MS)).toHaveLength(0)
+  })
+
+  it('hiç öğe için çağrı yapılmadıysa "durdur" tarayıcıya GİTMEZ (izin sorulmamışken kaydırma arayüzüne dokunulmaz); yapıldıysa bir kez gider', async () => {
+    const fw = vi.fn(async () => {})
+    const { session } = setup({ makeController: () => controllerOf(fw) })
+    await session.grab()
+    await session.forwardWheel(null)
+    await session.forwardWheel(null)
+    expect(fw).not.toHaveBeenCalled()
+    await session.forwardWheel('pad')
+    await session.forwardWheel(null)
+    await session.forwardWheel(null)
+    expect(fw.mock.calls).toEqual([['pad'], [null]])
+    // Reddedilen (izin verilmeyen) çağrıdan sonra da durdurma gider: tarayıcıya dokunuldu, temiz bırakılır
+    fw.mockImplementationOnce(() => Promise.reject(Object.assign(new Error('x'), { name: 'NotAllowedError' })))
+    await session.forwardWheel('pad2').catch(() => {})
+    await session.forwardWheel(null)
+    expect(fw.mock.calls).toEqual([['pad'], [null], ['pad2'], [null]])
+  })
+
+  it('paylaşım durunca sırada bekleyen çağrılar hemen serbest kalır: zamanlayıcı kalmaz, ölü denetleyiciye çağrı yapılmaz', async () => {
+    const calls = []
+    const fw = vi.fn((el) => { calls.push(el); return el === 'pad1' ? new Promise(() => {}) : Promise.resolve() })
+    const { session, timers } = setup({ makeController: () => controllerOf(fw) })
+    await session.grab()
+    session.forwardWheel('pad1').catch(() => {})   // izin sorusu açık: hiç yanıtlanmayacak
+    const stopped = session.forwardWheel(null)
+    const next = session.forwardWheel('pad2')
+    await tick()
+    // "Durdur" ilk çağrıyı, "yeni öğe" de durdurmayı bekliyor: iki süre sınırı kurulu
+    expect(timers.filter((h) => h.on && h.ms === WHEEL_QUEUE_WAIT_MS)).toHaveLength(2)
+    session.stop('user')
+    await expect(stopped).resolves.toBeUndefined()
+    await expect(next).rejects.toMatchObject({ kind: 'ended' })
+    expect(calls).toEqual(['pad1'])
+    expect(timers.filter((h) => h.on)).toHaveLength(0)
   })
 
   it('forwardWheel hataları türe çevrilir (neden korunur): NotAllowedError, InvalidStateError, NotSupportedError, diğer', async () => {

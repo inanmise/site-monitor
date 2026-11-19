@@ -95,11 +95,15 @@ export function useSlotCapture({
   const [scroll, setScroll] = useState('off')
   const [padEl, setPadEl] = useState(null)
   const [liveEnded, setLiveEnded] = useState(false)
+  // Açık kare bir SEKME paylaşımından mı geldi (paylaşım biterse / yüzey değişirse pencere bunu söyler)
+  const [tab, setTab] = useState(false)
   const liveRef = useRef(false)
   liveRef.current = live
   const stopPaintRef = useRef(null)
   const wheelSeq = useRef(0)
   const lastKeep = useRef(0)
+  // Pencere kapanınca artar: o sırada süren "Yeniden çek"in sonucu kapalı pencereyi yeniden AÇMAZ
+  const cropSeq = useRef(0)
   const snipRef = useRef(null)
   const zoneRef = useRef(null)
   const frameRef = useRef(frame)
@@ -131,6 +135,23 @@ export function useSlotCapture({
   const canLive = capture.status === 'live' && capture.surface === 'browser'
   const canvas = frame?.canvas || null
 
+  /**
+   * Canlı çizimi EŞZAMANLI durdurur (bu andan sonra tuval değişmez) ve tek renk denetimini DONAN kareye yapar. Tek yol:
+   * kullanıcının dondurması, paylaşımın bitmesi, yüzeyin sekme olmaktan çıkması ve çizimin başlatılamaması buradan geçer.
+   */
+  const haltLive = useCallback(() => {
+    liveRef.current = false
+    const stop = stopPaintRef.current
+    stopPaintRef.current = null
+    try { stop?.() } catch { /* yok */ }
+    setLive(false)
+    const f = frameRef.current
+    if (f) {
+      const uniform = frameUniform(f)
+      setFrame((cur) => (cur && cur.canvas === f.canvas && cur.uniform !== uniform ? { ...cur, uniform } : cur))
+    }
+  }, [])
+
   // Canlı çizim: yalnız pencere açık + canlıyken; dondurma / kapanış / ayrılma durdurur
   useEffect(() => {
     if (!canvas || !live) return undefined
@@ -139,7 +160,7 @@ export function useSlotCapture({
     })
     if (!stop) {
       // Paylaşım bu arada kapandı: eldeki kare donuk kalır
-      setLive(false)
+      haltLive()
       return undefined
     }
     stopPaintRef.current = stop
@@ -149,14 +170,22 @@ export function useSlotCapture({
       stopPaintRef.current = null
       stop()
     }
-  }, [canvas, live])
+  }, [canvas, live, haltLive])
 
-  // Paylaşım pencere açıkken biterse (tarayıcıdan durdurma, 10 dk boşta): son görüntü donar, pencere bunu söyler
+  // Sekme paylaşımı pencere açıkken biterse (tarayıcıdan durdurma, 10 dk boşta) — canlıyken de DONUKKEN de: son görüntü
+  // donar ve pencere bunu söyler ("Canlıya dön" artık yoktur; çubuk sessizce kaybolmaz)
+  const hasFrame = !!frame
   useEffect(() => {
-    if (!live || capture.status === 'live') return
-    setLive(false)
+    if (!hasFrame || !tab || liveEnded || capture.status === 'live') return
+    haltLive()
     setLiveEnded(true)
-  }, [live, capture.status])
+  }, [hasFrame, tab, liveEnded, capture.status, haltLive])
+
+  // Canlıyken paylaşılan yüzey sekme olmaktan çıkarsa (tarayıcıdan başka kaynağa geçiş): pencere / ekran buradan
+  // kaydırılamaz — görüntü donar, pencere nedenini söyler ("tarayıcınız desteklemiyor" denmez) ve "Yeniden çek" gelir
+  useEffect(() => {
+    if (live && capture.status === 'live' && !canLive) haltLive()
+  }, [live, capture.status, canLive, haltLive])
 
   // Tekerlek iletimi: canlıyken katman hazır olunca ÖNCE izin durumuna bakılır. İzin verilmişse sessizce açılır; henüz
   // sorulmamışsa (`prompt`) çağrı YAPILMAZ — tarayıcının izin sorusu yalnız kullanıcı "Kaydırmayı etkinleştir"e basınca
@@ -274,7 +303,9 @@ export function useSlotCapture({
       setLiveEnded(false)
       setFrame(f)
       // Sekme paylaşımında pencere CANLI açılır (kaydırıp doğru yeri bulmak için); pencere / ekranda donuk kare
-      setLive(captureSession.getState().surface === 'browser')
+      const isTab = captureSession.getState().surface === 'browser'
+      setTab(isTab)
+      setLive(isTab)
     } catch (e) {
       if (alive.current) setNote(captureNote(e))
     } finally {
@@ -285,19 +316,10 @@ export function useSlotCapture({
   /** Görüntüyü dondurur: çizim EŞZAMANLI durur (bu andan sonra tuval değişmez), tek renk denetimi donuk kareye yapılır. */
   const freeze = useCallback(() => {
     if (!liveRef.current) return
-    liveRef.current = false
-    const stop = stopPaintRef.current
-    stopPaintRef.current = null
-    try { stop?.() } catch { /* yok */ }
-    setLive(false)
-    const f = frameRef.current
-    if (f) {
-      const uniform = frameUniform(f)
-      setFrame((cur) => (cur && cur.canvas === f.canvas && cur.uniform !== uniform ? { ...cur, uniform } : cur))
-    }
+    haltLive()
     captureSession.keepAlive()
     markActivity()
-  }, [])
+  }, [haltLive])
 
   /** Canlıya dön: paylaşılan sekmede başka bir yere gitmek için (pencere seçimi tüm kareye döndürür). */
   function resume() {
@@ -335,22 +357,27 @@ export function useSlotCapture({
     markActivity()
     setRetaking(true)
     setCropError(null)
+    const seq = cropSeq.current
     try {
       const f = await captureSession.grab()
-      if (!alive.current) { releaseFrame(f); return }
+      // Kare beklenirken pencere kapatıldıysa (Vazgeç / Esc) sonuç pencereyi yeniden AÇMAZ: kare bırakılır
+      if (!alive.current || cropSeq.current !== seq) { releaseFrame(f); return }
       releaseFrame(frameRef.current)
       setLiveEnded(false)
       setFrame(f)
       // Paylaşım bitmişken "Yeniden çek" yeni paylaşım başlatır: bu kez sekme seçildiyse pencere canlıya geçer
-      setLive(captureSession.getState().surface === 'browser')
+      const isTab = captureSession.getState().surface === 'browser'
+      setTab(isTab)
+      setLive(isTab)
     } catch (e) {
-      if (alive.current) setCropError(captureNote(e).text)
+      if (alive.current && cropSeq.current === seq) setCropError(captureNote(e).text)
     } finally {
       if (alive.current) setRetaking(false)
     }
   }
 
   function closeCrop() {
+    cropSeq.current++
     // Çizim önce durur: bırakılan tuval bir sonraki karede yeniden büyümesin
     liveRef.current = false
     const stop = stopPaintRef.current
@@ -359,6 +386,7 @@ export function useSlotCapture({
     releaseFrame(frameRef.current)
     setFrame(null)
     setLive(false)
+    setTab(false)
     setLiveEnded(false)
     setCropError(null)
   }
