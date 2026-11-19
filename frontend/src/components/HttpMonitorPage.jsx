@@ -819,7 +819,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
         // "Arızalı" = kartı kırmızı olan her izleme: yanlış kod (down) + yanıt alınamayan (error: zaman aşımı / DNS / TLS)
         // — statusKey ikisini de 'down' çizer ve önce sıralar (2026-10-22, UIM-22)
         count={loading ? null : monitors.length} down={counts.down + counts.error}
-        refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
+        refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading} csv
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
         canWrite={canWrite} onNew={openNew} newLabel={t('http.addMonitor')}>
         <MonitorViewSwitch view={alarmsView} />

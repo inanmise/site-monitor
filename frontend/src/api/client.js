@@ -417,6 +417,60 @@ async function finishIncidentsCsv(res) {
 }
 
 /**
+ * İzleme CSV dışa aktarımı (2026-11-19): türün GÖRÜNEN izlemeleri sabit sütunlarla (sırlar YOK). Olaylar CSV'siyle aynı yol:
+ * ham `fetch` + Blob + ortak indirme (`downloadBlob` — Safari / iPad). 401 oturum yolu, 429 bekleme önerisi
+ * (`retryAfter`), JSON olmayan / ağ hatası çevrilmiş metinle; tarayıcı indirmeyi başlatamadıysa `DOWNLOAD_FAILED`.
+ * Başlıklar: `X-Export-Rows`, `X-Export-Truncated`, `X-Export-Max-Rows`.
+ */
+async function downloadMonitorCsv(type, qs = '', timeoutMs = EXPORT_FETCH_TIMEOUT_MS) {
+  const path = `/monitoring/csv/${encodeURIComponent(type)}/export`
+  let res
+  try {
+    res = await timedFetch(`${BASE}${path}${qs ? `?${qs}` : ''}`, { credentials: 'include', headers: { 'X-Lang': uiLang() } }, timeoutMs)
+  } catch (e) {
+    return isAbortish(e) ? noResponsePayload('timeout') : networkFailurePayload()
+  }
+  try {
+    return await finishMonitorCsv(path, type, res)
+  } catch (e) {
+    return isAbortish(e) ? noResponsePayload('timeout') : networkFailurePayload()
+  } finally {
+    res.done()
+  }
+}
+
+async function finishMonitorCsv(path, type, res) {
+  if (!res.ok) {
+    recordFailure(path, res.status)
+    if (res.status === 401) pingSessionPath()
+    const body = await errorBodyOf(res)
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return nonJsonErrorPayload(res.status, res)
+    const normalized = normalizeErrorBody(body, {
+      status: res.status, requestId: headerOf(res, 'X-Request-Id'), retryAfter: headerOf(res, 'Retry-After'), lang: uiLang(), exposeStatus: false,
+    })
+    normalized.success = false
+    normalized.status = res.status
+    const ra = parseRetryAfter(headerOf(res, 'Retry-After')) ?? parseRetryAfter(body?.retry_after_seconds)
+    if (ra != null) normalized.retryAfter = ra
+    return normalized
+  }
+  const blob = await res.blob()   // ağ hatası / süre → çağıranın catch'i
+  const disp = headerOf(res, 'Content-Disposition') || ''
+  const plain = /filename="?([^";]+)"?/.exec(disp)
+  const p = (n) => String(n).padStart(2, '0')
+  const d = new Date()
+  const name = plain ? plain[1] : `${type}-izlemeler-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}.csv`
+  const rows = Number(headerOf(res, 'X-Export-Rows'))
+  const truncated = String(headerOf(res, 'X-Export-Truncated') || '').toLowerCase() === 'true'
+  const maxRows = Number(headerOf(res, 'X-Export-Max-Rows'))
+  if (!downloadBlob(name, blob)) return { success: false, status: 0, code: 'DOWNLOAD_FAILED', error: null }
+  return {
+    success: true, name, rows: Number.isFinite(rows) && rows >= 0 ? rows : null, truncated,
+    maxRows: Number.isFinite(maxRows) && maxRows > 0 ? maxRows : null,
+  }
+}
+
+/**
  * SQL Playground istek gövdesi (2026-11-13): eski çağrı `{ sql }` aynen; çalıştırma kimliği / parametreler / ANALYZE /
  * biçim yalnız verilirse eklenir (eski sunucu tanımadığı alanları yok sayar).
  */
@@ -2736,6 +2790,21 @@ export const api = {
   // ── Monitoring ───────────────────────────────────────────────────────────
 
   monitoring: {
+    /**
+     * İzleme CSV'si (2026-11-19): `csvExport` türün görünen izlemelerini indirir (`team` = yalnız o takım); `csvImport`
+     * CSV METNİNİ ham gövdeyle yollar — `dryRun` true → önizleme (hiçbir şey yazılmaz), false → gerçek koşum (satır satır
+     * izleme uçları). Sunucu en çok 2000 satırı / 5 MB'ı işler; uzun bir koşum için sonlu uzun süre (LONG_JOB).
+     */
+    csvExport: (type, { team } = {}) => {
+      const q = new URLSearchParams()
+      if (team != null && team !== '') q.set('team', team)
+      return downloadMonitorCsv(type, q.toString())
+    },
+    csvImport: (type, text, { dryRun = true, signal } = {}) =>
+      request(`/monitoring/csv/${encodeURIComponent(type)}/import?dry_run=${dryRun ? 'true' : 'false'}`, {
+        method: 'POST', body: text, headers: { 'Content-Type': 'text/csv; charset=utf-8' }, signal,
+        withStatus: true, timeoutMs: LONG_JOB_TIMEOUT_MS,
+      }),
     /** İzleme Panosu (2026-09-30): 9 türün tek ekranda özeti + izleme satırları; pencere saat (24 | 168).
      *  `fresh` (2026-10-01, sayfanın Yenile düğmesi): sunucunun 30 sn'lik belleğini atlar (sunucu en fazla 5 sn'de bir izin verir). */
     getOverview: (hours = 24, fresh = false) =>

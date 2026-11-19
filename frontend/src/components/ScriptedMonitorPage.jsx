@@ -1488,7 +1488,7 @@ export default function ScriptedMonitorPage({ systemRole, teamId, teamName, myTe
         </>}
         showActions={view === 'monitors' && !alarmsView.active}
         count={loading ? null : monitors.length} down={counts.down}
-        refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading}
+        refreshEvery={REFRESH_INTERVAL} refreshResetKey={loadNonce} onRefresh={load} refreshing={loading} csv
         check={{ count: checkable.length, running: checkRun.running, done: checkRun.run?.rows.length ?? 0, total: checkRun.run?.total ?? 0, onOpen: checkRun.openPicker }}
         canWrite={k6.canManage && k6.available} onNew={openNew} newLabel={t('scripted.addMonitor')}>
         {/* Görünüm anahtarı: monitörler ↔ şablon kütüphanesi ↔ alarmlar — bir EYLEM değil görünüm seçicisi, yeri başlığın

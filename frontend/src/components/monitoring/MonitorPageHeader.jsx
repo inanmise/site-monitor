@@ -8,6 +8,7 @@ import CopyLinkButton, { useCopyLink } from '../ui/CopyLinkButton.jsx'
 import MonitorGuideButton, { MonitorGuideDialog, hasMonitorGuide } from '../ui/MonitorGuideButton.jsx'
 import { TAB_META } from '../palette/paletteModel.js'
 import SavedViewsMenu from '../ui/SavedViewsMenu.jsx'
+import MonitorCsvMenu from './csv/MonitorCsvMenu.jsx'
 import { MONITOR_TYPES, VIEW_SPECS } from '../../hooks/userPrefsModel.js'
 import { useIsMobile } from '../../hooks/use-mobile.js'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
@@ -49,6 +50,8 @@ import { cn } from '@/lib/utils'
  *  - check: { count, running, done, total, onOpen } → CheckAllButton (count 0 → düğme yok)
  *  - canWrite + onNew + newLabel → birincil "Yeni Monitör" (`data-tour="mon-new"`)
  *  - extraActions: ek eylem düğümü (Şimdi Kontrol Et'in sağında)
+ *  - csv (2026-11-19): true → "İçe / dışa aktar" menüsü (izleme CSV'si; on türde). İçe aktarım yalnız `canWrite` ile;
+ *    içe aktarım penceresi kapanınca `onRefresh` (liste yenilemesi)
  *  - showActions: false → meta + eylemler çizilmez (Sentetik izleme Şablonlar görünümü)
  *  - children: başlığın altına tam genişlik (ör. görünüm anahtarı)
  * Test kancaları: PageHeader'ınkiler + data-slot="monitor-header-tools|monitor-count|monitor-down|monitor-refresh".
@@ -77,6 +80,7 @@ export default function MonitorPageHeader({
   check = null,
   canWrite = false, onNew, newLabel,
   extraActions = null,
+  csv = false,
   showActions = true,
   className,
   children,
@@ -178,6 +182,9 @@ export default function MonitorPageHeader({
             onClick={check.onOpen} size="default" className={cn(H, 'max-sm:flex-1')} />
         )}
         {extraActions}
+        {csv && (
+          <MonitorCsvMenu type={type} canImport={!!canWrite} onImported={onRefresh} className={H} />
+        )}
         {/* Kayıtlı görünümler (2026-10-02, öneri 23) — yalnız dokuz izleme türünde; tercihler hazır değilse çizilmez.
             lg altında yalnız ikon (+ sayı); ad aria-label'da. */}
         {savedViews && (

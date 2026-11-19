@@ -219,6 +219,8 @@ public final class AuditEventCatalog {
             "MAINTENANCE_UPDATE",
             "METRICS_EXPORT_ACCESS_DENIED", // /metrics/sitemonitor: eksik / yanlış taşıyıcı belirteç (IP başına 10 dk'da bir; 2026-10-18)
             "MONITOR_CREATE",
+            "MONITOR_CSV_EXPORT", // izleme CSV dışa aktarımı (2026-11-19) — yalnız sayılar
+            "MONITOR_CSV_IMPORT", // izleme CSV içe aktarımı (2026-11-19, gerçek koşum) — yalnız sayılar, hücre değeri asla
             "MONITOR_DELETE",
             "MONITOR_DIAGNOSE",
             "MONITOR_GROUP_RENAME",
