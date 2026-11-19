@@ -6033,7 +6033,7 @@ export const TR = {
   'alh.view.list': 'Liste',
   'alh.view.calendar': 'Takvim',
   'alh.cal.title': 'Kesinti takvimi',
-  'alh.cal.desc': 'Seçili takımın izlemelerinden en az birinin kesinti alarmında olduğu süre, gün gün (İstanbul saati). Çakışan alarmlar bir kez sayılır; uyarı, yavaşlık ve değişiklik alarmları sayılmaz. Bir güne basınca o günün alarmları listede açılır.',
+  'alh.cal.desc': 'Seçili takımın izlemelerinden en az birinin kesinti alarmında olduğu süre, gün gün (İstanbul saati). Çakışan alarmlar bir kez sayılır; uyarı, yavaşlık ve değişiklik alarmları sayılmaz. Bir güne basınca o güne ait alarmların hepsi (uyarı ve yavaşlık dahil) listede açılır.',
   'alh.cal.team': 'Takım',
   'alh.cal.monthNav': 'Ay seçimi',
   'alh.cal.prev': 'Önceki ay',

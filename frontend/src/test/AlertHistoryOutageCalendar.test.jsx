@@ -20,6 +20,9 @@ vi.mock('../api/client', () => ({
 
 import { api } from '../api/client'
 
+// Takvim tembel parçadır: yük altında (paralel test dosyaları) içe aktarma 1 sn'yi aşabilir
+const LAZY_MS = 10_000
+
 /**
  * Alarm Geçmişi "Liste | Takvim" anahtarı (2026-11-19, takım kesinti takvimi): takvim URL'de `cal=1` (+ `calm`), takım
  * listeyle ortak `team`; güne basınca liste o takım + o gün (Tümü, aralıkta aktif) ile açılır; gömülü kullanımda anahtar yok.
@@ -54,8 +57,8 @@ describe('Alarm Geçmişi — Liste | Takvim', () => {
     expect(sw).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Calendar' }))
-    await waitFor(() => expect(document.querySelector('[data-slot="outage-calendar"]')).toBeTruthy())
-    await waitFor(() => expect(api.admin.getOutageCalendar).toHaveBeenCalledWith({ team: '6', month: currentMonth() }))
+    await waitFor(() => expect(document.querySelector('[data-slot="outage-calendar"]')).toBeTruthy(), { timeout: LAZY_MS })
+    await waitFor(() => expect(api.admin.getOutageCalendar).toHaveBeenCalledWith({ team: '6', month: currentMonth() }), { timeout: LAZY_MS })
     expect(screen.queryByRole('tablist', { name: 'Alert view' })).toBeNull()
     expect(screen.queryByRole('link', { name: /CSV/ })).toBeNull()
     await waitFor(() => expect(window.location.search).toContain('cal=1'), { timeout: 2000 })
@@ -65,13 +68,13 @@ describe('Alarm Geçmişi — Liste | Takvim', () => {
   it('URL cal=1&calm=<geçen ay>&team=5 doğrudan takvimi açar; güne basma listeyi o takım + o günle açar', async () => {
     window.history.replaceState({}, '', `/?cal=1&calm=${PREV}&team=5`)
     render(<AlertHistory urlSync primaryTeamId={6} />)
-    await waitFor(() => expect(api.admin.getOutageCalendar).toHaveBeenCalledWith({ team: '5', month: PREV }))
+    await waitFor(() => expect(api.admin.getOutageCalendar).toHaveBeenCalledWith({ team: '5', month: PREV }), { timeout: LAZY_MS })
     const day = monthGrid(PREV).flat().filter(Boolean)[2]
     const cell = await waitFor(() => {
       const c = document.querySelector(`[data-slot="outage-cal-day"][data-day="${day}"]`)
       expect(c).toBeTruthy()
       return c
-    })
+    }, { timeout: LAZY_MS })
     expect(cell).toHaveAttribute('data-bucket', '3')
 
     fireEvent.click(cell)
@@ -99,7 +102,7 @@ describe('Alarm Geçmişi — Liste | Takvim', () => {
   it('aralık dışı / bozuk calm → bu ay', async () => {
     window.history.replaceState({}, '', '/?cal=1&calm=1999-01&team=5')
     render(<AlertHistory urlSync />)
-    await waitFor(() => expect(api.admin.getOutageCalendar).toHaveBeenCalledWith({ team: '5', month: currentMonth() }))
+    await waitFor(() => expect(api.admin.getOutageCalendar).toHaveBeenCalledWith({ team: '5', month: currentMonth() }), { timeout: LAZY_MS })
   })
 
   it('gömülü kullanımda anahtar ve takvim yok', async () => {

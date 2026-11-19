@@ -6026,7 +6026,7 @@ export const EN = {
   'alh.view.list': 'List',
   'alh.view.calendar': 'Calendar',
   'alh.cal.title': 'Outage calendar',
-  'alh.cal.desc': 'Day by day, the time during which at least one monitor of the selected team was in an outage alert (Istanbul time). Overlapping alerts count once; warning, slowness and change alerts are not counted. Select a day to list that day’s alerts.',
+  'alh.cal.desc': 'Day by day, the time during which at least one monitor of the selected team was in an outage alert (Istanbul time). Overlapping alerts count once; warning, slowness and change alerts are not counted. Select a day to list all of that day’s alerts (warnings and slowness included).',
   'alh.cal.team': 'Team',
   'alh.cal.monthNav': 'Month',
   'alh.cal.prev': 'Previous month',

@@ -108,6 +108,13 @@ for (const vp of GATE_VIEWPORTS) {
         await expect(page.locator(`[data-slot="outage-cal-day"][data-day="${prev}-03"]`)).toContainText('2 h 15 min')
       }
       await expectLayout(page, '[data-slot="outage-calendar"]', { touch: vp.touch, label: `takvim @${vp.name}` })
+      // Başlık denetimleri (takım seçici, ay gezinmesi) kartın İÇİNDE kalır — sabit genişlikli seçici dar başlık sütununda taşıyordu
+      const outside = await page.evaluate(() => {
+        const card = document.querySelector('[data-slot="outage-calendar"]').getBoundingClientRect()
+        return [...document.querySelectorAll('[data-slot="outage-cal-team"], [data-slot="outage-cal-team"] button, [data-slot="outage-cal-next"], [data-slot="outage-cal-refresh"]')]
+          .map((n) => n.getBoundingClientRect()).filter((r) => r.width > 0 && (r.right > card.right - 1 || r.left < card.left + 1)).length
+      })
+      expect(outside, 'kartın dışına taşan başlık denetimi').toBe(0)
       // Gün hücreleri dokunmatikte ≥ 40 px (expectLayout de ölçer; burada açıkça bir hücre)
       const cellBox = await page.locator(`[data-slot="outage-cal-day"][data-day="${prev}-03"]`).boundingBox()
       if (vp.touch) { expect(cellBox.width).toBeGreaterThanOrEqual(39.5); expect(cellBox.height).toBeGreaterThanOrEqual(39.5) }

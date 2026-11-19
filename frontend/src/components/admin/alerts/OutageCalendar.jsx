@@ -94,7 +94,7 @@ export default function OutageCalendar({
         <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">{t('alh.cal.desc')}</p>
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <div className="min-w-0 flex-1 basis-full sm:basis-auto sm:w-64 sm:flex-none" data-slot="outage-cal-team">
+        <div className="min-w-0 max-w-full flex-1 basis-full sm:basis-auto sm:w-64 sm:flex-none" data-slot="outage-cal-team">
           <SearchableSelect value={team} onChange={(v) => { if (v) onTeamChange?.(String(v)) }} options={teamOptions}
             ariaLabel={t('alh.cal.team')} searchThreshold={6} disabled={teamsState !== 'ok' || teamOptions.length === 0}
             placeholder={teamName || t('alh.cal.team')} wrapLabels />
