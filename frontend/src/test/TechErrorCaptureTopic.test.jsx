@@ -28,6 +28,8 @@ vi.mock('../components/techerror/capture/frameReader.js', async (importOriginal)
     readVideoFrame: vi.fn(),
     cropFrameToFile: vi.fn(),
     releaseFrame: vi.fn(),
+    startLivePaint: vi.fn(() => () => {}),
+    frameUniform: vi.fn(() => false),
   }
 })
 import { api } from '../api/client'

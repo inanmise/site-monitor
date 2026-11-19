@@ -27,11 +27,13 @@ vi.mock('../components/techerror/capture/frameReader.js', async (importOriginal)
     readVideoFrame: vi.fn(),
     cropFrameToFile: vi.fn(),
     releaseFrame: vi.fn(),
+    startLivePaint: vi.fn(() => () => {}),
+    frameUniform: vi.fn(() => false),
   }
 })
 import { api } from '../api/client'
 import { prepareImage } from '../components/techerror/imagePrep.js'
-import { cropFrameToFile, readVideoFrame } from '../components/techerror/capture/frameReader.js'
+import { cropFrameToFile, frameUniform, readVideoFrame, releaseFrame, startLivePaint } from '../components/techerror/capture/frameReader.js'
 import { captureSession } from '../components/techerror/capture/captureSession.js'
 import { emitSessionReset } from '../utils/sessionResetBus.js'
 import { LANG_STORAGE_KEY } from '../i18n/dateLocale.js'
@@ -331,6 +333,9 @@ describe('ekrandan alma', () => {
   })
 
   it('ikinci yuva seçici AÇMADAN o anki kareyi alır; Vazgeç yüklemez; Durdur paylaşımı kapatır', async () => {
+    // Pencere paylaşımı: görüntü donuk kare olarak gelir, "Yeniden çek" yeni kare alır (sekme paylaşımı canlıdır —
+    // aşağıdaki "canlı görüntü" testleri)
+    stream.track.getSettings = () => ({ displaySurface: 'window' })
     const { slot } = await openEditor()
     fireEvent.click(within(slot()).getByRole('button', { name: /Ekrandan al/ }))
     let dlg = await screen.findByRole('dialog')
@@ -340,6 +345,12 @@ describe('ekrandan alma', () => {
     dlg = await screen.findByRole('dialog')
     expect(md.getDisplayMedia).toHaveBeenCalledTimes(1)
     expect(readVideoFrame).toHaveBeenCalledTimes(2)
+    // Pencere / ekran buradan kaydırılamaz: pencere nedenini söyler, canlı çizim başlamaz
+    expect(dlg.querySelector('[data-slot="te-cap-stage"]')).not.toHaveAttribute('data-live')
+    expect(dlg.querySelector('[data-slot="te-cap-live-status"]')).toHaveTextContent(
+      'Pencere ya da tüm ekran paylaşımında görüntü buradan kaydırılamaz (tarayıcı kısıtı).')
+    expect(startLivePaint).not.toHaveBeenCalled()
+    expect(within(dlg).queryByRole('button', { name: /Canlıya dön|Dondur/ })).toBeNull()
     // Yeniden çek: aynı akıştan yeni kare
     fireEvent.click(within(dlg).getByRole('button', { name: /Yeniden çek/ }))
     await waitFor(() => expect(readVideoFrame).toHaveBeenCalledTimes(3))
@@ -371,10 +382,13 @@ describe('ekrandan alma', () => {
     md.getDisplayMedia.mockRejectedValueOnce(Object.assign(new Error('x'), { name: 'NotReadableError' }))
     fireEvent.click(within(slot()).getByRole('button', { name: /Ekrandan al/ }))
     expect(await within(slot()).findByRole('alert')).toHaveTextContent(/Ekran paylaşımı başlatılamadı: .+ ekran görüntüsünü .+ ile alıp Ctrl\+V ile yapıştırın\./)
+    // Pencere paylaşımı (donuk kare): boş kare uyarısı hemen görünür
+    stream.track.getSettings = () => ({ displaySurface: 'window' })
     readVideoFrame.mockResolvedValueOnce({ width: 800, height: 600, canvas: document.createElement('canvas'), uniform: true })
     fireEvent.click(within(slot()).getByRole('button', { name: /Ekrandan al/ }))
     const dlg = await screen.findByRole('dialog')
     expect(within(dlg).getByText('Görüntü boş geldi')).toBeInTheDocument()
+    expect(within(dlg).getByText(/Pencereyi açıp “Yeniden çek”e basın/)).toBeInTheDocument()
     fireEvent.click(within(dlg).getByRole('button', { name: /Bu alanı yükle/ }))
     await waitFor(() => expect(te().uploadImage).toHaveBeenCalledTimes(1))
   })
@@ -408,6 +422,218 @@ describe('ekrandan alma', () => {
     // Çıkış kullanıcıya ayrıca "paylaşım durdu" diye söylenmez (yalnız tarayıcıdan durdurma / 10 dk kullanılmama)
     await new Promise((r) => setTimeout(r, 20))
     expect(screen.queryByText(/Ekran paylaşımı .*durduruldu/)).toBeNull()
+  })
+})
+
+// CANLI GÖRÜNTÜ + KAYDIRMA (2026-11-19, kullanıcı isteği: "paylaşılan ekranda aşağı yukarı gidebilmeliyim, istediğim
+// noktayı seçip alabilmeliyim"). Sekme paylaşımında kırpma penceresi canlı açılır; tarayıcı destekliyorsa (Chrome / Edge
+// 136+: CaptureController.forwardWheel) fare tekerleği paylaşılan sekmeyi buradan kaydırır. İzin sorusu yalnız kullanıcının
+// tıklamasıyla açtırılır. Seçim başlayınca / yüklemeden önce görüntü donar: yüklenen piksel, görülen pikseldir.
+describe('canlı görüntü ve kaydırma (sekme paylaşımı)', () => {
+  let fw
+  let stopPaint
+  let permState
+  const status = (dlg) => dlg.querySelector('[data-slot="te-cap-live-status"]')
+  const pad = (dlg) => dlg.querySelector('[data-slot="te-cap-pad"]')
+  const stage = (dlg) => dlg.querySelector('[data-slot="te-cap-stage"]')
+  const bar = (dlg) => dlg.querySelector('[data-slot="te-cap-live-bar"]')
+  const elementCalls = () => fw.mock.calls.filter((c) => c[0] != null)
+
+  beforeEach(() => {
+    fw = vi.fn(async () => {})
+    stopPaint = vi.fn()
+    permState = 'granted'
+    startLivePaint.mockImplementation(() => stopPaint)
+    frameUniform.mockImplementation(() => false)
+    globalThis.CaptureController = class {
+      setFocusBehavior() {}
+      forwardWheel(el) { return fw(el) }
+    }
+    Object.defineProperty(navigator, 'permissions', {
+      configurable: true, value: { query: vi.fn(async () => ({ state: permState })) },
+    })
+  })
+  afterEach(() => {
+    startLivePaint.mockImplementation(() => () => {})
+    frameUniform.mockImplementation(() => false)
+    delete globalThis.CaptureController
+    delete navigator.permissions
+  })
+
+  async function openLive() {
+    const ed = await openEditor()
+    fireEvent.click(within(ed.slot()).getByRole('button', { name: `Ekrandan al: ${LABEL}` }))
+    const dlg = await screen.findByRole('dialog', { name: `Ekrandan al: ${LABEL}` })
+    return { ...ed, dlg }
+  }
+
+  it('pencere CANLI açılır: paylaşılan sekme karenin kendi tuvaline çizilir; izin verilmişse tekerlek iletimi sessizce açılır', async () => {
+    const { dlg } = await openLive()
+    expect(stage(dlg)).toHaveAttribute('data-live', 'true')
+    expect(dlg.querySelector('[data-slot="te-cap-live-badge"]')).toHaveTextContent('Canlı')
+    await waitFor(() => expect(startLivePaint).toHaveBeenCalledTimes(1))
+    const [, canvas, opts] = startLivePaint.mock.calls[0]
+    expect(canvas).toBe(dlg.querySelector('[data-slot="te-cap-frame"]'))
+    expect(typeof opts.onResize).toBe('function')
+    await waitFor(() => expect(status(dlg)).toHaveTextContent('Fare tekerleği paylaşılan sekmeyi buradan kaydırır.'))
+    expect(bar(dlg)).toHaveAttribute('data-scroll', 'on')
+    expect(navigator.permissions.query).toHaveBeenCalledWith({ name: 'captured-surface-control' })
+    expect(elementCalls()).toEqual([[pad(dlg)]])
+    // Sekme paylaşımında "Yeniden çek" yok (canlı görüntü aynı işi görür); izin düğmesi de gerekmez
+    expect(within(dlg).queryByRole('button', { name: /Yeniden çek|Kaydırmayı etkinleştir/ })).toBeNull()
+    expect(within(dlg).getByRole('button', { name: /Dondur/ })).toBeInTheDocument()
+  })
+
+  it('paylaşılan sekmenin ölçüsü değişirse pencere yeni ölçüye geçer', async () => {
+    const { dlg } = await openLive()
+    await waitFor(() => expect(startLivePaint).toHaveBeenCalledTimes(1))
+    act(() => startLivePaint.mock.calls[0][2].onResize(1280, 720))
+    await waitFor(() => expect(stage(dlg)).toHaveAttribute('data-source', '1280x720'))
+    expect(stage(dlg)).toHaveAttribute('data-rect', '0,0,1280,720')
+    // Aynı tuval: çizim yeniden başlatılmaz
+    expect(startLivePaint).toHaveBeenCalledTimes(1)
+  })
+
+  it('izin henüz sorulmamışsa tarayıcıya çağrı YAPILMAZ; "Kaydırmayı etkinleştir" tıklamasıyla sorulur, izin verilince açılır', async () => {
+    permState = 'prompt'
+    let allow
+    fw.mockImplementation((el) => (el == null ? Promise.resolve() : new Promise((r) => { allow = r })))
+    const { dlg } = await openLive()
+    await waitFor(() => expect(status(dlg)).toHaveTextContent('Paylaşılan sekmeyi buradan kaydırmak için tarayıcı bir kez izin ister.'))
+    expect(bar(dlg)).toHaveAttribute('data-scroll', 'ask')
+    expect(elementCalls()).toHaveLength(0)
+    fireEvent.click(within(dlg).getByRole('button', { name: /Kaydırmayı etkinleştir/ }))
+    await waitFor(() => expect(elementCalls()).toEqual([[pad(dlg)]]))
+    expect(status(dlg)).toHaveTextContent('Kaydırma izni bekleniyor: tarayıcının sorusuna “İzin ver” deyin.')
+    expect(within(dlg).queryByRole('button', { name: /Kaydırmayı etkinleştir/ })).toBeNull()
+    await act(async () => { allow() })
+    await waitFor(() => expect(status(dlg)).toHaveTextContent('Fare tekerleği paylaşılan sekmeyi buradan kaydırır.'))
+  })
+
+  it('izin sorusu yanıtlanmadan kapatılırsa yeniden denenebilir; izin engellenmişse site ayarları söylenir (düğme yok)', async () => {
+    permState = 'prompt'
+    const notAllowed = () => Promise.reject(Object.assign(new Error('No permission.'), { name: 'NotAllowedError' }))
+    fw.mockImplementation((el) => (el == null ? Promise.resolve() : notAllowed()))
+    const { dlg } = await openLive()
+    fireEvent.click(await within(dlg).findByRole('button', { name: /Kaydırmayı etkinleştir/ }))
+    // Soru kapatıldı: izin durumu hâlâ "sorulacak" → düğme kalır
+    await waitFor(() => expect(status(dlg)).toHaveTextContent('Kaydırma açılamadı. “Kaydırmayı etkinleştir”e yeniden basın'))
+    expect(bar(dlg)).toHaveAttribute('data-scroll', 'failed')
+    // Bu kez kullanıcı "Engelle" dedi
+    permState = 'denied'
+    fireEvent.click(within(dlg).getByRole('button', { name: /Kaydırmayı etkinleştir/ }))
+    await waitFor(() => expect(status(dlg)).toHaveTextContent('Kaydırma izni verilmedi.'))
+    expect(status(dlg)).toHaveTextContent('İzni adres çubuğundaki site ayarlarından açabilirsiniz.')
+    expect(within(dlg).queryByRole('button', { name: /Kaydırmayı etkinleştir/ })).toBeNull()
+    // Canlı görüntü sürer: kullanıcı paylaşılan sekmede kaydırıp buradan seçebilir
+    expect(stage(dlg)).toHaveAttribute('data-live', 'true')
+  })
+
+  it('izin önceden engellenmişse pencere açılırken tarayıcıya hiç çağrı yapılmaz', async () => {
+    permState = 'denied'
+    const { dlg } = await openLive()
+    await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'denied'))
+    expect(elementCalls()).toHaveLength(0)
+    expect(within(dlg).queryByRole('button', { name: /Kaydırmayı etkinleştir/ })).toBeNull()
+  })
+
+  it('izin durumu sorgulanamayan tarayıcıda çağrı denenir; hareket gerektiği yanıtı gelirse düğme önerilir', async () => {
+    delete navigator.permissions
+    fw.mockImplementation((el) => (el == null ? Promise.resolve()
+      : Promise.reject(Object.assign(new Error('x'), { name: 'InvalidStateError' }))))
+    const { dlg } = await openLive()
+    await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'ask'))
+    expect(elementCalls()).toHaveLength(1)
+    expect(within(dlg).getByRole('button', { name: /Kaydırmayı etkinleştir/ })).toBeInTheDocument()
+  })
+
+  it('tarayıcı desteklemiyorsa (CaptureController yok) canlı görüntü yine vardır; pencere kaydırılamadığını söyler', async () => {
+    delete globalThis.CaptureController
+    const { dlg } = await openLive()
+    expect(stage(dlg)).toHaveAttribute('data-live', 'true')
+    await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'unsupported'))
+    expect(status(dlg)).toHaveTextContent('Bu tarayıcı paylaşılan sekmeyi buradan kaydıramıyor (Chrome ya da Edge 136 ve sonrası gerekir).')
+    expect(fw).not.toHaveBeenCalled()
+    expect(navigator.permissions.query).not.toHaveBeenCalled()
+  })
+
+  it('seçime başlayınca görüntü donar: çizim durur, tekerlek iletimi kesilir; "Canlıya dön" yeniden canlıya alır', async () => {
+    const { dlg } = await openLive()
+    await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'on'))
+    const firstPad = pad(dlg)
+    fireEvent.pointerDown(firstPad, { clientX: 10, clientY: 10, pointerId: 1, pointerType: 'mouse', button: 0 })
+    fireEvent.pointerUp(stage(dlg), { clientX: 10, clientY: 10, pointerId: 1, pointerType: 'mouse', button: 0 })
+    expect(stopPaint).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(dlg.querySelector('[data-slot="te-cap-live-badge"]')).toHaveTextContent('Donduruldu'))
+    expect(stage(dlg)).not.toHaveAttribute('data-live')
+    expect(pad(dlg)).toBeNull()
+    expect(status(dlg)).toHaveTextContent('Görüntü donduruldu; alanı seçip yükleyin.')
+    await waitFor(() => expect(fw).toHaveBeenLastCalledWith(null))
+    // Tek renk denetimi DONUK kareye yapılır
+    expect(frameUniform).toHaveBeenCalledTimes(1)
+    // Canlıya dön: çizim yeniden başlar, iletim yeni katmana bağlanır (izin zaten var — soru yok)
+    fireEvent.click(within(dlg).getByRole('button', { name: /Canlıya dön/ }))
+    await waitFor(() => expect(startLivePaint).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'on'))
+    expect(pad(dlg)).not.toBeNull()
+    expect(fw).toHaveBeenLastCalledWith(pad(dlg))
+    expect(stage(dlg)).toHaveAttribute('data-rect', '0,0,1600,900')
+  })
+
+  it('donan kare boşsa (tek renk) uyarı sekme paylaşımına özgü metinle gösterilir', async () => {
+    frameUniform.mockImplementation(() => true)
+    const { dlg } = await openLive()
+    await waitFor(() => expect(startLivePaint).toHaveBeenCalledTimes(1))
+    expect(within(dlg).queryByText('Görüntü boş geldi')).toBeNull()
+    fireEvent.click(within(dlg).getByRole('button', { name: /Dondur/ }))
+    expect(await within(dlg).findByText('Görüntü boş geldi')).toBeInTheDocument()
+    expect(within(dlg).getByText(/“Canlıya dön”e basıp yeniden deneyin/)).toBeInTheDocument()
+  })
+
+  it('canlıyken "Bu alanı yükle": ÖNCE dondurur, sonra görülen kareyi keser ve yükler', async () => {
+    const { dlg } = await openLive()
+    await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'on'))
+    fireEvent.click(within(dlg).getByRole('button', { name: /Bu alanı yükle/ }))
+    await waitFor(() => expect(te().uploadImage).toHaveBeenCalledTimes(1))
+    expect(stopPaint).toHaveBeenCalledTimes(1)
+    expect(stopPaint.mock.invocationCallOrder[0]).toBeLessThan(cropFrameToFile.mock.invocationCallOrder[0])
+    expect(cropFrameToFile).toHaveBeenCalledWith(expect.objectContaining({ width: 1600, height: 900 }), { x: 0, y: 0, w: 1600, h: 900 },
+      expect.stringMatching(/^monthly-tx-ekran-\d{8}-\d{6}\.png$/))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(fw).toHaveBeenLastCalledWith(null))
+  })
+
+  it('"Vazgeç": çizim durur, iletim kesilir, kare bırakılır; yükleme yok', async () => {
+    const { dlg } = await openLive()
+    await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'on'))
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Vazgeç' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(stopPaint).toHaveBeenCalledTimes(1)
+    expect(releaseFrame).toHaveBeenCalled()
+    await waitFor(() => expect(fw).toHaveBeenLastCalledWith(null))
+    expect(te().uploadImage).not.toHaveBeenCalled()
+    // Çizim durduktan SONRA kare bırakılır (bırakılan tuval yeniden boyanmaz)
+    expect(stopPaint.mock.invocationCallOrder[0]).toBeLessThan(releaseFrame.mock.invocationCallOrder.at(-1))
+  })
+
+  it('paylaşım pencere açıkken biterse son görüntü donar ve pencere bunu söyler; alan yine yüklenebilir', async () => {
+    const { dlg } = await openLive()
+    await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'on'))
+    act(() => stream.track.fire('ended'))
+    await waitFor(() => expect(status(dlg)).toHaveTextContent('Ekran paylaşımı sona erdi; son görüntü donduruldu.'))
+    expect(stopPaint).toHaveBeenCalledTimes(1)
+    expect(stage(dlg)).not.toHaveAttribute('data-live')
+    expect(within(dlg).queryByRole('button', { name: /Canlıya dön|Dondur/ })).toBeNull()
+    fireEvent.click(within(dlg).getByRole('button', { name: /Bu alanı yükle/ }))
+    await waitFor(() => expect(te().uploadImage).toHaveBeenCalledTimes(1))
+  })
+
+  it('rapordan ayrılınca (pencere canlıyken) çizim durur ve paylaşım kapanır', async () => {
+    const { dlg, view } = await openLive()
+    await waitFor(() => expect(bar(dlg)).toHaveAttribute('data-scroll', 'on'))
+    view.unmount()
+    expect(stopPaint).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(stream.track.stop).toHaveBeenCalled())
   })
 })
 

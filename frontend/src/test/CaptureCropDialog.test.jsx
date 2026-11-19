@@ -135,6 +135,17 @@ describe('kırpma penceresi', () => {
     expect(s()).toHaveAttribute('data-source', '1280x720')
   })
 
+  it('canlı özellik verilmeyen (eski) çağrıda canlı çubuk, katman ve "Canlıya dön" yoktur; yardım metni bugünkü', async () => {
+    setup()
+    const dlg = await screen.findByRole('dialog')
+    expect(document.querySelector('[data-slot="te-cap-live-bar"]')).toBeNull()
+    expect(document.querySelector('[data-slot="te-cap-pad"]')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Canlıya dön|Dondur|Kaydırmayı etkinleştir/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Yeniden çek/ })).toBeInTheDocument()
+    expect(dlg).toHaveTextContent('Yüklenecek alanı sürükleyerek seçin')
+    expect(document.querySelector('[data-slot="te-cap-stage"]')).not.toHaveAttribute('data-live')
+  })
+
   it('boş (tek renk) kare uyarısı; yeniden çek / vazgeç düğmeleri; meşgulken kapanmaz', async () => {
     const { onRetake, onCancel, view } = setup({ frame: { uniform: true } })
     await screen.findByRole('dialog')
@@ -149,5 +160,178 @@ describe('kırpma penceresi', () => {
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
     expect(onCancel).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('button', { name: /Hazırlanıyor/ })).toBeDisabled()
+  })
+})
+
+// CANLI KİP (2026-11-19, kullanıcı isteği: "paylaşılan ekranda aşağı yukarı gidebilmeliyim, istediğim noktayı seçip
+// alabilmeliyim"): sekme paylaşımında sahne canlıdır; tekerlek katmanı (te-cap-pad) çağırana verilir; seçime başlamak,
+// seçim tuşu ya da "Dondur" görüntüyü dondurur; "Canlıya dön" yeniden canlıya alır.
+describe('kırpma penceresi — canlı kip', () => {
+  function live(props = {}) {
+    const cb = { onFreeze: vi.fn(), onResume: vi.fn(), onEnableScroll: vi.fn(), onPad: vi.fn(), onActivity: vi.fn() }
+    const s = setup({ live: true, canLive: true, scroll: 'on', ...cb, ...props })
+    const bar = () => document.querySelector('[data-slot="te-cap-live-bar"]')
+    const status = () => document.querySelector('[data-slot="te-cap-live-status"]')
+    const pad = () => document.querySelector('[data-slot="te-cap-pad"]')
+    return { ...s, ...cb, bar, status, pad }
+  }
+
+  it('canlıyken: "Canlı" rozeti, canlı yardım metni, tekerlek katmanı çağırana verilir; "Yeniden çek" yok, "Dondur" var', async () => {
+    const { bar, status, pad, onPad, stage } = live()
+    const dlg = await screen.findByRole('dialog')
+    expect(bar()).toHaveAttribute('data-live', 'true')
+    expect(bar()).toHaveAttribute('data-scroll', 'on')
+    expect(document.querySelector('[data-slot="te-cap-live-badge"]')).toHaveTextContent('Canlı')
+    expect(dlg).toHaveTextContent('Paylaşılan sekme canlı gösteriliyor. Fare tekerleğiyle aşağı yukarı kaydırıp')
+    expect(status()).toHaveTextContent('Fare tekerleği paylaşılan sekmeyi buradan kaydırır.')
+    expect(status()).toHaveAttribute('aria-live', 'polite')
+    expect(stage()).toHaveAttribute('data-live', 'true')
+    // Katman sahnenin içinde, ekran okuyucudan gizli; çağıran öğeyi alır (tekerlek iletimi ona bağlanır)
+    expect(pad()).not.toBeNull()
+    expect(pad()).toHaveAttribute('aria-hidden', 'true')
+    expect(stage().contains(pad())).toBe(true)
+    expect(onPad).toHaveBeenCalledWith(pad())
+    expect(screen.queryByRole('button', { name: /Yeniden çek/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Canlıya dön/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Dondur/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Kaydırmayı etkinleştir/ })).toBeNull()
+  })
+
+  it('kaydırma durumu metne çevrilir; "Kaydırmayı etkinleştir" yalnız izin sorulacakken / açılamadığında', async () => {
+    const table = [
+      ['checking', 'Paylaşılan sekme canlı gösteriliyor.', false],
+      ['asking', 'Kaydırma izni bekleniyor: tarayıcının sorusuna “İzin ver” deyin.', false],
+      ['ask', 'Paylaşılan sekmeyi buradan kaydırmak için tarayıcı bir kez izin ister.', true],
+      ['failed', 'Kaydırma açılamadı.', true],
+      ['denied', 'Kaydırma izni verilmedi.', false],
+      ['unsupported', 'Bu tarayıcı paylaşılan sekmeyi buradan kaydıramıyor', false],
+      ['bilinmeyen-durum', 'Paylaşılan sekme canlı gösteriliyor.', false],
+    ]
+    const { view, status, onEnableScroll } = live({ scroll: 'checking' })
+    await screen.findByRole('dialog')
+    const frame = { ...FRAME, canvas: document.createElement('canvas') }
+    for (const [scroll, text, button] of table) {
+      view.rerender(<CaptureCropDialog open frame={frame} label="Yuva" live canLive scroll={scroll} onEnableScroll={onEnableScroll}
+        onConfirm={() => {}} onCancel={() => {}} />)
+      expect(status()).toHaveTextContent(text)
+      expect(!!screen.queryByRole('button', { name: /Kaydırmayı etkinleştir/ })).toBe(button)
+    }
+    view.rerender(<CaptureCropDialog open frame={frame} label="Yuva" live canLive scroll="ask" onEnableScroll={onEnableScroll}
+      onConfirm={() => {}} onCancel={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /Kaydırmayı etkinleştir/ }))
+    expect(onEnableScroll).toHaveBeenCalledTimes(1)
+  })
+
+  it('sahneye basmak görüntüyü ÖNCE dondurur (bir kez), sonra seçim bugünkü gibi çizilir', async () => {
+    const { stage, box, pad, onFreeze, onActivity } = live()
+    await screen.findByRole('dialog')
+    box(stage())
+    // Basış katmana düşer, olay sahneye çıkar
+    fireEvent.pointerDown(pad(), at(100, 50))
+    expect(onFreeze).toHaveBeenCalledTimes(1)
+    expect(onActivity).toHaveBeenCalled()
+    fireEvent.pointerMove(stage(), at(300, 200))
+    fireEvent.pointerUp(stage(), at(300, 200))
+    expect(stage()).toHaveAttribute('data-rect', '200,100,400,300')
+    // Sürükleme boyunca yeniden dondurma istenmez (tek basış = tek dondurma; çağıranın dondurması zaten tekrarsızdır)
+    expect(onFreeze).toHaveBeenCalledTimes(1)
+  })
+
+  it('seçim tuşu ve "Dondur" da dondurur; Enter canlıyken yüklemeyi çağırana bırakır (çağıran dondurur)', async () => {
+    const a = live()
+    await screen.findByRole('dialog')
+    fireEvent.keyDown(a.stage(), { key: 'ArrowLeft', altKey: true })
+    expect(a.onFreeze).toHaveBeenCalledTimes(1)
+    expect(a.stage()).toHaveAttribute('data-rect', '0,0,1599,900')
+    a.view.unmount()
+    const b = live()
+    await screen.findByRole('dialog')
+    fireEvent.click(screen.getByRole('button', { name: /Dondur/ }))
+    expect(b.onFreeze).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(document.activeElement).toBe(b.stage()))
+    b.view.unmount()
+    const c = live()
+    await screen.findByRole('dialog')
+    fireEvent.keyDown(c.stage(), { key: 'Enter' })
+    expect(c.onConfirm).toHaveBeenCalledWith({ x: 0, y: 0, w: 1600, h: 900 })
+    expect(c.onFreeze).not.toHaveBeenCalled()
+  })
+
+  it('canlıyken tekerlek ve işaretçi hareketi çağırana "kullanıcı burada" der (boşta sayacı için)', async () => {
+    const { stage, onActivity } = live()
+    await screen.findByRole('dialog')
+    fireEvent.wheel(stage(), { deltaY: 120 })
+    expect(onActivity).toHaveBeenCalledTimes(1)
+  })
+
+  it('donukken (sekme paylaşımı): "Donduruldu" rozeti, katman yok, "Canlıya dön" var; canlıya dönünce seçim tüm kareye döner', async () => {
+    const onResume = vi.fn()
+    const frame = { ...FRAME, canvas: document.createElement('canvas') }
+    const props = { open: true, frame, label: 'Yuva', canLive: true, onResume, onConfirm: () => {}, onCancel: () => {}, onRetake: () => {} }
+    const view = render(<CaptureCropDialog {...props} live={false} />)
+    await screen.findByRole('dialog')
+    const stage = () => document.querySelector('[data-slot="te-cap-stage"]')
+    expect(document.querySelector('[data-slot="te-cap-live-badge"]')).toHaveTextContent('Donduruldu')
+    expect(document.querySelector('[data-slot="te-cap-live-status"]')).toHaveTextContent('Görüntü donduruldu; alanı seçip yükleyin.')
+    expect(document.querySelector('[data-slot="te-cap-pad"]')).toBeNull()
+    // Sekme paylaşımında "Yeniden çek" yerine "Canlıya dön" (aynı iş: yeni görüntü + kaydırma)
+    expect(screen.queryByRole('button', { name: /Yeniden çek/ })).toBeNull()
+    fireEvent.keyDown(stage(), { key: 'ArrowLeft', altKey: true, shiftKey: true })
+    expect(stage()).toHaveAttribute('data-rect', '0,0,1590,900')
+    fireEvent.click(screen.getByRole('button', { name: /Canlıya dön/ }))
+    expect(onResume).toHaveBeenCalledTimes(1)
+    view.rerender(<CaptureCropDialog {...props} live />)
+    await waitFor(() => expect(stage()).toHaveAttribute('data-rect', '0,0,1600,900'))
+    expect(document.querySelector('[data-slot="te-cap-live-badge"]')).toHaveTextContent('Canlı')
+  })
+
+  it('canlıyken kaynağın ölçüsü değişirse seçim tüm kare kalır (donukken yeni kareye sığdırılırdı)', async () => {
+    const frame = { ...FRAME, canvas: document.createElement('canvas') }
+    const props = { open: true, label: 'Yuva', live: true, canLive: true, scroll: 'on', onConfirm: () => {}, onCancel: () => {} }
+    const view = render(<CaptureCropDialog {...props} frame={frame} />)
+    await screen.findByRole('dialog')
+    const stage = () => document.querySelector('[data-slot="te-cap-stage"]')
+    view.rerender(<CaptureCropDialog {...props} frame={{ ...frame, width: 1280, height: 720 }} />)
+    await waitFor(() => expect(stage()).toHaveAttribute('data-rect', '0,0,1280,720'))
+    expect(stage()).toHaveAttribute('data-source', '1280x720')
+  })
+
+  it('pencere / tüm ekran paylaşımı: canlı değil; neden buradan kaydırılamadığı yazar, "Yeniden çek" kalır', async () => {
+    setup({ scrollHint: true })
+    await screen.findByRole('dialog')
+    expect(document.querySelector('[data-slot="te-cap-live-bar"]')).toHaveAttribute('data-live', 'false')
+    expect(document.querySelector('[data-slot="te-cap-live-status"]')).toHaveTextContent(
+      'Pencere ya da tüm ekran paylaşımında görüntü buradan kaydırılamaz (tarayıcı kısıtı).')
+    expect(document.querySelector('[data-slot="te-cap-live-badge"]')).toBeNull()
+    expect(screen.getByRole('button', { name: /Yeniden çek/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Canlıya dön|Dondur/ })).toBeNull()
+  })
+
+  it('paylaşım pencere açıkken bittiyse bunu söyler; son görüntü seçilip yüklenebilir', async () => {
+    const { onConfirm } = setup({ liveEnded: true })
+    await screen.findByRole('dialog')
+    expect(document.querySelector('[data-slot="te-cap-live-status"]')).toHaveTextContent(
+      'Ekran paylaşımı sona erdi; son görüntü donduruldu. Alanı seçip yükleyebilirsiniz.')
+    expect(screen.queryByRole('button', { name: /Canlıya dön|Dondur/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Bu alanı yükle/ }))
+    expect(onConfirm).toHaveBeenCalledWith({ x: 0, y: 0, w: 1600, h: 900 })
+  })
+
+  it('boş kare uyarısı canlıyken gösterilmez (görüntü değişiyor); donunca sekme paylaşımına özgü metinle gösterilir', async () => {
+    const frame = { ...FRAME, uniform: true, canvas: document.createElement('canvas') }
+    const props = { open: true, frame, label: 'Yuva', canLive: true, onConfirm: () => {}, onCancel: () => {} }
+    const view = render(<CaptureCropDialog {...props} live scroll="on" />)
+    await screen.findByRole('dialog')
+    expect(screen.queryByText('Görüntü boş geldi')).toBeNull()
+    view.rerender(<CaptureCropDialog {...props} live={false} />)
+    expect(screen.getByText('Görüntü boş geldi')).toBeInTheDocument()
+    expect(screen.getByText(/“Canlıya dön”e basıp yeniden deneyin/)).toBeInTheDocument()
+  })
+
+  it('meşgulken (yükleme hazırlanıyor) canlı kip düğmeleri kapalıdır', async () => {
+    live({ scroll: 'ask', busy: true })
+    await screen.findByRole('dialog')
+    expect(screen.getByRole('button', { name: /Kaydırmayı etkinleştir/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Dondur/ })).toBeDisabled()
   })
 })

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { Maximize2, RefreshCw, Upload, X } from 'lucide-react'
+import { Maximize2, MousePointerClick, Pause, Play, Radio, RefreshCw, Upload, X } from 'lucide-react'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/shadcn/dialog'
 import { Button } from '@/components/shadcn/button'
+import { Badge } from '@/components/shadcn/badge'
 import { cn } from '@/lib/utils'
 import { useT } from '../../../i18n/index.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
@@ -19,15 +20,38 @@ const HANDLE_POS = {
   sw: ['0%', '100%', 'cursor-nesw-resize'], w: ['0%', '50%', 'cursor-ew-resize'],
 }
 
+/** Kaydırma durumu → durum satırının metni (canlıyken). Bilinmeyen durum nötr metne düşer. */
+const SCROLL_TEXT = {
+  on: 'te.cap.scrollOn',
+  asking: 'te.cap.scrollAsking',
+  ask: 'te.cap.scrollAsk',
+  failed: 'te.cap.scrollFailed',
+  denied: 'te.cap.scrollDenied',
+  unsupported: 'te.cap.scrollUnsupported',
+}
+
 /**
  * KIRPMA PENCERESİ (2026-10-18): paylaşılan yüzeyden alınan kare kutuya sığdırılır; kullanıcı yüklenecek alanı
  * sürükleyerek seçer (fare, kalem, dokunma), sekiz tutamakla boyutlandırır, içinden sürükleyerek taşır. Klavye: oklar
  * 1 px (Shift 10 px) taşır, Alt / Option + oklar boyutlandırır, Enter yükler. "Tümünü seç", canlı ölçü (kaynak
  * pikselleri), "Yeniden çek" (aynı paylaşımdan yeni kare — seçim korunur, yeni kareye sığdırılır), "Vazgeç", "Bu alanı
  * yükle". Seçim modelde (captureModel) kaynak pikselleriyle tutulur; yükleme tam sayı bölgeyle yapılır.
+ *
+ * <p>CANLI KİP (2026-11-19, kullanıcı isteği: "paylaşılan ekranda aşağı yukarı gidebilmeliyim, istediğim noktayı seçip
+ * alabilmeliyim"): `live` iken sahnedeki tuval paylaşılan sekmeyi CANLI gösterir (çizimi çağıran yapar); sahnenin
+ * üstündeki saydam katman (`te-cap-pad`, `onPad` ile çağırana verilir) fare tekerleğini paylaşılan sekmeye iletir.
+ * Sahneye basmak (seçime başlamak), seçim tuşu ya da "Dondur" görüntüyü dondurur (`onFreeze` — eşzamanlı), sonra seçim
+ * bugünkü gibi yapılır. "Canlıya dön" (`onResume`) yeniden canlıya alır; seçim tüm kareye döner (kaydırınca eski seçimin
+ * anlamı kalmaz). `canLive` yokken (pencere / tüm ekran paylaşımı) pencere bugünkü donuk kipte kalır ve `scrollHint` ile
+ * nedenini söyler. Canlı özellikler verilmezse (eski çağrı) pencere bugünkü gibidir.
+ *
+ * <p>`onPad` KARARLI bir fonksiyon olmalıdır (ör. `setState`): `ref` olarak verilir; her çizimde değişen bir fonksiyon
+ * katmanı her çizimde boş → öğe diye yeniden bildirir.
  */
 export default function CaptureCropDialog({
   open, frame, label, busy = false, retaking = false, error = null, onRetake, onConfirm, onCancel, returnFocusRef,
+  live = false, canLive = false, scroll = 'off', scrollHint = false, liveEnded = false,
+  onFreeze, onResume, onEnableScroll, onPad, onActivity,
 }) {
   const t = useT()
   const W = frame?.width || 0
@@ -42,14 +66,24 @@ export default function CaptureCropDialog({
   const drag = useRef(null)
   const [box, setBox] = useState({ w: 0, h: 0 })
   const keysId = useId()
+  const liveRef = useRef(live)
+  liveRef.current = live
 
-  // Yeni kare (yeniden çek): seçim korunur, yeni ölçüye sığdırılır
+  // Yeni kare (yeniden çek): seçim korunur, yeni ölçüye sığdırılır. Canlıyken ölçü değişirse (paylaşılan pencere
+  // boyutlandı, kaynak değişti) seçim tüm kare kalır
   const dims = useRef({ W, H })
   useEffect(() => {
     if (dims.current.W === W && dims.current.H === H) return
     dims.current = { W, H }
-    setRect((r) => clampRect(r, W, H))
+    setRect((r) => (liveRef.current ? fullRect(W, H) : clampRect(r, W, H)))
   }, [W, H])
+
+  // Canlıya dönüş: seçim tüm kareye döner (kaydırılınca eski seçimin yeri anlamını yitirir)
+  const wasLive = useRef(live)
+  useEffect(() => {
+    if (live && !wasLive.current) setRect(fullRect(dims.current.W, dims.current.H))
+    wasLive.current = live
+  }, [live])
 
   // Kutu ölçüsü (görüntü buna sığdırılır)
   useLayoutEffect(() => {
@@ -94,9 +128,18 @@ export default function CaptureCropDialog({
     return toSourcePoint({ x: e.clientX - b.left, y: e.clientY - b.top }, s)
   }, [W])
 
+  /** Canlıyken seçim başlamadan görüntü dondurulur: çizim eşzamanlı durur, seçilen pikseller görülen karedir. */
+  function freezeIfLive() {
+    if (!liveRef.current) return
+    liveRef.current = false
+    onFreeze?.()
+  }
+
   function onPointerDown(e) {
     if (busy || !W || !H) return
     if (e.pointerType === 'mouse' && e.button !== 0) return
+    onActivity?.()
+    freezeIfLive()
     const pt = srcPoint(e)
     const handle = e.target?.closest?.('[data-handle]')?.getAttribute('data-handle') || null
     const r = rectRef.current
@@ -137,8 +180,19 @@ export default function CaptureCropDialog({
     const next = keyRect(rectRef.current, e.key, { shift: e.shiftKey, alt: e.altKey }, W, H)
     if (!next) return
     e.preventDefault()
+    onActivity?.()
+    freezeIfLive()
     setRect(next)
   }
+
+  // Canlı kip çubuğu: yalnız canlı özellik kullanılıyorsa (eski çağrıda pencere bugünkü gibi)
+  const showBar = live || canLive || scrollHint || liveEnded
+  const canEnable = live && (scroll === 'ask' || scroll === 'failed')
+  const statusText = live
+    ? t(SCROLL_TEXT[scroll] || 'te.cap.liveNeutral')
+    : liveEnded ? t('te.cap.liveEnded')
+      : canLive ? t('te.cap.frozenHint')
+        : scrollHint ? t('te.cap.scrollOther') : ''
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o && !busy) onCancel?.() }}>
@@ -156,21 +210,59 @@ export default function CaptureCropDialog({
           </Button>
         </div>
         <DialogDescription className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
-          {t('te.cap.cropHelp')}
+          {live ? t('te.cap.liveHelp') : t('te.cap.cropHelp')}
         </DialogDescription>
-        {frame?.uniform && (
-          <AlertBanner tone="warning" title={t('te.cap.uniformTitle')}>{t('te.cap.uniformBody')}</AlertBanner>
+        {showBar && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2" data-slot="te-cap-live-bar"
+            data-live={live ? 'true' : 'false'} data-scroll={live ? scroll : 'off'}>
+            {(live || canLive) && (
+              <Badge variant={live ? 'default' : 'secondary'} data-slot="te-cap-live-badge"
+                className="shrink-0 gap-1 overflow-visible rounded-md whitespace-normal">
+                {live ? <Radio aria-hidden="true" /> : <Pause aria-hidden="true" />}
+                {live ? t('te.cap.liveBadge') : t('te.cap.frozenBadge')}
+              </Badge>
+            )}
+            <p className="min-w-0 flex-1 basis-64 text-sm text-muted-foreground [overflow-wrap:anywhere]" aria-live="polite"
+              data-slot="te-cap-live-status">
+              {statusText}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {canEnable && (
+                <Button type="button" className="pointer-coarse:min-h-10" disabled={busy} onClick={() => onEnableScroll?.()}
+                  data-slot="te-cap-scroll-enable">
+                  <MousePointerClick aria-hidden="true" /> {t('te.cap.scrollEnable')}
+                </Button>
+              )}
+              {live && (
+                <Button type="button" variant="outline" className="pointer-coarse:min-h-10" disabled={busy}
+                  onClick={() => { freezeIfLive(); stageRef.current?.focus?.({ preventScroll: true }) }} data-slot="te-cap-freeze">
+                  <Pause aria-hidden="true" /> {t('te.cap.freeze')}
+                </Button>
+              )}
+              {!live && canLive && (
+                <Button type="button" variant="outline" className="pointer-coarse:min-h-10" disabled={busy}
+                  onClick={() => onResume?.()} data-slot="te-cap-resume">
+                  <Play aria-hidden="true" /> {t('te.cap.resume')}
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+        {frame?.uniform && !live && (
+          <AlertBanner tone="warning" title={t('te.cap.uniformTitle')}>
+            {canLive ? t('te.cap.uniformBodyLive') : t('te.cap.uniformBody')}
+          </AlertBanner>
         )}
         <div ref={setBoxEl} className="relative flex min-h-40 min-w-0 flex-1 items-center justify-center overflow-hidden rounded-md border bg-muted/40"
           data-slot="te-cap-box">
           {/* Sahne: karenin ekrandaki kopyası değil kendisi (tuval); seçim kutusu karartmanın içinde boşluk bırakır */}
           <div ref={stageRef} tabIndex={0} role="group" aria-label={t('te.cap.stageLabel', out.w, out.h)} aria-describedby={keysId}
             data-slot="te-cap-stage" data-rect={`${out.x},${out.y},${out.w},${out.h}`} data-source={`${W}x${H}`}
-            data-scale={(dw / (W || 1)).toFixed(4)}
+            data-scale={(dw / (W || 1)).toFixed(4)} data-live={live ? 'true' : undefined}
             className="relative shrink-0 touch-none select-none overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-ring"
             style={{ width: dw, height: dh }}
             onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endDrag} onPointerCancel={endDrag}
-            onKeyDown={onKeyDown}>
+            onKeyDown={onKeyDown} onWheel={live ? () => onActivity?.() : undefined}>
             <span id={keysId} className="sr-only">{t('te.cap.stageKeys')}</span>
             <div ref={setHostEl} className="absolute inset-0" data-slot="te-cap-frame-host" />
             <div data-slot="te-cap-selection"
@@ -188,6 +280,9 @@ export default function CaptureCropDialog({
                 )
               })}
             </div>
+            {/* Canlı kip katmanı: fare tekerleği buradan paylaşılan sekmeye iletilir (koordinatlar sahneyle aynı);
+                basılınca olay sahneye çıkar — görüntü donar ve seçim başlar */}
+            {live && <div ref={onPad} aria-hidden="true" data-slot="te-cap-pad" className="absolute inset-0 z-10 cursor-crosshair" />}
           </div>
         </div>
         <p className="text-sm tabular-nums text-muted-foreground [overflow-wrap:anywhere]" aria-hidden="true" data-slot="te-cap-size">
@@ -201,7 +296,8 @@ export default function CaptureCropDialog({
               onClick={() => setRect(fullRect(W, H))} data-slot="te-cap-select-all">
               <Maximize2 aria-hidden="true" /> {t('te.cap.selectAll')}
             </Button>
-            {onRetake && (
+            {/* Sekme paylaşımında "Canlıya dön" aynı işi görür (yeni kare + kaydırma): iki düğme karışıklık olurdu */}
+            {onRetake && !canLive && !live && (
               <Button type="button" variant="outline" className="pointer-coarse:min-h-10" disabled={busy || retaking}
                 onClick={() => onRetake()} data-slot="te-cap-retake">
                 <RefreshCw aria-hidden="true" className={retaking ? 'animate-spin motion-reduce:animate-none' : undefined} />

@@ -144,6 +144,92 @@ async function mockDisplayCapture(target) {
     }
   }, { W: CAP_W, H: CAP_H, BW: CAP_BW, BH: CAP_BH, COLORS: CAP_COLORS })
 }
+// Canlı görüntü + kaydırma (2026-11-19): sahte SEKME paylaşımı. Paylaşılan "sayfa" 1600 × 4500'lük bloklu bir şerittir;
+// akışın tuvali (1600 × 900) şeridin `__capScrollY`den başlayan bölümünü gösterir. Sahte CaptureController gerçek
+// tarayıcının yaptığını yapar (Chromium 159 deneyiyle aynı): forwardWheel(öğe) o öğedeki GERÇEK tekerlek olaylarını
+// "paylaşılan sekmeye" iletir (şeridi kaydırır), forwardWheel(null) iletimi keser; izin `prompt` iken çağrı, test
+// `__capAnswer('granted' | 'denied' | 'dismiss')` diyene dek BEKLER (tarayıcının izin sorusu).
+async function mockLiveTabCapture(target, { perm = 'prompt' } = {}) {
+  await target.addInitScript(({ W, H, BW, BH, COLORS, perm0 }) => {
+    window.__capCalls = 0
+    window.__capStopped = false
+    window.__capScrollY = 0
+    window.__capPerm = perm0
+    window.__capWheelCalls = []
+    window.__capPending = null
+    const PAGE_H = H * 5
+    let ctx = null
+    const paint = () => {
+      if (!ctx) return
+      const top = window.__capScrollY
+      for (let by = Math.floor(top / BH); by * BH < top + H; by++) {
+        for (let bx = 0; bx * BW < W; bx++) {
+          const [r, g, b] = COLORS[(bx + by * 3) % COLORS.length]
+          ctx.fillStyle = `rgb(${r}, ${g}, ${b})`
+          ctx.fillRect(bx * BW, by * BH - top, BW, BH)
+        }
+      }
+    }
+    window.__capScrollTo = (y) => {
+      window.__capScrollY = Math.max(0, Math.min(PAGE_H - H, Math.round(y)))
+      paint()
+    }
+    const md = navigator.mediaDevices || {}
+    if (!navigator.mediaDevices) Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: md })
+    md.getDisplayMedia = async () => {
+      window.__capCalls++
+      const c = document.createElement('canvas')
+      c.width = W
+      c.height = H
+      ctx = c.getContext('2d')
+      paint()
+      const stream = c.captureStream(10)
+      const timer = setInterval(paint, 100)
+      for (const tr of stream.getTracks()) {
+        const stop = tr.stop.bind(tr)
+        tr.stop = () => { window.__capStopped = true; clearInterval(timer); stop() }
+        const settings = tr.getSettings.bind(tr)
+        tr.getSettings = () => ({ ...settings(), displaySurface: 'browser' })
+      }
+      return stream
+    }
+    let wheelEl = null
+    const onWheel = (e) => { if (e.isTrusted) window.__capScrollTo(window.__capScrollY + e.deltaY) }
+    const attach = (el) => {
+      if (wheelEl) wheelEl.removeEventListener('wheel', onWheel)
+      wheelEl = el
+      if (el) el.addEventListener('wheel', onWheel)
+    }
+    const notAllowed = () => Object.assign(new Error('No permission.'), { name: 'NotAllowedError' })
+    window.CaptureController = class {
+      setFocusBehavior() {}
+      forwardWheel(el) {
+        window.__capWheelCalls.push(el ? 'el' : 'null')
+        if (el == null) { attach(null); return Promise.resolve() }
+        if (window.__capPerm === 'granted') { attach(el); return Promise.resolve() }
+        if (window.__capPerm === 'denied') return Promise.reject(notAllowed())
+        return new Promise((resolve, reject) => {
+          window.__capPending = (answer) => {
+            window.__capPending = null
+            if (answer === 'granted') { window.__capPerm = 'granted'; attach(el); resolve(); return }
+            if (answer === 'denied') window.__capPerm = 'denied'
+            reject(notAllowed())
+          }
+        })
+      }
+    }
+    window.__capAnswer = (answer) => {
+      if (!window.__capPending) return false
+      window.__capPending(answer)
+      return true
+    }
+    const perms = navigator.permissions
+    if (perms && typeof perms.query === 'function') {
+      const query = perms.query.bind(perms)
+      perms.query = (d) => (d && d.name === 'captured-surface-control' ? Promise.resolve({ state: window.__capPerm }) : query(d))
+    }
+  }, { W: CAP_W, H: CAP_H, BW: CAP_BW, BH: CAP_BH, COLORS: CAP_COLORS, perm0: perm })
+}
 // Çok parçalı yükleme gövdesindeki PNG'nin boyutu (IHDR)
 function pngSize(body) {
   const i = body.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47]))
@@ -2149,6 +2235,168 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(() => window.__noReload), 'sayfa yeniden yüklenmedi').toBe('kanal-raporlari')
       await expect(editor.locator('[data-slot-id="daily-errors"]')).toHaveAttribute('data-has-image', 'true', { timeout: 10_000 })
       await panel.close()
+    })
+
+    // Canlı görüntü + kaydırma (2026-11-19, kullanıcı isteği: "paylaşılan ekranda aşağı yukarı gidebilmeliyim, istediğim
+    // noktayı seçip alabilmeliyim"): sekme paylaşımında kırpma penceresi CANLI açılır; izin kullanıcının tıklamasıyla
+    // sorulur; tekerlek paylaşılan sekmeyi kaydırır; seçim başlayınca görüntü donar ve yüklenen görsel DONAN karedir.
+    test('ekrandan al — canlı görüntü + kaydırma (sekme paylaşımı): izin, tekerlek, dondur, canlıya dön; yüklenen = donan kare; sığar', async ({ page, context }) => {
+      test.skip(vp.width < 768, 'telefonda ekrandan alma yok (yukarıdaki testte doğrulanır)')
+      test.setTimeout(150_000)
+      await mockLiveTabCapture(context)
+      await mock(page, { target: context })
+      persistUploads = true
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const editor = page.locator('[data-slot="te-report"]')
+      const slot = editor.locator('[data-slot-id="tech-errors"]')
+      await expect(slot).toBeVisible({ timeout: 20_000 })
+      await slot.locator('[data-slot="te-image-snip"]').click()
+      const dlg = page.locator('[data-slot="te-cap-dialog"]')
+      await expect(dlg).toBeVisible({ timeout: 15_000 })
+      const stage = dlg.locator('[data-slot="te-cap-stage"]')
+      const bar = dlg.locator('[data-slot="te-cap-live-bar"]')
+      const status = dlg.locator('[data-slot="te-cap-live-status"]')
+      const badge = dlg.locator('[data-slot="te-cap-live-badge"]')
+      const wheelCalls = () => page.evaluate(() => window.__capWheelCalls.slice())
+      // Penceredeki tuvalin (karenin kendisi) bir pikseli
+      const pixel = (x, y) => page.evaluate(([px, py]) => {
+        const c = document.querySelector('[data-slot="te-cap-frame"]')
+        const d = c.getContext('2d').getImageData(px, py, 1, 1).data
+        return [d[0], d[1], d[2]]
+      }, [x, y])
+      const near = (got, want) => got.every((v, k) => Math.abs(v - want[k]) <= 14)
+      // Şerit `top` kadar kaymışken karenin (x, y) pikselinin beklenen rengi
+      const colorAt = (x, y, top) => CAP_COLORS[(Math.floor(x / CAP_BW) + Math.floor((y + top) / CAP_BH) * 3) % CAP_COLORS.length]
+      const fits = async (what) => {
+        await page.waitForTimeout(250)
+        const db = await dlg.boundingBox()
+        expect(db.x, `pencere solda taşmaz (${what})`).toBeGreaterThanOrEqual(-1)
+        expect(db.y + db.height, `pencere altta taşmaz (${what})`).toBeLessThanOrEqual(vp.height + 1)
+        expect(db.x + db.width, `pencere sağda taşmaz (${what})`).toBeLessThanOrEqual(vp.width + 1)
+        expect(await page.evaluate(overflowX), `yatay taşma (${what})`).toBeLessThanOrEqual(1)
+        expect(await page.evaluate(clipped, '[data-slot="te-cap-dialog"]'), `kırpılan metin (${what})`).toEqual([])
+        if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-cap-dialog"]'), `küçük hedef (${what})`).toEqual([])
+        // Sahne görünür kalır (çubuk onu pencereden itmez)
+        const box = await stage.boundingBox()
+        expect(box.height, `sahne görünür (${what})`).toBeGreaterThan(120)
+        expect(box.y + box.height, `sahne pencerenin içinde (${what})`).toBeLessThanOrEqual(db.y + db.height + 1)
+      }
+
+      // 1) Canlı açılır. İzin henüz sorulmadı: tarayıcıya çağrı YAPILMAZ, ne isteneceği yazar, düğme önerilir
+      await expect(stage).toHaveAttribute('data-live', 'true')
+      await expect(badge).toContainText(/Canlı|Live/)
+      await expect(bar).toHaveAttribute('data-scroll', 'ask')
+      await expect(status).toContainText(/bir kez izin ister|asks once for permission/)
+      expect((await wheelCalls()).filter((c) => c === 'el')).toHaveLength(0)
+      await expect(dlg.locator('[data-slot="te-cap-retake"]')).toHaveCount(0)
+      await expect(dlg.locator('[data-slot="alert"]')).toHaveCount(0)
+      await fits('izin sorulacak')
+      await page.screenshot({ path: `test-results/te-cap-live-ask-${vp.name}.png` })
+      // Canlı çizim gerçek video hattından: paylaşılan sayfa değişince penceredeki tuval de değişir
+      await expect.poll(async () => near(await pixel(100, 75), colorAt(100, 75, 0)), { timeout: 8000 }).toBe(true)
+      await page.evaluate(() => window.__capScrollTo(150))
+      await expect.poll(async () => near(await pixel(100, 75), colorAt(100, 75, 150)), { timeout: 8000 }).toBe(true)
+      await page.evaluate(() => window.__capScrollTo(0))
+      await expect.poll(async () => near(await pixel(100, 75), colorAt(100, 75, 0)), { timeout: 8000 }).toBe(true)
+
+      // 2) "Kaydırmayı etkinleştir": tarayıcının izin sorusu (yanıt gelene dek bekler); kapatılırsa yeniden denenebilir
+      const enable = dlg.locator('[data-slot="te-cap-scroll-enable"]')
+      await enable.click()
+      await expect(bar).toHaveAttribute('data-scroll', 'asking')
+      await expect(status).toContainText(/İzin ver|Allow/)
+      await expect(enable).toHaveCount(0)
+      expect(await page.evaluate(() => window.__capAnswer('dismiss'))).toBe(true)
+      await expect(bar).toHaveAttribute('data-scroll', 'failed')
+      await fits('izin sorusu kapatıldı')
+      await enable.click()
+      await expect(bar).toHaveAttribute('data-scroll', 'asking')
+      expect(await page.evaluate(() => window.__capAnswer('granted'))).toBe(true)
+      await expect(bar).toHaveAttribute('data-scroll', 'on')
+      await expect(status).toContainText(/Fare tekerleği paylaşılan sekmeyi buradan kaydırır|The mouse wheel scrolls the shared tab from here/)
+      await fits('kaydırma açık')
+
+      // 3) Tekerlek sahnenin üstünde: paylaşılan sekme kayar (pencerenin kendisi kaymaz), görüntü canlı güncellenir
+      const sb = await stage.boundingBox()
+      const pageY = await page.evaluate(() => window.scrollY)
+      await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2)
+      await page.mouse.wheel(0, 150)
+      await expect.poll(() => page.evaluate(() => window.__capScrollY), { timeout: 5000 }).toBe(150)
+      await expect.poll(async () => near(await pixel(100, 75), colorAt(100, 75, 150)), { timeout: 8000 }).toBe(true)
+      expect(await page.evaluate(() => window.scrollY), 'arkadaki sayfa kaymaz').toBe(pageY)
+      const sb2 = await stage.boundingBox()
+      expect(Math.abs(sb2.y - sb.y), 'sahne yerinde').toBeLessThanOrEqual(1)
+      await page.screenshot({ path: `test-results/te-cap-live-on-${vp.name}.png` })
+
+      // 4) Sürükleyerek seçim: görüntü donar, tekerlek iletimi kesilir
+      await page.mouse.move(sb.x + sb.width * 0.2, sb.y + sb.height * 0.3)
+      await page.mouse.down()
+      await page.mouse.move(sb.x + sb.width * 0.55, sb.y + sb.height * 0.5, { steps: 6 })
+      await page.mouse.move(sb.x + sb.width * 0.7, sb.y + sb.height * 0.8, { steps: 6 })
+      await page.mouse.up()
+      await expect(badge).toContainText(/Donduruldu|Frozen/)
+      await expect(stage).not.toHaveAttribute('data-live', 'true')
+      await expect(dlg.locator('[data-slot="te-cap-pad"]')).toHaveCount(0)
+      await expect.poll(async () => (await wheelCalls()).at(-1)).toBe('null')
+      const [rx, ry, rw, rh] = (await stage.getAttribute('data-rect')).split(',').map(Number)
+      expect(rw).toBeGreaterThan(CAP_W * 0.4)
+      expect(rh).toBeGreaterThan(CAP_H * 0.4)
+      // Donduktan sonra paylaşılan sayfa değişse de penceredeki kare DEĞİŞMEZ; tekerlek artık kaydırmaz
+      await page.evaluate(() => window.__capScrollTo(600))
+      await page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2)
+      await page.mouse.wheel(0, 150)
+      await page.waitForTimeout(700)
+      expect(await page.evaluate(() => window.__capScrollY), 'donukken tekerlek iletilmez').toBe(600)
+      expect(near(await pixel(100, 75), colorAt(100, 75, 150)), 'donan kare değişmez').toBe(true)
+      await fits('donduruldu')
+      await page.screenshot({ path: `test-results/te-cap-live-frozen-${vp.name}.png` })
+
+      // 5) Yükle: PNG = DONAN karenin seçilen bölgesi (kaydırma 150 iken görülen pikseller), ölçek yok
+      await dlg.locator('[data-slot="te-cap-confirm"]').click()
+      await expect.poll(() => uploads.length, { timeout: 20_000 }).toBe(1)
+      await expect(dlg).toHaveCount(0)
+      const img = decodePng(uploadBodies[0])
+      expect(img, 'yüklenen PNG çözülür').not.toBeNull()
+      expect([img.w, img.h]).toEqual([rw, rh])
+      let checked = 0
+      for (let cy = 75; cy < CAP_H; cy += CAP_BH) {
+        for (let cx = 100; cx < CAP_W; cx += CAP_BW) {
+          if (cx < rx + 4 || cy < ry + 4 || cx >= rx + rw - 4 || cy >= ry + rh - 4) continue
+          const got = img.px(cx - rx, cy - ry)
+          const want = colorAt(cx, cy, 150)
+          expect(near(got, want), `piksel ${cx},${cy}: ${got} ≠ ${want} (donan kare, kaydırma 150)`).toBe(true)
+          checked++
+        }
+      }
+      expect(checked, 'denetlenen blok').toBeGreaterThanOrEqual(4)
+      await expect(slot).toHaveAttribute('data-has-image', 'true')
+
+      // 6) İkinci yuva: seçici yeniden açılmaz, izin zaten var → soru / düğme yok, kaydırma hemen açık
+      await editor.locator('[data-slot-id="daily-errors"] [data-slot="te-image-snip"]').click()
+      await expect(dlg).toBeVisible()
+      expect(await page.evaluate(() => window.__capCalls)).toBe(1)
+      await expect(stage).toHaveAttribute('data-live', 'true')
+      await expect(bar).toHaveAttribute('data-scroll', 'on')
+      await expect(enable).toHaveCount(0)
+      await expect.poll(async () => near(await pixel(100, 75), colorAt(100, 75, 600)), { timeout: 8000 }).toBe(true)
+      // "Dondur" → "Canlıya dön": yeniden canlı, tekerlek yeniden kaydırır
+      await dlg.locator('[data-slot="te-cap-freeze"]').click()
+      await expect(badge).toContainText(/Donduruldu|Frozen/)
+      await dlg.locator('[data-slot="te-cap-resume"]').click()
+      await expect(stage).toHaveAttribute('data-live', 'true')
+      await expect(bar).toHaveAttribute('data-scroll', 'on')
+      const sb3 = await stage.boundingBox()
+      await page.mouse.move(sb3.x + sb3.width / 2, sb3.y + sb3.height / 2)
+      await page.mouse.wheel(0, 150)
+      await expect.poll(() => page.evaluate(() => window.__capScrollY), { timeout: 5000 }).toBe(750)
+      await expect.poll(async () => near(await pixel(100, 75), colorAt(100, 75, 750)), { timeout: 8000 }).toBe(true)
+      await dlg.locator('[data-slot="te-cap-cancel"]').click()
+      await expect(dlg).toHaveCount(0)
+      await expect.poll(async () => (await wheelCalls()).at(-1)).toBe('null')
+      expect(uploads.length, 'Vazgeç yüklemez').toBe(1)
+      // Durdur: akış kapanır
+      await editor.locator('[data-slot="te-cap-stop"]').first().click()
+      await expect(editor.locator('[data-slot="te-cap-chip"]')).toHaveCount(0)
+      expect(await page.evaluate(() => window.__capStopped)).toBe(true)
     })
 
     test('takım şablon kütüphanesi (D17) + raporun şablon sürümü (D19): yönetim penceresi, yeni kanal kaynağı, kütüphaneye kaydet, varsayılana dön; sığar, kesilmez', async ({ page }) => {
