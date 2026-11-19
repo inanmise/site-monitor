@@ -24,8 +24,12 @@ public final class MonitorCsvParser {
     public static final int MAX_ROWS = 2000;
     /** Sütun sınırı (başlık ve her satır). */
     public static final int MAX_COLUMNS = 200;
-    /** Hücre sınırı (karakter) — k6 betiği ve SQL çok satırlı tek hücre olabilir. */
-    public static final int MAX_CELL_CHARS = 64 * 1024;
+    /**
+     * Hücre sınırı (karakter) — k6 betiği ve SQL çok satırlı tek hücre olabilir. Betiğin kendi tavanıyla AYNI (bağımsız inceleme
+     * 2026-11-19: 64 KB'tı; 512 KB'a kadar kaydedilebilen bir betiğin dışa aktarılan dosyası geri alınamıyordu). Toplam metin
+     * yine {@link #MAX_CHARS} ile sınırlı.
+     */
+    public static final int MAX_CELL_CHARS = com.sitemonitor.service.ScriptedSafetyRules.MAX_SCRIPT_CHARS;
 
     private MonitorCsvParser() { }
 

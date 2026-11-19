@@ -17,11 +17,13 @@ public interface MonitorCsvWriter {
      *
      * @param ok      uç başarılı döndü
      * @param id      oluşturulan / güncellenen izlemenin kimliği (biliniyorsa)
-     * @param message başarısızlıkta kullanıcıya gösterilecek güvenli metin
+     * @param message başarısızlıkta kullanıcıya gösterilecek güvenli metin; başarıda ucun 2xx yanıtındaki UYARILAR (k6 kayıt
+     *                uyarıları, dbquery maliyet / gövde uyarıları — bağımsız inceleme 2026-11-19: düşürülüyordu) ya da null
      * @param field   başarısızlığın alanı (biliniyorsa — gövde anahtarı)
      */
     record Result(boolean ok, Long id, String message, String field) {
         public static Result success(Long id) { return new Result(true, id, null, null); }
+        public static Result success(Long id, String warning) { return new Result(true, id, warning, null); }
         public static Result failure(String message, String field) { return new Result(false, null, message, field); }
     }
 

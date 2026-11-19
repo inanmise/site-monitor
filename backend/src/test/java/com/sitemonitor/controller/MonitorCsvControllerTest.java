@@ -73,10 +73,10 @@ class MonitorCsvControllerTest {
         ResponseEntity<?> ex = controller.export("ftp", null, null, session);
         assertThat(ex.getStatusCode().value()).isEqualTo(400);
         assertThat(((Map<?, ?>) ex.getBody()).get("field")).isEqualTo("type");
-        ResponseEntity<Map<String, Object>> im = controller.importCsv("ftp", true, body("name,team\n"), session);
+        ResponseEntity<Map<String, Object>> im = controller.importCsv("ftp", true, null, body("name,team\n"), session);
         assertThat(im.getStatusCode().value()).isEqualTo(400);
         assertThat(im.getBody()).containsEntry("field", "type").containsEntry("code", "VALIDATION_FAILED");
-        verify(service, never()).importCsv(anyString(), anyString(), anyBoolean(), any());
+        verify(service, never()).importCsv(anyString(), anyString(), anyBoolean(), any(), any());
     }
 
     @Test
@@ -86,22 +86,22 @@ class MonitorCsvControllerTest {
             @Override public long getContentLengthLong() { return -1; }
         };
         big.setContent(new byte[MonitorCsvController.MAX_BODY_BYTES + 10]);
-        ResponseEntity<Map<String, Object>> res = controller.importCsv("http", true, big, session);
+        ResponseEntity<Map<String, Object>> res = controller.importCsv("http", true, null, big, session);
         assertThat(res.getStatusCode().value()).isEqualTo(413);
         assertThat(res.getBody()).containsEntry("code", "PAYLOAD_TOO_LARGE");
         MockHttpServletRequest overDeclared = new MockHttpServletRequest("POST", "/x") {
             @Override public long getContentLengthLong() { return MonitorCsvController.MAX_BODY_BYTES + 1L; }
         };
-        assertThat(controller.importCsv("http", true, overDeclared, session).getStatusCode().value()).isEqualTo(413);
-        verify(service, never()).importCsv(anyString(), anyString(), anyBoolean(), any());
+        assertThat(controller.importCsv("http", true, null, overDeclared, session).getStatusCode().value()).isEqualTo(413);
+        verify(service, never()).importCsv(anyString(), anyString(), anyBoolean(), any(), any());
     }
 
     @Test
     @DisplayName("başlık hatası: 400 VALIDATION_FAILED alan csv + reason / column / line")
     void headerErrorIs400() {
-        when(service.importCsv(eq("http"), anyString(), eq(true), any())).thenThrow(
+        when(service.importCsv(eq("http"), anyString(), eq(true), any(), any())).thenThrow(
                 new MonitorCsvService.CsvRequestException("unknown_column", "password", 1, "Bilinmeyen sütun: password"));
-        ResponseEntity<Map<String, Object>> res = controller.importCsv("http", true, body("name,team,password\n"), session);
+        ResponseEntity<Map<String, Object>> res = controller.importCsv("http", true, null, body("name,team,password\n"), session);
         assertThat(res.getStatusCode().value()).isEqualTo(400);
         assertThat(res.getBody()).containsEntry("field", "csv").containsEntry("reason", "unknown_column")
                 .containsEntry("column", "password").containsEntry("line", 1);
@@ -110,15 +110,15 @@ class MonitorCsvControllerTest {
     @Test
     @DisplayName("önizleme denetim yazmaz; gerçek koşum MONITOR_CSV_IMPORT'u yalnız sayılarla yazar (hücre değeri yok)")
     void auditOnlyOnRealRun() {
-        when(service.importCsv(eq("http"), anyString(), eq(true), any())).thenReturn(result(true));
-        when(service.importCsv(eq("http"), anyString(), eq(false), any())).thenReturn(result(false));
-        ResponseEntity<Map<String, Object>> dry = controller.importCsv("http", true, body("name,team\nA,T\n"), session);
+        when(service.importCsv(eq("http"), anyString(), eq(true), any(), any())).thenReturn(result(true));
+        when(service.importCsv(eq("http"), anyString(), eq(false), any(), any())).thenReturn(result(false));
+        ResponseEntity<Map<String, Object>> dry = controller.importCsv("http", true, null, body("name,team\nA,T\n"), session);
         assertThat(dry.getStatusCode().value()).isEqualTo(200);
         @SuppressWarnings("unchecked") Map<String, Object> data = (Map<String, Object>) dry.getBody().get("data");
         assertThat(data).containsEntry("dry_run", true).containsKeys("rows", "counts", "columns", "limits");
         verify(audit, never()).recordAction(anyString(), any(jakarta.servlet.http.HttpSession.class), anyString(), anyString(), anyString(), isNull());
 
-        controller.importCsv("http", false, body("name,team\nA,T\n"), session);
+        controller.importCsv("http", false, null, body("name,team\nA,T\n"), session);
         ArgumentCaptor<String> detail = ArgumentCaptor.forClass(String.class);
         verify(audit).recordAction(eq("MONITOR_CSV_IMPORT"), any(jakarta.servlet.http.HttpSession.class), eq("MONITOR_CSV"), eq("http"),
                 detail.capture(), isNull());
@@ -130,23 +130,23 @@ class MonitorCsvControllerTest {
     void oneImportAtATime() throws Exception {
         CountDownLatch inside = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
-        when(service.importCsv(eq("http"), anyString(), eq(true), any())).thenAnswer(inv -> {
+        when(service.importCsv(eq("http"), anyString(), eq(true), any(), any())).thenAnswer(inv -> {
             inside.countDown();
             release.await(10, TimeUnit.SECONDS);
             return result(true);
         });
         AtomicReference<ResponseEntity<Map<String, Object>>> first = new AtomicReference<>();
-        Thread t = new Thread(() -> first.set(controller.importCsv("http", true, body("name,team\nA,T\n"), session)));
+        Thread t = new Thread(() -> first.set(controller.importCsv("http", true, null, body("name,team\nA,T\n"), session)));
         t.start();
         assertThat(inside.await(10, TimeUnit.SECONDS)).isTrue();
-        ResponseEntity<Map<String, Object>> second = controller.importCsv("http", true, body("name,team\nA,T\n"), session);
+        ResponseEntity<Map<String, Object>> second = controller.importCsv("http", true, null, body("name,team\nA,T\n"), session);
         assertThat(second.getStatusCode().value()).isEqualTo(429);
         assertThat(second.getBody()).containsEntry("code", "RATE_LIMITED");
         assertThat(second.getHeaders().getFirst("Retry-After")).isEqualTo("5");
         release.countDown();
         t.join(10_000);
         assertThat(first.get().getStatusCode().value()).isEqualTo(200);
-        assertThat(controller.importCsv("http", true, body("name,team\nA,T\n"), session).getStatusCode().value()).isEqualTo(200);
+        assertThat(controller.importCsv("http", true, null, body("name,team\nA,T\n"), session).getStatusCode().value()).isEqualTo(200);
     }
 
     @Test
@@ -166,6 +166,49 @@ class MonitorCsvControllerTest {
         assertThat(Long.parseLong(limited.getHeaders().getFirst("Retry-After"))).isBetween(1L, 60L);
         verify(audit, org.mockito.Mockito.times(MonitorCsvLimiter.EXPORTS_PER_MINUTE)).recordAction(eq("MONITOR_CSV_EXPORT"),
                 any(jakarta.servlet.http.HttpSession.class), eq("MONITOR_CSV"), eq("ping"), anyString(), isNull());
+    }
+
+    @Test
+    @DisplayName("bağımsız inceleme: Windows-1254 kaydedilmiş gövde (geçersiz UTF-8) 400 reason encoding — servise gidilmez, bozuk harf yazılmaz")
+    void nonUtf8BodyRejected() {
+        MockHttpServletRequest r = new MockHttpServletRequest("POST", "/api/monitoring/csv/http/import");
+        r.setContentType("text/csv");
+        r.setContent("name,team\nİstanbul Web,Takım Ş\n".getBytes(java.nio.charset.Charset.forName("windows-1254")));
+        ResponseEntity<Map<String, Object>> res = controller.importCsv("http", true, null, r, session);
+        assertThat(res.getStatusCode().value()).isEqualTo(400);
+        assertThat(res.getBody()).containsEntry("field", "csv").containsEntry("reason", "encoding");
+        verify(service, never()).importCsv(anyString(), anyString(), anyBoolean(), any(), any());
+        // geçerli UTF-8 (BOM'lu) Türkçe metin geçer
+        when(service.importCsv(eq("http"), anyString(), eq(true), any(), any())).thenReturn(result(true));
+        assertThat(controller.importCsv("http", true, null, body("﻿name,team\nİstanbul,Ş\n"), session).getStatusCode().value()).isEqualTo(200);
+        assertThat(MonitorCsvController.strictUtf8("İ".getBytes(StandardCharsets.UTF_8))).isEqualTo("İ");
+        assertThat(MonitorCsvController.strictUtf8(new byte[]{(byte) 0xDD})).isNull();
+    }
+
+    @Test
+    @DisplayName("bağımsız inceleme: plan_token servise iletilir; plan değişmişse 409 CSV_PLAN_CHANGED, denetim yazılmaz; yanıt plan_token / stopped / paused taşır")
+    void planTokenAndChangedPlan() {
+        MonitorCsvService.RowResult row = new MonitorCsvService.RowResult(2, "A", "T", MonitorCsvService.A_CREATE, List.of(),
+                List.of("basic_auth_pass"), null, null, null, true);
+        when(service.importCsv(eq("http"), anyString(), eq(true), any(), any())).thenReturn(new MonitorCsvService.ImportResult(
+                "http", true, List.of(row), Map.of("create", 1), List.of("name", "team"), false, "abc123", false));
+        ResponseEntity<Map<String, Object>> dry = controller.importCsv("http", true, null, body("name,team\nA,T\n"), session);
+        @SuppressWarnings("unchecked") Map<String, Object> data = (Map<String, Object>) dry.getBody().get("data");
+        assertThat(data).containsEntry("plan_token", "abc123").containsEntry("stopped", false);
+        @SuppressWarnings("unchecked") List<Map<String, Object>> rows = (List<Map<String, Object>>) data.get("rows");
+        assertThat(rows.get(0)).containsEntry("paused", true);
+
+        when(service.importCsv(eq("http"), anyString(), eq(false), eq("abc123"), any()))
+                .thenThrow(new MonitorCsvService.PlanChangedException("değişti"));
+        ResponseEntity<Map<String, Object>> real = controller.importCsv("http", false, "abc123", body("name,team\nA,T\n"), session);
+        assertThat(real.getStatusCode().value()).isEqualTo(409);
+        assertThat(real.getBody()).containsEntry("code", "CSV_PLAN_CHANGED").containsEntry("error", "değişti");
+        verify(audit, never()).recordAction(eq("MONITOR_CSV_IMPORT"), any(jakarta.servlet.http.HttpSession.class), anyString(),
+                anyString(), anyString(), isNull());
+        // aşırı uzun belirteç yok sayılır (null iletilir)
+        when(service.importCsv(eq("http"), anyString(), eq(false), isNull(), any())).thenReturn(result(false));
+        assertThat(controller.importCsv("http", false, "x".repeat(65), body("name,team\nA,T\n"), session).getStatusCode().value())
+                .isEqualTo(200);
     }
 
     @Test

@@ -2,8 +2,11 @@
  * İzleme CSV dışa / içe aktarımı — saf model (2026-11-19, kullanıcı isteği: "UAT'tan prod'a izleme taşıma, toplu kurulum").
  *
  * Sunucu sözleşmesi (`/api/monitoring/csv/{type}/…`, MonitorCsvController):
- *  - Önizleme / gerçek koşum yanıtı `data = {type, dry_run, columns, counts, budget_exceeded, rows[], limits}`; her satır
- *    `{row, name, team, action create|update|unchanged|error, changed[], secrets[], status done|skipped|failed|null, message, field}`.
+ *  - Önizleme / gerçek koşum yanıtı `data = {type, dry_run, columns, counts, budget_exceeded, stopped, plan_token, rows[],
+ *    limits}`; her satır `{row, name, team, action create|update|unchanged|error, changed[], secrets[], status
+ *    done|skipped|failed|null, message, field, paused}` — `paused`: sırrı taşınmayan YENİ izleme duraklatılmış oluşturulur;
+ *    uygulanan satırın `message`'ı ucun uyarısıdır (varsa).
+ *  - Gerçek koşum önizlemenin `plan_token`'ını yollar; arada veri değiştiyse 409 `CSV_PLAN_CHANGED` (hiçbir satır yazılmaz).
  *  - Sırlar ASLA taşınmaz: `secrets` = içe aktarmadan sonra elle girilmesi gereken alanlar (`basic_auth_pass`,
  *    `custom_headers`, `env:<AD>`).
  * Bu dosya React'tan bağımsızdır (birim testi `monitorCsvModel.test.js`).
@@ -98,17 +101,54 @@ export function rowsNeedingSecrets(rows, phase = 'preview') {
 }
 
 /**
- * İçe aktarım yanıtının sınıfı: 'ok' (veri var) | 'unsupported' (eski sunucu: 404 / 405 — uç yok) | 'unsure' (yanıt yok:
- * zaman aşımı / ağ / 502-504 — gerçek koşumda sonuç BİLİNMİYOR) | 'error' (sunucu bir şey söyledi: 400 / 403 / 413 / 429 …).
+ * İçe aktarım yanıtının sınıfı: 'ok' (veri var) | 'unsupported' (eski sunucu: 404 / 405 — uç yok) | 'planChanged' (409
+ * `CSV_PLAN_CHANGED`: önizlemeden sonra veri değişti, hiçbir şey yazılmadı) | 'unsure' (yanıt yok: zaman aşımı / ağ / 502-504
+ * — gerçek koşumda sonuç BİLİNMİYOR; `applying` ise HER 5xx de: istek yarıda kalmış, bir kısmı uygulanmış olabilir —
+ * bağımsız inceleme 2026-11-19) | 'error' (sunucu bir şey söyledi: 400 / 403 / 413 / 429 …).
  */
-export function classifyImportResponse(res) {
+export function classifyImportResponse(res, { applying = false } = {}) {
   if (res && res.success !== false && res.data && Array.isArray(res.data.rows)) return 'ok'
   const status = Number(res?.status ?? 0)
   const code = res?.code
   if (status === 405 || (status === 404 && (code == null || code === 'NOT_FOUND'))) return 'unsupported'
+  if (status === 409 && code === 'CSV_PLAN_CHANGED') return 'planChanged'
   if (!res || status === 0 || status === 502 || status === 503 || status === 504
     || code === 'REQUEST_TIMEOUT' || code === 'NETWORK_ERROR' || code === 'OFFLINE') return 'unsure'
+  if (applying && status >= 500) return 'unsure'
   return 'error'
+}
+
+/**
+ * Dosya baytlarını metne çevirir (bağımsız inceleme 2026-11-19: `file.text()` her dosyayı UTF-8 sanıyordu — Türkçe Excel'in
+ * Windows-1254 kaydettiği dosyada "İstanbul" "�stanbul" olarak yazılırdı). Sıra: UTF-16 BOM (FF FE / FE FF) → UTF-16;
+ * KATI UTF-8 (BOM'lu ya da BOM'suz) geçerse UTF-8; değilse Windows-1254 (Türkçe Windows varsayılanı — her bayt bir harf, hata
+ * yok). Dönüş `{ text, encoding: 'utf-8' | 'utf-16le' | 'utf-16be' | 'windows-1254' }`. Tarayıcı bir kodlamayı tanımıyorsa
+ * (RangeError) 'utf-8' yerine geçer (sunucu yine KATI denetler).
+ */
+export function decodeCsvBytes(input) {
+  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input || new ArrayBuffer(0))
+  const decode = (label, opts) => new TextDecoder(label, opts).decode(bytes)
+  if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) {
+    try { return { text: decode('utf-16le'), encoding: 'utf-16le' } } catch { /* aşağıda UTF-8 */ }
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) {
+    try { return { text: decode('utf-16be'), encoding: 'utf-16be' } } catch { /* aşağıda UTF-8 */ }
+  }
+  try {
+    return { text: decode('utf-8', { fatal: true }), encoding: 'utf-8' }
+  } catch {
+    try {
+      return { text: decode('windows-1254'), encoding: 'windows-1254' }
+    } catch {
+      return { text: decode('utf-8'), encoding: 'utf-8' }
+    }
+  }
+}
+
+/** Duraklatılmış oluşturulacak / oluşturulan satırlar (önizlemede oluşturulacaklar; sonuçta uygulananlar). */
+export function pausedRows(rows, phase = 'preview') {
+  return (rows || []).filter((r) => r?.paused === true && r.action === 'create'
+    && (phase === 'result' ? r.status === 'done' : true))
 }
 
 /** Değişen sütunların okunur listesi (CSV başlık adları — dosyadaki adlarla aynı; ≤ 12, gerisi "+N"). */

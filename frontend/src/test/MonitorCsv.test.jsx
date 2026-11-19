@@ -200,6 +200,108 @@ describe('CSV içe aktarım penceresi', () => {
   })
 })
 
+describe('CSV içe aktarım — bağımsız inceleme 2026-11-19', () => {
+  it('Windows-1254 dosyası Türkçe harflerle okunur ve önizleme bunu söyler; UTF-8 dosyada not yok', async () => {
+    api.monitoring.csvImport.mockResolvedValue({ success: true, data: previewData() })
+    renderDialog()
+    // "name,team\nİstanbul,Ş\n" — Windows-1254 baytları (İ = DD, Ş = DE)
+    const bytes = new Uint8Array([...new TextEncoder().encode('name,team\n'), 0xDD, ...new TextEncoder().encode('stanbul,'), 0xDE, 0x0A])
+    await choose(new File([bytes], 'eski-excel.csv', { type: 'text/csv' }))
+    await waitFor(() => expect(slot('mcsv-dialog').getAttribute('data-phase')).toBe('preview'))
+    expect(api.monitoring.csvImport).toHaveBeenCalledWith('http', 'name,team\nİstanbul,Ş\n', expect.objectContaining({ dryRun: true }))
+    expect(slot('mcsv-encoding').textContent).toMatch(/Windows-1254/)
+    fireEvent.click(slot('mcsv-pick-another'))
+    await choose(csvFile())
+    await waitFor(() => expect(slot('mcsv-dialog').getAttribute('data-phase')).toBe('preview'))
+    expect(slot('mcsv-encoding')).toBeNull()
+  })
+
+  it('"Uygula" önizlemenin plan_token\'ını yollar; 409 CSV_PLAN_CHANGED → hiçbir şey yazılmadı, önizleme kendiliğinden yenilenir', async () => {
+    api.monitoring.csvImport
+      .mockResolvedValueOnce({ success: true, data: previewData({ plan_token: 'tok-1' }) })
+      .mockResolvedValueOnce({ success: false, status: 409, code: 'CSV_PLAN_CHANGED', error: 'değişti' })
+      .mockResolvedValueOnce({ success: true, data: previewData({ plan_token: 'tok-2', rows: previewData().rows.slice(0, 1) }) })
+      .mockResolvedValueOnce({ success: true, data: resultData() })
+    const { onClose } = renderDialog()
+    await choose(csvFile())
+    await waitFor(() => expect(slot('mcsv-apply')).not.toBeNull())
+    fireEvent.click(slot('mcsv-apply'))
+    await waitFor(() => expect(slot('mcsv-plan-changed')).not.toBeNull())
+    expect(api.monitoring.csvImport.mock.calls[1][2]).toEqual(expect.objectContaining({ dryRun: false, planToken: 'tok-1' }))
+    expect(api.monitoring.csvImport.mock.calls[2][2]).toEqual(expect.objectContaining({ dryRun: true }))
+    expect(slot('mcsv-dialog').getAttribute('data-phase')).toBe('preview')
+    expect(slots('mcsv-row').length).toBe(1)
+    fireEvent.click(slot('mcsv-apply'))
+    await waitFor(() => expect(slot('mcsv-dialog').getAttribute('data-phase')).toBe('result'))
+    expect(api.monitoring.csvImport.mock.calls[3][2]).toEqual(expect.objectContaining({ dryRun: false, planToken: 'tok-2' }))
+    fireEvent.click(slot('mcsv-close'))
+    expect(onClose).toHaveBeenCalledWith(true)
+  })
+
+  it('sırrı taşınmayan yeni izleme: önizlemede ve sonuçta "duraklatılmış" notu; uygulanan satırın uyarısı görünür', async () => {
+    const p = previewData()
+    p.rows[0] = { ...p.rows[0], paused: true }
+    const r = resultData()
+    r.rows[0] = { ...r.rows[0], paused: true }
+    r.rows[1] = { ...r.rows[1], message: 'Sorgu maliyeti yüksek' }
+    api.monitoring.csvImport.mockResolvedValueOnce({ success: true, data: p }).mockResolvedValueOnce({ success: true, data: r })
+    renderDialog()
+    await choose(csvFile())
+    await waitFor(() => expect(slot('mcsv-row-paused')).not.toBeNull())
+    expect(slot('mcsv-secrets').textContent).toMatch(/duraklatılmış oluşturulacak/)
+    fireEvent.click(slot('mcsv-apply'))
+    await waitFor(() => expect(slot('mcsv-dialog').getAttribute('data-phase')).toBe('result'))
+    const rows = slots('mcsv-row')
+    expect(slot('mcsv-row-paused', rows[0]).textContent).toMatch(/Duraklatılmış oluşturuldu/)
+    expect(slot('mcsv-row-warning', rows[1]).textContent).toContain('Sorgu maliyeti yüksek')
+    expect(slot('mcsv-row-message', rows[1])).toBeNull()
+  })
+
+  it('gerçek koşum 5xx: "sonuç bilinmiyor" (başarı da hata da denmez); uygulama kapanınca sonuçta şerit', async () => {
+    api.monitoring.csvImport
+      .mockResolvedValueOnce({ success: true, data: previewData() })
+      .mockResolvedValueOnce({ success: false, status: 500, code: 'INTERNAL_ERROR', error: 'beklenmeyen' })
+    const { onClose } = renderDialog()
+    await choose(csvFile())
+    await waitFor(() => expect(slot('mcsv-apply')).not.toBeNull())
+    fireEvent.click(slot('mcsv-apply'))
+    await waitFor(() => expect(slot('mcsv-error')).not.toBeNull())
+    expect(slot('mcsv-error').textContent).toMatch(/Sonuç bilinmiyor/)
+    fireEvent.click(screen.getByRole('button', { name: 'Vazgeç' }))
+    expect(onClose).toHaveBeenCalledWith(true)
+  })
+
+  it('durdurulan koşum: sonuçta "yeniden başlatıldı" şeridi', async () => {
+    api.monitoring.csvImport
+      .mockResolvedValueOnce({ success: true, data: previewData() })
+      .mockResolvedValueOnce({ success: true, data: { ...resultData(), stopped: true } })
+    renderDialog()
+    await choose(csvFile())
+    await waitFor(() => expect(slot('mcsv-apply')).not.toBeNull())
+    fireEvent.click(slot('mcsv-apply'))
+    await waitFor(() => expect(slot('mcsv-stopped')).not.toBeNull())
+  })
+
+  it('gerçek koşum sürerken pencere kaldırılırsa istek iptal edilmez; sonuç bildirimle söylenir', async () => {
+    let resolveApply
+    api.monitoring.csvImport
+      .mockResolvedValueOnce({ success: true, data: previewData() })
+      .mockImplementationOnce((_t, _x, opts) => {
+        expect(opts.signal).toBeUndefined()
+        return new Promise((res) => { resolveApply = res })
+      })
+    const Harness = ({ show }) => (show ? <MonitorCsvImportDialog open type="http" typeLabel="HTTP" onClose={() => {}} /> : <p>sayfa değişti</p>)
+    const { rerender } = render(<Harness show />)
+    await choose(csvFile())
+    await waitFor(() => expect(slot('mcsv-apply')).not.toBeNull())
+    fireEvent.click(slot('mcsv-apply'))
+    await waitFor(() => expect(resolveApply).toBeTypeOf('function'))
+    rerender(<Harness show={false} />)
+    resolveApply({ success: true, data: resultData() })
+    expect(await screen.findByText(/CSV içe aktarımı bitti: 2 uygulandı, 1 atlandı, 1 uygulanamadı/)).toBeTruthy()
+  })
+})
+
 describe('İçe / dışa aktar menüsü', () => {
   it('dışa aktar: türle çağırır, satır sayısını söyler', async () => {
     api.monitoring.csvExport.mockResolvedValue({ success: true, rows: 12, truncated: false, name: 'http-izlemeler.csv' })

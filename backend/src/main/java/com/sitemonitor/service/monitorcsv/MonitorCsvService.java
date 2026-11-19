@@ -25,6 +25,7 @@ import com.sitemonitor.repository.TeamRepository;
 import com.sitemonitor.service.PingCheckerService;
 import com.sitemonitor.service.dbquery.DbQuerySqlGuard;
 import com.sitemonitor.service.dbquery.DbType;
+import com.sitemonitor.service.keyword.KeywordFold;
 import com.sitemonitor.service.monitorcsv.MonitorCsvSpec.Column;
 import com.sitemonitor.service.monitorcsv.MonitorCsvSpec.Kind;
 import com.sitemonitor.service.monitorcsv.MonitorCsvSpec.TypeSpec;
@@ -33,9 +34,14 @@ import com.sitemonitor.util.Msg;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.PropertyAccessorFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.event.ContextClosedEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.text.Collator;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -45,6 +51,7 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -52,6 +59,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.function.LongSupplier;
 
 /**
@@ -69,14 +77,36 @@ import java.util.function.LongSupplier;
  * denetimi) ve satır başına "oluşturulacak / güncellenecek (değişen alanlar) / değişiklik yok / hata" der. Gerçek koşum
  * satırları sırayla izleme uçlarından ({@link MonitorCsvWriter}) geçirir; güncelleme gövdesi YALNIZ farklı alanları taşır.
  * Önizlemenin kabul ettiği satır gerçek koşumda yine reddedilebilir (ör. mükerrer URL) — satır sonucu bunu söyler.
+ *
+ * <p><b>Bağımsız inceleme kuralları (2026-11-19).</b>
+ * <ul>
+ *   <li>Önizleme bir {@code plan_token} döner (satır başına eylem + hedef kimlik + değişen sütunlar + gövde özeti); gerçek koşum
+ *       bu belirteci yollarsa ve veri arada değiştiyse (başkası izlemeyi düzenledi / sildi / ekledi) HİÇBİR satır yazılmaz,
+ *       {@link PlanChangedException} (409 {@code CSV_PLAN_CHANGED}) — kullanıcı onaylamadığı bir planı uygulamaz.</li>
+ *   <li>Sırrı taşınmayan YENİ izleme (Basic auth parolası, özel başlıklar, k6 gizli değişkeni) DURAKLATILMIŞ oluşturulur
+ *       ({@code active=false}, satırda {@code paused}) — sırsız çalışıp sahte alarm açmasın; sırlar girilince kullanıcı açar.</li>
+ *   <li>Eşleştirme anahtarları Türkçe katlanır ({@link KeywordFold}: İ / I / ı / i aynı) — "İSTANBUL" ile "istanbul" aynı takım.</li>
+ *   <li>dbquery SQL güvenlik denetimi yalnız YENİ ya da DEĞİŞEN sorguda / bağlantıda koşar, toplam {@link #GUARD_BUDGET_MS}
+ *       ile sınırlı; denetimin süre sınırına takılması satır hatası değildir (gerçek kayıt ucu yine denetler).</li>
+ *   <li>Gerçek koşumun zaman bütçesi PLANLAMA DAHİL sayılır; uygulama kapanırken ({@link ContextClosedEvent}) kalan satırlar
+ *       yazılmadan "atlandı" döner.</li>
+ *   <li>Dışa aktarımda bildirim grubu / bağlantı ADI yalnız oturumun KENDİ kapsamındaki takımların satırlarına yazılır
+ *       ({@link SessionScope#canView}); paylaşımla / 7/24 ile okunan satırda boş kalır. Pasif bildirim / 7/24 grupları yazılmaz
+ *       (içe aktarım onları çözemez).</li>
+ * </ul>
  */
 @Service
 public class MonitorCsvService {
 
     /** Dışa aktarımın satır sınırı. */
     public static final int EXPORT_MAX_ROWS = 5000;
-    /** Gerçek koşumun zaman bütçesi — dolunca kalan satırlar "atlandı (süre)" ile döner. */
+    /** Gerçek koşumun zaman bütçesi (planlama dahil) — dolunca kalan satırlar "atlandı (süre)" ile döner. */
     public static final long IMPORT_BUDGET_MS = 10 * 60_000L;
+    /** Bir içe aktarımdaki dbquery SQL güvenlik denetimlerinin TOPLAM süre bütçesi — dolunca kalan satırlarda denetim atlanır. */
+    public static final long GUARD_BUDGET_MS = 60_000L;
+
+    /** Uygulama kapanıyor ({@link ContextClosedEvent}) — gerçek koşum yeni satır yazmaz. */
+    private volatile boolean closing;
 
     private static final ZoneId IST = ZoneId.of("Europe/Istanbul");
     private static final Set<String> DNS_RECORD_TYPES = Set.of("A", "AAAA", "CNAME", "MX", "TXT", "NS");
@@ -122,6 +152,17 @@ public class MonitorCsvService {
         this.connectionRepo = connectionRepo;
         this.writer = writer;
         this.clock = clock;
+    }
+
+    /** Kapanış başladı: sürmekte olan gerçek koşum kalan satırları yazmadan bitirir (bayrak; bekleme yok). */
+    @EventListener(ContextClosedEvent.class)
+    public void onContextClosed() {
+        closing = true;
+    }
+
+    /** Test kancası. */
+    void closingForTest(boolean v) {
+        closing = v;
     }
 
     // ═════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -176,8 +217,13 @@ public class MonitorCsvService {
         Map<Long, String> groupNames = new HashMap<>();
         Map<Long, String> nocNames = new HashMap<>();
         Map<Long, String> connNames = new HashMap<>();
-        if (!list.isEmpty()) for (NotificationGroup g : notificationGroupRepo.findAll()) groupNames.put(g.getId(), g.getName());
-        for (NocNotificationGroup g : nocGroupRepo.findAllByOrderByNameAsc()) nocNames.put(g.getId(), g.getName());
+        // Pasif grup yazılmaz: içe aktarım yalnız etkin grupları çözer (yazılsaydı dosya geri alınamazdı)
+        if (!list.isEmpty()) for (NotificationGroup g : notificationGroupRepo.findAll()) {
+            if (Boolean.TRUE.equals(g.getActive())) groupNames.put(g.getId(), g.getName());
+        }
+        for (NocNotificationGroup g : nocGroupRepo.findAllByOrderByNameAsc()) {
+            if (!Boolean.FALSE.equals(g.getActive())) nocNames.put(g.getId(), g.getName());
+        }
         if ("dbquery".equals(type) && connectionRepo != null) {
             for (DbConnectionProfile p : connectionRepo.findAllByOrderByNameAsc()) connNames.put(p.getId(), p.getName());
         }
@@ -186,12 +232,15 @@ public class MonitorCsvService {
         sb.append(MonitorCsvCodec.row(spec.headers()));
         for (Object e : list) {
             List<String> cells = new ArrayList<>(spec.columns().size());
+            // Takım belgeleri (bildirim grubu, bağlantı) yalnız oturumun KENDİ kapsamındaki takımda adlandırılır — paylaşımla /
+            // 7/24 ile okunan satır başka takımın grup / bağlantı adını taşımaz (bağımsız inceleme 2026-11-19)
+            boolean ownScope = SessionScope.canView(session, teamOf(e));
             for (Column c : spec.columns()) {
                 Object v = safeCurrent(c, e);
                 String text;
                 if (MonitorCsvSpec.H_TEAM.equals(c.header())) text = Objects.toString(teamNames.get(teamOf(e)), "");
-                else if (c.kind() == Kind.NOTIFY_GROUP) text = v instanceof Number n ? Objects.toString(groupNames.get(n.longValue()), "") : "";
-                else if (c.kind() == Kind.CONNECTION) text = v instanceof Number n ? Objects.toString(connNames.get(n.longValue()), "") : "";
+                else if (c.kind() == Kind.NOTIFY_GROUP) text = ownScope && v instanceof Number n ? Objects.toString(groupNames.get(n.longValue()), "") : "";
+                else if (c.kind() == Kind.CONNECTION) text = ownScope && v instanceof Number n ? Objects.toString(connNames.get(n.longValue()), "") : "";
                 else if (c.kind() == Kind.NOC_GROUPS) {
                     List<String> names = new ArrayList<>();
                     if (v instanceof Collection<?> ids) for (Object id : ids) {
@@ -228,26 +277,60 @@ public class MonitorCsvService {
      * @param secrets içe aktarımdan sonra arayüzde girilmesi gereken sırlar ({@code basic_auth_pass}, {@code custom_headers},
      *                {@code env:<AD>})
      * @param status  gerçek koşumda done | skipped | failed (önizlemede null)
-     * @param message hata / atlama metni (Msg.t)
+     * @param message hata / atlama metni (Msg.t); uygulanan satırda ucun uyarısı (varsa)
      * @param field   hatanın sütunu (başlık adı; bilinmiyorsa null)
+     * @param paused  yeni izleme, sırları taşınmadığı için DURAKLATILMIŞ oluşturulacak / oluşturuldu
      */
     public record RowResult(int row, String name, String team, String action, List<String> changed, List<String> secrets,
-                            String status, String message, String field) {
+                            String status, String message, String field, boolean paused) {
+        public RowResult(int row, String name, String team, String action, List<String> changed, List<String> secrets,
+                         String status, String message, String field) {
+            this(row, name, team, action, changed, secrets, status, message, field, false);
+        }
+
         RowResult withStatus(String s, String msg, String f) {
-            return new RowResult(row, name, team, action, changed, secrets, s, msg, f);
+            return new RowResult(row, name, team, action, changed, secrets, s, msg, f, paused);
         }
     }
 
-    /** İçe aktarım sonucu. {@code counts}: create / update / unchanged / error (+ gerçek koşumda done / skipped / failed). */
+    /**
+     * İçe aktarım sonucu. {@code counts}: create / update / unchanged / error (+ gerçek koşumda done / skipped / failed).
+     * {@code planToken}: bu planın özeti (önizlemede istemciye verilir, gerçek koşumda karşılaştırılır). {@code stopped}:
+     * uygulama kapanırken koşum kesildi (kalan satırlar yazılmadı).
+     */
     public record ImportResult(String type, boolean dryRun, List<RowResult> rows, Map<String, Integer> counts,
-                               List<String> columns, boolean budgetExceeded) { }
+                               List<String> columns, boolean budgetExceeded, String planToken, boolean stopped) {
+        public ImportResult(String type, boolean dryRun, List<RowResult> rows, Map<String, Integer> counts,
+                            List<String> columns, boolean budgetExceeded) {
+            this(type, dryRun, rows, counts, columns, budgetExceeded, null, false);
+        }
+    }
+
+    /**
+     * Önizlemeden sonra veri değişti: gerçek koşumun planı önizlemenin planı değil (409 {@code CSV_PLAN_CHANGED}). Hiçbir
+     * satır yazılmadı.
+     */
+    public static final class PlanChangedException extends RuntimeException {
+        public PlanChangedException(String message) {
+            super(message);
+        }
+    }
 
     /** Önizleme / gerçek koşum için çözülmüş satır planı. */
     private record Plan(RowResult result, Long existingId, Map<String, Object> body, Map<String, String> bodyKeyToHeader) { }
 
     public ImportResult importCsv(String type, String text, boolean dryRun, HttpSession session) {
+        return importCsv(type, text, dryRun, null, session);
+    }
+
+    /**
+     * @param planToken gerçek koşumda önizlemenin {@code plan_token}'ı (null = karşılaştırma yok — eski istemci); farklıysa
+     *                  {@link PlanChangedException} ve HİÇBİR satır yazılmaz
+     */
+    public ImportResult importCsv(String type, String text, boolean dryRun, String planToken, HttpSession session) {
         TypeSpec spec = MonitorCsvSpec.of(type);
         if (spec == null) throw new IllegalArgumentException("type");
+        long start = clock.getAsLong();   // bütçe PLANLAMA dahil (bağımsız inceleme 2026-11-19)
         MonitorCsvParser.Parsed parsed;
         try {
             parsed = MonitorCsvParser.parse(text);
@@ -256,16 +339,24 @@ public class MonitorCsvService {
         }
         List<String> header = readHeader(spec, parsed.header());
         Context ctx = context(spec, session);
+        ctx.guardDeadline = clock.getAsLong() + GUARD_BUDGET_MS;
         List<Plan> plans = new ArrayList<>(parsed.rows().size());
         Set<String> seen = new HashSet<>();
         for (MonitorCsvParser.Record rec : parsed.rows()) plans.add(plan(spec, header, rec, ctx, seen, session));
+        String token = planToken(plans);
+        if (!dryRun && planToken != null && !planToken.isBlank() && !planToken.equals(token)) {
+            throw new PlanChangedException(Msg.t("Önizlemeden sonra izlemeler değişti (biri düzenledi, ekledi ya da sildi) — hiçbir satır "
+                            + "yazılmadı. Güncel önizlemeyi inceleyip yeniden uygulayın.",
+                    "The monitors changed after the preview (someone edited, added or deleted one) — no row was written. "
+                            + "Review the current preview and apply again."));
+        }
 
         List<RowResult> out = new ArrayList<>(plans.size());
         boolean budgetExceeded = false;
+        boolean stopped = false;
         if (dryRun) {
             for (Plan p : plans) out.add(p.result());
         } else {
-            long start = clock.getAsLong();
             String note = Msg.t("CSV ile içe aktarıldı", "Imported from CSV");
             for (Plan p : plans) {
                 RowResult r = p.result();
@@ -273,6 +364,14 @@ public class MonitorCsvService {
                 if (A_UNCHANGED.equals(r.action())) {
                     out.add(r.withStatus(S_SKIPPED, Msg.t("Değişiklik yok — kayıt olduğu gibi bırakıldı.",
                             "No changes — the record was left as it is."), null));
+                    continue;
+                }
+                if (closing) {
+                    stopped = true;
+                    out.add(r.withStatus(S_SKIPPED, Msg.t("Atlandı: uygulama yeniden başlatılıyor. Dosyayı biraz sonra yeniden içe aktarın "
+                                    + "(uygulanan satırlar \"değişiklik yok\" görünür).",
+                            "Skipped: the application is restarting. Import the file again shortly (rows already applied show "
+                                    + "\"no changes\")."), null));
                     continue;
                 }
                 if (clock.getAsLong() - start > IMPORT_BUDGET_MS) {
@@ -287,7 +386,8 @@ public class MonitorCsvService {
                 MonitorCsvWriter.Result w = A_CREATE.equals(r.action())
                         ? writer.create(type, body, session)
                         : writer.update(type, p.existingId(), body, session);
-                if (w.ok()) out.add(r.withStatus(S_DONE, null, null));
+                // Başarıda ucun uyarısı (k6 kayıt uyarısı, dbquery maliyet uyarısı) satır iletisinde taşınır
+                if (w.ok()) out.add(r.withStatus(S_DONE, w.message(), null));
                 else out.add(r.withStatus(S_FAILED, w.message(), w.field() == null ? null
                         : p.bodyKeyToHeader().getOrDefault(w.field(), w.field())));
             }
@@ -299,7 +399,28 @@ public class MonitorCsvService {
             counts.merge(r.action(), 1, Integer::sum);
             if (r.status() != null) counts.merge(r.status(), 1, Integer::sum);
         }
-        return new ImportResult(type, dryRun, out, counts, header, budgetExceeded);
+        return new ImportResult(type, dryRun, out, counts, header, budgetExceeded, token, stopped);
+    }
+
+    /**
+     * Planın özeti (SHA-256, ilk 32 onaltılık): satır başına eylem, hedef kimlik, değişen sütunlar, sırlar, duraklatma, hata
+     * sütunu ve gövde (anahtar sıralı). İleti metni dışarıda (dil). Önizleme ile gerçek koşum arasında başkası izlemeyi
+     * düzenlerse / siler / eklerse değişir.
+     */
+    static String planToken(List<Plan> plans) {
+        MessageDigest md;
+        try {
+            md = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+        for (Plan p : plans) {
+            RowResult r = p.result();
+            String line = r.row() + "|" + r.action() + "|" + p.existingId() + "|" + r.changed() + "|" + r.secrets() + "|"
+                    + r.paused() + "|" + r.field() + "|" + new TreeMap<>(p.body()) + "\n";
+            md.update(line.getBytes(StandardCharsets.UTF_8));
+        }
+        return HexFormat.of().formatHex(md.digest()).substring(0, 32);
     }
 
     /** Başlık: bilinmeyen / yinelenen sütun ya da eksik anahtar sütun → istek hatası. */
@@ -350,8 +471,10 @@ public class MonitorCsvService {
             case MonitorCsvParser.E_TOO_MANY_COLUMNS -> Msg.t("Satır " + line + ": çok fazla sütun var (en çok "
                     + MonitorCsvParser.MAX_COLUMNS + "). Ayırıcıyı ve tırnakları denetleyin.", "Line " + line
                     + ": too many columns (at most " + MonitorCsvParser.MAX_COLUMNS + "). Check the separators and quotes.");
-            case MonitorCsvParser.E_CELL_TOO_LONG -> Msg.t("Satır " + line + ": bir hücre çok uzun (en çok 64 KB). Kapanmamış bir tırnak olabilir.",
-                    "Line " + line + ": a cell is too long (at most 64 KB). There may be an unclosed quote.");
+            case MonitorCsvParser.E_CELL_TOO_LONG -> Msg.t("Satır " + line + ": bir hücre çok uzun (en çok "
+                    + MonitorCsvParser.MAX_CELL_CHARS / 1024 + " KB). Kapanmamış bir tırnak olabilir.",
+                    "Line " + line + ": a cell is too long (at most " + MonitorCsvParser.MAX_CELL_CHARS / 1024
+                    + " KB). There may be an unclosed quote.");
             case MonitorCsvParser.E_UNCLOSED_QUOTE -> Msg.t("Satır " + line + ": tırnak kapatılmamış. Hücredeki tırnakları denetleyin (tırnak içinde tırnak \"\" diye yazılır).",
                     "Line " + line + ": a quote isn't closed. Check the quotes in the cell (a quote inside quotes is written \"\").");
             case MonitorCsvParser.E_BAD_QUOTE -> Msg.t("Satır " + line + ": kapanan tırnaktan sonra beklenmeyen karakter. Hücreyi baştan sona tırnakla sarın.",
@@ -371,6 +494,8 @@ public class MonitorCsvService {
         final Map<String, List<Long>> nocGroups = new HashMap<>();
         final Map<Long, Map<String, List<DbConnectionProfile>>> connections = new HashMap<>();
         final Map<Long, DbConnectionProfile> connectionsById = new HashMap<>();
+        /** SQL güvenlik denetimlerinin toplam bütçesinin sonu (saat) — geçince denetim atlanır (kayıt ucu yine denetler). */
+        long guardDeadline = Long.MAX_VALUE;
     }
 
     private Context context(TypeSpec spec, HttpSession session) {
@@ -527,6 +652,7 @@ public class MonitorCsvService {
         Map<String, Object> body = new LinkedHashMap<>();
         List<String> changed = new ArrayList<>();
         String action;
+        boolean paused = false;
         if (existing == null) {
             List<String> missing = new ArrayList<>();
             for (String req : spec.createRequired()) {
@@ -562,17 +688,23 @@ public class MonitorCsvService {
             action = changed.isEmpty() ? A_UNCHANGED : A_UPDATE;
         }
 
-        String typeErr = typeCheck(spec, values, existing, teamId, session, rb);
+        String typeErr = typeCheck(spec, values, existing, teamId, session, rb, ctx);
         if (typeErr != null) return rb.error(rb.errField, typeErr);
 
         List<String> secrets = secrets(spec.type(), info, values, existing);
-        return new Plan(new RowResult(rec.line(), name, teamName, action, List.copyOf(changed), secrets, null, null, null),
+        // Sırrı taşınmayan YENİ izleme duraklatılmış oluşturulur: sırsız çalışsaydı (401 / boş token) ilk taramada sahte alarm
+        // açardı. Sırlar arayüzde girilince kullanıcı izlemeyi etkinleştirir (bağımsız inceleme 2026-11-19).
+        if (A_CREATE.equals(action) && !secrets.isEmpty()) {
+            paused = true;
+            body.put("active", false);
+        }
+        return new Plan(new RowResult(rec.line(), name, teamName, action, List.copyOf(changed), secrets, null, null, null, paused),
                 existing == null ? null : idOf(existing), body, keyToHeader);
     }
 
     /** Türe özgü ucuz denetimler — hata metni (rb.errField alanı yazar) ya da null. */
     private String typeCheck(TypeSpec spec, Map<String, Object> values, Object existing, Long teamId, HttpSession session,
-                             RowBuilder rb) {
+                             RowBuilder rb, Context ctx) {
         if (values.get("url") instanceof String url) {
             String u = MonitorUrls.normalize(url);
             if (!MonitorUrls.isCheckable(u)) {
@@ -614,18 +746,21 @@ public class MonitorCsvService {
                     return Msg.t("Paylaşımla erişilen takımda veritabanı sorgu izlemesi oluşturulamaz — bağlantılar takımın kendi belgesidir.",
                             "A database query monitor can't be created in a team you reach through access sharing — connections belong to the team itself.");
                 }
-                Long connId = values.get("connection") instanceof Long l ? l
-                        : existing instanceof DbQueryMonitor m ? m.getProfileId() : null;
-                String sql = values.get("sql_text") instanceof String s ? s : null;
-                boolean connChanged = values.containsKey("connection");
-                if ((sql != null || connChanged) && connId != null) {
-                    if (sql == null && existing instanceof DbQueryMonitor m) sql = m.getSqlText();
-                    DbConnectionProfile prof = null;
-                    if (connectionRepo != null) prof = connectionRepo.findById(connId).orElse(null);
+                // Denetim YALNIZ yeni ya da değişen sorguda / bağlantıda (aynı dosyanın yeniden içe aktarımı 2000 kez ayrıştırmasın);
+                // toplam süre bütçeli; denetimin kendi süre sınırına takılması satır hatası değil — kayıt ucu yine denetler
+                // (bağımsız inceleme 2026-11-19)
+                DbQueryMonitor em = existing instanceof DbQueryMonitor m ? m : null;
+                Long connId = values.get("connection") instanceof Long l ? l : em != null ? em.getProfileId() : null;
+                String sqlCell = values.get("sql_text") instanceof String s ? s : null;
+                boolean sqlChanged = sqlCell != null && (em == null || !sqlCell.equals(em.getSqlText()));
+                boolean connChanged = values.containsKey("connection") && (em == null || !Objects.equals(values.get("connection"), em.getProfileId()));
+                if ((sqlChanged || connChanged) && connId != null && clock.getAsLong() < ctx.guardDeadline) {
+                    String sql = sqlCell != null ? sqlCell : em != null ? em.getSqlText() : null;
+                    DbConnectionProfile prof = ctx.connectionsById.get(connId);
                     if (sql != null && !sql.isBlank()) {
                         DbType t = prof == null ? null : DbType.parse(prof.getDbType());
                         DbQuerySqlGuard.Result g = DbQuerySqlGuard.check(sql, t == null ? DbType.POSTGRESQL : t);
-                        if (g != null && !g.ok()) {
+                        if (g != null && !g.ok() && !DbQuerySqlGuard.isTimeout(g)) {
                             String first = g.violations() == null || g.violations().isEmpty() ? null : g.violations().get(0).message();
                             rb.errField = "sql_text";
                             return Msg.t("Sorgu güvenlik denetiminden geçmedi" + (first == null ? "." : ": " + first),
@@ -760,8 +895,12 @@ public class MonitorCsvService {
         return v == null ? null : v.toString();
     }
 
+    /**
+     * Eşleştirme anahtarı: kırpılır ve Türkçe katlanır (İ / I / ı / i → i, diğerleri küçük harf; uzunluk korunur). Locale.ROOT
+     * küçük harfi "İSTANBUL"u "i̇stanbul" yapıp "istanbul" ile eşleştirmiyordu (bağımsız inceleme 2026-11-19).
+     */
     static String lower(String s) {
-        return s == null ? "" : s.trim().toLowerCase(Locale.ROOT);
+        return s == null ? "" : KeywordFold.fold(s.trim());
     }
 
     private static String key(Long teamId, String name) {

@@ -62,7 +62,7 @@ class MonitorCsvParserTest {
     }
 
     @Test
-    @DisplayName("sınırlar: 2000 veri satırı geçer, 2001 hata; 200 sütun geçer, 201 hata; 64 KB hücre sınırı; 5 MB metin sınırı")
+    @DisplayName("sınırlar: 2000 veri satırı geçer, 2001 hata; 200 sütun geçer, 201 hata; hücre sınırı = betik tavanı (512 KB); 5 MB metin sınırı")
     void bounds() throws Exception {
         StringBuilder ok = new StringBuilder("name,team\n");
         for (int i = 0; i < MonitorCsvParser.MAX_ROWS; i++) ok.append("m").append(i).append(",T\n");
@@ -76,6 +76,8 @@ class MonitorCsvParserTest {
         assertThatThrownBy(() -> MonitorCsvParser.parse(cols200 + ",y\n"))
                 .isInstanceOfSatisfying(MonitorCsvParser.CsvFormatException.class, e -> assertThat(e.reason()).isEqualTo("too_many_columns"));
 
+        // bağımsız inceleme 2026-11-19: 512 KB'a kadar kaydedilen bir k6 betiğinin dışa aktarılan dosyası geri alınabilmeli
+        assertThat(MonitorCsvParser.MAX_CELL_CHARS).isEqualTo(com.sitemonitor.service.ScriptedSafetyRules.MAX_SCRIPT_CHARS);
         String bigCell = "a".repeat(MonitorCsvParser.MAX_CELL_CHARS);
         assertThat(MonitorCsvParser.parse("name\n" + bigCell + "\n").rows().get(0).cells().get(0)).hasSize(MonitorCsvParser.MAX_CELL_CHARS);
         assertThatThrownBy(() -> MonitorCsvParser.parse("name\n" + bigCell + "b\n"))

@@ -456,6 +456,132 @@ class MonitorCsvServiceIntegrationTest {
     }
 
     @Test
+    @DisplayName("bağımsız inceleme: sırrı taşınmayan YENİ izleme duraklatılmış oluşturulur (önizleme paused, kayıt active=false); sırsız satır etkin kalır")
+    void secretMissingCreatesPaused() {
+        String csv = "name,team,url,group_name,tags,active,basic_auth_user\n"
+                + "CSV Sırlı " + sfx + ",CSV Kaynak " + sfx + ",https://csv-sec-" + sfx + ".example.invalid/,G,t,true,svc\n"
+                + "CSV Sırsız " + sfx + ",CSV Kaynak " + sfx + ",https://csv-nosec-" + sfx + ".example.invalid/,G,t,true,\n";
+        MonitorCsvService.ImportResult dry = service.importCsv("http", csv, true, admin);
+        assertThat(dry.rows().get(0).paused()).isTrue();
+        assertThat(dry.rows().get(0).secrets()).containsExactly("basic_auth_pass");
+        assertThat(dry.rows().get(1).paused()).isFalse();
+        MonitorCsvService.ImportResult real = service.importCsv("http", csv, false, dry.planToken(), admin);
+        assertThat(real.rows()).allSatisfy(r -> assertThat(r.status()).as(r.message()).isEqualTo(MonitorCsvService.S_DONE));
+        assertThat(real.rows().get(0).paused()).isTrue();
+        Map<String, Object> active = new HashMap<>();
+        for (Object e : service.load("http")) {
+            if (teamA.getId().equals(MonitorCsvService.teamOf(e))) active.put(MonitorCsvService.nameOf(e), MonitorCsvSpec.prop("active").apply(e));
+        }
+        assertThat(active).containsEntry("CSV Sırlı " + sfx, false).containsEntry("CSV Sırsız " + sfx, true);
+    }
+
+    @Test
+    @DisplayName("bağımsız inceleme: önizlemeden sonra izleme değişirse gerçek koşum 409 (PlanChangedException) — hiçbir satır yazılmaz; aynı veriyle belirteç aynı")
+    void planChangedBetweenPreviewAndApply() {
+        Map<String, Object> b = sourceBody("ping", "CSV Plan " + sfx);
+        assertThat(writer.create("ping", b, admin).ok()).isTrue();
+        String csv = "name,team,host,confirm_attempts,group_name,tags\n"
+                + "CSV Plan " + sfx + ",CSV Kaynak " + sfx + ",csv-ping-" + sfx + ".example.invalid,5,G,t\n"
+                + "CSV Yeni Plan " + sfx + ",CSV Kaynak " + sfx + ",csv-new-" + sfx + ".example.invalid,2,G,t\n";
+        MonitorCsvService.ImportResult dry = service.importCsv("ping", csv, true, admin);
+        assertThat(dry.planToken()).hasSize(32);
+        assertThat(service.importCsv("ping", csv, true, admin).planToken()).isEqualTo(dry.planToken());
+        // başkası confirm_attempts'i dosyadaki değere getirdi → plan "güncelle"den "değişiklik yok"a döner
+        Object stored = service.load("ping").stream().filter(e -> ("CSV Plan " + sfx).equals(MonitorCsvService.nameOf(e))).findFirst().orElseThrow();
+        Map<String, Object> upd = new LinkedHashMap<>();
+        upd.put("confirmAttempts", 5);
+        assertThat(writer.update("ping", MonitorCsvService.idOf(stored), upd, admin).ok()).isTrue();
+        long before = countInTeam("ping", teamA.getId());
+        assertThatThrownBy(() -> service.importCsv("ping", csv, false, dry.planToken(), admin))
+                .isInstanceOf(MonitorCsvService.PlanChangedException.class);
+        assertThat(countInTeam("ping", teamA.getId())).as("hiçbir satır yazılmadı").isEqualTo(before);
+        // belirteçsiz (eski istemci) koşum karşılaştırmaz
+        assertThat(service.importCsv("ping", csv, false, null, admin).rows().get(1).status()).isEqualTo(MonitorCsvService.S_DONE);
+    }
+
+    @Test
+    @DisplayName("bağımsız inceleme: takım adı Türkçe katlanır — \"İZMİR\" / \"izmir\" / \"IZMIR\" aynı takım")
+    void turkishTeamNameFolding() {
+        team("İzmir CSV " + sfx);
+        for (String variant : List.of("IZMIR CSV " + sfx, "izmir csv " + sfx, "İZMİR CSV " + sfx)) {
+            String csv = "name,team,host,group_name,tags\nCSV Katla " + sfx + "," + variant + ",csv-fold-" + sfx + ".example.invalid,G,t\n";
+            MonitorCsvService.RowResult r = service.importCsv("ping", csv, true, admin).rows().get(0);
+            assertThat(r.action()).as(variant + ": " + r.message()).isEqualTo(MonitorCsvService.A_CREATE);
+        }
+        assertThat(MonitorCsvService.lower(" İSTANBUL ")).isEqualTo(MonitorCsvService.lower("istanbul"))
+                .isEqualTo(MonitorCsvService.lower("ISTANBUL")).isEqualTo(MonitorCsvService.lower("ıstanbul"));
+    }
+
+    @Test
+    @DisplayName("bağımsız inceleme: dışa aktarımda bildirim grubu adı yalnız kendi kapsamındaki takımda; pasif grup yazılmaz")
+    void exportGroupNamesOwnScopeAndActiveOnly() throws Exception {
+        assertThat(writer.create("ping", sourceBody("ping", "CSV Kapsam " + sfx), admin).ok()).isTrue();
+        MockHttpSession noc = new MockHttpSession();
+        noc.setAttribute("systemRole", "USER");
+        noc.setAttribute("username", "csv-noc-" + sfx);
+        noc.setAttribute("viewTeamIds", List.of(teamC.getId()));
+        noc.setAttribute("nocOperator", true);
+        Map<String, String> asNoc = rows(service.export("ping", noc, teamA.getId(), null).csv()).get(0);
+        assertThat(asNoc.get("name")).isEqualTo("CSV Kapsam " + sfx);
+        assertThat(asNoc.get("notification_group")).as("7/24 operatörü başka takımın grup adını görmez").isEmpty();
+        assertThat(rows(service.export("ping", admin, teamA.getId(), null).csv()).get(0).get("notification_group"))
+                .isEqualTo("CSV Bildirim " + sfx);
+
+        NotificationGroup g = groupRepo.findById(groupOf(teamA)).orElseThrow();
+        g.setActive(false);
+        groupRepo.save(g);
+        assertThat(rows(service.export("ping", admin, teamA.getId(), null).csv()).get(0).get("notification_group"))
+                .as("pasif grup adı yazılmaz (içe aktarım çözemez)").isEmpty();
+    }
+
+    @Test
+    @DisplayName("bağımsız inceleme: uygulama kapanırken gerçek koşum yazmaz — satırlar atlandı, stopped=true")
+    void closingStopsRealRun() {
+        String csv = "name,team,host,group_name,tags\nCSV Kapanış " + sfx + ",CSV Kaynak " + sfx + ",csv-close-" + sfx + ".example.invalid,G,t\n";
+        service.closingForTest(true);
+        try {
+            MonitorCsvService.ImportResult r = service.importCsv("ping", csv, false, admin);
+            assertThat(r.stopped()).isTrue();
+            assertThat(r.rows().get(0).status()).isEqualTo(MonitorCsvService.S_SKIPPED);
+            assertThat(countInTeam("ping", teamA.getId())).isZero();
+        } finally {
+            service.closingForTest(false);
+        }
+    }
+
+    @Test
+    @DisplayName("bağımsız inceleme: dbquery — aynı SQL yeniden içe aktarılınca güvenlik denetimi koşmaz; denetimin süre sınırı satır hatası değil")
+    void dbqueryGuardOnlyForChangedSql() {
+        Map<String, Object> b = sourceBody("dbquery", "CSV Denetim " + sfx);
+        b.put("teamId", teamB.getId());
+        b.put("profile_id", connOf(teamB));
+        b.put("notificationGroupId", groupOf(teamB));
+        MonitorCsvWriter.Result made = writer.create("dbquery", b, admin);
+        assertThat(made.ok()).as(made.message() + " / " + made.field()).isTrue();
+        String same = "name,team,connection,purpose,sql_text,group_name,tags\n"
+                + "CSV Denetim " + sfx + ",CSV Hedef " + sfx + ",CSV Bağlantı " + sfx + ",Sipariş kuyruğu birikmesin,"
+                + "SELECT COUNT(*) AS n FROM orders WHERE status = 'NEW',CSV Grup " + sfx + ",\"csv,göç\"\n";
+        String changed = same.replace("status = 'NEW'", "status = 'OLD'");
+        try (var guard = org.mockito.Mockito.mockStatic(com.sitemonitor.service.dbquery.DbQuerySqlGuard.class, org.mockito.Mockito.CALLS_REAL_METHODS)) {
+            MonitorCsvService.RowResult r = service.importCsv("dbquery", same, true, admin).rows().get(0);
+            assertThat(r.action()).as(r.message() + " / " + r.changed()).isIn(MonitorCsvService.A_UNCHANGED, MonitorCsvService.A_UPDATE);
+            assertThat(r.changed()).doesNotContain("sql_text");
+            guard.verify(() -> com.sitemonitor.service.dbquery.DbQuerySqlGuard.check(org.mockito.ArgumentMatchers.anyString(),
+                    org.mockito.ArgumentMatchers.any()), org.mockito.Mockito.never());
+
+            // denetimin süre / izin sınırı: satır hatası değil (kayıt ucu yine denetler)
+            com.sitemonitor.service.dbquery.DbQuerySqlGuard.Result timeout = new com.sitemonitor.service.dbquery.DbQuerySqlGuard.Result(false,
+                    List.of(new com.sitemonitor.service.dbquery.DbQuerySqlGuard.Violation(com.sitemonitor.service.dbquery.DbQuerySqlGuard.SQL_UNPARSABLE,
+                            com.sitemonitor.service.dbquery.DbQuerySqlGuard.TOKEN_TIMEOUT, "zaman", null, null)), List.of());
+            guard.when(() -> com.sitemonitor.service.dbquery.DbQuerySqlGuard.check(org.mockito.ArgumentMatchers.anyString(),
+                    org.mockito.ArgumentMatchers.any())).thenReturn(timeout);
+            MonitorCsvService.RowResult r2 = service.importCsv("dbquery", changed, true, admin).rows().get(0);
+            assertThat(r2.action()).as(r2.message()).isEqualTo(MonitorCsvService.A_UPDATE);
+            assertThat(r2.changed()).contains("sql_text");
+        }
+    }
+
+    @Test
     @DisplayName("hatalı hücre: sayı / mantıksal / alarm seviyesi / geçersiz URL — sütun adıyla satır hatası; Türkçe Excel ';' ayırıcısı okunur")
     void cellErrorsAndSemicolon() {
         String csv = "name;team;url;interval_seconds;active;alert_level;group_name;tags\n"

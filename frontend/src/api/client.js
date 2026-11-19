@@ -2795,15 +2795,17 @@ export const api = {
     /**
      * İzleme CSV'si (2026-11-19): `csvExport` türün görünen izlemelerini indirir (`team` = yalnız o takım); `csvImport`
      * CSV METNİNİ ham gövdeyle yollar — `dryRun` true → önizleme (hiçbir şey yazılmaz), false → gerçek koşum (satır satır
-     * izleme uçları). Sunucu en çok 2000 satırı / 5 MB'ı işler; uzun bir koşum için sonlu uzun süre (LONG_JOB).
+     * izleme uçları). Sunucu en çok 2000 satırı / 5 MB'ı işler; uzun bir koşum için sonlu uzun süre (LONG_JOB). Gerçek koşum
+     * önizlemenin `planToken`'ını yollar (arada veri değiştiyse 409 `CSV_PLAN_CHANGED`, hiçbir satır yazılmaz).
      */
     csvExport: (type, { team } = {}) => {
       const q = new URLSearchParams()
       if (team != null && team !== '') q.set('team', team)
       return downloadMonitorCsv(type, q.toString())
     },
-    csvImport: (type, text, { dryRun = true, signal } = {}) =>
-      request(`/monitoring/csv/${encodeURIComponent(type)}/import?dry_run=${dryRun ? 'true' : 'false'}`, {
+    csvImport: (type, text, { dryRun = true, signal, planToken } = {}) =>
+      request(`/monitoring/csv/${encodeURIComponent(type)}/import?dry_run=${dryRun ? 'true' : 'false'}`
+        + (!dryRun && planToken ? `&plan_token=${encodeURIComponent(planToken)}` : ''), {
         method: 'POST', body: text, headers: { 'Content-Type': 'text/csv; charset=utf-8' }, signal,
         withStatus: true, timeoutMs: LONG_JOB_TIMEOUT_MS,
       }),

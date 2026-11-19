@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
-  CSV_MAX_BYTES, CSV_MAX_ROWS, MONITOR_CSV_TYPES, changedText, classifyImportResponse, fileProblem, filterRows, isCsvType,
-  previewCounts, resultCounts, rowsNeedingSecrets, secretLabel,
+  CSV_MAX_BYTES, CSV_MAX_ROWS, MONITOR_CSV_TYPES, changedText, classifyImportResponse, decodeCsvBytes, fileProblem, filterRows,
+  isCsvType, pausedRows, previewCounts, resultCounts, rowsNeedingSecrets, secretLabel,
 } from '../components/monitoring/csv/monitorCsvModel.js'
 
 const JAVA = path.resolve(__dirname, '../../../backend/src/main/java/com/sitemonitor/service/monitorcsv')
@@ -110,5 +110,41 @@ describe('yanıt sınıfı', () => {
     expect(classifyImportResponse({ success: false, status: 400, code: 'VALIDATION_FAILED' })).toBe('error')
     expect(classifyImportResponse({ success: false, status: 429, code: 'RATE_LIMITED' })).toBe('error')
     expect(classifyImportResponse({ success: false, status: 413, code: 'PAYLOAD_TOO_LARGE' })).toBe('error')
+  })
+})
+
+describe('bağımsız inceleme 2026-11-19', () => {
+  it('gerçek koşumda her 5xx "sonuç bilinmiyor"; önizlemede yalnız 502-504; 409 CSV_PLAN_CHANGED ayrı sınıf', () => {
+    expect(classifyImportResponse({ success: false, status: 500, code: 'INTERNAL_ERROR' }, { applying: true })).toBe('unsure')
+    expect(classifyImportResponse({ success: false, status: 500, code: 'INTERNAL_ERROR' })).toBe('error')
+    expect(classifyImportResponse({ success: false, status: 409, code: 'CSV_PLAN_CHANGED' }, { applying: true })).toBe('planChanged')
+    expect(classifyImportResponse({ success: false, status: 409, code: 'CONCURRENT_MODIFICATION' }, { applying: true })).toBe('error')
+  })
+
+  it('kodlama: UTF-8 (BOM ile ya da BOM olmadan), UTF-16 LE / BE BOM, geçersiz UTF-8 → Windows-1254 (Türkçe harfler doğru)', () => {
+    const utf8 = new TextEncoder().encode('name,team\nİstanbul Şube,Takım Ğ\n')
+    expect(decodeCsvBytes(utf8)).toEqual({ text: 'name,team\nİstanbul Şube,Takım Ğ\n', encoding: 'utf-8' })
+    const bom = new Uint8Array([0xEF, 0xBB, 0xBF, ...new TextEncoder().encode('a,b')])
+    expect(decodeCsvBytes(bom)).toEqual({ text: 'a,b', encoding: 'utf-8' })
+    // Windows-1254: İ=DD, Ş=DE, Ğ=D0, ı=FD, ş=FE, ğ=F0, ö=F6, ü=FC, ç=E7
+    const cp1254 = new Uint8Array([0xDD, 0x73, 0x74, 0x61, 0x6E, 0x62, 0x75, 0x6C, 0x2C, 0xDE, 0xFE, 0xD0, 0xF0, 0xFD])
+    expect(decodeCsvBytes(cp1254)).toEqual({ text: 'İstanbul,ŞşĞğı', encoding: 'windows-1254' })
+    const le = new Uint8Array([0xFF, 0xFE, 0x30, 0x01, 0x2C, 0x00])   // "İ,"
+    expect(decodeCsvBytes(le)).toEqual({ text: 'İ,', encoding: 'utf-16le' })
+    const be = new Uint8Array([0xFE, 0xFF, 0x01, 0x30, 0x00, 0x2C])
+    expect(decodeCsvBytes(be)).toEqual({ text: 'İ,', encoding: 'utf-16be' })
+    expect(decodeCsvBytes(new ArrayBuffer(0))).toEqual({ text: '', encoding: 'utf-8' })
+  })
+
+  it('duraklatılmış satırlar: önizlemede oluşturulacaklar, sonuçta yalnız uygulananlar', () => {
+    const rows = [
+      { action: 'create', paused: true, status: 'done' },
+      { action: 'create', paused: true, status: 'failed' },
+      { action: 'create', paused: false, status: 'done' },
+      { action: 'update', paused: true, status: 'done' },
+    ]
+    expect(pausedRows(rows).length).toBe(2)
+    expect(pausedRows(rows, 'result').length).toBe(1)
+    expect(pausedRows(null)).toEqual([])
   })
 })

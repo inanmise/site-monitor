@@ -24,6 +24,9 @@ import org.springframework.web.bind.annotation.RestController;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -40,8 +43,10 @@ import java.util.Set;
  *       indirilir, {@code no-store}. Yalnız oturumun GÖRDÜĞÜ izlemeler ({@code monitoring.read/view} + takım görünürlüğü). Sır
  *       YOK. Kişi başına dakikada {@value MonitorCsvLimiter#EXPORTS_PER_MINUTE} → 429 {@code RATE_LIMITED}. Denetim
  *       {@code MONITOR_CSV_EXPORT} (yalnız sayılar).</li>
- *   <li>{@code POST /api/monitoring/csv/{type}/import?dry_run=true|false} — gövde ham CSV ({@code text/csv}, ≤ 5 MB; aşan
- *       413 {@code PAYLOAD_TOO_LARGE}). {@code monitoring.crud/edit} (k6 için ayrıca {@code monitoring.scripted/edit}). Kişi
+ *   <li>{@code POST /api/monitoring/csv/{type}/import?dry_run=true|false[&plan_token=…]} — gövde ham CSV ({@code text/csv},
+ *       ≤ 5 MB; aşan 413 {@code PAYLOAD_TOO_LARGE}); gövde KATI UTF-8 çözülür — geçersiz bayt dizisi (Windows-1254 kaydedilmiş
+ *       dosya) 400 {@code reason: encoding} (sessizce bozulmuş Türkçe harf yazılmaz). Önizleme {@code plan_token} döner; gerçek
+ *       koşum onu yollar, arada veri değiştiyse 409 {@code CSV_PLAN_CHANGED} ve hiçbir satır yazılmaz. {@code monitoring.crud/edit} (k6 için ayrıca {@code monitoring.scripted/edit}). Kişi
  *       başına aynı anda tek içe aktarım → 429 {@code RATE_LIMITED}. Önizleme hiçbir şey yazmaz (denetim de yazmaz); gerçek
  *       koşum satır sonuçlarıyla döner, denetim {@code MONITOR_CSV_IMPORT} (yalnız sayılar — hücre değeri ASLA).</li>
  * </ul>
@@ -106,6 +111,7 @@ public class MonitorCsvController {
     @PostMapping("/{type}/import")
     public ResponseEntity<Map<String, Object>> importCsv(@PathVariable String type,
                                                          @RequestParam(value = "dry_run", defaultValue = "true") boolean dryRun,
+                                                         @RequestParam(value = "plan_token", required = false) String planToken,
                                                          HttpServletRequest request, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
         MonitorCsvSpec.TypeSpec spec = MonitorCsvSpec.of(type);
@@ -127,10 +133,23 @@ public class MonitorCsvController {
                         "The file couldn't be read — the connection may have dropped. Try again."), null);
             }
             if (raw == null) return tooLarge();
-            String text = new String(raw, StandardCharsets.UTF_8);
+            String text = strictUtf8(raw);
+            if (text == null) {
+                return validation("csv", Msg.t("Dosya UTF-8 kodlamalı değil (Türkçe harfler bozulurdu). Dosyayı \"CSV UTF-8\" olarak "
+                                + "kaydedip yeniden seçin.",
+                        "The file isn't UTF-8 encoded (Turkish letters would be corrupted). Save it as \"CSV UTF-8\" and choose it again."),
+                        Map.of("reason", "encoding"));
+            }
+            if (planToken != null && planToken.length() > 64) planToken = null;
             MonitorCsvService.ImportResult r;
             try {
-                r = service.importCsv(type, text, dryRun, session);
+                r = service.importCsv(type, text, dryRun, planToken, session);
+            } catch (MonitorCsvService.PlanChangedException e) {
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("success", false);
+                body.put("code", "CSV_PLAN_CHANGED");
+                body.put("error", e.getMessage());
+                return ResponseEntity.status(409).header(HttpHeaders.CACHE_CONTROL, "no-store").body(body);
             } catch (MonitorCsvService.CsvRequestException e) {
                 Map<String, Object> extra = new LinkedHashMap<>();
                 extra.put("reason", e.reason());
@@ -144,7 +163,8 @@ public class MonitorCsvController {
                         "updated", count(r, MonitorCsvService.A_UPDATE, MonitorCsvService.S_DONE),
                         "failed", r.counts().getOrDefault(MonitorCsvService.S_FAILED, 0),
                         "skipped", r.counts().getOrDefault(MonitorCsvService.S_SKIPPED, 0),
-                        "budget_exceeded", r.budgetExceeded()), null);
+                        "budget_exceeded", r.budgetExceeded(), "stopped", r.stopped(),
+                        "paused", count(r, MonitorCsvService.A_CREATE, MonitorCsvService.S_DONE, true)), null);
             }
             Map<String, Object> data = new LinkedHashMap<>();
             data.put("type", r.type());
@@ -152,6 +172,8 @@ public class MonitorCsvController {
             data.put("columns", r.columns());
             data.put("counts", r.counts());
             data.put("budget_exceeded", r.budgetExceeded());
+            data.put("stopped", r.stopped());
+            data.put("plan_token", r.planToken());
             List<Map<String, Object>> rows = new ArrayList<>(r.rows().size());
             for (MonitorCsvService.RowResult row : r.rows()) {
                 Map<String, Object> m = new LinkedHashMap<>();
@@ -164,6 +186,7 @@ public class MonitorCsvController {
                 m.put("status", row.status());
                 m.put("message", row.message());
                 m.put("field", row.field());
+                m.put("paused", row.paused());
                 rows.add(m);
             }
             data.put("rows", rows);
@@ -181,6 +204,29 @@ public class MonitorCsvController {
         int n = 0;
         for (MonitorCsvService.RowResult row : r.rows()) if (action.equals(row.action()) && status.equals(row.status())) n++;
         return n;
+    }
+
+    private static int count(MonitorCsvService.ImportResult r, String action, String status, boolean paused) {
+        int n = 0;
+        for (MonitorCsvService.RowResult row : r.rows()) {
+            if (action.equals(row.action()) && status.equals(row.status()) && row.paused() == paused) n++;
+        }
+        return n;
+    }
+
+    /**
+     * Gövdeyi KATI UTF-8 çözer (geçersiz bayt → null). {@code new String(raw, UTF_8)} geçersiz baytı sessizce U+FFFD yapar:
+     * Windows-1254 ile kaydedilmiş bir dosyada "İstanbul" "�stanbul" olarak YAZILIRDI (bağımsız inceleme 2026-11-19).
+     */
+    static String strictUtf8(byte[] raw) {
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(raw)).toString();
+        } catch (CharacterCodingException e) {
+            return null;
+        }
     }
 
     /** Gövdeyi en çok {@link #MAX_BODY_BYTES} baytla okur; aşarsa null (çağıran 413 döner). */

@@ -1,20 +1,27 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { CircleCheck, CircleSlash, CircleX, FilePlus2, FileSpreadsheet, KeyRound, Pencil, Upload } from 'lucide-react'
+import { CircleCheck, CircleSlash, CircleX, FilePlus2, FileSpreadsheet, KeyRound, CirclePause, Pencil, TriangleAlert, Upload } from 'lucide-react'
 import { useT } from '../../../i18n/index.jsx'
 import { api } from '../../../api/client.js'
 import ModalShell from '../../ui/ModalShell.jsx'
 import AlertBanner from '../../ui/AlertBanner.jsx'
 import PaginationBar from '../../ui/PaginationBar.jsx'
 import ToneBadge from '../../admin/ToneBadge.jsx'
+import { useToast } from '../../ui/Toast.jsx'
 import { usePagination } from '../../../hooks/usePagination.js'
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
 import { Label } from '@/components/shadcn/label'
 import { cn } from '@/lib/utils'
 import {
-  CSV_MAX_ROWS, changedText, classifyImportResponse, fileProblem, filterRows, previewCounts, resultCounts,
-  rowsNeedingSecrets, secretLabel,
+  CSV_MAX_ROWS, changedText, classifyImportResponse, decodeCsvBytes, fileProblem, filterRows, pausedRows, previewCounts,
+  resultCounts, rowsNeedingSecrets, secretLabel,
 } from './monitorCsvModel.js'
+
+/** Dosya baytlarını oku — `arrayBuffer` yoksa (eski ortam) `text()` (UTF-8 varsayımı). */
+async function readFileText(file) {
+  if (typeof file?.arrayBuffer === 'function') return decodeCsvBytes(await file.arrayBuffer())
+  return { text: await file.text(), encoding: 'utf-8' }
+}
 
 /**
  * İzleme CSV içe aktarım penceresi (2026-11-19, kullanıcı isteği: "UAT'tan prod'a izleme taşıma, toplu kurulum").
@@ -27,32 +34,52 @@ import {
  *  - Sırlar taşınmaz: her satır sonradan girilmesi gereken sırları sayar (Basic auth parolası, özel başlıklar, k6 gizli
  *    değişkenleri).
  * Adlar KESİLMEZ (sarar); satırlar her genişlikte kart listesidir (tablo yok — telefonda da aynı okunur).
+ * Bağımsız inceleme (2026-11-19):
+ *  - Dosya baytları kodlamasına göre okunur (UTF-8 / UTF-16 / Windows-1254 — `decodeCsvBytes`); Windows-1254 okunduysa
+ *    önizleme bunu söyler (Türkçe harfleri denetleyin). Sunucuya hep UTF-8 gider.
+ *  - "Uygula" önizlemenin `plan_token`'ını yollar; 409 `CSV_PLAN_CHANGED` → hiçbir şey yazılmadı, önizleme KENDİLİĞİNDEN
+ *    yenilenir ve bir uyarı "güncel önizlemeyi inceleyip yeniden uygulayın" der.
+ *  - Sırrı taşınmayan yeni izleme DURAKLATILMIŞ oluşturulur (satırda not + şeritte cümle).
+ *  - Gerçek koşum iptal EDİLMEZ (pencere zaten kapanmaz; sayfa değişse de istek sürer) — yanıt sayfadan çıkıldıktan sonra
+ *    gelirse sonuç bildirim (toast) olarak söylenir. Gerçek koşumda her 5xx "sonuç bilinmiyor"dur.
+ *  - Uygulanan satırın uyarısı (k6 / dbquery kayıt uyarısı) satırda görünür.
  * `onClose(applied)` — `applied` true ise gerçek koşum yapıldı (ya da sonucu bilinmiyor): çağıran listeyi yeniler.
  * Test kancaları: `data-slot="mcsv-dialog|mcsv-file|mcsv-summary|mcsv-tile|mcsv-row|mcsv-apply|mcsv-close|mcsv-error"`,
  * `data-phase`, `data-action`, `data-status`.
  */
 export default function MonitorCsvImportDialog({ open, type, typeLabel, onClose }) {
   const t = useT()
+  const toast = useToast()
   const [phase, setPhase] = useState('pick')   // pick | preview | result
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const [notice, setNotice] = useState(null)   // 'planChanged' — önizleme kendiliğinden yenilendi
+  const [encoding, setEncoding] = useState('utf-8')
   const [fileName, setFileName] = useState(null)
   const [preview, setPreview] = useState(null)
   const [result, setResult] = useState(null)
   const [filter, setFilter] = useState('all')
   const [fileKey, setFileKey] = useState(0)
   const textRef = useRef(null)
+  const planTokenRef = useRef(null)
   const seq = useRef(0)
   const abortRef = useRef(null)
   const appliedRef = useRef(false)
+  const mountedRef = useRef(true)
   const inputId = useId()
   const listHeadingId = useId()
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
 
   // Her açılışta temiz evre (önceki dosyanın / sonucun kalıntısı yok)
   useEffect(() => {
     if (!open) return undefined
-    setPhase('pick'); setBusy(false); setError(null); setFileName(null); setPreview(null); setResult(null)
-    setFilter('all'); textRef.current = null; appliedRef.current = false
+    setPhase('pick'); setBusy(false); setError(null); setNotice(null); setEncoding('utf-8'); setFileName(null)
+    setPreview(null); setResult(null); setFilter('all'); textRef.current = null; planTokenRef.current = null
+    appliedRef.current = false
     return () => { seq.current += 1; abortRef.current?.abort() }
   }, [open])
 
@@ -68,6 +95,15 @@ export default function MonitorCsvImportDialog({ open, type, typeLabel, onClose 
     return res?.error || t('mcsv.dlg.requestFailed')
   }
 
+  /** Önizlemeyi uygula (yeni dosya ya da 409 sonrası yenileme). */
+  function showPreview(data) {
+    planTokenRef.current = typeof data?.plan_token === 'string' ? data.plan_token : null
+    setPreview(data)
+    setFilter('all')
+    setFileKey((k) => k + 1)
+    setPhase('preview')
+  }
+
   async function pick(file) {
     setError(null)
     const problem = fileProblem(file)
@@ -78,12 +114,12 @@ export default function MonitorCsvImportDialog({ open, type, typeLabel, onClose 
     abortRef.current = ac
     setBusy(true)
     try {
-      let text
-      try { text = await file.text() } catch { if (mine === seq.current) setError(t('mcsv.err.read')); return }
+      let decoded
+      try { decoded = await readFileText(file) } catch { if (mine === seq.current) setError(t('mcsv.err.read')); return }
       if (mine !== seq.current) return
       let res
       try {
-        res = await api.monitoring.csvImport(type, text, { dryRun: true, signal: ac.signal })
+        res = await api.monitoring.csvImport(type, decoded.text, { dryRun: true, signal: ac.signal })
       } catch (e) {
         if (mine === seq.current) setError(e?.message || t('mcsv.dlg.requestFailed'))
         return
@@ -91,35 +127,70 @@ export default function MonitorCsvImportDialog({ open, type, typeLabel, onClose 
       if (mine !== seq.current) return
       const kind = classifyImportResponse(res)
       if (kind !== 'ok') { setError(describe(res, kind) || t('mcsv.dlg.requestFailed')); return }
-      textRef.current = text
+      textRef.current = decoded.text
+      setEncoding(decoded.encoding)
+      setNotice(null)
       setFileName(file.name || null)
-      setPreview(res.data)
-      setFilter('all')
-      setFileKey((k) => k + 1)
-      setPhase('preview')
+      showPreview(res.data)
     } finally {
       if (mine === seq.current) setBusy(false)
     }
   }
 
+  /** 409 CSV_PLAN_CHANGED: hiçbir şey yazılmadı — aynı metinle önizlemeyi yeniden iste. */
+  async function refreshPreview(mine) {
+    const ac = new AbortController()
+    abortRef.current = ac
+    let res = null
+    try {
+      res = await api.monitoring.csvImport(type, textRef.current, { dryRun: true, signal: ac.signal })
+    } catch {
+      res = null
+    }
+    if (mine !== seq.current || !mountedRef.current) return
+    if (classifyImportResponse(res) === 'ok') {
+      showPreview(res.data)
+      setNotice('planChanged')
+    } else {
+      setError(t('mcsv.dlg.planChangedNoPreview'))
+    }
+  }
+
+  /** Sayfadan çıkıldıktan sonra gelen gerçek koşum yanıtı: sonuç bildirimle söylenir (sessiz kalmaz). */
+  function announceAway(res, kind) {
+    if (kind === 'ok') {
+      const rc = resultCounts(res.data.rows)
+      const msg = t('mcsv.toast.finished', rc.done, rc.skipped, rc.failed)
+      if (rc.failed > 0) toast.error(msg, { duration: 15000 })
+      else toast.success(msg, 10000)
+      return
+    }
+    if (kind === 'planChanged') { toast.info(t('mcsv.toast.planChanged'), 15000); return }
+    if (kind === 'unsure') { toast.info(t('mcsv.toast.unknown'), 15000); return }
+    toast.error(describe(res, kind) || t('mcsv.dlg.requestFailed'), { duration: 15000 })
+  }
+
   async function apply() {
     if (busy || !textRef.current) return
     const mine = ++seq.current
-    const ac = new AbortController()
-    abortRef.current = ac
+    // Gerçek koşum İPTAL EDİLMEZ: yarıda kesilen istek bir kısmı uygulanmış bir dosya bırakır (bağımsız inceleme 2026-11-19)
+    abortRef.current = null
     setBusy(true)
     setError(null)
+    setNotice(null)
     try {
       let res
       try {
-        res = await api.monitoring.csvImport(type, textRef.current, { dryRun: false, signal: ac.signal })
+        res = await api.monitoring.csvImport(type, textRef.current, { dryRun: false, planToken: planTokenRef.current })
       } catch (e) {
         // Ağ hatası: istek sunucuya ulaşıp uygulanmış olabilir — sonuç bilinmiyor, liste kapanışta yenilenir
+        if (!mountedRef.current) { toast.info(t('mcsv.toast.unknown'), 15000); return }
         if (mine === seq.current) { appliedRef.current = true; setError(e?.message ? `${e.message} ${t('mcsv.dlg.applyUnknown')}` : t('mcsv.dlg.applyUnknown')) }
         return
       }
+      const kind = classifyImportResponse(res, { applying: true })
+      if (!mountedRef.current) { announceAway(res, kind); return }
       if (mine !== seq.current) return
-      const kind = classifyImportResponse(res)
       if (kind === 'ok') {
         appliedRef.current = true
         setResult(res.data)
@@ -127,6 +198,7 @@ export default function MonitorCsvImportDialog({ open, type, typeLabel, onClose 
         setPhase('result')
         return
       }
+      if (kind === 'planChanged') { await refreshPreview(mine); return }
       if (kind === 'unsure') { appliedRef.current = true; setError(t('mcsv.dlg.applyUnknown')); return }
       setError(describe(res, kind))
     } finally {
@@ -137,8 +209,10 @@ export default function MonitorCsvImportDialog({ open, type, typeLabel, onClose 
   function pickAnother() {
     if (busy) return
     seq.current += 1
-    setPhase('pick'); setPreview(null); setError(null); setFileName(null); setFilter('all')
+    setPhase('pick'); setPreview(null); setError(null); setNotice(null); setEncoding('utf-8'); setFileName(null)
+    setFilter('all')
     textRef.current = null
+    planTokenRef.current = null
   }
 
   const data = phase === 'result' ? result : preview
@@ -148,6 +222,7 @@ export default function MonitorCsvImportDialog({ open, type, typeLabel, onClose 
   const shown = filterRows(rows, filter, phase)
   const pager = usePagination(shown, { listKey: 'monitor-csv-rows', preset: 'modal', resetDeps: [filter, phase, fileKey] })
   const secretRows = rowsNeedingSecrets(rows, phase)
+  const paused = pausedRows(rows, phase)
 
   const tiles = phase === 'result'
     ? [
@@ -234,6 +309,16 @@ export default function MonitorCsvImportDialog({ open, type, typeLabel, onClose 
               })}
             </div>
 
+            {notice === 'planChanged' && phase === 'preview' && (
+              <AlertBanner tone="warning" className="mb-0">
+                <span data-slot="mcsv-plan-changed">{t('mcsv.dlg.planChanged')}</span>
+              </AlertBanner>
+            )}
+            {encoding === 'windows-1254' && phase === 'preview' && (
+              <AlertBanner tone="info" className="mb-0">
+                <span data-slot="mcsv-encoding">{t('mcsv.dlg.encoding1254')}</span>
+              </AlertBanner>
+            )}
             {phase === 'preview' && pc.error > 0 && (
               <AlertBanner tone="warning" className="mb-0">{t('mcsv.dlg.errorsNote')}</AlertBanner>
             )}
@@ -243,10 +328,18 @@ export default function MonitorCsvImportDialog({ open, type, typeLabel, onClose 
             {phase === 'result' && data.budget_exceeded && (
               <AlertBanner tone="warning" className="mb-0">{t('mcsv.dlg.budget')}</AlertBanner>
             )}
+            {phase === 'result' && data.stopped === true && (
+              <AlertBanner tone="warning" className="mb-0"><span data-slot="mcsv-stopped">{t('mcsv.dlg.stopped')}</span></AlertBanner>
+            )}
             {secretRows.length > 0 && (
               <AlertBanner tone="warning" icon={KeyRound} className="mb-0" title={t('mcsv.dlg.secretsTitle')}>
                 <span data-slot="mcsv-secrets">
                   {secretRows.length === 1 ? t('mcsv.dlg.secretsBodyOne') : t('mcsv.dlg.secretsBody', secretRows.length)}
+                  {paused.length > 0 && (
+                    <> {paused.length === 1
+                      ? t(phase === 'result' ? 'mcsv.dlg.pausedDoneOne' : 'mcsv.dlg.pausedOne')
+                      : t(phase === 'result' ? 'mcsv.dlg.pausedDone' : 'mcsv.dlg.paused', paused.length)}</>
+                  )}
                 </span>
               </AlertBanner>
             )}
@@ -308,6 +401,18 @@ function RowItem({ r, phase, t }) {
           <span className="flex items-start gap-1 text-xs text-amber-700 dark:text-amber-300 [overflow-wrap:anywhere]" data-slot="mcsv-row-secrets">
             <KeyRound aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
             {t('mcsv.dlg.secretsRow', secrets.map((s) => secretLabel(t, s)).join(', '))}
+          </span>
+        )}
+        {r.paused === true && action === 'create' && (status ? status === 'done' : true) && (
+          <span className="flex items-start gap-1 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="mcsv-row-paused">
+            <CirclePause aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+            {t(status ? 'mcsv.dlg.rowPausedDone' : 'mcsv.dlg.rowPaused')}
+          </span>
+        )}
+        {r.message && status === 'done' && (
+          <span className="flex items-start gap-1 text-xs text-amber-700 dark:text-amber-300 [overflow-wrap:anywhere]" data-slot="mcsv-row-warning">
+            <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+            {t('mcsv.dlg.rowWarning', r.message)}
           </span>
         )}
         {r.message && (action === 'error' || status === 'failed' || status === 'skipped') && (
