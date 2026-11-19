@@ -117,7 +117,10 @@ class TechErrorReportSenderTest {
         assertThat(p.html()).doesNotContain("Hazırlayan:").doesNotContain("Ayşe");   // gövdede kimlik / hazırlayan yok (2026-11-16)
         assertThat(p.pdfBytes()).isEqualTo(1000);
         assertThat(p.maxMailMb()).isEqualTo(sender.maxMailMb);
-        assertThat(p.html()).contains("takımının adresi olduğu");  // TEAM dipnotu
+        // çerçevesiz posta (2026-11-19): dipnot, "raporları aç" düğmesi ve logo başlığı yok
+        assertThat(p.html()).doesNotContain("takımının adresi olduğu").doesNotContain("Neden bu e-postayı aldınız?")
+                .doesNotContain("Teknik hata raporlarını aç").doesNotContain("data:image/png;base64," + java.util.Base64.getEncoder()
+                        .encodeToString(com.sitemonitor.service.BrandMailAssets.logoBytes("ok")));
         verify(email, never()).sendHtml(any(String[].class), any(), anyString(), anyString(), any(), any(), anyBoolean(), any());
         verify(reports, never()).claimSendUnlessQueued(any(), any(), any(), any());
         verify(logs, never()).save(any());
@@ -127,7 +130,8 @@ class TechErrorReportSenderTest {
         assertThat(ex.role()).isEqualTo("EXECUTIVE");
         assertThat(ex.to()).hasSize(2).contains("ceo@example.com");
         assertThat(ex.cc()).doesNotContain(TechErrorReportSender.recipients(team).get(0));
-        assertThat(ex.html()).contains("yönetici (executive) alıcısı").doesNotContain("takımının adresi olduğu");   // EXECUTIVE dipnotu
+        // yönetici tesliminde de dipnot yok — gövde takım teslimiyle AYNI (teslim yolu gövdeyi değiştirmez, 2026-11-19)
+        assertThat(ex.html()).doesNotContain("yönetici (executive) alıcısı").doesNotContain("takımının adresi olduğu").isEqualTo(p.html());
         // PDF tek başına sınırı aşıyor: gövde gelir, problem PDF_TOO_LARGE (gönderim 409 verir)
         sender.maxMailMb = 5;
         pdfReturns(new byte[6 * 1024 * 1024]);
@@ -974,7 +978,8 @@ class TechErrorReportSenderTest {
         verify(email).sendHtml(eq(new String[]{ "ayse@example.com" }), org.mockito.ArgumentMatchers.isNull(), eq(res.subject()),
                 html.capture(), anyString(), inline.capture(), eq(false), att.capture());
         assertThat(html.getValue()).contains("Bu bir TEST gönderimidir").contains("takıma / yöneticilere gönderilmedi");
-        assertThat(html.getValue()).contains("takımının adresi olduğu");                 // TEAM dipnotu — gerçek posta gibi okunur
+        assertThat(html.getValue()).doesNotContain("takımının adresi olduğu").doesNotContain("Neden bu e-postayı aldınız?")
+                .doesNotContain("cid:brand-logo");                                       // çerçevesiz — gerçek posta gibi (2026-11-19)
         assertThat(html.getValue()).contains("TEKNİK HATA RAPORU").contains("cid:te-img-annual-summary");  // gövde gönderimle aynı, görsel gömülü
         assertThat(inline.getValue()).hasSize(1);
         assertThat(att.getValue()).hasSize(1);
@@ -998,7 +1003,7 @@ class TechErrorReportSenderTest {
         assertThat(log.getValue().getEmailStatus()).isEqualTo("SENT");
         assertThat(log.getValue().getAlertEventId()).isZero();
         assertThat(log.getValue().getCc()).isNull();
-        // EXECUTIVE yolu: dipnot yönetici cümlesi, test kutusu İngilizce (okuyanın dili), alıcı yine yalnız kendisi
+        // EXECUTIVE yolu: gövde çerçevesiz (dipnot yok — 2026-11-19), test kutusu İngilizce (okuyanın dili), alıcı yine yalnız kendisi
         org.mockito.Mockito.reset(email);
         mailReturns("SENT");
         channel.setExecutiveEmails("ceo@example.com");
@@ -1006,7 +1011,8 @@ class TechErrorReportSenderTest {
         assertThat(ex.to()).containsExactly("ayse@example.com");
         verify(email).sendHtml(eq(new String[]{ "ayse@example.com" }), org.mockito.ArgumentMatchers.isNull(), anyString(),
                 html.capture(), anyString(), any(), eq(false), any());
-        assertThat(html.getValue()).contains("This is a TEST send").contains("yönetici (executive) alıcısı").doesNotContain("ceo@example.com");
+        assertThat(html.getValue()).contains("This is a TEST send").doesNotContain("yönetici (executive) alıcısı")
+                .doesNotContain("Neden bu e-postayı aldınız?").doesNotContain("cid:brand-logo").doesNotContain("ceo@example.com");
         verify(reports, never()).claimSendUnlessQueued(anyLong(), any(), any(), any());
         verifyNoInteractions(history);
     }
