@@ -684,7 +684,7 @@ const IssueCard = memo(function IssueCard({ section, template, opts, legacy, iss
                 const capKey = String(n)
                 return (
                   <div key={slotId} className="flex min-w-0 flex-col gap-2" data-slot="te-issue-image" data-n={n}>
-                    <ImageSlotTile slot={{ id: slotId, label, width: 'full' }} image={img} reportId={reportId} resolve={(x) => x}
+                    <ImageSlotTile slot={{ id: slotId, label, width: 'full' }} image={img} reportId={reportId} resolve={(x) => x} pairedRow
                       uiLang={uiLang} readOnly={readOnly} onImagesChange={onImagesChange} hideWidth contextLabel={topicLabel}
                       otherBytes={() => otherBytes(slotId)}
                       // Görsel silinince açıklaması da taslaktan düşer (inceleme 2026-10-18: boş yuvanın açıklaması kayıtta kalıyordu)

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { Maximize2, MousePointerClick, Pause, Play, Radio, RefreshCw, Upload, X } from 'lucide-react'
+import { Keyboard, Maximize2, MousePointerClick, Pause, Play, Radio, RefreshCw, Upload, X } from 'lucide-react'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/shadcn/dialog'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
@@ -31,6 +31,12 @@ const SCROLL_TEXT = {
 }
 
 /**
+ * Canlıyken "kaydırmak istiyorum" anlamına gelen tuşlar. Tarayıcı paylaşılan sekmeyi tuşla kaydırmaya izin vermez (yalnız
+ * gerçek tekerlek / dokunmatik yüzey hareketi iletilir) — bu tuşlar görüntüyü dondurmaz, klavye ipucunu vurgular.
+ */
+export const LIVE_SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Spacebar'])
+
+/**
  * KIRPMA PENCERESİ (2026-10-18): paylaşılan yüzeyden alınan kare kutuya sığdırılır; kullanıcı yüklenecek alanı
  * sürükleyerek seçer (fare, kalem, dokunma), sekiz tutamakla boyutlandırır, içinden sürükleyerek taşır. Klavye: oklar
  * 1 px (Shift 10 px) taşır, Alt / Option + oklar boyutlandırır, Enter yükler. "Tümünü seç", canlı ölçü (kaynak
@@ -39,9 +45,10 @@ const SCROLL_TEXT = {
  *
  * <p>CANLI KİP (2026-11-19, kullanıcı isteği: "paylaşılan ekranda aşağı yukarı gidebilmeliyim, istediğim noktayı seçip
  * alabilmeliyim"): `live` iken sahnedeki tuval paylaşılan sekmeyi CANLI gösterir (çizimi çağıran yapar); sahnenin
- * üstündeki saydam katman (`te-cap-pad`, `onPad` ile çağırana verilir) fare tekerleğini paylaşılan sekmeye iletir.
- * Sahneye basmak (seçime başlamak), seçim tuşu ya da "Dondur" görüntüyü dondurur (`onFreeze` — eşzamanlı), sonra seçim
- * bugünkü gibi yapılır. "Canlıya dön" (`onResume`) yeniden canlıya alır; seçim tüm kareye döner (kaydırınca eski seçimin
+ * üstündeki saydam katman (`te-cap-pad`, `onPad` ile çağırana verilir) fare tekerleğini / dokunmatik yüzey kaydırmasını
+ * paylaşılan sekmeye iletir. Sahneye basmak (seçime başlamak) ya da "Dondur" görüntüyü dondurur (`onFreeze` —
+ * eşzamanlı), sonra seçim bugünkü gibi yapılır. Canlıyken ok / sayfa tuşları (`LIVE_SCROLL_KEYS`) görüntüyü DONDURMAZ:
+ * tarayıcı tuşla kaydırmaya izin vermediği için klavye ipucu (`te-cap-keys-hint`) vurgulanır ve sesli söylenir (2026-11-20). "Canlıya dön" (`onResume`) yeniden canlıya alır; seçim tüm kareye döner (kaydırınca eski seçimin
  * anlamı kalmaz). `canLive` yokken (pencere / tüm ekran paylaşımı) pencere bugünkü donuk kipte kalır ve `scrollHint` ile
  * nedenini söyler. Canlı özellikler verilmezse (eski çağrı) pencere bugünkü gibidir.
  *
@@ -68,6 +75,9 @@ export default function CaptureCropDialog({
   const keysId = useId()
   const liveRef = useRef(live)
   liveRef.current = live
+  // Canlıyken basılan kaydırma tuşu sayısı: > 0 iken klavye ipucu vurgulanır ve ekran okuyucuya yeniden söylenir
+  const [keyNote, setKeyNote] = useState(0)
+  useEffect(() => { if (!live) setKeyNote(0) }, [live])
 
   // Yeni kare (yeniden çek): seçim korunur, yeni ölçüye sığdırılır. Canlıyken ölçü değişirse (paylaşılan pencere
   // boyutlandı, kaynak değişti) seçim tüm kare kalır
@@ -185,11 +195,22 @@ export default function CaptureCropDialog({
       onConfirm?.(sourceRect(rectRef.current, W, H))
       return
     }
+    if (liveRef.current) {
+      // CANLIYKEN ok / sayfa tuşları (2026-11-20, kullanıcı isteği: "fare olmayan biri de aşağı yukarı gidebilmeli"):
+      // kullanıcı büyük olasılıkla KAYDIRMAK istiyor. Tarayıcı paylaşılan sekmeyi buradan yalnız GERÇEK tekerlek /
+      // dokunmatik yüzey hareketiyle kaydırır (gerçek Chromium 159'da ölçüldü: betikle üretilen wheel olayı iletilmez,
+      // CaptureController'da kaydırma yöntemi yok) — tuşla kaydırılamaz. Görüntüyü sessizce dondurmak yerine klavyeyle
+      // ne yapılacağı görünür ve sesli söylenir. Klavyeyle seçim: önce "Dondur", sonra oklar.
+      if (!LIVE_SCROLL_KEYS.has(e.key)) return
+      e.preventDefault()
+      onActivity?.()
+      setKeyNote((n) => n + 1)
+      return
+    }
     const next = keyRect(rectRef.current, e.key, { shift: e.shiftKey, alt: e.altKey }, W, H)
     if (!next) return
     e.preventDefault()
     onActivity?.()
-    freezeIfLive()
     setRect(next)
   }
 
@@ -256,6 +277,20 @@ export default function CaptureCropDialog({
                 </Button>
               )}
             </div>
+            {/* Fare olmadan kaydırma (2026-11-20): dokunmatik yüzey gerçek tekerlek olayı üretir (iletilir); klavyeyle
+                paylaşılan sekmede kaydırılır. Canlıyken hep görünür; bir ok / sayfa tuşuna basılınca vurgulanır. */}
+            {live && (
+              <p className={cn('m-0 flex basis-full items-start gap-2 text-xs [overflow-wrap:anywhere]',
+                keyNote > 0 ? 'rounded-md border border-ring bg-accent px-2 py-1.5 text-accent-foreground' : 'text-muted-foreground')}
+                data-slot="te-cap-keys-hint" data-flash={keyNote > 0 ? 'true' : undefined}>
+                <Keyboard aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+                <span className="min-w-0">{t(scroll === 'on' ? 'te.cap.keysHint' : 'te.cap.keysHintPlain')}</span>
+              </p>
+            )}
+            {/* Aynı tuşa yeniden basılınca da okunur (metin her basışta değişir) */}
+            <span className="sr-only" aria-live="assertive" data-slot="te-cap-keys-live">
+              {live && keyNote > 0 ? `${t('te.cap.keysBlocked')}${keyNote % 2 ? '' : '\u00a0'}` : ''}
+            </span>
           </div>
         )}
         {frame?.uniform && !live && (

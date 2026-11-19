@@ -20,6 +20,38 @@ export function shortcutKeys(family = shortcutFamily()) {
     : family === 'win' ? { paste: 'Ctrl+V', snip: 'Win+Shift+S' } : { paste: 'Ctrl+V', snip: 'PrtSc' }
 }
 
+/**
+ * Yuva eylemleri HER yuvada AYNI (2026-11-20, kullanıcı isteği: "görsel yükle, Ekrandan al, panodan yapıştır her bir panelde
+ * eşit olmalı, aynı sırada olmalı, farklılık olmamalı"): Görsel yükle → Ekrandan al → Panodan yapıştır; eşit genişlikte
+ * düğmeler. Yarım / tam yuva, konu görseli ve Görsel paneli aynı kodu kullanır ("Diğer işlemler" menüsü yok).
+ *
+ * <p>Diziliş eylem KABININ genişliğine bağlıdır (`@container`) ve kap bütün yuvalarda aynı genişlikte tutulur
+ * (`SLOT_ACTIONS_WRAP` / `SLOT_ACTIONS_PAIRED`) — bu yüzden aynı ekranda yarım ve tam yuva HEP aynı görünür:
+ * <ul>
+ *   <li>yeterli genişlikte (3 eylem: ≥ 320 px, 2 eylem: ≥ 224 px) tek satırda eşit "karo"lar — simge üstte, etiket altta;</li>
+ *   <li>daha dar kapta (ör. 768 px'te kenar çubuğu açıkken yarım yuva ≈ 160 px) alt alta tam genişlik düğmeler — üç karo
+ *       oraya sığmaz, sözcükler harf harf bölünürdü.</li>
+ * </ul>
+ * Sıra iki dizilişte de aynıdır. Uzun etiket sarar (kesilmez).
+ */
+export const SLOT_ACTION_CLASS = 'h-auto min-h-8 w-full min-w-0 shrink gap-1.5 px-2 py-1.5 text-center text-sm whitespace-normal pointer-coarse:min-h-10'
+
+/** Karo dizilişi (kap yeterince genişken): simge üstte, etiket altta, bir boy küçük yazı, en az 48 px yükseklik. */
+const TILE_3 = '@xs:grid-cols-3 @xs:[&>button]:min-h-12 @xs:[&>button]:flex-col @xs:[&>button]:gap-1 @xs:[&>button]:text-xs'
+const TILE_2 = '@[14rem]:grid-cols-2 @[14rem]:[&>button]:min-h-12 @[14rem]:[&>button]:flex-col @[14rem]:[&>button]:gap-1 @[14rem]:[&>button]:text-xs'
+
+/** Ana eylemlerin ızgarası: eylem sayısı kadar EŞİT sütun (kap dar ise tek sütun). */
+export const MAIN_ACTION_GRID = Object.freeze({ 1: 'grid-cols-1', 2: `grid-cols-1 ${TILE_2}`, 3: `grid-cols-1 ${TILE_3}` })
+
+/**
+ * Eylem kabı: en çok 28rem (448 px) — geniş yuvada düğmeler gereksiz büyümez. `SLOT_ACTIONS_PAIRED`: iki sütunlu görsel
+ * ızgarasında (md ve üstü) satırın TAMAMINI kaplayan yuvada kap, yarım yuvanın iç genişliğine indirilir — yarım yuva içi
+ * = tam yuva içi / 2 − 19 px (ızgara aralığı 12, yuva iç boşluğu 2 × 12, kenarlık 2 × 1). Böylece yarım ve tam yuvada
+ * kap (dolayısıyla diziliş ve düğme genişliği) piksel piksel aynıdır (e2e ölçer).
+ */
+export const SLOT_ACTIONS_WRAP = '@container min-w-0 max-w-md'
+export const SLOT_ACTIONS_PAIRED = 'md:max-w-[min(28rem,calc(50%-19px))]'
+
 const isEditable = (el) => !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName || ''))
 
 /** Canlı önizlemede kullanıcı hareketi boşta sayacını en çok bu aralıkla yeniler. */
@@ -72,7 +104,7 @@ export async function scrollStateAfter(e, byGesture, permission) {
  * Salt okunur yuvada hiçbiri yoktur; yükleme sürerken yuva yeni görsel almaz (bir yuvada tek yükleme).
  *
  * <p>Dönen parçalar: `zoneProps` (odaklanabilir bırakma alanı, `ref` dahil), `zoneRef`, `pasteButton`, `snipButton`,
- * `pasteMenuItem` (yarım yuvanın "Diğer işlemler" menüsü için), `notes`, `emptyHint`, `dialog`. Kırpma penceresi
+ * `notes`, `emptyHint`, `dialog` (düğmeler her yuvada aynı sırada çizilir: yükle → `snipButton` → `pasteButton`). Kırpma penceresi
  * kapanınca odak "Ekrandan al"a döner; düğme o an kapalıysa (yükleme başladı) yuvanın kendisine.
  */
 export function useSlotCapture({
@@ -422,25 +454,15 @@ export function useSlotCapture({
 
   const pasteButton = showClip ? (
     <Button type="button" size="sm" variant="outline" disabled={busy || clipBusy} onClick={pasteFromClipboard}
-      className="pointer-coarse:min-h-10" data-slot="te-image-paste">
+      className={SLOT_ACTION_CLASS} data-slot="te-image-paste">
       {clipBusy ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <ClipboardPaste aria-hidden="true" />}
       {t('te.cap.pasteButton')}
       <span className="sr-only">{`: ${label}`}</span>
     </Button>
   ) : null
-
-  // Yarım yuvanın "Diğer işlemler" menüsündeki karşılığı (aynı işlev; erişilebilir ad yuvanın adını taşır)
-  const pasteMenuItem = showClip ? {
-    label: t('te.cap.pasteButton'),
-    ariaLabel: `${t('te.cap.pasteButton')}: ${label}`,
-    icon: clipBusy ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <ClipboardPaste aria-hidden="true" />,
-    disabled: busy || clipBusy,
-    onClick: pasteFromClipboard,
-  } : null
-
   const snipButton = showSnip ? (
     <Button ref={snipRef} type="button" size="sm" variant="outline" disabled={busy || snipping} onClick={snip}
-      className="pointer-coarse:min-h-10" data-slot="te-image-snip">
+      className={SLOT_ACTION_CLASS} data-slot="te-image-snip">
       {snipping ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <ScreenShare aria-hidden="true" />}
       {t('te.cap.snipButton')}
       <span className="sr-only">{`: ${label}`}</span>
@@ -468,5 +490,5 @@ export function useSlotCapture({
     </Suspense>
   ) : null
 
-  return { zoneProps, zoneRef, zoneClassName, pasteButton, snipButton, pasteMenuItem, notes, emptyHint, dialog }
+  return { zoneProps, zoneRef, zoneClassName, pasteButton, snipButton, notes, emptyHint, dialog }
 }
