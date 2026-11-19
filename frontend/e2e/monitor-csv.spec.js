@@ -96,6 +96,10 @@ for (const vp of GATE_VIEWPORTS) {
       await expect(page.getByText('2 monitors downloaded as CSV.')).toBeVisible()
 
       // ── İçe aktar: dosya seç → önizleme ──
+      // Menü kapanış animasyonu (~150 ms) bitmeden tetiğe yeniden basılırsa, hâlâ DOM'da duran kapanmakta olan katman
+      // basışı "dışarı tıklama" sayar ve aynı basışın tıklamasında yeni açılan menüyü kapatır (Radix; CI'da 6 / 6, yerelde
+      // 6'da 1 düştü — animasyon 1,5 sn'ye uzatılınca her koşuda). Önce eski menünün tamamen söküldüğünü bekle.
+      await expect(page.locator('[data-slot="monitor-csv-export"]')).toHaveCount(0)
       await trigger.click()
       await page.locator('[data-slot="monitor-csv-import"]').click()
       const dialog = page.getByRole('dialog')

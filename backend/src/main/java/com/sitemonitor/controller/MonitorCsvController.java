@@ -43,10 +43,11 @@ import java.util.Set;
  *       indirilir, {@code no-store}. Yalnız oturumun GÖRDÜĞÜ izlemeler ({@code monitoring.read/view} + takım görünürlüğü). Sır
  *       YOK. Kişi başına dakikada {@value MonitorCsvLimiter#EXPORTS_PER_MINUTE} → 429 {@code RATE_LIMITED}. Denetim
  *       {@code MONITOR_CSV_EXPORT} (yalnız sayılar).</li>
- *   <li>{@code POST /api/monitoring/csv/{type}/import?dry_run=true|false[&plan_token=…]} — gövde ham CSV ({@code text/csv},
+ *   <li>{@code POST /api/monitoring/csv/{type}/import?dry_run=true|false[&plan=…]} — gövde ham CSV ({@code text/csv},
  *       ≤ 5 MB; aşan 413 {@code PAYLOAD_TOO_LARGE}); gövde KATI UTF-8 çözülür — geçersiz bayt dizisi (Windows-1254 kaydedilmiş
  *       dosya) 400 {@code reason: encoding} (sessizce bozulmuş Türkçe harf yazılmaz). Önizleme {@code plan_token} döner; gerçek
- *       koşum onu yollar, arada veri değiştiyse 409 {@code CSV_PLAN_CHANGED} ve hiçbir satır yazılmaz. {@code monitoring.crud/edit} (k6 için ayrıca {@code monitoring.scripted/edit}). Kişi
+ *       koşum onu {@code plan} sorgu parametresiyle yollar (adı "token" içermez — kimlik bilgisi değildir, iz arka ucunda
+ *       gizlenmesi gerekmez), arada veri değiştiyse 409 {@code CSV_PLAN_CHANGED} ve hiçbir satır yazılmaz. {@code monitoring.crud/edit} (k6 için ayrıca {@code monitoring.scripted/edit}). Kişi
  *       başına aynı anda tek içe aktarım → 429 {@code RATE_LIMITED}. Önizleme hiçbir şey yazmaz (denetim de yazmaz); gerçek
  *       koşum satır sonuçlarıyla döner, denetim {@code MONITOR_CSV_IMPORT} (yalnız sayılar — hücre değeri ASLA).</li>
  * </ul>
@@ -111,7 +112,7 @@ public class MonitorCsvController {
     @PostMapping("/{type}/import")
     public ResponseEntity<Map<String, Object>> importCsv(@PathVariable String type,
                                                          @RequestParam(value = "dry_run", defaultValue = "true") boolean dryRun,
-                                                         @RequestParam(value = "plan_token", required = false) String planToken,
+                                                         @RequestParam(value = "plan", required = false) String planToken,
                                                          HttpServletRequest request, HttpSession session) {
         permissionService.require(session, "monitoring.crud", "edit");
         MonitorCsvSpec.TypeSpec spec = MonitorCsvSpec.of(type);

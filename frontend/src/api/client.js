@@ -2805,7 +2805,7 @@ export const api = {
     },
     csvImport: (type, text, { dryRun = true, signal, planToken } = {}) =>
       request(`/monitoring/csv/${encodeURIComponent(type)}/import?dry_run=${dryRun ? 'true' : 'false'}`
-        + (!dryRun && planToken ? `&plan_token=${encodeURIComponent(planToken)}` : ''), {
+        + (!dryRun && planToken ? `&plan=${encodeURIComponent(planToken)}` : ''), {
         method: 'POST', body: text, headers: { 'Content-Type': 'text/csv; charset=utf-8' }, signal,
         withStatus: true, timeoutMs: LONG_JOB_TIMEOUT_MS,
       }),
