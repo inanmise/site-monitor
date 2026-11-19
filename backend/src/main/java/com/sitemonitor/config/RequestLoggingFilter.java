@@ -143,6 +143,8 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             // Veritabanı sorgu izlemesi (2026-10-31): bağlantı gövdesi PAROLA, izleme gövdesi sorgu metni taşır (bağlantılar /
             // şablonlar / deneme uçları aynı önekin altında)
             "/api/monitoring/dbquery",
+            // İzleme CSV dışa / içe aktarımı (2026-11-19): k6 betikleri, SQL ve dosyanın tamamı gövdede gider
+            "/api/monitoring/csv",
             // SQL Playground (2026-11-13): sorgu sonucu satırları (hassas tablolar dahil), parametre DEĞERLERİ ve dışa
             // aktarım dosyası taşır — parametre değeri hiçbir günlüğe yazılmaz
             "/api/admin/sql",

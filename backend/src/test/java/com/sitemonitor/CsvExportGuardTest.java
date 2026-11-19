@@ -40,7 +40,9 @@ class CsvExportGuardTest {
             "controller/AlarmFeedController.java",
             "CSV gövdesi AlarmFeedService.toCsv() → Csv.row; uç yalnız MIME türünü ve başlıkları ekliyor",
             "controller/SqlPlaygroundController.java",
-            "CSV gövdesi SqlExportWriter → Csv.row; SQL Playground dışa aktarım ucu yalnız MIME türünü ve X-Export-* başlıklarını ekliyor");
+            "CSV gövdesi SqlExportWriter → Csv.row; SQL Playground dışa aktarım ucu yalnız MIME türünü ve X-Export-* başlıklarını ekliyor",
+            "controller/MonitorCsvController.java",
+            "CSV gövdesi MonitorCsvService.export() → MonitorCsvCodec.row → Csv.cell; uç yalnız MIME türünü ve X-Export-* başlıklarını ekliyor");
 
     private static final String HAND_ROLLED_QUOTING = "replace(\"\\\"\", \"\\\"\\\"\")";
 

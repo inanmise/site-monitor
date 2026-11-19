@@ -1,9 +1,65 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-19T10:36:22Z",
+  "generatedAt": "2026-11-19T16:15:22Z",
   "repo": "inanmise/site-monitor",
-  "count": 862,
+  "count": 863,
   "releases": [
+    {
+      "version": "20.217.0",
+      "tag": "v20.217.0",
+      "releasedAt": "2026-11-19T16:15:11Z",
+      "commit": "36985411a49ed35caa8911c7837f4b7c50f4840e",
+      "prevVersion": "20.216.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 3,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "36985411",
+          "subject": "izleme CSV — CI kapıları (sorgu parametresi adı, CSV yazar listesi, e2e menü yarışı)"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "6623743a",
+          "subject": "izleme CSV — bağımsız inceleme düzeltmeleri"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "a3bb7a50",
+          "subject": "toplu düzenleme — bağımsız inceleme düzeltmeleri"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "4bd62091",
+          "subject": "izleme CSV dışa / içe aktarımı (on tür, önizlemeli)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "7e90b88b",
+          "subject": "izleme sayfalarında genişletilmiş toplu düzenleme"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.216.0",
       "tag": "v20.216.0",
