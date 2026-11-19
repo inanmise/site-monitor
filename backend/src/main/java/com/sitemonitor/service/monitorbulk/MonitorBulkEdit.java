@@ -22,7 +22,9 @@ import java.util.Set;
  * {@code not_found} (adı verilmez), işletilemeyen takım {@code out_of_scope}, paylaşımla (yalnız erişim paylaşımı üzerinden)
  * yazan kişinin yönlendirme alanı (seviye / kanal / grup) {@code routing_locked}, değer zaten aynı {@code unchanged}, CRON
  * zamanlamalı izlemenin aralığı (aralık plandan gelir) {@code schedule_cron}, son etiketi silmek (en az bir etiket zorunlu)
- * {@code last_tag}, başka takımın bildirim grubu {@code group_other_team}.
+ * {@code last_tag}, başka takımın bildirim grubu {@code group_other_team}, istek süre bütçesi bittiği için denenmeyen satır
+ * {@code time_budget}; tekil güncelleme ucunun değeri reddettiği (4xx / doğrulama) başarısız satır {@code rejected} — yalnız
+ * beklenmeyen sunucu hatası {@code error}.
  */
 public final class MonitorBulkEdit {
 
@@ -41,7 +43,7 @@ public final class MonitorBulkEdit {
     public static final List<String> LEVELS = List.of("WARNING", "HIGH", "CRITICAL");
     public static final List<String> GROUP_MODES = List.of("keep", "default", "set");
     public static final List<String> REASONS = List.of("not_found", "out_of_scope", "routing_locked", "unchanged",
-            "schedule_cron", "last_tag", "group_other_team");
+            "schedule_cron", "last_tag", "group_other_team", "time_budget", "rejected");
 
     /** Aralık alt sınırı (sn) — formdaki en küçük seçenek; Sayfa Hızı {@code PageSpeedMonitor.MIN_INTERVAL_SECONDS}. */
     public static int minInterval(String type) {

@@ -2,8 +2,11 @@ import { describe, it, expect } from 'vitest'
 import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
 import { readJavaMain } from './helpers/javaTable.js'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { INTERVAL_PRESETS } from '../components/dbquery/scheduleModel.js'
 import {
-  ACTIONS, LEVELS, MAX_ITEMS, MAX_TAGS, TAG_MAX_CHARS, TYPES, TYPE_OF_NOC, buildBody, commonTeam, formProblem, intervalOptions,
+  ACTIONS, INTERVALS_BY_TYPE, LEVELS, MAX_ITEMS, MAX_TAGS, TAG_MAX_CHARS, TYPES, TYPE_OF_NOC, buildBody, commonTeam, formProblem, intervalOptions,
   isUnsupportedAnswer, maxInterval, mergeTags, minInterval, planRows, sameTags, tagProblem, tagsOf, EMPTY_FORM,
 } from '../components/monitoring/bulkedit/monitorBulkEditModel.js'
 
@@ -52,9 +55,26 @@ describe('monitorBulkEditModel — Java ile aynı sabitler', () => {
     expect(intervalOptions('domain')).toEqual([3600, 21600, 43200, 86400])
   })
 
+  it('aralık seçenekleri türün KENDİ formundakilerle aynı (bağımsız inceleme 2026-11-19: birleşim listesi formda olmayan değer yazdırıyordu)', () => {
+    const page = (f) => readFileSync(resolve(__dirname, `../components/${f}.jsx`), 'utf8')
+    const formIntervals = (f) => {
+      const src = page(f)
+      const block = /const INTERVALS = \[([\s\S]*?)\r?\n\]/.exec(src)[1]
+      return [...block.matchAll(/value:\s*([\d_]+)/g)].map((m) => Number(m[1].replace(/_/g, '')))
+    }
+    const files = { http: 'HttpMonitorPage', keyword: 'KeywordMonitorPage', port: 'PortMonitorPage', ping: 'PingMonitorPage',
+      dns: 'DnsMonitorPage', page: 'PageMonitorPage', domain: 'DomainMonitorPage' }
+    for (const [type, f] of Object.entries(files)) expect([...INTERVALS_BY_TYPE[type]], type).toEqual(formIntervals(f))
+    // zamanlama düzenleyicili türler (sentetik / sorgu / Sayfa Hızı): düzenleyicinin hazır aralıkları, tür tabanından itibaren
+    expect([...INTERVALS_BY_TYPE.scripted]).toEqual(INTERVAL_PRESETS.filter((x) => x >= 60))
+    expect([...INTERVALS_BY_TYPE.dbquery]).toEqual(INTERVAL_PRESETS.filter((x) => x >= 60))
+    expect([...INTERVALS_BY_TYPE.pagespeed]).toEqual(INTERVAL_PRESETS.filter((x) => x >= 300))
+    expect(Object.keys(INTERVALS_BY_TYPE).sort()).toEqual([...TYPES].sort())
+  })
+
   it('sunucunun her neden kodunun TR + EN metni var', () => {
     const reasons = listOf('REASONS')
-    expect(reasons).toContain('routing_locked')
+    expect(reasons).toEqual(expect.arrayContaining(['routing_locked', 'time_budget', 'rejected']))
     for (const r of reasons) {
       expect(TR[`adm.bulk.reason.${r}`], r).toBeTruthy()
       expect(EN[`adm.bulk.reason.${r}`], r).toBeTruthy()

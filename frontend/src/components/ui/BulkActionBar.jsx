@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { Pause, Play, Users, FolderInput, Trash2, X, CheckSquare, Square, Headset, BellRing, BellOff, Info, SlidersHorizontal } from 'lucide-react'
 import { api as client } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -15,9 +15,14 @@ import { markMonitorDeleted } from '../../utils/recentlyDeleted.js'
 import { namesPreview } from '../../utils/deleteInventory.js'
 import { isRoutingLockedRow } from '../../hooks/useMonitorTeamPick.js'
 import { TYPE_OF_NOC } from '../monitoring/bulkedit/monitorBulkEditModel.js'
+import { importWithDeadline } from '../../utils/importWithDeadline.js'
 
-// Genişletilmiş toplu düzenleme penceresi (2026-11-19) — yalnız açılınca yüklenir
-const MonitorBulkEditDialog = lazy(() => import('../monitoring/bulkedit/MonitorBulkEditDialog.jsx'))
+// Genişletilmiş toplu düzenleme penceresi (2026-11-19) — yalnız ilk açılışta yüklenir (süre sınırlı; yüklenemezse bildirim,
+// sayfa çökmez). Modül düzeyinde bir kez tutulur.
+let bulkEditDialogModule = null
+const loadBulkEditDialog = () => (bulkEditDialogModule
+  ? Promise.resolve(bulkEditDialogModule)
+  : importWithDeadline(() => import('../monitoring/bulkedit/MonitorBulkEditDialog.jsx')).then((m) => { bulkEditDialogModule = m; return m }))
 
 /**
  * Toplu işlem çubuğu (2026-09-12, zenginleştirme #13) — izleme sayfalarında çoklu seçim:
@@ -56,7 +61,10 @@ export default function BulkActionBar({ selected, items, onClear, onDone, api, t
   const [busy, setBusy] = useState(null)   // 'pause' | 'resume' | 'team' | 'group' | 'delete'
   const [teamId, setTeamId] = useState('')
   const [group, setGroup] = useState('')
-  const [editOpen, setEditOpen] = useState(false)
+  // Toplu düzenleme penceresi: AÇILIŞTAKİ seçili satırların anlık kopyası + bileşen. Pencere açıkken seçim boşalsa da (sessiz
+  // yenileme süzgeçle satırı düşürdü) pencere ve sonucu kaybolmaz, kendiliğinden yeniden açılmaz (bağımsız inceleme 2026-11-19).
+  const [edit, setEdit] = useState(null)        // { Dialog, rows }
+  const [editLoading, setEditLoading] = useState(false)
   const nocLabelId = useId()
   const editType = nocType ? TYPE_OF_NOC[nocType] : null
   // Görünmeyen seçimleri buda — kimlik listesi değişmedikçe hiçbir şey yazılmaz (sonsuz yeniden çizim olmaz)
@@ -67,8 +75,28 @@ export default function BulkActionBar({ selected, items, onClear, onDone, api, t
     if ([...selected].some((id) => !visible.has(id))) onPrune(new Set([...selected].filter((id) => visible.has(id))))
   }, [visibleKey, selected]) // eslint-disable-line react-hooks/exhaustive-deps
   const chosen = items.filter((m) => selected.has(m.id))
-  if (chosen.length === 0) return null
+  const editDialog = edit && (
+    <edit.Dialog open onClose={() => setEdit(null)} type={editType} rows={edit.rows} teams={teams}
+      onFinished={() => { onClear?.(); onDone?.() }}
+      onUnsure={() => { setEdit(null); toast.info(t('mbe.unsure'), 10000); onClear?.(); onDone?.() }} />
+  )
+  // Pencere çubuğun KARDEŞİ, kök hep aynı parça: seçim boşalınca çubuk düşer, pencere aynı konumda kalır (yeniden kurulmaz)
+  if (chosen.length === 0) return <>{null}{editDialog || null}</>
   const allVisibleSelected = items.length > 0 && items.every((m) => selected.has(m.id))
+
+  async function openEdit() {
+    if (editLoading || edit) return
+    const rows = chosen.slice()
+    setEditLoading(true)
+    try {
+      const mod = await loadBulkEditDialog()
+      setEdit({ Dialog: mod.default, rows })
+    } catch {
+      toast.error(t('mbe.loadFailed'))
+    } finally {
+      setEditLoading(false)
+    }
+  }
 
   async function run(kind, fn, filterFn) {
     const targets = filterFn ? chosen.filter(filterFn) : chosen
@@ -130,6 +158,7 @@ export default function BulkActionBar({ selected, items, onClear, onDone, api, t
     // Katman (2026-09-27, Playwright 390 ölçümü): kartların örtü üstü bölgeleri `relative z-10` (CARD_LAYER) — z-[6]'daki
     // yapışkan çubuk kaydırınca kart içeriğinin ALTINDA kalıyordu → z-20. Telefonda (<md) üstteki MobileTopBar (sticky, h-14,
     // z-30) çubuğun ilk satırını örtüyordu → top-16; masaüstünde eskisi gibi top-2.
+    <>
     <div data-slot="bulk-action-bar" role="region" aria-label={t('bulk.aria')}
       className="sticky top-16 z-20 mb-2.5 flex flex-wrap items-center gap-2.5 rounded-[10px] border border-primary bg-card px-3 py-2 shadow-lg md:top-2">
       <Button type="button" variant="ghost" size="icon-sm" className="text-muted-foreground pointer-coarse:size-10"
@@ -200,8 +229,8 @@ export default function BulkActionBar({ selected, items, onClear, onDone, api, t
         </span>
         {editType && (
           <Button type="button" variant="secondary" size="sm" className="pointer-coarse:h-10" disabled={!!busy}
-            data-slot="bulk-edit-open" onClick={() => setEditOpen(true)}>
-            <SlidersHorizontal size={13} aria-hidden="true" /> {t('mbe.open')}
+            data-slot="bulk-edit-open" aria-busy={editLoading || undefined} onClick={openEdit}>
+            {editLoading ? <Spinner size={12} inline decorative /> : <SlidersHorizontal size={13} aria-hidden="true" />} {t('mbe.open')}
           </Button>
         )}
         {extra?.(chosen, { busy: !!busy })}
@@ -213,12 +242,8 @@ export default function BulkActionBar({ selected, items, onClear, onDone, api, t
         onClick={onClear} aria-label={t('bulk.clear')}>
         <X size={14} />
       </Button>
-      {editType && editOpen && (
-        <Suspense fallback={null}>
-          <MonitorBulkEditDialog open={editOpen} onClose={() => setEditOpen(false)} type={editType} rows={chosen} teams={teams}
-            onFinished={() => { onClear?.(); onDone?.() }} />
-        </Suspense>
-      )}
     </div>
+    {editDialog || null}
+    </>
   )
 }

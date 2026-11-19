@@ -263,7 +263,7 @@ class MonitorBulkEditControllerTest {
     }
 
     @Test
-    @DisplayName("tekil uç yanıtları: 400 metni 'failed'; SecurityException 'out_of_scope'; beklenmeyen hata genel metin — diğer satır sürer")
+    @DisplayName("tekil uç yanıtları: 400 'failed' + 'rejected' + uç metni; SecurityException 'out_of_scope'; beklenmeyen hata 'error' + genel metin — diğer satır sürer")
     void updateOutcomes() throws Exception {
         for (long i = 1; i <= 4; i++) when(httpRepo.findById(i)).thenReturn(Optional.of(http(i, 5, 300, "web")));
         when(monitoring.updateHttp(eq(1L), anyMap(), any())).thenReturn(ResponseEntity.badRequest()
@@ -272,9 +272,11 @@ class MonitorBulkEditControllerTest {
         doThrow(new IllegalStateException("boom java.sql.SQLException")).when(monitoring).updateHttp(eq(3L), anyMap(), any());
         call(admin, "{\"type\":\"http\",\"action\":\"interval\",\"ids\":[1,2,3,4],\"interval_seconds\":900}")
                 .andExpect(jsonPath("$.data.results[0].status").value("failed"))
+                .andExpect(jsonPath("$.data.results[0].reason").value("rejected"))
                 .andExpect(jsonPath("$.data.results[0].message").value("Aralık kabul edilmedi."))
                 .andExpect(jsonPath("$.data.results[1].reason").value("out_of_scope"))
                 .andExpect(jsonPath("$.data.results[2].status").value("failed"))
+                .andExpect(jsonPath("$.data.results[2].reason").value("error"))
                 .andExpect(jsonPath("$.data.results[2].message").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("SQL"))))
                 .andExpect(jsonPath("$.data.results[3].status").value("done"))
                 .andExpect(jsonPath("$.data.failed").value(2))
@@ -296,6 +298,47 @@ class MonitorBulkEditControllerTest {
         controller.monitoring = null;
         call(admin, "{\"type\":\"http\",\"action\":\"interval\",\"ids\":[1],\"interval_seconds\":600}")
                 .andExpect(status().isServiceUnavailable());
+    }
+
+    @Test
+    @DisplayName("doğrulama retleri (IllegalArgumentException) 'rejected', güvenli ileti")
+    void validationRejected() throws Exception {
+        when(httpRepo.findById(1L)).thenReturn(Optional.of(http(1, 5, 300, "web")));
+        doThrow(new IllegalArgumentException("Bu URL zaten izleniyor.")).when(monitoring).updateHttp(eq(1L), anyMap(), any());
+        call(admin, "{\"type\":\"http\",\"action\":\"interval\",\"ids\":[1],\"interval_seconds\":900}")
+                .andExpect(jsonPath("$.data.results[0].status").value("failed"))
+                .andExpect(jsonPath("$.data.results[0].reason").value("rejected"));
+    }
+
+    @Test
+    @DisplayName("süre bütçesi: bütçe bitince kalan satırlar denenmez ('time_budget'), yanıt yine satır satır döner")
+    void timeBudget() throws Exception {
+        for (long i = 1; i <= 3; i++) when(httpRepo.findById(i)).thenReturn(Optional.of(http(i, 5, 300, "web")));
+        long[] now = {1_000_000L};
+        controller.clock = () -> now[0];
+        when(monitoring.updateHttp(eq(1L), anyMap(), any())).thenAnswer(inv -> {
+            now[0] += MonitorBulkEditController.TIME_BUDGET_MS;   // ilk satır bütçeyi tüketir
+            return ResponseEntity.ok(Map.of("success", true));
+        });
+        call(admin, "{\"type\":\"http\",\"action\":\"interval\",\"ids\":[1,2,3],\"interval_seconds\":900}")
+                .andExpect(jsonPath("$.data.results[0].status").value("done"))
+                .andExpect(jsonPath("$.data.results[1].reason").value("time_budget"))
+                .andExpect(jsonPath("$.data.results[2].reason").value("time_budget"))
+                .andExpect(jsonPath("$.data.skipped").value(2));
+        verify(monitoring, times(1)).updateHttp(anyLong(), anyMap(), any());
+    }
+
+    @Test
+    @DisplayName("sentetik (k6) tür tekil ucun izni 'monitoring.scripted/edit' ile korunur; diğer türler 'monitoring.crud/edit'")
+    void scriptedPermission() throws Exception {
+        controller.monitoring = null;   // izin kararından sonra 503 — yalnız hangi iznin sorulduğu ölçülür
+        call(admin, "{\"type\":\"scripted\",\"action\":\"interval\",\"ids\":[1],\"interval_seconds\":600}")
+                .andExpect(status().isServiceUnavailable());
+        verify(permissionService).require(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.scripted"), eq("edit"));
+        verify(permissionService, never()).require(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.crud"), eq("edit"));
+        call(admin, "{\"type\":\"http\",\"action\":\"interval\",\"ids\":[1],\"interval_seconds\":600}")
+                .andExpect(status().isServiceUnavailable());
+        verify(permissionService).require(any(jakarta.servlet.http.HttpSession.class), eq("monitoring.crud"), eq("edit"));
     }
 
     @Test

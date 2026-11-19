@@ -44,6 +44,7 @@ import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.BiFunction;
+import java.util.function.LongSupplier;
 
 /**
  * İzleme sayfalarında GENİŞLETİLMİŞ toplu düzenleme (2026-11-19) — {@code POST /api/monitoring/bulk-edit}.
@@ -82,6 +83,14 @@ public class MonitorBulkEditController {
     @Autowired(required = false) NotificationGroupRepository groupRepo;
     @Autowired(required = false) TeamRepository teamRepo;
 
+    /**
+     * İstek süre bütçesi (ms): 200 satırın her biri tekil güncelleme + zenginleştirmeden geçer; bütçe bitince kalan satırlar
+     * denenmez ({@code time_budget}) — yanıt istemcinin 120 sn yazma süresinden ÖNCE döner (sonuç belirsiz kalmaz).
+     */
+    static final long TIME_BUDGET_MS = 90_000;
+    /** Saat (testte el ile ilerletilir). */
+    LongSupplier clock = System::currentTimeMillis;
+
     public MonitorBulkEditController(PermissionService permissionService, AuditService auditService) {
         this.permissionService = permissionService;
         this.auditService = auditService;
@@ -94,7 +103,10 @@ public class MonitorBulkEditController {
     @PostMapping("/bulk-edit")
     public ResponseEntity<Map<String, Object>> bulkEdit(@RequestBody Map<String, Object> body, HttpSession session,
                                                         HttpServletRequest request) {
-        permissionService.require(session, "monitoring.crud", "edit");
+        // Sentetik (k6) izlemenin tekil güncellemesi `monitoring.scripted` ister (crud değil) — toplu yol aynı izni sorar
+        Object rawType = body == null ? null : body.get("type");
+        boolean scripted = rawType != null && "scripted".equalsIgnoreCase(rawType.toString().trim());
+        permissionService.require(session, scripted ? "monitoring.scripted" : "monitoring.crud", "edit");
         MonitorBulkEdit.Request req = MonitorBulkEdit.parse(body);
         if (monitoring == null) {
             Map<String, Object> err = new LinkedHashMap<>();
@@ -115,8 +127,11 @@ public class MonitorBulkEditController {
         Map<Long, String> teamNames = new HashMap<>();
         List<Map<String, Object>> results = new ArrayList<>();
         int done = 0, skipped = 0, failed = 0;
+        final long deadline = clock.getAsLong() + TIME_BUDGET_MS;
         for (Long id : req.ids()) {
-            Map<String, Object> r = applyRow(req, id, group, session, teamNames);
+            Map<String, Object> r = clock.getAsLong() >= deadline
+                    ? result(id, null, null, teamNames, "skipped", "time_budget", null)
+                    : applyRow(req, id, group, session, teamNames);
             switch (String.valueOf(r.get("status"))) {
                 case "done" -> done++;
                 case "failed" -> failed++;
@@ -166,15 +181,21 @@ public class MonitorBulkEditController {
             if (st >= 200 && st < 300) return result(id, row.name(), row.teamId(), teamNames, "done", "done", null);
             if (st == 404) return result(id, null, null, teamNames, "skipped", "not_found", null);
             if (st == 403) return result(id, row.name(), row.teamId(), teamNames, "skipped", "out_of_scope", null);
-            return failed(id, row.name(), row.teamId(), teamNames, errorOf(res));
+            return st >= 400 && st < 500
+                    ? rejected(id, row.name(), row.teamId(), teamNames, errorOf(res))
+                    : failed(id, row.name(), row.teamId(), teamNames, errorOf(res));
         } catch (SecurityException e) {
             return result(id, row.name(), row.teamId(), teamNames, "skipped", "out_of_scope", null);
         } catch (NoSuchElementException e) {
             return result(id, null, null, teamNames, "skipped", "not_found", null);
         } catch (DbQueryApiException e) {
-            return failed(id, row.name(), row.teamId(), teamNames, errorOf(e.toResponse()));
+            ResponseEntity<Map<String, Object>> er = e.toResponse();
+            int est = er == null ? 500 : er.getStatusCode().value();
+            return est >= 400 && est < 500
+                    ? rejected(id, row.name(), row.teamId(), teamNames, errorOf(er))
+                    : failed(id, row.name(), row.teamId(), teamNames, errorOf(er));
         } catch (IllegalArgumentException e) {
-            return failed(id, row.name(), row.teamId(), teamNames, ErrorTexts.safeMessage(e,
+            return rejected(id, row.name(), row.teamId(), teamNames, ErrorTexts.safeMessage(e,
                     "Bu izleme güncellenemedi — değer kabul edilmedi.", "This monitor could not be updated — the value was not accepted."));
         } catch (RuntimeException e) {
             log.warn("Toplu düzenleme: {} #{} güncellenemedi: {}", req.type(), id, e.getClass().getSimpleName());
@@ -324,6 +345,11 @@ public class MonitorBulkEditController {
         return s == null || s.isBlank()
                 ? Msg.t("Bu izleme güncellenemedi — değer kabul edilmedi.", "This monitor could not be updated — the value was not accepted.")
                 : s;
+    }
+
+    /** Tekil ucun değeri REDDETTİĞİ satır (4xx / doğrulama): başarısız, ama "beklenmeyen hata" değil — ayrıntı iletide. */
+    private Map<String, Object> rejected(Long id, String name, Long teamId, Map<Long, String> teamNames, String message) {
+        return result(id, name, teamId, teamNames, "failed", "rejected", message);
     }
 
     private Map<String, Object> failed(Long id, String name, Long teamId, Map<Long, String> teamNames, String message) {

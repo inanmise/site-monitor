@@ -22,8 +22,22 @@ export const MAX_ITEMS = 200
 export const MAX_TAGS = 20
 export const TAG_MAX_CHARS = 50
 
-/** Aralık seçenekleri (sn) — formlardaki seçeneklerin birleşimi; tür sınırına göre süzülür. */
-const INTERVAL_PRESETS = Object.freeze([30, 60, 300, 600, 900, 1800, 3600, 21600, 43200, 86400, 172800, 604800])
+/**
+ * Tür başına aralık seçenekleri (sn) — TÜRÜN KENDİ FORMUNDAKİ seçeneklerin AYNISI (bağımsız inceleme 2026-11-19: birleşim listesi
+ * formda olmayan 6 sa / 10 dk değerleri yazdırıyordu; form kaydırıcısı saklı değere en yakın seçeneği gösterdiği için kayıtlı
+ * aralığı yanlış söylerdi). Sayfa formlarının `INTERVALS` dizileri ve zamanlama düzenleyicisinin `INTERVAL_PRESETS`'i
+ * (sentetik / sorgu ≥ 60 sn, Sayfa Hızı ≥ 300 sn) kaynaktır — test sayfa kaynaklarını okuyup karşılaştırır.
+ */
+const WEB = Object.freeze([30, 60, 300, 600, 900, 1800, 3600, 43200, 86400])
+const NET = Object.freeze([30, 60, 300, 900, 1800, 3600, 43200, 86400])
+const SCHEDULED = Object.freeze([60, 300, 600, 900, 1800, 3600, 7200, 21600, 43200, 86400])
+export const INTERVALS_BY_TYPE = Object.freeze({
+  http: WEB, keyword: WEB, port: WEB, ping: NET, dns: NET,
+  page: Object.freeze([60, 300, 600, 900, 1800, 3600, 43200, 86400]),
+  domain: Object.freeze([3600, 21600, 43200, 86400]),
+  scripted: SCHEDULED, dbquery: SCHEDULED,
+  pagespeed: Object.freeze(SCHEDULED.filter((s) => s >= 300)),
+})
 
 export function minInterval(type) {
   if (type === 'page' || type === 'scripted' || type === 'dbquery') return 60
@@ -33,7 +47,7 @@ export function minInterval(type) {
 }
 export const maxInterval = (type) => (type === 'dbquery' ? 7 * 86400 : 86400)
 
-export const intervalOptions = (type) => INTERVAL_PRESETS.filter((s) => s >= minInterval(type) && s <= maxInterval(type))
+export const intervalOptions = (type) => INTERVALS_BY_TYPE[type] ?? []
 
 /** Saklı etiket metni → liste (virgül, kırpma, büyük/küçük harf duyarsız tekrar bir kez) — Java `tagsOf`. */
 export function tagsOf(raw) {

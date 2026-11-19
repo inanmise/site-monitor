@@ -148,6 +148,30 @@ describe('MonitorBulkEditDialog', () => {
     await waitFor(() => expect(dialog().textContent).toContain('Sunucu şu an yanıt vermiyor'))
   })
 
+  it('sonuç belirsiz (zaman aşımı / ağ): onUnsure çağrılır, önizleme evresinde "Uygula" yeniden sunulmaz', async () => {
+    const onUnsure = vi.fn()
+    renderDialog({ onUnsure })
+    fireEvent.change(document.querySelector('[data-slot="mbe-interval"]'), { target: { value: '600' } })
+    api.monitoring.bulkEdit.mockResolvedValueOnce({ success: false, code: 'REQUEST_TIMEOUT', status: 0, error: 'zaman aşımı' })
+    fireEvent.click(confirmBtn())
+    await waitFor(() => expect(onUnsure).toHaveBeenCalledTimes(1))
+    expect(dialog().dataset.phase).toBe('preview')
+    api.monitoring.bulkEdit.mockRejectedValueOnce(Object.assign(new Error('ağ'), { code: 'NETWORK_ERROR' }))
+    fireEvent.click(confirmBtn())
+    await waitFor(() => expect(onUnsure).toHaveBeenCalledTimes(2))
+  })
+
+  it('push kanalının etiketi ve ipucu: kişisel push — Teams / Slack webhook iletileri etkilenmez', () => {
+    renderDialog()
+    pick('mbe-action', /Bildirim kanalları|Notification channels/)
+    const group = document.querySelector('[data-slot="mbe-webhook"]')
+    expect(group.getAttribute('role')).toBe('group')
+    expect(group.textContent).toMatch(/Push/)
+    const hint = document.getElementById(group.getAttribute('aria-describedby'))
+    expect(hint.textContent).toMatch(/Teams \/ Slack/)
+    expect(document.getElementById(group.getAttribute('aria-labelledby')).textContent).toMatch(/Push/)
+  })
+
   it('200 sınırı: fazlası bildirilir, yalnız ilk 200 gönderilir', async () => {
     const many = Array.from({ length: 205 }, (_, i) => ({ id: i + 1, name: `m${i + 1}`, team_id: 7, interval_seconds: 300 }))
     renderDialog({ rows: many })
@@ -179,5 +203,36 @@ describe('BulkActionBar — Toplu düzenle düğmesi', () => {
     fireEvent.click(document.querySelector('[data-slot="bulk-close"]'))
     expect(onClear).toHaveBeenCalled()
     expect(onDone).toHaveBeenCalled()
+  })
+
+  it('pencere açıkken seçim boşalırsa (sessiz yenileme) pencere ve önizleme KALIR; kapanınca yeniden açılmaz', async () => {
+    const onClear = vi.fn(), onDone = vi.fn()
+    const { rerender } = render(<BulkActionBar selected={new Set([1, 2])} items={ROWS} api={apiRows} nocType="HTTP" teams={TEAMS}
+      onClear={onClear} onDone={onDone} />)
+    fireEvent.click(document.querySelector('[data-slot="bulk-edit-open"]'))
+    await waitFor(() => expect(dialog()).toBeTruthy())
+    fireEvent.change(document.querySelector('[data-slot="mbe-interval"]'), { target: { value: '600' } })
+    rerender(<BulkActionBar selected={new Set()} items={[]} api={apiRows} nocType="HTTP" teams={TEAMS} onClear={onClear} onDone={onDone} />)
+    expect(dialog()).toBeTruthy()
+    expect(document.querySelectorAll('[data-slot="bulk-preview-row"]').length).toBe(2)   // açılıştaki anlık kopya
+    expect(document.querySelector('[data-slot="bulk-action-bar"]')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /^(Vazgeç|İptal|Cancel)$/ }))
+    await waitFor(() => expect(dialog()).toBeNull())
+    rerender(<BulkActionBar selected={new Set([1])} items={ROWS} api={apiRows} nocType="HTTP" teams={TEAMS} onClear={onClear} onDone={onDone} />)
+    expect(dialog()).toBeNull()
+  })
+
+  it('sonuç belirsizse pencere kapanır, bilgi verilir, seçim temizlenir ve liste yeniden okunur', async () => {
+    const onClear = vi.fn(), onDone = vi.fn()
+    render(<BulkActionBar selected={new Set([1, 2])} items={ROWS} api={apiRows} nocType="HTTP" teams={TEAMS} onClear={onClear} onDone={onDone} />)
+    fireEvent.click(document.querySelector('[data-slot="bulk-edit-open"]'))
+    await waitFor(() => expect(dialog()).toBeTruthy())
+    fireEvent.change(document.querySelector('[data-slot="mbe-interval"]'), { target: { value: '600' } })
+    api.monitoring.bulkEdit.mockResolvedValueOnce({ success: false, code: 'REQUEST_TIMEOUT', status: 0 })
+    fireEvent.click(confirmBtn())
+    await waitFor(() => expect(dialog()).toBeNull())
+    expect(onClear).toHaveBeenCalled()
+    expect(onDone).toHaveBeenCalled()
+    expect(await screen.findByText(/kaydedilmiş olabilir|may have been saved/)).toBeInTheDocument()
   })
 })

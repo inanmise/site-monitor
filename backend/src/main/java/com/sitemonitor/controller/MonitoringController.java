@@ -262,7 +262,8 @@ public class MonitoringController {
         // "form acikken grup silindi" normal bir yaris hali. Kullaniciya 400 vermek, silinen
         // grubu tasiyan monitorun butun duzenlemelerini kilitlerdi.
         if (supplied && g != null && !ownedByTeam) {
-            throw new IllegalArgumentException("Secilen bildirim grubu bu takima ait degil");
+            throw new IllegalArgumentException(com.sitemonitor.util.Msg.t("Seçilen bildirim grubu bu takıma ait değil — izlemenin takımına ait bir grup seçin.",
+                    "The selected notification group does not belong to this team — choose a group of the monitor team."));
         }
 
         // KENDI takiminin SILINMIS grubu: kullanici hatasi degil, normal yasam dongusu. Grup
@@ -2791,7 +2792,10 @@ public class MonitoringController {
             if (body.get("active")          != null) m.setActive((Boolean) body.get("active"));
             if (body.containsKey("teamId"))    m.setTeamId(_nextTeam);
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
-            m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            // Envanter türevi satırın alarmı ENVANTER takımına gider (etkin takım): bildirim grubu o takımın olmalı —
+            // kayıtlı (eski) takımla denetlemek, formun sunduğu etkin takım grubunu reddediyordu (2026-11-19)
+            m.setNotificationGroupId(applyNotificationGroup(body,
+                    Boolean.TRUE.equals(m.getStandalone()) || _effTeam == null ? m.getTeamId() : _effTeam, m.getNotificationGroupId()));
             applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
             if (body.get("intervalSeconds") != null) m.setIntervalSeconds(((Number) body.get("intervalSeconds")).intValue());
             if (body.get("timeoutMs") instanceof Number tmo) m.setTimeoutMs(clampTimeoutMs(tmo.intValue()));
@@ -3360,7 +3364,9 @@ public class MonitoringController {
             if (body.containsKey("groupName")) m.setGroupName(monitoringGroupService.getOrCreateFor(m, m.getTeamId(), body.get("groupName") == null ? null : body.get("groupName").toString(), actor(session)));
             if (body.containsKey("tags")) m.setTags(blank(body.get("tags")) ? null : body.get("tags").toString().trim());
         if (body.containsKey("alertLevel")) m.setAlertLevel(com.sitemonitor.model.MonitorAlertPrefs.normalize(body.get("alertLevel")));   // alarm seviyesi (2026-09-19)
-            m.setNotificationGroupId(applyNotificationGroup(body, m.getTeamId(), m.getNotificationGroupId()));
+            // Envanter türevi DNS satırının alarmı envanter (etkin) takımına gider — grup o takımın olmalı (2026-11-19)
+            m.setNotificationGroupId(applyNotificationGroup(body, Boolean.TRUE.equals(m.getStandalone()) ? m.getTeamId()
+                    : effectiveTeam(m.getDomain(), m.getStandalone(), m.getTeamId()), m.getNotificationGroupId()));
             applyNoc(body, m);   // 7/24 (NOC) — yalnız gövdede GELEN anahtar yazılır (2026-09-27)
             boolean detached = detachIfIdentityChanged(m, _prevDomain);
             m.setUpdatedAt(ISO.format(Instant.now()));
@@ -9318,7 +9324,9 @@ public class MonitoringController {
                 saved.setScriptVersion(writeScriptVersion(saved, ev, str(body.get("bumpType")), note, session));
                 saved = scriptedMonitorRepo.save(saved);
             }
-            clearDraft(session, String.valueOf(saved.getId()));
+            // Taslak YALNIZ formun içeriği (betik / env) kaydedilince silinir: toplu düzenleme (aralık, etiket) ya da toplu
+            // duraklatma gövdesi betik taşımaz — kullanıcının kaydedilmemiş taslağı sessizce silinmesin (2026-11-19)
+            if (body.containsKey("script") || body.containsKey("env")) clearDraft(session, String.valueOf(saved.getId()));
             auditService.recordAction("MONITOR_UPDATE", session, "SCRIPTED_MONITOR", String.valueOf(saved.getId()), saved.getName(),
                     AuditDiff.diff(_before, AuditDiff.snapshot(saved, SCRIPTED_FIELDS)));
             // Script SÜRÜM geçmişi (scripted_script_versions) ile bu AYRI şeylerdir: orası script

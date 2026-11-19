@@ -1459,6 +1459,61 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("2026-11-19 toplu düzenleme: betik / env taşımayan sentetik güncelleme k6 taslağını SİLMEZ; içerik kaydı siler")
+    void scriptedUpdate_partialBodyKeepsDraft() throws Exception {
+        com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
+        m.setId(53L); m.setName("taslakli"); m.setTags("web"); m.setGroupName("Kurumsal");
+        when(scriptedMonitorRepo.findById(53L)).thenReturn(Optional.of(m));
+        when(scriptedMonitorRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(scriptedCheckRepo.findTopByMonitorIdOrderByCheckedAtDesc(53L)).thenReturn(Optional.empty());
+
+        mvc.perform(put("/api/monitoring/scripted/53").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"tags\":\"web,yeni\"}"))
+                .andExpect(status().isOk());
+        verify(scriptedDraftRepo, never()).deleteByOwnerAndMonitorKey(any(), any());
+
+        when(secretCipher.encrypt(anyString())).thenReturn("ENC(t)");
+        mvc.perform(put("/api/monitoring/scripted/53").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"env\":[{\"name\":\"TOKEN\",\"secret\":true,\"value\":\"t\"}]}"))
+                .andExpect(status().isOk());
+        verify(scriptedDraftRepo).deleteByOwnerAndMonitorKey(any(), eq("53"));
+    }
+
+    @Test
+    @DisplayName("2026-11-19: envanter türevi Port satırında bildirim grubu ETKİN (envanter) takımınınki olmalı; kayıtlı eski takımın grubu reddedilir")
+    void portUpdate_derivedRow_groupOfEffectiveTeam() throws Exception {
+        com.sitemonitor.model.PortMonitor m = new com.sitemonitor.model.PortMonitor();
+        m.setId(61L); m.setName("Envanter portu"); m.setHost("envanter.local"); m.setPort(443);
+        m.setTeamId(5L); m.setStandalone(false); m.setActive(true); m.setIntervalSeconds(300);
+        when(portMonitorRepo.findById(61L)).thenReturn(Optional.of(m));
+        when(portMonitorRepo.save(any(com.sitemonitor.model.PortMonitor.class))).thenAnswer(a -> a.getArgument(0));
+        CertificateInventory inv = new CertificateInventory();
+        inv.setDomain("envanter.local"); inv.setTeamId(9L); inv.setActive(true);
+        when(inventoryRepo.findByDomain("envanter.local")).thenReturn(Optional.of(inv));
+        com.sitemonitor.model.NotificationGroup g9 = new com.sitemonitor.model.NotificationGroup();
+        g9.setId(77L); g9.setTeamId(9L); g9.setActive(true);
+        com.sitemonitor.model.NotificationGroup g5 = new com.sitemonitor.model.NotificationGroup();
+        g5.setId(78L); g5.setTeamId(5L); g5.setActive(true);
+        when(notificationGroupRepo.findById(77L)).thenReturn(Optional.of(g9));
+        when(notificationGroupRepo.findById(78L)).thenReturn(Optional.of(g5));
+
+        mvc.perform(put("/api/monitoring/port/61").session(session("ADMIN"))
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"notificationGroupId\":77}"))
+                .andExpect(status().isOk());
+        verify(portMonitorRepo, org.mockito.Mockito.atLeastOnce()).save(org.mockito.ArgumentMatchers.argThat(
+                pm -> Long.valueOf(77L).equals(pm.getNotificationGroupId())));
+
+        mvc.perform(put("/api/monitoring/port/61").session(session("ADMIN")).header("X-Lang", "en")
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"notificationGroupId\":78}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("does not belong to this team")));
+    }
+
+    @Test
     @DisplayName("PUT /scripted/{id} rename: açık SCRIPTED_FAIL alarmının domain bağı YENİ ada taşınır")
     void scriptedRename_movesOpenAlarmToNewName() throws Exception {
         com.sitemonitor.model.ScriptedMonitor m = new com.sitemonitor.model.ScriptedMonitor();
