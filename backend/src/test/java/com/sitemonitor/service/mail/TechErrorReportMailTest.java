@@ -1,5 +1,6 @@
 package com.sitemonitor.service.mail;
 
+import com.sitemonitor.service.BrandMailAssets;
 import com.sitemonitor.service.techerror.TechErrorCalc;
 import com.sitemonitor.service.techerror.TechErrorPdfInput;
 import com.sitemonitor.service.techerror.TechErrorTemplate;
@@ -77,8 +78,10 @@ class TechErrorReportMailTest {
         assertThat(html).contains("TEKNİK HATA RAPORU · EYLÜL 2026").contains("Mobil Kanalı Teknik Hata Mesajları - Eylül 2026")
                 .contains("Dijital Kanallar · Mobil · Eylül 2026").contains("bgcolor=\"#0f172a\"");
         assertThat(html).doesNotContain("Hazırlayan:").doesNotContain("Üretim:").doesNotContain("data-slot=\"te-mail-provenance\"");
-        assertThat(html).contains("ekteki PDF&#39;tedir (mobil.pdf)");
-        assertThat(b.mail().text()).contains("ekteki PDF'tedir (mobil.pdf)");
+        // 2026-11-19 (kullanıcı isteği): PDF ekliyken "Tam rapor — görseller tam çözünürlükte — ekteki PDF'tedir (…)" giriş
+        // cümlesi YOK — ne HTML'de ne düz metinde; dosya adı gövdede geçmez (ek postanın kendisinde görünür)
+        assertThat(html).doesNotContain("Tam rapor").doesNotContain("tam çözünürlükte").doesNotContain("mobil.pdf");
+        assertThat(b.mail().text()).doesNotContain("Tam rapor").doesNotContain("tam çözünürlükte").doesNotContain("mobil.pdf");
         // Sıra: band → özet (kutucuk şeridi + metin + taşınan not) → anomaliler → SLA görselleri → metin → grafikler. Verileri
         // ve Oranları bölümü YOK (2026-10-18, veri tekrarı yok + kullanıcı kararı "Verileri'ni kaldıralım"): bütün değerleri
         // özetin cümlelerinde / kutucuklarında (kesinti cevabı dahil); dolu map açıklaması özetin sonunda alanın adıyla
@@ -98,6 +101,23 @@ class TechErrorReportMailTest {
         assertThat(moved).as("not özetin sonunda, anomalilerden önce").isLessThan(issues);
         assertThat(issues).isLessThan(charts);
         assertThat(charts).isLessThan(note);
+        // 2026-11-19 (kullanıcı isteği): posta ÇERÇEVESİZ — tepede logo + "Teknik hata raporu" etiketi taşıyan başlık satırı
+        // yok (kartın ilk içeriği lacivert band), altta düğme / "Neden bu e-postayı aldınız?" / meta satırı yok: raporun
+        // kapanış notu gövdenin SON bloğudur, ardından yalnız kapanış etiketleri gelir
+        assertThat(html).doesNotContain("cid:" + BrandMailAssets.CID).doesNotContain("width=\"32\" height=\"32\"")
+                .doesNotContain("Neden bu e-postayı aldınız?").doesNotContain("takımının adresi olduğu")
+                .doesNotContain("Teknik hata raporlarını aç").doesNotContain("tab=channelreports")
+                .doesNotContain("Site Monitor — teknik hata raporu").doesNotContain("class=\"btn-full\"");
+        assertThat(count(html, ">Teknik hata raporu<")).as("sağ üst köşedeki alt-sistem etiketi yok").isZero();
+        int cardOpen = html.indexOf("class=\"card\"");
+        assertThat(html.substring(cardOpen, band)).as("kart ile band arasında başlık satırı yok")
+                .doesNotContain("<img").doesNotContain("border-bottom:1px solid");
+        String afterNote = html.substring(html.indexOf("</p>", note));
+        assertThat(MSO.matcher(afterNote).replaceAll("").replaceAll("<[^>]+>", "").strip())
+                .as("kapanış notundan sonra görünür metin yok").isEmpty();
+        assertThat(b.mail().text()).doesNotContain("Neden bu e-postayı aldınız?").doesNotContain("\n--\n")
+                .doesNotContain("Teknik hata raporlarını aç").doesNotContain("sm.example");
+        assertThat(b.mail().text().strip()).endsWith("Adetleri ekip girmiştir; oranları Site Monitor bu adetlerden hesaplamıştır.");
         // Map / kota açıklaması "Verileri" bölümünün alanı (7. sürüm): ayrı bölüm başlığı yok, alanın adıyla basılır (Verileri
         // çözülünce özetin sonunda — 2026-10-18)
         assertThat(html).doesNotContain("Map Yapılmamış Hatalar").contains("Map yapılmamış hatalar hakkında açıklama").contains("<strong>kodlar</strong>");
@@ -252,7 +272,9 @@ class TechErrorReportMailTest {
         TechErrorReportMail.Built b = TechErrorReportMail.buildFull(in, TechErrorMailImages.prepare(in, TechErrorMailImages.DEFAULT_BUDGET), "https://sm.example", "m.pdf");
         assertThat(TechErrorReportMail.subject(in)).isEqualTo(in.title());
         assertThat(b.mail().html()).contains("TECHNICAL ERROR REPORT · SEPTEMBER 2026").doesNotContain("Prepared by:").doesNotContain("Turkey time")
-                .contains("is in the attached PDF (m.pdf)").contains("Open technical error reports");
+                .doesNotContain("The full report").doesNotContain("at full resolution, is in").doesNotContain("m.pdf")
+                .doesNotContain("Open technical error reports").doesNotContain("You received this e-mail")
+                .doesNotContain(">Technical error report<").doesNotContain("cid:" + BrandMailAssets.CID);
         assertThat(b.mail().text()).contains("[Image] ").contains("Total transactions: 1,000");
     }
 
@@ -272,51 +294,78 @@ class TechErrorReportMailTest {
             for (TechErrorPdfInput.Provenance pv : java.util.Arrays.asList(null, p,
                     new TechErrorPdfInput.Provenance("Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"), null, null, "pending", null, null))) {
                 TechErrorPdfInput in = pv == null ? base : base.withProvenance(pv);
-                for (TechErrorReportMail.Audience a : TechErrorReportMail.Audience.values()) {
-                    TechErrorReportMail.Built b = TechErrorReportMail.buildFull(in, TechErrorMailImages.allSkipped(in), "https://sm.example", "m.pdf", null, a);
-                    for (String body : List.of(b.mail().html(), b.mail().text())) {
-                        for (String w : PROVENANCE_WORDS) {
-                            assertThat(body).as(lang + " " + a + " " + w).doesNotContain(w);
-                        }
-                        assertThat(body).as(lang + " " + a).doesNotContain("Ayşe Yılmaz").doesNotContain("Ali Veli").doesNotContain("Mehmet PO")
-                                .doesNotContain("03.09.2026 14:05").doesNotContain("06.09.2026");
+                TechErrorReportMail.Built b = TechErrorReportMail.buildFull(in, TechErrorMailImages.allSkipped(in), "https://sm.example", "m.pdf", null);
+                for (String body : List.of(b.mail().html(), b.mail().text())) {
+                    for (String w : PROVENANCE_WORDS) {
+                        assertThat(body).as(lang + " " + w).doesNotContain(w);
                     }
-                    assertThat(b.mail().html()).doesNotContain("data-slot=\"te-mail-provenance\"");
+                    assertThat(body).as(lang).doesNotContain("Ayşe Yılmaz").doesNotContain("Ali Veli").doesNotContain("Mehmet PO")
+                            .doesNotContain("03.09.2026 14:05").doesNotContain("06.09.2026");
+                }
+                assertThat(b.mail().html()).doesNotContain("data-slot=\"te-mail-provenance\"");
+            }
+        }
+    }
+
+    // ── Çerçevesiz posta: başlık satırı, düğme ve dipnot yok (2026-11-19) ───────────────────────────
+
+    @Test
+    @DisplayName("çerçevesiz posta (kullanıcı isteği 2026-11-19): logo + etiket başlığı yok, 'neden aldınız' dipnotu / meta satırı / 'raporları aç' düğmesi yok — onay durumu ne olursa olsun, TR + EN, PDF ekli ya da eksiz; kartın dört köşesi gövde hücresinde; rapor kapanış notuyla biter")
+    void bareMailHasNoHeaderFooterOrButton() {
+        TechErrorPdfInput.Provenance approved = new TechErrorPdfInput.Provenance("Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"),
+                null, null, "approved", "Mehmet PO", Instant.parse("2026-09-06T07:00:00Z"));
+        for (String lang : List.of("tr", "en")) {
+            TechErrorPdfInput base = input(lang, Map.of());
+            for (TechErrorPdfInput in : List.of(base, base.withProvenance(approved))) {
+                for (String fileName : java.util.Arrays.asList("m.pdf", null)) {
+                    TechErrorReportMail.Built b = TechErrorReportMail.buildFull(in, TechErrorMailImages.allSkipped(in), "https://sm.example", fileName, null);
+                    String html = b.mail().html();
+                    String text = b.mail().text();
+                    assertThat(html).as(lang).doesNotContain("cid:" + BrandMailAssets.CID).doesNotContain("width=\"32\" height=\"32\"")
+                            .doesNotContain("Neden bu e-postayı aldınız?").doesNotContain("takımının adresi olduğu")
+                            .doesNotContain("yönetici (executive)").doesNotContain("PO onaylayıcısı").doesNotContain("tarafından onaylandı")
+                            .doesNotContain("You received this e-mail").doesNotContain("approved by the team")
+                            .doesNotContain("Teknik hata raporlarını aç").doesNotContain("Open technical error reports")
+                            .doesNotContain("tab=channelreports").doesNotContain("class=\"btn-full\"")
+                            .doesNotContain(">Teknik hata raporu<").doesNotContain(">Technical error report<")
+                            .doesNotContain("Site Monitor — teknik hata raporu").doesNotContain("Site Monitor — technical error report");
+                    // kart yalnız gövde hücresinden oluşur: dört köşe de o hücrede yuvarlanır; alt bilgi satırı yok
+                    assertThat(html).contains("style=\"padding:24px 24px 8px;border-radius:" + MailTokens.RADIUS_CARD + "px;")
+                            .doesNotContain("border-radius:0 0 " + MailTokens.RADIUS_CARD + "px");
+                    assertThat(text).as(lang).doesNotContain("Neden bu e-postayı aldınız?").doesNotContain("\n--\n")
+                            .doesNotContain("sm.example").doesNotContain("Mehmet PO");
+                    // rapor kapanış notuyla biter (PDF'in son satırıyla aynı anlam)
+                    assertThat(text.strip()).as(lang).endsWith(lang.equals("en")
+                            ? "Counts were entered by the team; Site Monitor calculated the rates from those counts."
+                            : "Adetleri ekip girmiştir; oranları Site Monitor bu adetlerden hesaplamıştır.");
                 }
             }
         }
     }
 
-    // ── Dipnot "neden aldınız" kitleye göre (inceleme 2026-10-17) ───────────────────────────────────
-
     @Test
-    @DisplayName("dipnot: TEAM eski metin (bayt bayt), EXECUTIVE yönetici alıcısı + 'PO onayladı' cümlesi (kişi adı ve tarih yok — 2026-11-16), APPROVER onaylayıcı; EN karşılıkları")
-    void footerWhyByAudience() {
-        TechErrorPdfInput base = input("tr", Map.of());
-        TechErrorMailImages.Result none = TechErrorMailImages.allSkipped(base);
-        String team = TechErrorReportMail.buildFull(base, none, "https://sm.example", "m.pdf").mail().html();
-        assertThat(team).contains("Dijital Kanallar takımının adresi olduğu ve bir takım üyesi raporu Site Monitor&#39;den gönderdiği için geldi")
-                .doesNotContain("yönetici (executive)");
-        assertThat(TechErrorReportMail.buildFull(base, none, "https://sm.example", "m.pdf", null, TechErrorReportMail.Audience.TEAM).mail().html()).isEqualTo(team);
-        TechErrorPdfInput.Provenance approved = new TechErrorPdfInput.Provenance("Ayşe Yılmaz", Instant.parse("2026-09-03T11:05:00Z"),
-                null, null, "approved", "Mehmet PO", Instant.parse("2026-09-06T07:00:00Z"));
-        String exec = TechErrorReportMail.buildFull(base.withProvenance(approved), none, "https://sm.example", "m.pdf", null,
-                TechErrorReportMail.Audience.EXECUTIVE).mail().html();
-        assertThat(exec).contains("Mobil kanalının yönetici (executive) alıcısı olarak tanımlı olduğunuz için geldi; Dijital Kanallar takımının adresi bilgidedir.")
-                .contains("Rapor gönderilmeden önce takımın PO&#39;su tarafından onaylandı.").doesNotContain("Mehmet PO").doesNotContain("06.09.2026")
-                .doesNotContain("takımının adresi olduğu");   // kim ve ne zaman yalnız uygulamada (2026-11-16)
-        // Kimlik yok (eski imza) → onaylayan cümlesi yok
-        assertThat(TechErrorReportMail.buildFull(base, none, "https://sm.example", "m.pdf", null, TechErrorReportMail.Audience.EXECUTIVE).mail().html())
-                .contains("yönetici (executive) alıcısı").doesNotContain("onaylandı.");
-        String approver = TechErrorReportMail.buildFull(base, none, "https://sm.example", "m.pdf", null, TechErrorReportMail.Audience.APPROVER).mail().html();
-        assertThat(approver).contains("Dijital Kanallar takımının PO onaylayıcısı olduğunuz için geldi; rapor yöneticilere gönderilmeden önce onayınızı bekliyor.");
-        TechErrorPdfInput en = input("en", Map.of());
-        assertThat(TechErrorReportMail.buildFull(en.withProvenance(approved), TechErrorMailImages.allSkipped(en), "https://sm.example", "m.pdf", null,
-                TechErrorReportMail.Audience.EXECUTIVE).mail().html())
-                .contains("registered executive recipient of the Mobil channel").contains("The report was approved by the team&#39;s PO before it was sent.")
-                .doesNotContain("Mehmet PO");
-        assertThat(TechErrorReportMail.buildFull(en, TechErrorMailImages.allSkipped(en), "https://sm.example", "m.pdf", null,
-                TechErrorReportMail.Audience.APPROVER).mail().html()).contains("PO approver of Dijital Kanallar");
+    @DisplayName("MailDoc.bare(): başlık ve alt bilgi çizilmez, düz metne alt bilgi eklenmez; bare olmayan belge eskisi gibi (tek logo, etiket, 'Neden bu e-postayı aldınız?')")
+    void mailDocBareSkipsChromeOnly() {
+        MailDoc normal = MailDoc.create("Konu").kicker("Port İzleme");
+        normal.paragraph("Gövde");
+        normal.footerWhy("Takım A").footerMeta("Meta");
+        assertThat(count(normal.html(), "src=\"cid:" + BrandMailAssets.CID + "\"")).isEqualTo(1);
+        assertThat(normal.html()).contains("Port İzleme").contains("Neden bu e-postayı aldınız?").contains("Meta");
+        assertThat(normal.text()).contains("Neden bu e-postayı aldınız?").contains("Meta");
+
+        MailDoc bare = MailDoc.create("Konu").kicker("Port İzleme").bare();
+        bare.paragraph("Gövde");
+        bare.footerWhy("Takım A").footerMeta("Meta");      // verilse de çizilmez
+        assertThat(bare.html()).contains("Gövde").doesNotContain("cid:" + BrandMailAssets.CID).doesNotContain("Port İzleme")
+                .doesNotContain("Neden bu e-postayı aldınız?").doesNotContain("Meta")
+                .contains("<title>Konu</title>").endsWith("</table><!--[if mso]></td></tr></table><![endif]--></td></tr></table></body></html>");
+        assertThat(bare.text()).isEqualTo("Gövde\n");
+    }
+
+    private static int count(String s, String needle) {
+        int c = 0, i = 0;
+        while ((i = s.indexOf(needle, i)) >= 0) { c++; i += needle.length(); }
+        return c;
     }
 
     // ── PDF eklenmeyen posta (inceleme 2026-10-18) ─────────────────────────────────────────────────────

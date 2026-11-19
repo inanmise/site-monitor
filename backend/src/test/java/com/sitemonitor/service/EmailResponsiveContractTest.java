@@ -31,7 +31,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   <li>{@code border-left:} YOK, 4/5px renkli şerit hücresi ({@code width="4"}) YOK — sol şerit kuralı;</li>
  *   <li>tüm {@code font-size} ≥ 12px (0 = görünmez aralayıcı);</li>
  *   <li>CTA butonları ≥ 44px dokunma hedefi (HTML: padding + line-height; Outlook: VML yüksekliği);</li>
- *   <li>tam BİR logo: {@code cid:brand-logo}, {@code width="32" height="32"} öznitelikli;</li>
+ *   <li>tam BİR logo: {@code cid:brand-logo}, {@code width="32" height="32"} öznitelikli — ÇERÇEVESİZ rapor postası
+ *       ({@code MailDoc.bare()}: kanal teknik hata raporu gövdesi, slug {@code report-tech-error…}; kullanıcı isteği
+ *       2026-11-19) hariç: onda logo, başlık etiketi ve "Neden bu e-postayı aldınız?" alt bilgisi HİÇ yoktur;</li>
  *   <li>düz metin parçası dolu ve HTML değil;</li>
  *   <li>{@code rgba(} YOK, div zemini YOK, dış URL'li görsel YOK, "SiteMonitor" bitişik yazımı YOK;</li>
  *   <li>tek duyarlı {@code <style>} bloğu (MSO dışı) ve mobil kırılımı taşıyor; mobil kopyalar Outlook'tan gizli.</li>
@@ -57,8 +59,18 @@ class EmailResponsiveContractTest {
     private static final Pattern LH = Pattern.compile("line-height:(\\d+)px");
     private static final Pattern DIV_BG = Pattern.compile("(?i)<div\\b[^>]*style=\"[^\"]*background");
 
+    /** Çerçevesiz ({@code MailDoc.bare()}) rapor gövdeleri: slug öneki — kanal teknik hata raporu ve onay isteği. */
+    static boolean bareSlug(String slug) {
+        return slug != null && slug.startsWith("report-tech-error");
+    }
+
     /** Bir e-postanın sözleşme ihlalleri (boş liste = uyumlu). */
     static List<String> violations(String html, String text) {
+        return violations(html, text, false);
+    }
+
+    /** {@code bare}: çerçevesiz posta — logo, başlık satırı ve alt bilgi OLMAMALI (normal postada tam bir logo olmalı). */
+    static List<String> violations(String html, String text, boolean bare) {
         List<String> v = new ArrayList<>();
         if (html == null || html.isBlank()) { v.add("boş HTML"); return v; }
         if (!html.contains("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")) v.add("viewport meta yok");
@@ -87,8 +99,13 @@ class EmailResponsiveContractTest {
         Matcher vh = VML_H.matcher(html);
         while (vh.find()) if (Integer.parseInt(vh.group(1)) < 44) v.add("VML buton " + vh.group(1) + "px < 44");
         int logos = count(html, "src=\"cid:" + BrandMailAssets.CID + "\"");
-        if (logos != 1) v.add("logo sayısı " + logos + " (tam 1 olmalı)");
-        if (!html.contains("width=\"32\" height=\"32\"")) v.add("logo width/height özniteliği yok");
+        if (bare) {
+            if (logos != 0) v.add("çerçevesiz postada logo var (" + logos + ")");
+            if (html.contains("Neden bu e-postayı aldınız?")) v.add("çerçevesiz postada alt bilgi var");
+        } else {
+            if (logos != 1) v.add("logo sayısı " + logos + " (tam 1 olmalı)");
+            if (!html.contains("width=\"32\" height=\"32\"")) v.add("logo width/height özniteliği yok");
+        }
         if (html.contains("rgba(")) v.add("rgba( var");
         if (DIV_BG.matcher(html).find()) v.add("div zemini var");
         if (html.contains("img src=\"http") || html.contains("img src='http")) v.add("dış URL'li görsel");
@@ -114,7 +131,7 @@ class EmailResponsiveContractTest {
     void everyMailConforms() {
         Map<String, List<String>> bad = new HashMap<>();
         for (EmailSamples.Sample s : samples) {
-            List<String> v = violations(s.html(), s.text());
+            List<String> v = violations(s.html(), s.text(), bareSlug(s.slug()));
             if (!v.isEmpty()) bad.put(s.slug(), v);
         }
         assertThat(bad).as("sözleşme ihlalleri").isEmpty();
@@ -165,6 +182,13 @@ class EmailResponsiveContractTest {
         assertThat(violations(good.replace("padding:12px 20px", "padding:6px 20px"), "x")).anyMatch(s -> s.contains("dokunma hedefi"));
         assertThat(violations(good.replace("height:44px;v-text", "height:32px;v-text"), "x")).anyMatch(s -> s.contains("VML buton"));
         assertThat(violations(good.replace("</h1>", "</h1><img src=\"cid:brand-logo\">"), "x")).anyMatch(s -> s.contains("logo sayısı 2"));
+        // çerçevesiz kural da ısırır: normal (logolu, alt bilgili) posta çerçevesiz sayılırsa ihlal; gerçekten çerçevesiz olan temiz
+        assertThat(violations(good, "metin", true)).anyMatch(s -> s.contains("çerçevesiz postada logo var"));
+        String bare = MailDoc.create("t").bare().title("Başlık", "alt").button("https://example.com", "Aç").html();
+        assertThat(violations(bare, "metin", true)).isEmpty();
+        assertThat(violations(bare, "metin")).anyMatch(s -> s.contains("logo sayısı 0"));
+        assertThat(bareSlug("report-tech-error-tr")).isTrue();
+        assertThat(bareSlug("report-tech-approval-approved-tr")).isFalse();
         assertThat(violations(good.replace("color:#09090b", "color:rgba(0,0,0,.5)"), "x")).anyMatch(s -> s.contains("rgba"));
         assertThat(violations(good.replace("<h1 ", "<div style=\"background:#fef2f2\"></div><h1 "), "x")).anyMatch(s -> s.contains("div zemini"));
         assertThat(violations(good.replace("<h1 ", "<img src=\"https://example.com/x.png\"><h1 "), "x")).anyMatch(s -> s.contains("dış URL"));

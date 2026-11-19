@@ -346,7 +346,7 @@ public class TechErrorReportSender {
         if (mailImages[0].bytes() > 0 && pdf.length + mailImages[0].bytes() > max) mailImages[0] = mailFallback[0];
         String fileName = TechErrorReportPdfWriter.fileName(channel.getName(), report.getReportYear(), report.getReportMonth(),
                 in.template().lang());
-        TechErrorReportMail.Built built = TechErrorReportMail.buildFull(in, mailImages[0], baseUrl(), fileName, intro, audienceOf(delivery));
+        TechErrorReportMail.Built built = TechErrorReportMail.buildFull(in, mailImages[0], baseUrl(), fileName, intro);
         return new Rendering(in, pdf, built, fileName, List.copyOf(to), cc, role, problem, pdfTooLarge, toSource.dropped(), ccDropped, maxMb);
     }
 
@@ -448,14 +448,9 @@ public class TechErrorReportSender {
                 java.util.Map.of("max_mb", maxMailMb));
     }
 
-    /** Dipnotun "neden aldınız" cümlesi teslim yoluna göre (inceleme 2026-10-17: yöneticiler "takım adresi olduğunuz için" okuyordu). */
-    static TechErrorReportMail.Audience audienceOf(Delivery delivery) {
-        return delivery == Delivery.EXECUTIVE ? TechErrorReportMail.Audience.EXECUTIVE : TechErrorReportMail.Audience.TEAM;
-    }
-
     /**
-     * Başlıktaki marka logosu gönderimde CID eki olarak eklenir ({@code EmailNotificationService} → {@code BrandMailAssets.addInline},
-     * varyant {@code ok}); önizlemede (duman testi 2026-10-17: iframe'de kırık görsel) aynı baytlar data: URI olur.
+     * Güvenlik ağı: rapor postası çerçevesizdir ({@code MailDoc.bare()}, 2026-11-19) ve gövdesi marka logosu TAŞIMAZ; yine de
+     * gövdede {@code cid:brand-logo} bulunursa önizlemede (iframe kırık görsel göstermesin diye) aynı baytlar data: URI olur.
      */
     static String inlineBrandLogo(String html) {
         if (html == null || !html.contains("cid:" + BrandMailAssets.CID)) return html;
@@ -683,7 +678,7 @@ public class TechErrorReportSender {
                         report.getId(), mb(pdf.length), mb(mailImages[0].bytes()), maxMailMb);
                 mailImages[0] = mailFallback[0];
             }
-            TechErrorReportMail.Built built = TechErrorReportMail.buildFull(in, mailImages[0], baseUrl(), fileName, null, audienceOf(delivery));
+            TechErrorReportMail.Built built = TechErrorReportMail.buildFull(in, mailImages[0], baseUrl(), fileName, null);
             MailDoc.Mail mail = built.mail();
             mailAttempted = true;
             String status = email.sendHtml(to.toArray(new String[0]), cc, subject, mail.html(), mail.text(), built.inline(), false,

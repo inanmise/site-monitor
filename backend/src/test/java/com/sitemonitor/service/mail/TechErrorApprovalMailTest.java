@@ -47,7 +47,9 @@ class TechErrorApprovalMailTest {
         String noPdf = TechErrorApprovalMail.request(in, TechErrorMailImages.Result.empty(), "https://sm.example", null, 100L, 10L, "Ayşe", "PO Bir", 1,
                 "https://sm.example/x?token=t", 14).mail().html();
         assertThat(noPdf).contains("PDF bu postanın boyut sınırına sığmadığından eklenmedi").doesNotContain("ekteki PDF&#39;tedir");
-        assertThat(noLink).contains("ekteki PDF&#39;tedir (m.pdf)");
+        // PDF ekli: giriş cümlesi yok (2026-11-19) — ne "Tam rapor …" ne dosya adı; "eklenmedi" de denmez
+        assertThat(noLink).doesNotContain("Tam rapor").doesNotContain("m.pdf")
+                .doesNotContain("PDF bu postanın boyut sınırına sığmadığından eklenmedi");
         // EN
         String en = TechErrorApprovalMail.request(input("en"), TechErrorMailImages.Result.empty(), "https://sm.example", "m.pdf", 100L, 10L,
                 "Ayşe", "PO One", 2, "https://sm.example/x?token=t", 14).mail().html();
