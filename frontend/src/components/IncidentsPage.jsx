@@ -303,15 +303,18 @@ export default function IncidentsPage({ systemRole, teamId }) {
   // ── Eylemler (gerekçe zorunlu — sunucu AlertActionNote ile aynı kural) ──
   function ack(inc) {
     if (!canActOn(inc)) return
-    setNoteDialog({ action: 'ack', items: [contextFromIncident(inc)], submit: (note) => submitAck(inc, note) })
+    setNoteDialog({ action: 'ack', items: [contextFromIncident(inc)], submit: (note, opts) => submitAck(inc, note, opts?.durationMinutes) })
   }
-  async function submitAck(inc, note) {
+  async function submitAck(inc, note, durationMinutes) {
     patchRow(inc.id, { acknowledged: true })   // iyimser
     let r
-    try { r = await api.admin.acknowledgeAlert(inc.id, note) } catch { r = null }
+    try { r = await (durationMinutes ? api.admin.acknowledgeAlert(inc.id, note, durationMinutes) : api.admin.acknowledgeAlert(inc.id, note)) } catch { r = null }
     if (!r?.success) { patchRow(inc.id, { acknowledged: inc.acknowledged ?? false }); return { ok: false, error: r?.error || t('incov.actionError') } }
-    patchRow(inc.id, { acknowledged: true, acknowledged_by: r.data?.acknowledged_by ?? null, acknowledged_at: r.data?.acknowledged_at ?? null })
-    toast.success(t('incov.ackDone'))
+    patchRow(inc.id, { acknowledged: true, acknowledged_by: r.data?.acknowledged_by ?? null, acknowledged_at: r.data?.acknowledged_at ?? null,
+      ack_expires_at: r.data?.ack_expires_at ?? null })
+    // Süreli onay (2026-11-19): eski sunucu süreyi tanımaz — süresiz onaylandığını söyle
+    if (durationMinutes && r.data && typeof r.data === 'object' && !('ack_expires_at' in r.data)) toast.info(t('ackdur.ignored'))
+    else toast.success(t('incov.ackDone'))
     loadSummary({ fresh: true })
     return { ok: true }
   }
@@ -370,11 +373,11 @@ export default function IncidentsPage({ systemRole, teamId }) {
     const ids = rowsFor.map((r) => r.id)
     const names = new Map(selectedRows.map((r) => [String(r.id), r.monitor?.name || r.domain || `#${r.id}`]))
     const preSkipped = action === 'ack' ? ackSkipped.map((r) => r.id) : []
-    setNoteDialog({ action, items, submit: (note) => runBulk(action, ids, names, note, preSkipped) })
+    setNoteDialog({ action, items, submit: (note, opts) => runBulk(action, ids, names, note, preSkipped, opts?.durationMinutes) })
   }
-  async function runBulk(action, ids, names, note, preSkipped = []) {
+  async function runBulk(action, ids, names, note, preSkipped = [], durationMinutes = null) {
     let res
-    try { res = await api.admin.bulkAlertAction(action === 'resolve' ? 'resolve' : 'acknowledge', ids, note) } catch { res = null }
+    try { res = await (durationMinutes && action !== 'resolve' ? api.admin.bulkAlertAction('acknowledge', ids, note, durationMinutes) : api.admin.bulkAlertAction(action === 'resolve' ? 'resolve' : 'acknowledge', ids, note)) } catch { res = null }
     if (!res?.success) return { ok: false, error: res?.error || t('incov.bulk.failed') }
     const byId = new Map((Array.isArray(res.data?.results) ? res.data.results : []).map((x) => [String(x.id), x.outcome]))
     const items = [

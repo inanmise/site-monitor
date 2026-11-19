@@ -2985,6 +2985,72 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("süreli onay: duration_minutes 4 argümanlı onaya gider, yanıt ack_expires_at taşır")
+    void acknowledgeAlert_withDuration_callsTimedAck() throws Exception {
+        AlertEvent event = new AlertEvent();
+        event.setId(1L); event.setDomain("example.com"); event.setAlertType("EXPIRY"); event.setAlertLevel("WARNING");
+        event.setAcknowledged(true); event.setResolved(false); event.setAckExpiresAt("2026-11-19T14:00:00");
+        when(escalationService.acknowledge(anyLong(), any(), any(), eq(240))).thenReturn(event);
+
+        mvc.perform(post("/api/admin/alerts/1/acknowledge").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"note\":\"bakım saatine kadar beklenecek\",\"duration_minutes\":240}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.ack_expires_at").value("2026-11-19T14:00:00"));
+        verify(escalationService).acknowledge(eq(1L), any(), any(), eq(240));
+        verify(escalationService, never()).acknowledge(anyLong(), any(), any());
+    }
+
+    @Test
+    @DisplayName("süreli onay: listede olmayan süre 400 duration_minutes — onay yapılmaz")
+    void acknowledgeAlert_badDuration_400() throws Exception {
+        mvc.perform(post("/api/admin/alerts/1/acknowledge").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"note\":\"bakım saatine kadar beklenecek\",\"duration_minutes\":45}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fields.duration_minutes").exists());
+        verify(escalationService, never()).acknowledge(anyLong(), any(), any());
+        verify(escalationService, never()).acknowledge(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("süreli onay: duration_minutes 0 / yok = bugünkü süresiz çağrı")
+    void acknowledgeAlert_zeroDuration_isUnlimited() throws Exception {
+        AlertEvent event = new AlertEvent();
+        event.setId(1L); event.setDomain("example.com"); event.setAcknowledged(true); event.setResolved(false);
+        when(escalationService.acknowledge(anyLong(), any(), any())).thenReturn(event);
+
+        mvc.perform(post("/api/admin/alerts/1/acknowledge").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"note\":\"bakım saatine kadar beklenecek\",\"duration_minutes\":0}"))
+                .andExpect(status().isOk());
+        verify(escalationService).acknowledge(eq(1L), any(), any());
+        verify(escalationService, never()).acknowledge(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("toplu süreli onay: her kimliğe aynı süre; geçersiz süre tüm isteği 400 ile durdurur")
+    void bulkAlert_acknowledgeWithDuration() throws Exception {
+        AlertEvent ev = new AlertEvent(); ev.setId(3L);
+        when(escalationService.acknowledge(anyLong(), any(), any(), eq(1440))).thenReturn(ev);
+
+        mvc.perform(post("/api/admin/alerts/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"acknowledge\",\"ids\":[3,4],\"note\":\"bilinen sorun takip ediliyor\",\"duration_minutes\":1440}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.processed").value(2));
+        verify(escalationService).acknowledge(eq(3L), any(), any(), eq(1440));
+        verify(escalationService).acknowledge(eq(4L), any(), any(), eq(1440));
+
+        mvc.perform(post("/api/admin/alerts/bulk").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"action\":\"acknowledge\",\"ids\":[5],\"note\":\"bilinen sorun takip ediliyor\",\"duration_minutes\":\"7g\"}"))
+                .andExpect(status().isBadRequest());
+        verify(escalationService, never()).acknowledge(eq(5L), any(), any(), any());
+        verify(escalationService, never()).acknowledge(eq(5L), any(), any());
+    }
+
+    @Test
     @DisplayName("POST /api/admin/alerts/bulk one failing id → counted as failed, batch continues")
     void bulkAlert_partialFailure_counted() throws Exception {
         AlertEvent ev = new AlertEvent(); ev.setId(1L); ev.setResolved(true);

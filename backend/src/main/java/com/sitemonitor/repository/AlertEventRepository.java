@@ -1238,4 +1238,27 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
          + "WHERE e.resolved = false AND e.notificationGroupId IS NOT NULL GROUP BY e.notificationGroupId")
     List<Object[]> countOpenByNotificationGroup();
 
+    /**
+     * Süreli onay (2026-11-19): süresi dolmuş açık onaylar — {@code [id, ack_expires_at]}, en eski önce, en çok {@code limit}.
+     * Koşul PostgreSQL kısmi indeksiyle ({@code idx_ae_ack_expires}, {@code DeferredIndexBuilder}) aynı metin: yalnız süreli
+     * onaylı açık alarmları taşır, dakikada bir tarama tabloyu okumaz.
+     */
+    @Query(value = "SELECT e.id, e.ack_expires_at FROM alert_events e "
+         + "WHERE e.ack_expires_at IS NOT NULL AND e.acknowledged = true AND e.resolved = false "
+         + "AND e.ack_expires_at <= :now ORDER BY e.ack_expires_at, e.id LIMIT :limit", nativeQuery = true)
+    List<Object[]> findDueAckExpiries(@Param("now") String now, @Param("limit") int limit);
+
+    /**
+     * Süresi dolan onayı SAHİPLENİR ve düşürür (2026-11-19): yalnız hâlâ açık, onaylı ve okunan süreyi taşıyan satır — iki pod
+     * ya da süre ile elle yeni onay yarışında tek kazanan. Aynı ifadede yeniden uyarı damgası {@code now}'a çekilir: hemen giden
+     * hatırlatmanın ardından günlük takvim buradan sayar, araya giren tarama aynı anda ikinci bildirim göndermez. Gerekçe
+     * ({@code acknowledged_note}) terfinin onay düşürmesindeki gibi kalır.
+     */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE alert_events SET acknowledged = false, acknowledged_by = NULL, acknowledged_at = NULL, "
+         + "ack_expires_at = NULL, last_re_alert_at = :now "
+         + "WHERE id = :id AND resolved = false AND acknowledged = true AND ack_expires_at = :seen", nativeQuery = true)
+    int expireAck(@Param("id") Long id, @Param("seen") String seen, @Param("now") String now);
+
 }

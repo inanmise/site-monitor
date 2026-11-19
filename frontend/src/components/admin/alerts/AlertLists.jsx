@@ -184,7 +184,7 @@ export function OpenAlertCard({
           </Label>
         )}
         <AlertLevelBadge level={a.alert_level} />
-        {a.acknowledged && <AckBadge />}
+        {a.acknowledged && <AckBadge expiresAt={a.resolved ? null : a.ack_expires_at} />}
         <MaintenanceBadge target={a.domain} />
         <RepeatBadge count={a.repeat_count} />
         <SendFailedBadge count={a.email_failed_count} />
@@ -477,7 +477,7 @@ export function AlertRowsList({
                     <TableCell>
                       <span className="flex flex-wrap gap-1">
                         <AlertStateBadge resolved={a.resolved} />
-                        {!a.resolved && a.acknowledged && <AckBadge />}
+                        {!a.resolved && a.acknowledged && <AckBadge expiresAt={a.ack_expires_at} />}
                       </span>
                     </TableCell>
                   )}

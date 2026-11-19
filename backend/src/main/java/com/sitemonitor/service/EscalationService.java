@@ -882,15 +882,32 @@ public class EscalationService {
      * yalnız manuel akışlar için geçerli; servis katmanı notsuz da çağrılabilmeli.
      */
     public AlertEvent acknowledge(Long eventId, String acknowledgedBy, String note) {
+        return acknowledge(eventId, acknowledgedBy, note, null);
+    }
+
+    /**
+     * Süreli onay (2026-11-19, kullanıcı kararı): {@code durationMinutes} null / ≤ 0 = süresiz (bugünkü davranış); aksi halde
+     * onay o kadar dakika sonra kendiliğinden düşer ({@link #expireDueAcknowledgements}). Değer listesi uçta doğrulanır
+     * ({@link com.sitemonitor.service.AckDurations}). Her onay süreyi yeniden yazar — süresiz yeniden onay eski süreyi siler.
+     */
+    public AlertEvent acknowledge(Long eventId, String acknowledgedBy, String note, Integer durationMinutes) {
         AlertEvent event = alertEventRepo.findById(eventId)
                 .orElseThrow(() -> new NoSuchElementException("Alert not found: " + eventId));
+        String expiresAt = ackExpiry(durationMinutes, Instant.now());
         AlertEventFieldWriter writer = fieldWriter;
-        if (writer != null && event.getId() != null) return acknowledgeIfOpen(writer, event, acknowledgedBy, note);
+        if (writer != null && event.getId() != null) return acknowledgeIfOpen(writer, event, acknowledgedBy, note, expiresAt);
         event.setAcknowledged(true);
         event.setAcknowledgedBy(acknowledgedBy);
         event.setAcknowledgedAt(now());
+        event.setAckExpiresAt(expiresAt);
         if (note != null && !note.isBlank()) event.setAcknowledgedNote(note.trim());
         return alertEventRepo.save(event);
+    }
+
+    /** Onayın düşeceği an (UTC ISO) — süresizde null. */
+    static String ackExpiry(Integer durationMinutes, Instant now) {
+        if (durationMinutes == null || durationMinutes <= 0 || now == null) return null;
+        return ISO.format(now.plus(java.time.Duration.ofMinutes(durationMinutes)));
     }
 
     /**
@@ -914,13 +931,15 @@ public class EscalationService {
         }
     }
 
-    private AlertEvent acknowledgeIfOpen(AlertEventFieldWriter writer, AlertEvent event, String by, String note) {
+    private AlertEvent acknowledgeIfOpen(AlertEventFieldWriter writer, AlertEvent event, String by, String note,
+                                         String expiresAt) {
         String at = now();
         String trimmed = note != null && !note.isBlank() ? note.trim() : null;
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("acknowledged", Boolean.TRUE);
         values.put("acknowledgedBy", by);
         values.put("acknowledgedAt", at);
+        values.put("ackExpiresAt", expiresAt);   // süresiz onay eski süreyi siler (null yazılır)
         if (trimmed != null) values.put("acknowledgedNote", trimmed);
         if (writer.writeValues(event.getId(), values, true) == 0) {
             // İnceleme AL-1: onay YAZILMADI — çağıran "onaylandı" demesin, denetim kaydı yazmasın, toplu işlem atlandı saysın.
@@ -935,6 +954,7 @@ public class EscalationService {
         out.setAcknowledged(true);
         out.setAcknowledgedBy(by);
         out.setAcknowledgedAt(at);
+        out.setAckExpiresAt(expiresAt);
         if (trimmed != null) out.setAcknowledgedNote(trimmed);
         // Aktivite (2026-11-05): onay YAZILDI (0 satırda yukarıda fırlatıldı — kapanmış alarmın onayı satır üretmez)
         noteAlert(out, ActivityLogService.ACTION_ALERT_ACKNOWLEDGED, null, null, actorOr(by), null);
@@ -1409,61 +1429,171 @@ public class EscalationService {
                               String alertLevel, String alertType, Integer daysRemainingFallback,
                               Set<String> excludeEmails, Set<String> excludeUsernames) {
         try {
-            // İçerik bağlamı (mail detay tablosu): domain monitörü → EN GÜNCEL domain_checks (bitiş/registrar/EPP);
-            // DNS_CHANGED → son changed dns_records kaydından eski/yeni değerler (günlük re-alert ile aynı kaynak;
-            // yoksa mail ESKİ/YENİ kutuları boş gidiyordu — 2026-08-03 bug'ı); diğer serbest-form izleme → yok
-            // (tipe özel şablon; ctx reconstruction follow-up); sertifika → latest_check.
-            // NOT: monitörün dns_change_alert_enabled=false olması MANUEL Tekrar Bildir'i ENGELLEMEZ —
-            // bastırma yalnız otomatik günlük re-alert içindir, manuel gönderim operatör iradesidir.
-            // ALERTS-1 (2026-10-22): izleme türlerinde içerik ALARM ANI anlık görüntüsünden ve olayın kendi iletisinden
-            // kurulur. Eskiden bağlam null'dı ve ileti sertifika şablonundan üretiliyordu: KEYWORD / PING_* "sertifika
-            // bilgileri alınamadı", BLACKLIST / TRANSFER_LOCK "sertifikanın süresi 245 gün içinde doluyor" + konu
-            // "245 GÜN KALDI" diyordu; diğer türler URL / port / anahtar kelime / izleme adını ve "e-posta kapalı"
-            // (mail_disabled) damgasını kaybediyordu. Push aynı olayın iletisini okuduğu için e-posta ile çelişiyordu.
             AlertEvent ev = alertEventId == null ? null : alertEventRepo.findById(alertEventId).orElse(null);
-            Map<String, Object> snapshot = ev == null ? null : deserializeContext(ev.getContextJson());
-            boolean monitoring = MONITORING_ALERT_TYPES.contains(alertType);
-            boolean freshCtx = false;   // bağlam taze kaynaktan mı (ileti ondan yeniden kurulur)
-            Map<String, Object> certContext;
-            if (isDomainMon(alertType)) {
-                Map<String, Object> rebuilt = reconstructDomainContext(domain);
-                freshCtx = rebuilt != null && reconstructedDomainCtxFresh(alertType);
-                certContext = withSnapshot(rebuilt, snapshot);
-            } else if (TYPE_DNS_CHANGED.equals(alertType)) {
-                // D-b2: olayı AÇAN izlemenin kaydı (günlük yeniden uyarıyla aynı seçim).
-                Long opener = ev == null ? null : contextMonitorId(ev);
-                Map<String, Object> change = DnsCheckerService.changeCtxOf(
-                        DnsCheckerService.lastChangedRecord(dnsRecordRepo, domain, opener));
-                freshCtx = change != null && !change.isEmpty();
-                certContext = freshCtx ? withSnapshot(change, snapshot) : copyOf(snapshot);
-                // Taze kayıt bakım SONRASI bir değişiklik olabilir: "bakımda algılandı" notu yalnız olayın kendi iletisinde kalır.
-                if (freshCtx) certContext.remove(CTX_DETECTED_IN_MAINTENANCE);
-            } else if (monitoring) {
-                certContext = copyOf(snapshot);
-            } else {
-                certContext = latestCheckRepo.findById(domain).map(this::latestToCertContext).orElse(null);
-            }
-            // "N gün kaldı" yalnız süre-bitişi türlerinde (sertifika + alan adı/kayıt bitişi); diğer izleme türlerinde gün yok.
-            Integer effectiveDays = null;
-            if (!monitoring || isDurationAlert(alertType)) {
-                Integer freshDays = certContext != null ? toInt(certContext.get("days_remaining")) : null;
-                effectiveDays = freshDays != null ? freshDays : daysRemainingFallback;
-            }
-            String storedMessage = ev == null ? null : ev.getMessage();
-            String freshMessage;
-            if (!monitoring) {
-                freshMessage = buildMessage(domain, alertType, alertLevel, effectiveDays);
-            } else if (freshCtx || storedMessage == null || storedMessage.isBlank()) {
-                freshMessage = monitoringMessage(domain, alertType, alertLevel, certContext);   // taze / tek kaynak bağlamı
-            } else {
-                freshMessage = withLevelWord(storedMessage, alertLevel);   // alarmın kendi iletisi (Alarm Geçmişi + push ile aynı)
-            }
+            ReNotifyContent c = reNotifyContent(ev, domain, alertLevel, alertType, daysRemainingFallback);
             sendCombinedAlert(domainTeamId, ugTeamId, contacts, domain, alertLevel, alertType,
-                    freshMessage, "[RE-ALERT] ", alertEventId, "MANUAL",
-                    effectiveDays, certContext, excludeEmails == null ? Set.of() : excludeEmails,
+                    c.message(), "[RE-ALERT] ", alertEventId, "MANUAL",
+                    c.days(), c.context(), excludeEmails == null ? Set.of() : excludeEmails,
                     excludeUsernames == null ? Set.of() : excludeUsernames);
         } catch (Exception e) {
             log.error("Async reNotify failed for alertEventId={}: {}", alertEventId, e.getMessage(), e);
+        }
+    }
+
+    /** Elle yeniden bildirimin (ve süresi dolan onay hatırlatmasının) e-posta içeriği: ileti + bağlam + gün. */
+    private record ReNotifyContent(String message, Map<String, Object> context, Integer days) {}
+
+    /**
+     * Alarmın yeniden gönderilen içeriği — {@link #reNotifyAsync} ile süresi dolan onay hatırlatmasının ({@link
+     * #ackExpiredReminderAsync}) TEK kaynağı (2026-11-19'da çıkarıldı; gövde bayt bayt eskisi).
+     */
+    private ReNotifyContent reNotifyContent(AlertEvent ev, String domain, String alertLevel, String alertType,
+                                            Integer daysRemainingFallback) {
+        // İçerik bağlamı (mail detay tablosu): domain monitörü → EN GÜNCEL domain_checks (bitiş/registrar/EPP);
+        // DNS_CHANGED → son changed dns_records kaydından eski/yeni değerler (günlük re-alert ile aynı kaynak;
+        // yoksa mail ESKİ/YENİ kutuları boş gidiyordu — 2026-08-03 bug'ı); diğer serbest-form izleme → yok
+        // (tipe özel şablon; ctx reconstruction follow-up); sertifika → latest_check.
+        // NOT: monitörün dns_change_alert_enabled=false olması MANUEL Tekrar Bildir'i ENGELLEMEZ —
+        // bastırma yalnız otomatik günlük re-alert içindir, manuel gönderim operatör iradesidir.
+        // ALERTS-1 (2026-10-22): izleme türlerinde içerik ALARM ANI anlık görüntüsünden ve olayın kendi iletisinden
+        // kurulur. Eskiden bağlam null'dı ve ileti sertifika şablonundan üretiliyordu: KEYWORD / PING_* "sertifika
+        // bilgileri alınamadı", BLACKLIST / TRANSFER_LOCK "sertifikanın süresi 245 gün içinde doluyor" + konu
+        // "245 GÜN KALDI" diyordu; diğer türler URL / port / anahtar kelime / izleme adını ve "e-posta kapalı"
+        // (mail_disabled) damgasını kaybediyordu. Push aynı olayın iletisini okuduğu için e-posta ile çelişiyordu.
+        Map<String, Object> snapshot = ev == null ? null : deserializeContext(ev.getContextJson());
+        boolean monitoring = MONITORING_ALERT_TYPES.contains(alertType);
+        boolean freshCtx = false;   // bağlam taze kaynaktan mı (ileti ondan yeniden kurulur)
+        Map<String, Object> certContext;
+        if (isDomainMon(alertType)) {
+            Map<String, Object> rebuilt = reconstructDomainContext(domain);
+            freshCtx = rebuilt != null && reconstructedDomainCtxFresh(alertType);
+            certContext = withSnapshot(rebuilt, snapshot);
+        } else if (TYPE_DNS_CHANGED.equals(alertType)) {
+            // D-b2: olayı AÇAN izlemenin kaydı (günlük yeniden uyarıyla aynı seçim).
+            Long opener = ev == null ? null : contextMonitorId(ev);
+            Map<String, Object> change = DnsCheckerService.changeCtxOf(
+                    DnsCheckerService.lastChangedRecord(dnsRecordRepo, domain, opener));
+            freshCtx = change != null && !change.isEmpty();
+            certContext = freshCtx ? withSnapshot(change, snapshot) : copyOf(snapshot);
+            // Taze kayıt bakım SONRASI bir değişiklik olabilir: "bakımda algılandı" notu yalnız olayın kendi iletisinde kalır.
+            if (freshCtx) certContext.remove(CTX_DETECTED_IN_MAINTENANCE);
+        } else if (monitoring) {
+            certContext = copyOf(snapshot);
+        } else {
+            certContext = latestCheckRepo.findById(domain).map(this::latestToCertContext).orElse(null);
+        }
+        // "N gün kaldı" yalnız süre-bitişi türlerinde (sertifika + alan adı/kayıt bitişi); diğer izleme türlerinde gün yok.
+        Integer effectiveDays = null;
+        if (!monitoring || isDurationAlert(alertType)) {
+            Integer freshDays = certContext != null ? toInt(certContext.get("days_remaining")) : null;
+            effectiveDays = freshDays != null ? freshDays : daysRemainingFallback;
+        }
+        String storedMessage = ev == null ? null : ev.getMessage();
+        String freshMessage;
+        if (!monitoring) {
+            freshMessage = buildMessage(domain, alertType, alertLevel, effectiveDays);
+        } else if (freshCtx || storedMessage == null || storedMessage.isBlank()) {
+            freshMessage = monitoringMessage(domain, alertType, alertLevel, certContext);   // taze / tek kaynak bağlamı
+        } else {
+            freshMessage = withLevelWord(storedMessage, alertLevel);   // alarmın kendi iletisi (Alarm Geçmişi + push ile aynı)
+        }
+        return new ReNotifyContent(freshMessage, certContext, effectiveDays);
+    }
+
+    // ── Süreli onay (2026-11-19, kullanıcı kararı: "süre dolunca alarm hâlâ açıksa onay kalkar ve hemen hatırlatma gider") ──
+
+    /** Bildirim günlüğü tetiği — KALICI (gönderim günlüğü etiketi {@code logTriggers.js}, push fazı aynı adla). */
+    public static final String TRIGGER_ACK_EXPIRED = "ACK_EXPIRED";
+    /** Hatırlatma e-postasının konu öneki. */
+    static final String ACK_EXPIRED_SUBJECT_PREFIX = "[ONAY SÜRESİ DOLDU] ";
+    /** Bir turda düşürülen en çok onay (dakikada bir; kalan sonraki turda). */
+    static final int ACK_EXPIRY_BATCH = 200;
+    static final String STATUS_ACK_EXPIRED_STORM = "SKIPPED: onay süresi doldu — alarm aktif fırtına üyesi, hatırlatma fırtınaya devredildi";
+    static final String STATUS_ACK_EXPIRED_MAINTENANCE = "SKIPPED: onay süresi doldu — bakım penceresi, hatırlatma gönderilmedi";
+
+    /**
+     * Süresi dolan onayları düşürür ({@code AckExpirySweeper}, kümede tek pod — {@code scheduler_lock}). Her satır koşullu
+     * UPDATE ile SAHİPLENİLİR ({@link AlertEventRepository#expireAck}: hâlâ açık + onaylı + okunan süre) — iki pod, ya da süre
+     * ile aynı anda yeni onay / kapanış yarışında tek kazanan; kaybeden hiçbir şey göndermez. Kazanan: aktivite satırı +
+     * eşzamansız hatırlatma ({@link #ackExpiredReminderAsync}). Pod hatırlatmadan önce ölürse o hatırlatma kaybolur (en çok
+     * bir kez); onay yine düşmüştür, günlük hatırlatma takvimi sürer.
+     *
+     * @return bu turda düşürülen onay sayısı
+     */
+    public int expireDueAcknowledgements(Instant now) {
+        String nowIso = ISO.format(now);
+        List<Object[]> due = alertEventRepo.findDueAckExpiries(nowIso, ACK_EXPIRY_BATCH);
+        int expired = 0;
+        for (Object[] r : due) {
+            Long id = r != null && r.length > 0 && r[0] instanceof Number n ? n.longValue() : null;
+            String seen = r != null && r.length > 1 && r[1] != null ? r[1].toString() : null;
+            if (id == null || seen == null) continue;
+            int won;
+            try {
+                won = alertEventRepo.expireAck(id, seen, nowIso);
+            } catch (RuntimeException e) {
+                log.warn("Onay süresi düşürülemedi (olay {}) — sonraki turda yeniden denenir: {}", id, e.toString());
+                continue;
+            }
+            if (won == 0) continue;   // başka pod sahiplendi / alarm kapandı / bu arada yeniden onaylandı
+            expired++;
+            try {
+                alertEventRepo.findById(id).ifPresent(ev -> noteAlert(ev, ActivityLogService.ACTION_ALERT_ACK_EXPIRED,
+                        ev.getAlertLevel(), contextMonitorId(ev), ActivityLogService.SYSTEM_ACTOR, "Onay süresi doldu", null));
+            } catch (RuntimeException e) {
+                log.debug("Onay süresi aktivite satırı atlandı (olay {}): {}", id, e.toString());
+            }
+            try {
+                (self != null ? self : this).ackExpiredReminderAsync(id);
+            } catch (RuntimeException e) {
+                // Havuz kapanmış (kapanış) ya da dolu: onay düştü, hatırlatma bu kez gitmedi — sessiz değil
+                log.warn("Onay süresi hatırlatması kuyruğa alınamadı (olay {}): {}", id, e.toString());
+                saveLog(id, "-", "", ACK_EXPIRED_SUBJECT_PREFIX + "#" + id, "",
+                        "FAILED: onay süresi hatırlatması kuyruğa alınamadı (" + e.getClass().getSimpleName() + ")",
+                        "SKIPPED", TRIGGER_ACK_EXPIRED);
+            }
+        }
+        if (expired > 0) log.info("Süreli onay: {} onayın süresi doldu — alarmlar yeniden bildiriliyor", expired);
+        return expired;
+    }
+
+    /**
+     * Süresi dolan onayın hatırlatması: alarmın NORMAL alıcılarına (takım adresi / grup, eskalasyon kişileri, nöbetçi, push,
+     * webhook, iletim) {@code ACK_EXPIRED} tetiğiyle — içerik elle yeniden bildirimle aynı kaynaktan ({@link #reNotifyContent}).
+     * Otomatik bir hatırlatmadır: sistem bakımı susturması, takım sessiz saati (ertelenebilir tetik) ve sahipsiz kayıt kapısı
+     * {@code sendCombinedAlert}'te bugünkü gibi uygulanır; aktif fırtına üyesi ve bakım penceresindeki alarm için gönderim yok,
+     * günlüğe karar satırı yazılır. 7/24 (NOC) bu tetikte bildirilmez (açılış tetikleri listesinde yok).
+     */
+    @Async("notifyExecutor")
+    public void ackExpiredReminderAsync(Long alertEventId) {
+        try {
+            AlertEvent ev = alertEventId == null ? null : alertEventRepo.findById(alertEventId).orElse(null);
+            if (ev == null || Boolean.TRUE.equals(ev.getResolved())) return;   // bu arada kapandı
+            if (Boolean.TRUE.equals(ev.getAcknowledged())) return;              // bu arada yeniden onaylandı
+            String domain = ev.getDomain();
+            String subject = ACK_EXPIRED_SUBJECT_PREFIX + (domain == null ? "#" + alertEventId : domain);
+            if (ev.getStormId() != null && stormService != null && stormService.isActive(ev.getStormId())) {
+                saveLog(alertEventId, "-", "", subject, (ev.getMessage() == null ? "" : ev.getMessage()), STATUS_ACK_EXPIRED_STORM, "SKIPPED",
+                        TRIGGER_ACK_EXPIRED);
+                return;
+            }
+            if (domain != null && maintenanceService != null && maintenanceService.isUnderMaintenance(domain)) {
+                saveLog(alertEventId, "-", "", subject, (ev.getMessage() == null ? "" : ev.getMessage()), STATUS_ACK_EXPIRED_MAINTENANCE, "SKIPPED",
+                        TRIGGER_ACK_EXPIRED);
+                return;
+            }
+            ReNotifyTargets targets = resolveReNotifyTargets(ev);
+            ReNotifyContent c = reNotifyContent(ev, domain, ev.getAlertLevel(), ev.getAlertType(), ev.getDaysRemaining());
+            sendCombinedAlert(targets.domainTeamId(), targets.ugTeamId(), targets.contacts(), domain, ev.getAlertLevel(),
+                    ev.getAlertType(), c.message(), ACK_EXPIRED_SUBJECT_PREFIX, alertEventId, TRIGGER_ACK_EXPIRED,
+                    c.days(), c.context());
+            ev.setNotifiedContacts(serializeContacts(targets.contacts()));
+            persistIfOpen(ev, "notifiedContacts");
+        } catch (Exception e) {
+            log.error("Onay süresi hatırlatması gönderilemedi (olay {}): {}", alertEventId, e.toString(), e);
+            saveLog(alertEventId, "-", "", ACK_EXPIRED_SUBJECT_PREFIX + "#" + alertEventId, "",
+                    "FAILED: onay süresi hatırlatması gönderilemedi (" + e.getClass().getSimpleName() + ")", "SKIPPED",
+                    TRIGGER_ACK_EXPIRED);
         }
     }
 
@@ -4489,6 +4619,7 @@ public class EscalationService {
             case "INITIAL" -> "İlk bildirim";
             case "ESCALATION" -> "Seviye artışı bildirimi";
             case "DAILY_REALERT" -> "Günlük hatırlatma";
+            case TRIGGER_ACK_EXPIRED -> "Onay süresi doldu hatırlatması";
             case TeamQuietHoursService.STEP_TRIGGER -> "Eskalasyon adımı";
             default -> "Bildirim";
         };

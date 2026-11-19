@@ -82,7 +82,7 @@ const STATUS_OPTIONS = ['SENT', 'FAILED', 'PENDING', 'RATE_LIMITED', 'CIRCUIT_OP
 const TRIGGERS = ['OPEN', 'ESCALATION', 'RE_ALERT', 'RESOLVE', 'RESEND', 'WEAK_ALGO', 'WEEKLY_REPORT', 'TEST',
   'STORM', 'STORM_RESOLVED', 'SCRIPTED_DISABLED', 'DOMAIN_EXPIRY_REMINDER', 'OVERFLOW_SUMMARY', 'ESCALATION_STEP',
   'TECH_ERROR_REMINDER', 'TECH_ERROR_APPROVAL', 'TECH_ERROR_APPROVAL_REMINDER', 'TECH_ERROR_DECISION', 'TECH_ERROR_SENT',
-  'TECH_ERROR_SEND_FAILED', 'TLS_GRADE_DROP', 'ONCALL_WEEKLY']   // 20.165.1: TLS notu düşüş bildirimi (UIA-C4); 2026-10-04; 2026-10-17: teknik hata raporu hatırlatması; 2026-10-18: onay / karar / gönderim push'ları   // WEAK_ALGO: rapor 'takıma bildir' (2026-09-12); WEEKLY_REPORT: onay → takıma (2026-09-13)
+  'TECH_ERROR_SEND_FAILED', 'TLS_GRADE_DROP', 'ONCALL_WEEKLY', 'ACK_EXPIRED']   // 20.165.1: TLS notu düşüş bildirimi (UIA-C4); 2026-10-04; 2026-10-17: teknik hata raporu hatırlatması; 2026-10-18: onay / karar / gönderim push'ları   // WEAK_ALGO: rapor 'takıma bildir' (2026-09-12); WEEKLY_REPORT: onay → takıma (2026-09-13)
 
 /** İzleme tipleri — ikonlar Nav/ChangeKindCards ile AYNI: kullanıcı yeni görsel dil öğrenmez. */
 const TYPES = [

@@ -714,6 +714,7 @@ public class IncidentsController {
     private static void ownerFacts(Map<String, Object> dto, AlertEvent e, Delivery d) {
         dto.put("acknowledged_by", e.getAcknowledgedBy());
         dto.put("acknowledged_at", e.getAcknowledgedAt());
+        dto.put("ack_expires_at", e.getAckExpiresAt());   // süreli onay (2026-11-19)
         // Gerekçeler + tekrar hatırlatma (2026-11-13) — sahiplenen gibi takım içi bilgi: yalnız kendi / 7/24 satırında
         dto.put("acknowledged_note", e.getAcknowledgedNote());
         dto.put("resolved_note", e.getResolvedNote());

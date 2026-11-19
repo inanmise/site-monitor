@@ -42,7 +42,7 @@ export default function IncidentCard({ inc, onOpen, selected = false, showStatus
       <div className="flex min-w-0 flex-wrap items-center gap-1.5 px-3 pt-2.5">
         <SeverityBadge level={inc.alert_level} />
         {showStatus && <IncidentStatusBadge status={inc.status} />}
-        {open && isAcked(inc) && <AckBadge />}
+        {open && isAcked(inc) && <AckBadge expiresAt={inc.ack_expires_at} />}
         <RootCauseChip rc={inc.root_cause} withLabel={false} />
         {isForeign(inc) && <ReadOnlyBadge compact />}
         {isNew && <NewBadge />}

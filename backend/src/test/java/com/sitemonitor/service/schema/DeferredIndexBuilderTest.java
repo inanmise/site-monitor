@@ -87,6 +87,8 @@ class DeferredIndexBuilderTest {
         EXPECTED.put("idx_dnsr_changed", "dns_records(monitor_id, checked_at) WHERE changed = true OR rotated = true");
         EXPECTED.put("idx_ae_domain_id", "alert_events(domain, id)");
         EXPECTED.put("idx_ae_resolution_notify_open", "alert_events(id) WHERE resolution_notify IN ('PENDING', 'SENDING')");
+        // Süreli onay süpürücüsü (2026-11-19): yalnız süresi belli, onaylı, açık satırlar (kısmi, PG'ye özgü)
+        EXPECTED.put("idx_ae_ack_expires", "alert_events(ack_expires_at) WHERE ack_expires_at IS NOT NULL AND acknowledged = true AND resolved = false");
         // Kontrol Geçmişi hata sayacı / "yalnız hatalar" sayfası (2026-11-06): yalnız hatalı satırları taşıyan kısmi indeksler
         EXPECTED.put("idx_portc_fail", "port_checks(monitor_id, checked_at) WHERE open = false");
         EXPECTED.put("idx_kwr_fail", "keyword_results(monitor_id, checked_at) WHERE ok = false");
@@ -104,7 +106,7 @@ class DeferredIndexBuilderTest {
             Set.of("idx_sc_success_monitor", "idx_audit_lower_actor_type_time", "idx_push_lower_user_created",
                     "idx_app_users_upper_username", "ux_push_eventless_key_user", "idx_dnsr_pending", "ux_der_mon_exp_thr",
                     "ux_audit_seq", "idx_act_reason_time", "idx_kwr_change_checked", "idx_dnsr_changed",
-                    "idx_ae_resolution_notify_open", "idx_portc_fail", "idx_kwr_fail", "idx_pingc_fail", "idx_hc_fail",
+                    "idx_ae_resolution_notify_open", "idx_ae_ack_expires", "idx_portc_fail", "idx_kwr_fail", "idx_pingc_fail", "idx_hc_fail",
                     "idx_pc_fail", "idx_dnsr_fail");
 
     private static final Path MAIN = Path.of("src/main/java/com/sitemonitor");

@@ -900,6 +900,7 @@ public class SchedulerService {
         patch("ALTER TABLE oncall_schedules ADD COLUMN weekly_notice_since VARCHAR(19)");
         patch("ALTER TABLE oncall_weekly_notices ADD COLUMN mail_log_id BIGINT");   // kuyruktaki e-postanın günlük satırı (2026-11-17)
         patch("ALTER TABLE alert_events ADD COLUMN forward_emails TEXT");  // alarm iletimiyle bildirilenler (2026-11-05)
+        patch("ALTER TABLE alert_events ADD COLUMN ack_expires_at VARCHAR(30)");  // süreli onay (2026-11-19)
         patch("ALTER TABLE sql_query_history ADD COLUMN cancelled BOOLEAN"); // SQL Playground "Durdur" (2026-11-13)
         // Sertifika alarmında gerçek son geçerlilik anı (kapalı alarm kartı artık hesaplamaz, okur).
         patch("ALTER TABLE alert_events ADD COLUMN not_after TEXT");

@@ -1,10 +1,11 @@
-import { CheckCircle2, UserCheck, OctagonAlert, TriangleAlert, CircleAlert, ExternalLink, Bot, Repeat, Sparkles, UserRound } from 'lucide-react'
-import { useT } from '../../i18n/index.jsx'
+import { CheckCircle2, UserCheck, OctagonAlert, TriangleAlert, CircleAlert, ExternalLink, Bot, Repeat, Sparkles, UserRound, Timer } from 'lucide-react'
+import { useT, useDateLocale } from '../../i18n/index.jsx'
 import { rcMeta } from '../../utils/incidentMeta.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
 import { MONITOR_TYPE_ICON, MONITOR_TYPE_LABEL_KEY, severityMeta, incidentHref, RESOLVED_BY_TOKEN_KEY } from './incidentsModel.js'
+import { ackExpiry, ackExpiryText } from './ackDurationModel.js'
 
 /**
  * Olay konsolunun küçük, tekrar eden rozetleri — durum, önem, kök neden, izleme türü, kaynağa bağlantı.
@@ -32,13 +33,29 @@ export function IncidentStatusBadge({ status, className }) {
 }
 
 /** "Onaylandı" işareti — birinin sahiplendiği açık olay (kapalı olayda çizilmez, bilgi artık zaman çizelgesinde). */
-export function AckBadge({ className }) {
+export function AckBadge({ className, expiresAt }) {
   const t = useT()
-  return (
+  const dateLocale = useDateLocale()
+  // Süreli onay (2026-11-19): rozetin YANINDA kısa kalan süre — rozet tek satır kalır, metin sarar (kesilmez). Canlı
+  // saymaz (liste yenilenince güncellenir); tam an `title`'da.
+  const expiry = expiresAt ? ackExpiry(expiresAt, Date.now()) : null
+  const badge = (
     <Badge variant="outline" data-slot="incident-ack"
       className={cn('gap-1 border-sky-500/30 bg-sky-500/10 font-semibold whitespace-nowrap text-sky-700 dark:text-sky-300', className)}>
       <UserCheck aria-hidden="true" />{t('incov.acked')}
     </Badge>
+  )
+  if (!expiry) return badge
+  return (
+    <>
+      {badge}
+      <span data-slot="ack-expiry" data-expired={expiry.expired ? 'true' : 'false'}
+        title={t('ackdur.until', expiry.at.toLocaleString(dateLocale, { dateStyle: 'medium', timeStyle: 'short' }))}
+        className="inline-flex min-w-0 items-center gap-1 text-xs text-muted-foreground tabular-nums [overflow-wrap:anywhere]">
+        <Timer aria-hidden="true" className="size-3.5 shrink-0" />
+        {ackExpiryText(expiresAt, Date.now(), t)}
+      </span>
+    </>
   )
 }
 

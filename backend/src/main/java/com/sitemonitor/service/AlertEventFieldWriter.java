@@ -51,6 +51,7 @@ public class AlertEventFieldWriter {
         m.put("acknowledgedBy", AlertEvent::getAcknowledgedBy);
         m.put("acknowledgedAt", AlertEvent::getAcknowledgedAt);
         m.put("acknowledgedNote", AlertEvent::getAcknowledgedNote);
+        m.put("ackExpiresAt", AlertEvent::getAckExpiresAt);   // süreli onay (2026-11-19)
         m.put("lastReAlertAt", AlertEvent::getLastReAlertAt);
         m.put("realertCount", AlertEvent::getRealertCount);
         m.put("stormId", AlertEvent::getStormId);

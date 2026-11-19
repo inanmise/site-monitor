@@ -2442,9 +2442,10 @@ export const api = {
       return request(`/admin/alerts${s ? `?${s}` : ''}`)
     },
     // note = zorunlu gerekçe (en az 3 kelime). Sunucu da doğruluyor; geçersizse 400 döner.
-    acknowledgeAlert: (id, note) => request(`/admin/alerts/${id}/acknowledge`, {
+    // durationMinutes (2026-11-19, süreli onay): yalnız seçilince gönderilir — yoksa gövde bugünküyle aynı (süresiz)
+    acknowledgeAlert: (id, note, durationMinutes) => request(`/admin/alerts/${id}/acknowledge`, {
       method: 'POST',
-      body: JSON.stringify({ note }),
+      body: JSON.stringify({ note, ...(durationMinutes ? { duration_minutes: durationMinutes } : {}) }),
     }),
     resolveAlert: (id, note) => request(`/admin/alerts/${id}/resolve`, {
       method: 'POST',
@@ -2457,8 +2458,12 @@ export const api = {
     previewReNotify: (id) => request(`/admin/alerts/${id}/re-notify/preview`),
     // Toplu işlem: action ∈ {acknowledge, resolve, re-notify}, ids = alarm id listesi
     // note yalnız acknowledge/resolve için gerekli; re-notify'da null geçilir (sunucu da aramaz).
-    bulkAlertAction: (action, ids, note) => request('/admin/alerts/bulk', {
-      method: 'POST', body: JSON.stringify({ action, ids, ...(note ? { note } : {}) }), timeoutMs: REPORT_TIMEOUT_MS,
+    // durationMinutes (2026-11-19): yalnız toplu onayda ve seçilince — süreli onay her alarma aynı yazılır
+    bulkAlertAction: (action, ids, note, durationMinutes) => request('/admin/alerts/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ action, ids, ...(note ? { note } : {}),
+        ...(action === 'acknowledge' && durationMinutes ? { duration_minutes: durationMinutes } : {}) }),
+      timeoutMs: REPORT_TIMEOUT_MS,
     }),
     getAlertNotifications: (id) => request(`/admin/alerts/${id}/notifications`),
     getAlertNoise: (days = 7, teamId) => request(`/admin/alerts/noise?days=${days}${teamId ? `&team=${encodeURIComponent(teamId)}` : ''}`),

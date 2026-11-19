@@ -318,9 +318,10 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
                 case "ESCALATION" -> "ESCALATION";
                 case "DAILY_REALERT" -> "RE_ALERT";
                 case "MANUAL" -> "RESEND";
+                case "ACK_EXPIRED" -> "ACK_EXPIRED";   // süresi dolan onayın hatırlatması (2026-11-19)
                 default -> "OPEN";
             };
-            if ("RE_ALERT".equals(trigger)
+            if (isReminder(trigger)
                     && !appSettings.getBoolean("site.monitor.userpush.realert-enabled", true)) {
                 skipRow(event, trigger, "SKIPPED_REALERT_OFF");
                 return;
@@ -2392,13 +2393,14 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
                 case "ESCALATION" -> "ESCALATION";
                 case "DAILY_REALERT" -> "RE_ALERT";
                 case "MANUAL" -> "RESEND";
+                case "ACK_EXPIRED" -> "ACK_EXPIRED";
                 default -> "OPEN";
             };
             String level = event.getAlertLevel();
             String family = MonitorTypeCatalog.typeOfAlert(event.getAlertType());
             String block = null;
             if (!"RESEND".equals(trigger) && systemMaintenanceMuted()) block = SystemMaintenanceService.PUSH_SKIPPED;
-            if (block == null && "RE_ALERT".equals(trigger) && !appSettings.getBoolean("site.monitor.userpush.realert-enabled", true)) {
+            if (block == null && isReminder(trigger) && !appSettings.getBoolean("site.monitor.userpush.realert-enabled", true)) {
                 block = "SKIPPED_REALERT_OFF";
             }
             if (block == null) block = scopeBlockReason(teamId, family);
@@ -2576,8 +2578,17 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
             case "ESCALATION" -> "ESCALATION";
             case "DAILY_REALERT" -> "RE_ALERT";
             case "MANUAL" -> "RESEND";
+            case "ACK_EXPIRED" -> "ACK_EXPIRED";
             default -> "OPEN";
         };
+    }
+
+    /**
+     * Hatırlatma fazı mı (günlük yeniden uyarı + süresi dolan onayın hatırlatması, 2026-11-19): "günlük hatırlatma push'u"
+     * ayarı ({@code site.monitor.userpush.realert-enabled}) ikisini birlikte açar / kapatır.
+     */
+    static boolean isReminder(String pushTrigger) {
+        return "RE_ALERT".equals(pushTrigger) || "ACK_EXPIRED".equals(pushTrigger);
     }
 
     /** Bir iletim adayı: alıcı ve onu getiren hedef (alıcı takım). */
@@ -2639,7 +2650,7 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
             String family = MonitorTypeCatalog.typeOfAlert(event.getAlertType());
             // 1. Sahip düzeyi (satır yok — sahip push'unun karar satırı izi taşır)
             if (!"RESEND".equals(trigger) && systemMaintenanceMuted()) return;
-            if ("RE_ALERT".equals(trigger) && !appSettings.getBoolean("site.monitor.userpush.realert-enabled", true)) return;
+            if (isReminder(trigger) && !appSettings.getBoolean("site.monitor.userpush.realert-enabled", true)) return;
             Long ownerPush = null;
             boolean ownerPushRead = false;
             // 2. Hedefin sahip kapsamı (satır yok) + alıcı takımın push'u kapalı → o takımın karar satırı
@@ -3037,6 +3048,9 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
             case "RE_ALERT" -> "RE_ALERT:" + Instant.now().atZone(ZONE).toLocalDate();
             case "ESCALATION" -> "ESC:" + event.getAlertLevel();   // seviye başına 1x (mail aynası)
             case "RESEND" -> "RESEND:" + UUID.randomUUID().toString().substring(0, 8);
+            // Süre bitimi başına bir kez: sahiplenme yeniden uyarı damgasını o ana çeker (AlertEventRepository.expireAck)
+            case "ACK_EXPIRED" -> "ACK_EXP:" + (event.getLastReAlertAt() != null ? event.getLastReAlertAt()
+                    : Instant.now().atZone(ZONE).toLocalDate().toString());
             default -> trigger;   // OPEN / RESOLVE: olay başına 1x (DB garantisi)
         };
     }
@@ -3076,6 +3090,7 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
             case "ESCALATION" -> "ESCALATION";
             case "DAILY_REALERT" -> "RE_ALERT";
             case "MANUAL" -> "RESEND";
+            case "ACK_EXPIRED" -> "ACK_EXPIRED";
             case "RESOLUTION", "MANUAL_RESOLVE" -> "RESOLVE";
             default -> "OPEN";
         };
@@ -3262,7 +3277,10 @@ public class UserPushService implements com.sitemonitor.service.forward.ForwardP
     String buildMessage(AlertEvent event, String trigger, Map<String, Object> ctx, String lang) {
         // Kanal ISO-8859-9 tasiyor: tipografik isaretler burada karsiligina cevrilir, aksi halde
         // kullanicinin telefonunda soru isaretine donuyorlar (kirpma isareti "..." dahil).
-        return PushText.truncate(PushText.pushSafe(rawMessage(event, trigger, ctx, lang)), maxMessageChars());
+        String raw = rawMessage(event, trigger, ctx, lang);
+        // Süresi dolan onay (2026-11-19): telefonda neden yeniden geldiği görünsün — alarm metninin önünde kısa önek
+        if ("ACK_EXPIRED".equals(trigger)) raw = PushI18n.ackExpiredPrefix(lang) + raw;
+        return PushText.truncate(PushText.pushSafe(raw), maxMessageChars());
     }
 
     /** Doldurulmuş şablon — süzme/kırpma ÖNCESİ (eskalasyon adımı önek ekleyip kendisi kırpar). */

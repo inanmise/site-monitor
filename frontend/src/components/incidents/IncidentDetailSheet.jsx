@@ -281,7 +281,7 @@ export default function IncidentDetailSheet({
           {/* Durum şeridi */}
           <div className="flex flex-wrap items-center gap-1.5 pt-3">
             <IncidentStatusBadge status={incident.status} />
-            {open && isAcked(incident) && <AckBadge />}
+            {open && isAcked(incident) && <AckBadge expiresAt={incident.ack_expires_at} />}
             <SeverityBadge level={incident.alert_level} />
             <RootCauseChip rc={incident.root_cause} />
             <RecurrenceBadge count={incident.recurrence_7d} />

@@ -67,7 +67,7 @@ function NoisePanelSkeleton() {
 }
 
 /** Onay/çözüm yanıtından detaya taşınan alanlar (zenginleştirme alanları sunucu yanıtında yok — ezilmesin). */
-const ACTION_FIELDS = ['acknowledged', 'acknowledged_by', 'acknowledged_at', 'acknowledged_note', 'resolved', 'resolved_by', 'resolved_at', 'resolved_note']
+const ACTION_FIELDS = ['acknowledged', 'acknowledged_by', 'acknowledged_at', 'acknowledged_note', 'ack_expires_at', 'resolved', 'resolved_by', 'resolved_at', 'resolved_note']
 
 /**
  * Alarm Geçmişi (2026-09-27 yeniden tasarım, shadcn) — takım kapsamlı alarm listesi, inceleme odaklı:
@@ -369,13 +369,18 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
 
   function ack(a) {
     if (!a || actBlocked(a)) return   // başka takımın uyarısı / eylem izni yok — düğme zaten çizilmez (savunma)
-    setNoteDialog({ action: 'ack', items: [noteContext(a)], submit: (note) => submitAck(a, note) })
+    setNoteDialog({ action: 'ack', items: [noteContext(a)], submit: (note, opts) => submitAck(a, note, opts?.durationMinutes) })
   }
-  async function submitAck(a, note) {
+  async function submitAck(a, note, durationMinutes) {
     let r
-    try { r = await api.admin.acknowledgeAlert(a.id, note) } catch { r = null }
+    try { r = await (durationMinutes ? api.admin.acknowledgeAlert(a.id, note, durationMinutes) : api.admin.acknowledgeAlert(a.id, note)) } catch { r = null }
     if (r == null || r.success === false) return { ok: false, error: r?.error || t('alh.note.error') }
-    toast.success(t('alh.ackSuccess'))
+    // Süreli onay (2026-11-19): eski sunucu süreyi tanımaz (yanıtta `ack_expires_at` hiç yok) — süresiz onaylandığını söyle
+    if (durationMinutes && r.data && typeof r.data === 'object' && !('ack_expires_at' in r.data)) {
+      toast.info(t('ackdur.ignored'))
+    } else {
+      toast.success(t('alh.ackSuccess'))
+    }
     mergeDetail(a.id, r.data, { acknowledged: true, acknowledged_note: note, acknowledged_at: nowIso() })
     refreshAll()
     announceAlertsChanged()   // İzleme menüsü rozetleri (sahiplenilmemiş sayısı) hemen tazelensin
@@ -473,7 +478,7 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
       if (items.length === 0) return
       // Gönderilen = pencerenin GÖSTERDİĞİ (listede olmayan seçim sessizce isteğe girmesin)
       const shownIds = items.map((i) => i.id)
-      setNoteDialog({ action: action === 'resolve' ? 'resolve' : 'ack', items, submit: (note) => runBulk(action, shownIds, note) })
+      setNoteDialog({ action: action === 'resolve' ? 'resolve' : 'ack', items, submit: (note, opts) => runBulk(action, shownIds, note, opts?.durationMinutes) })
       return
     }
     const ok = await showConfirm({ title: t('alh.bulk.renotifyTitle'), message: t('alh.bulk.renotifyMsg', ids.length), variant: 'warning',
@@ -483,10 +488,10 @@ export default function AlertHistory({ domain = null, urlSync = false, types = n
   }
 
   /** Toplu uç — `{ ok, error }` döner (gerekçeli pencere hatayı satır içi gösterir; tekrar bildirde pencere yok → tost). */
-  async function runBulk(action, ids, note) {
+  async function runBulk(action, ids, note, durationMinutes) {
     setBulkBusy(true)
     let res
-    try { res = await api.admin.bulkAlertAction(action, ids, note) } catch { res = null } finally { setBulkBusy(false) }
+    try { res = await (durationMinutes ? api.admin.bulkAlertAction(action, ids, note, durationMinutes) : api.admin.bulkAlertAction(action, ids, note)) } catch { res = null } finally { setBulkBusy(false) }
     if (res?.success) {
       const { processed = 0, skipped = 0, failed = 0 } = res.data ?? {}
       let msg = t('alh.bulk.done', processed)
