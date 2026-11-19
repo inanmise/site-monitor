@@ -637,6 +637,9 @@ public interface AlertEventRepository extends JpaRepository<AlertEvent, Long> {
      * bağımsızlık işaretine bağlı türler: envanter türevi olabilen Port / DNS / Erişilebilirlik); diğerlerinde NULL. Kararlı
      * sıra (id), tavan {@code pageable}. İndeks: {@code idx_ae_created_at} + {@code idx_ae_resolved_at} (BitmapOr).
      */
+    // Sorgu sınırı 15 sn: aşılırsa takvim 503 "okunamadı" der (havuzun uzun soket sınırına kalmaz).
+    @org.springframework.data.jpa.repository.QueryHints(@jakarta.persistence.QueryHint(
+            name = "jakarta.persistence.query.timeout", value = "15000"))
     @Query("""
             SELECT e.id, e.domain, e.alertType, e.alertLevel, e.teamId, e.createdAt, e.resolvedAt, e.resolved,
                    CASE WHEN e.alertType IN :contextTypes THEN e.contextJson ELSE NULL END
