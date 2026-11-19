@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-19T16:15:22Z",
+  "generatedAt": "2026-11-19T18:11:16Z",
   "repo": "inanmise/site-monitor",
-  "count": 863,
+  "count": 864,
   "releases": [
+    {
+      "version": "20.217.1",
+      "tag": "v20.217.1",
+      "releasedAt": "2026-11-19T18:11:05Z",
+      "commit": "43317761a2d98dab96ae14f78af828729f5d90f3",
+      "prevVersion": "20.217.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "43317761",
+          "subject": "teknik hata raporu e-postası çerçevesiz — logo / etiket başlığı, PDF giriş cümlesi, düğme ve dipnot yok"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.217.0",
       "tag": "v20.217.0",
