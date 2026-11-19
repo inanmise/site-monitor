@@ -1,9 +1,58 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-18T20:28:50Z",
+  "generatedAt": "2026-11-19T00:32:37Z",
   "repo": "inanmise/site-monitor",
-  "count": 859,
+  "count": 860,
   "releases": [
+    {
+      "version": "20.215.0",
+      "tag": "v20.215.0",
+      "releasedAt": "2026-11-19T00:32:27Z",
+      "commit": "c205dd7ad0a874f7cd2074911b9e7d545a6cc5f1",
+      "prevVersion": "20.214.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 2,
+        "fix": 2,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "c205dd7a",
+          "subject": "izleme sayfalarında \"İzlemeler | Alarmlar\" görünümü + Alarm Geçmişi'nde izleme adı"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "fa433a66",
+          "subject": "alan adı kartında sorgulanan sayfa bağlantısı + süzgeçler sade faset düğmeleri"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "bfaadcda",
+          "subject": "İzleme Panosu sahipsiz türev kalıntıları ayrı sayılır, envanter yeniden adlandırması Port/DNS'i taşır, DNS tabanı başka alan adıyla kıyaslanmaz"
+        },
+        {
+          "type": "fix",
+          "scope": "rdap",
+          "breaking": false,
+          "sha": "e6fd037f",
+          "subject": "tek sorgu ve .tr 404'ü alan adı süre kaynağını \"Kesinti\"ye çevirmez"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.214.0",
       "tag": "v20.214.0",
