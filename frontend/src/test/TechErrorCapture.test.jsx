@@ -228,8 +228,9 @@ describe('yapıştırma', () => {
     for (const el of [half, full]) {
       const actions = el.querySelector('[data-slot="te-image-actions"]')
       expect(actions).toHaveAttribute('data-count', '3')
-      // Tek satır, eşit sütun: yarım ve tam yuvada AYNI ızgara
-      expect(actions.querySelector('[data-slot="te-image-main-actions"]').className).toContain('grid-cols-3')
+      // Tek satır, eşit sütun: yarım ve tam yuvada AYNI ızgara — üç eylem + "Kaldır" için AYRILMIŞ dördüncü sütun (boş
+      // yuvada o sütun boş durur; görsel yüklenince düğmeler kaymaz / daralmaz)
+      expect(actions.querySelector('[data-slot="te-image-main-actions"]').className).toContain('grid-cols-4')
       expect(within(el).queryByRole('button', { name: /^Diğer işlemler/ })).toBeNull()
       expect(within(el).queryByRole('button', { name: /^Kaldır/ })).toBeNull()   // boş yuvada "Kaldır" yok
     }
@@ -240,17 +241,21 @@ describe('yapıştırma', () => {
     }
   })
 
-  it('DOLU yuvada da sıra aynı (ilk düğme "Değiştir"); "Kaldır" ayrı satırda düğme — yarım yuvada da (menüde değil)', async () => {
+  it('DOLU yuvada da sıra aynı (ilk düğme "Değiştir"); "Kaldır" AYNI ızgaranın son düğmesi — öteki düğmelerle aynı hizada, aynı biçimde', async () => {
     navigator.clipboard.read = vi.fn()
     te().report.mockResolvedValue(reportResponse({ images: [IMG, { ...IMG, id: 8, slot_id: 'daily-errors' }] }))
     te().deleteImage.mockResolvedValue({ success: true })
     const { slot } = await openEditor()
-    expect(mainActions(slot())).toEqual(['Değiştir', 'Ekrandan al', 'Panodan yapıştır'])
+    // Kullanıcı bildirimi (2026-11-20): "Kaldır alta kayıyor, diğer düğmelerle aynı hizada kalmıyor" → aynı ızgarada
+    expect(mainActions(slot())).toEqual(['Değiştir', 'Ekrandan al', 'Panodan yapıştır', 'Kaldır'])
     expect(mainActions(slot('daily-errors'))).toEqual(mainActions(slot()))
     for (const id of ['monthly-tx', 'daily-errors']) {
       const remove = within(slot(id)).getByRole('button', { name: /^Kaldır: / })
-      expect(remove.closest('[data-slot="te-image-main-actions"]')).toBeNull()   // ana satırın dışında
-      expect(remove.closest('[data-slot="te-image-actions"]')).not.toBeNull()
+      const grid = remove.closest('[data-slot="te-image-main-actions"]')
+      expect(grid).not.toBeNull()                       // ayrı satırda değil: ana ızgaranın içinde
+      expect(grid.lastElementChild).toBe(remove)        // son hücre
+      expect(grid.className).toContain('grid-cols-4')   // dolu ve boş yuvada AYNI ızgara (düğmeler daralmaz)
+      for (const token of SLOT_ACTION_CLASS.split(' ')) expect(remove.className.split(' ')).toContain(token)
     }
     fireEvent.click(within(slot()).getByRole('button', { name: `Kaldır: ${LABEL}` }))
     const dlg = await screen.findByRole('dialog', { name: 'Görsel kaldırılsın mı?' })
@@ -261,13 +266,14 @@ describe('yapıştırma', () => {
     expect(within(slot()).queryByRole('button', { name: /^Kaldır/ })).toBeNull()
   })
 
-  it('pano arayüzü yoksa "Panodan yapıştır" hiçbir yuvada çizilmez: iki eşit sütun, sıra yine aynı', async () => {
+  it('pano arayüzü yoksa "Panodan yapıştır" hiçbir yuvada çizilmez: iki eşit eylem, sıra yine aynı', async () => {
     const { slot } = await openEditor()
     for (const id of ['monthly-tx', 'daily-errors']) {
       expect(mainActions(slot(id))).toEqual(['Görsel yükle', 'Ekrandan al'])
       const actions = slot(id).querySelector('[data-slot="te-image-actions"]')
       expect(actions).toHaveAttribute('data-count', '2')
-      expect(actions.querySelector('[data-slot="te-image-main-actions"]').className).toContain('grid-cols-2')
+      // iki eylem + "Kaldır" için ayrılmış üçüncü sütun
+      expect(actions.querySelector('[data-slot="te-image-main-actions"]').className).toContain('grid-cols-3')
     }
   })
 

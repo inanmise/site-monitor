@@ -2048,8 +2048,11 @@ for (const vp of VIEWPORTS) {
       // Yuva eylemleri (2026-11-20, kullanıcı isteği: "görsel yükle, Ekrandan al, panodan yapıştır her bir panelde eşit
       // olmalı, aynı sırada olmalı, farklılık olmamalı"): HER yuvada (yarım / tam, dolu / boş) aynı düğmeler, aynı sırada,
       // eşit genişlikte ve AYNI dizilişte — kap yeterince genişse tek satırda eşit karolar, çok darsa (768 px'te yarım
-      // yuva) alt alta; yarım ve tam yuvada diziliş ve düğme genişliği aynı. "Kaldır" ayrı satırda düğme; "Diğer
-      // işlemler" menüsü yok. Eylemler yuvanın içinde kalır, sözcükler bölünmez / kesilmez.
+      // yuva) alt alta; yarım ve tam yuvada diziliş ve düğme genişliği aynı. "Diğer işlemler" menüsü yok. Eylemler
+      // yuvanın içinde kalır, sözcükler bölünmez / kesilmez.
+      // "Kaldır" (2026-11-20, kullanıcı bildirimi: "alta kayıyor, diğer düğmelerle aynı hizada kalmıyor"): AYNI ızgaranın
+      // SON hücresi — öteki düğmelerle aynı satırda, aynı boyda. O sütun boş yuvada da AYRILMIŞTIR; bu yüzden dolu ve boş
+      // yuvada ana düğmelerin yeri ve genişliği aynıdır (yükleme sonrası düğmeler kaymaz / daralmaz).
       const actions = paste.locator('[data-slot="te-image-actions"]')
       const expectedActions = vp.width < 768 ? ['te-image-upload', 'te-image-paste'] : ['te-image-upload', 'te-image-snip', 'te-image-paste']
       await expect(paste.getByRole('button', { name: /^(Diğer işlemler|More actions): / })).toHaveCount(0)
@@ -2057,6 +2060,7 @@ for (const vp of VIEWPORTS) {
       await page.waitForTimeout(200)
       const seen = {}
       for (const id of ['monthly-tx', 'tech-errors', 'daily-errors']) {   // dolu yarım · boş yarım · boş tam
+        const filled = id === 'monthly-tx'
         const main = editor.locator(`[data-slot-id="${id}"] [data-slot="te-image-main-actions"] > button`)
         const info = await main.evaluateAll((els) => els.map((b) => {
           const r = b.getBoundingClientRect()
@@ -2072,7 +2076,7 @@ for (const vp of VIEWPORTS) {
           const room = r.width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - parseFloat(cs.borderLeftWidth) - parseFloat(cs.borderRightWidth)
           return { slot: b.getAttribute('data-slot'), x: r.x, y: r.y, w: r.width, h: r.height, longest, room, col: cs.flexDirection === 'column' }
         }))
-        expect(info.map((b) => b.slot), `eylem sırası (${id})`).toEqual(expectedActions)
+        expect(info.map((b) => b.slot), `eylem sırası (${id})`).toEqual(filled ? [...expectedActions, 'te-image-remove'] : expectedActions)
         const row = info.every((b) => Math.abs(b.y - info[0].y) <= 1)
         const stack = info.every((b) => Math.abs(b.x - info[0].x) <= 1)
         expect(row || stack, `tek satır ya da alt alta (${id})`).toBe(true)
@@ -2087,18 +2091,29 @@ for (const vp of VIEWPORTS) {
           const iconRoom = info[i].col ? 0 : 22
           expect(info[i].longest, `en uzun sözcük sığar (${id} · ${info[i].slot})`).toBeLessThanOrEqual(info[i].room - iconRoom + 1)
         }
-        seen[id] = { row, w: info[0].w }
+        seen[id] = { row, w: info[0].w, x0: info[0].x - (await editor.locator(`[data-slot-id="${id}"] [data-slot="te-image-main-actions"]`).boundingBox()).x }
       }
-      // Yarım ve tam yuvada AYNI diziliş ve AYNI düğme genişliği (tam yuvada eylem kabı yarım yuvanın iç genişliğine iner)
+      // Yarım ve tam yuvada, DOLU ve BOŞ yuvada AYNI diziliş ve AYNI düğme genişliği (tam yuvada eylem kabı yarım yuvanın
+      // iç genişliğine iner; "Kaldır" sütunu boş yuvada da ayrılmıştır — yükleme sonrası ana düğmeler daralmaz / kaymaz)
       for (const id of ['tech-errors', 'daily-errors']) {
         expect(seen[id].row, `diziliş aynı (${id})`).toBe(seen['monthly-tx'].row)
         expect(Math.abs(seen[id].w - seen['monthly-tx'].w), `düğme genişliği aynı (${id})`).toBeLessThanOrEqual(2)
+        expect(Math.abs(seen[id].x0 - seen['monthly-tx'].x0), `ilk düğmenin yeri aynı (${id})`).toBeLessThanOrEqual(1)
       }
       if (vp.width >= 1280 || vp.width < 768) expect(seen['monthly-tx'].row, 'geniş kapta tek satır').toBe(true)
-      // "Kaldır" ana satırın altında
+      // "Kaldır" öteki düğmelerle AYNI hizada: aynı ızgaranın son hücresi; tek satır dizilişinde aynı satırda (aynı üst
+      // kenar, aynı yükseklik), alt alta dizilişte aynı sol kenar ve aynı genişlikte
       const removeBox = await paste.locator('[data-slot="te-image-remove"]').boundingBox()
-      const mainBox = await paste.locator('[data-slot="te-image-main-actions"]').boundingBox()
-      expect(removeBox.y, '"Kaldır" ana eylemlerin altında').toBeGreaterThanOrEqual(mainBox.y + mainBox.height - 1)
+      const uploadBox = await paste.locator('[data-slot="te-image-upload"]').boundingBox()
+      expect(await paste.locator('[data-slot="te-image-main-actions"] > button').last().getAttribute('data-slot'), '"Kaldır" ızgaranın son düğmesi').toBe('te-image-remove')
+      expect(Math.abs(removeBox.width - uploadBox.width), '"Kaldır" öteki düğmelerle aynı genişlikte').toBeLessThanOrEqual(1)
+      if (seen['monthly-tx'].row) {
+        expect(Math.abs(removeBox.y - uploadBox.y), '"Kaldır" öteki düğmelerle aynı satırda').toBeLessThanOrEqual(1)
+        expect(Math.abs(removeBox.height - uploadBox.height), '"Kaldır" aynı yükseklikte').toBeLessThanOrEqual(1)
+        expect(removeBox.x, '"Kaldır" satırın sonunda').toBeGreaterThan(uploadBox.x)
+      } else {
+        expect(Math.abs(removeBox.x - uploadBox.x), '"Kaldır" aynı sol kenarda').toBeLessThanOrEqual(1)
+      }
       const slotBox = await paste.boundingBox()
       for (const b of await actions.locator('button').all()) {
         if (!(await b.isVisible())) continue
@@ -2109,9 +2124,9 @@ for (const vp of VIEWPORTS) {
       expect(await page.evaluate(clipped, '[data-slot-id="monthly-tx"]'), 'kırpılan metin (yuva eylemleri)').toEqual([])
       expect(await page.evaluate(clipped, '[data-slot-id="daily-errors"]'), 'kırpılan metin (tam yuva eylemleri)').toEqual([])
       if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot-id="monthly-tx"]'), 'küçük hedef (yuva)').toEqual([])
-      // Klavye: üç eylem sekme sırasında da aynı sırada
+      // Klavye: eylemler sekme sırasında da aynı sırada; dolu yuvada sonuncu "Kaldır"
       await paste.locator('[data-slot="te-image-upload"]').focus()
-      for (const next of expectedActions.slice(1)) {
+      for (const next of [...expectedActions.slice(1), 'te-image-remove']) {
         await page.keyboard.press('Tab')
         await expect(paste.locator(`[data-slot="${next}"]`)).toBeFocused()
       }

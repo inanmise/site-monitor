@@ -44,6 +44,26 @@ const TILE_2 = '@[14rem]:grid-cols-2 @[14rem]:[&>button]:min-h-12 @[14rem]:[&>bu
 export const MAIN_ACTION_GRID = Object.freeze({ 1: 'grid-cols-1', 2: `grid-cols-1 ${TILE_2}`, 3: `grid-cols-1 ${TILE_3}` })
 
 /**
+ * Görsel YUVASININ ızgarası (2026-11-20, kullanıcı bildirimi: "Kaldır düğmesi alta kayıyor, diğer düğmelerle aynı hizada
+ * kalmıyor"): ana eylemler + "Kaldır" için AYRILMIŞ bir sütun. O sütun görsel yokken BOŞ durur, görsel yüklenince
+ * "Kaldır" oraya gelir — böylece (a) "Kaldır" öteki düğmelerle aynı satırda, aynı boyda durur, (b) ana düğmelerin yeri
+ * ve genişliği dolu / boş her yuvada AYNI kalır (yükleme sonrası düğmeler kaymaz, daralmaz).
+ * <ul>
+ *   <li>3 ana eylem (masaüstü): kap ≥ 384 px iken 4 sütun tek satır (1280'de kap ≈ 408 px);</li>
+ *   <li>2 ana eylem (telefon: "Ekrandan al" yok): kap ≥ 272 px iken 3 sütun tek satır (390'da kap ≈ 282 px);</li>
+ *   <li>daha dar kapta (≥ 224 px) 2 sütun, en darda (768'de yarım yuva ≈ 160 px) alt alta tam genişlik düğmeler.</li>
+ * </ul>
+ * Karo kipinde (≥ 224 px) yan boşluk küçülür ve hücreye sığmayan TEK sözcük (ör. "Hazırlanıyor…") taşmak yerine bölünür.
+ */
+const SLOT_TILE = '@[14rem]:[&>button]:min-h-12 @[14rem]:[&>button]:flex-col @[14rem]:[&>button]:gap-1 @[14rem]:[&>button]:px-1 @[14rem]:[&>button]:text-xs @[14rem]:[&>button]:[overflow-wrap:anywhere]'
+const SLOT_GRID = Object.freeze({
+  1: `grid-cols-1 @[14rem]:grid-cols-2 ${SLOT_TILE}`,
+  2: `grid-cols-1 @[14rem]:grid-cols-2 @[17rem]:grid-cols-3 ${SLOT_TILE}`,
+  3: `grid-cols-1 @[14rem]:grid-cols-2 @sm:grid-cols-4 ${SLOT_TILE}`,
+})
+export const slotActionGrid = (mainCount) => SLOT_GRID[Math.min(3, Math.max(1, mainCount))]
+
+/**
  * Eylem kabı: en çok 28rem (448 px) — geniş yuvada düğmeler gereksiz büyümez. `SLOT_ACTIONS_PAIRED`: iki sütunlu görsel
  * ızgarasında (md ve üstü) satırın TAMAMINI kaplayan yuvada kap, yarım yuvanın iç genişliğine indirilir — yarım yuva içi
  * = tam yuva içi / 2 − 19 px (ızgara aralığı 12, yuva iç boşluğu 2 × 12, kenarlık 2 × 1). Böylece yarım ve tam yuvada
