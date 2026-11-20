@@ -3,6 +3,7 @@ package com.sitemonitor.service;
 import com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException;
 import com.sitemonitor.model.IncidentRecord;
 import com.sitemonitor.repository.IncidentRecordRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,15 @@ class IncidentServiceVersionTest {
 
     @BeforeEach
     void clean() {
+        repo.deleteAll();
+    }
+
+    /**
+     * Bu sınıf işlemsiz yazar (satırlar KALICI); aynı Spring bağlamını (aynı gömülü H2) paylaşan IncidentServiceTest gibi
+     * sınıflar sonradan koşunca bu satırları görür — her testten sonra da temizlenir.
+     */
+    @AfterEach
+    void cleanAfter() {
         repo.deleteAll();
     }
 
