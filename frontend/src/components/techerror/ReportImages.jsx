@@ -13,7 +13,7 @@ import { ImagePrepError, displayWidthPct, prepareImage } from './imagePrep.js'
 import { CopyTextButton } from './TechErrorParts.jsx'
 import { ImageLightbox } from './ImageLightbox.jsx'
 import {
-  MAIN_ACTION_GRID, SLOT_ACTIONS_PAIRED, SLOT_ACTIONS_WRAP, SLOT_ACTION_CLASS, useSlotCapture,
+  SLOT_ACTIONS_PAIRED, SLOT_ACTIONS_WRAP, SLOT_ACTION_CLASS, slotActionGrid, useSlotCapture,
 } from './capture/SlotCapture.jsx'
 import {
   CaptureHint, CaptureSessionChip, CaptureStopNotice, ImagesPanelHeaderButton, useCaptureScope,
@@ -454,11 +454,12 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
         // Ana eylemler eşit sütunlu bir ızgarada, hep aynı sırada (SlotCapture.jsx → SLOT_ACTION_CLASS / MAIN_ACTION_GRID):
         // kap yeterince genişse tek satırda eşit karolar, çok darsa alt alta. Kabın genişliği bütün yuvalarda aynıdır — en
         // çok 448 px; iki sütunlu ızgarada satırı kaplayan (tam) yuvada yarım yuvanın iç genişliği (`pairedRow`) — bu yüzden
-        // aynı ekranda yarım ve tam yuva hep aynı dizilir. "Kaldır" ayrı satırda.
+        // aynı ekranda yarım ve tam yuva hep aynı dizilir. "Kaldır" aynı ızgaranın SON hücresidir (slotActionGrid: o sütun
+        // görsel yokken boş durur) — öteki düğmelerle aynı satırda, aynı boyda; yükleme sonrası ana düğmeler kaymaz.
         <div className={cn(SLOT_ACTIONS_WRAP, pairedRow && SLOT_ACTIONS_PAIRED)} data-slot="te-image-actions" data-count={mainCount}>
           <Input ref={inputRef} id={inputId} type="file" accept={ACCEPT} hidden tabIndex={-1} aria-hidden="true"
             onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f) }} />
-          <div className={cn('grid gap-2', MAIN_ACTION_GRID[mainCount])} data-slot="te-image-main-actions">
+          <div className={cn('grid gap-2', slotActionGrid(mainCount))} data-slot="te-image-main-actions">
             {/* Erişilebilir ad görünen metni İÇERİR (yuva adı yalnız ekran okuyucuya eklenir — etiket-adda kuralı) */}
             <Button type="button" size="sm" variant={image ? 'outline' : 'default'} disabled={busy}
               onClick={() => inputRef.current?.click()} className={SLOT_ACTION_CLASS} data-slot="te-image-upload">
@@ -469,16 +470,14 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
             </Button>
             {cap.snipButton}
             {cap.pasteButton}
-          </div>
-          {image && (
-            <div className="mt-2 flex justify-end">
-              <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={remove}
-                className="text-destructive pointer-coarse:min-h-10" data-slot="te-image-remove">
+            {image && (
+              <Button type="button" size="sm" variant="outline" disabled={busy} onClick={remove}
+                className={cn(SLOT_ACTION_CLASS, 'text-destructive hover:text-destructive')} data-slot="te-image-remove">
                 <Trash2 aria-hidden="true" /> {t('te.img.remove')}
                 <span className="sr-only">{`: ${fullLabel}`}</span>
               </Button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       )}
       {error && <p className="text-sm text-destructive [overflow-wrap:anywhere]" role="alert" data-slot="te-image-error">{error}</p>}

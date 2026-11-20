@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-19T23:45:27Z",
+  "generatedAt": "2026-11-20T00:49:23Z",
   "repo": "inanmise/site-monitor",
-  "count": 865,
+  "count": 866,
   "releases": [
+    {
+      "version": "20.218.1",
+      "tag": "v20.218.1",
+      "releasedAt": "2026-11-20T00:49:12Z",
+      "commit": "92d487e0aa9737bc35c273eb50df6cb850d7f34b",
+      "prevVersion": "20.218.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "92d487e0",
+          "subject": "teknik hata raporu — \"Kaldır\" düğmesi öteki yuva düğmeleriyle aynı hizada (aynı ızgara)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.218.0",
       "tag": "v20.218.0",
