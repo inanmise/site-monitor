@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-20T05:18:46Z",
+  "generatedAt": "2026-11-20T06:11:23Z",
   "repo": "inanmise/site-monitor",
-  "count": 867,
+  "count": 868,
   "releases": [
+    {
+      "version": "20.220.0",
+      "tag": "v20.220.0",
+      "releasedAt": "2026-11-20T06:11:15Z",
+      "commit": "f71dc6ca29ee464be06d9c565e250e1b6c09f103",
+      "prevVersion": "20.219.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "f71dc6ca",
+          "subject": "kanal teknik hata raporu — kanal notları (veriye nereden / nasıl ulaşılır)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.219.0",
       "tag": "v20.219.0",
