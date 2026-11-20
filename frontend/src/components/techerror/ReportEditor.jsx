@@ -1,7 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft, ChevronLeft, ChevronRight, CircleAlert, Download, Eye, History, LayoutTemplate, MailWarning, RefreshCw, Save, Send,
-  Trash2, Undo2, ShieldCheck } from 'lucide-react'
+  ArrowLeft, ChevronLeft, ChevronRight, CircleAlert, Download, Eye, History, LayoutTemplate, Lock, LockOpen, MailWarning, RefreshCw, Save,
+  Send, Trash2, Undo2, ShieldCheck } from 'lucide-react'
 import { api } from '../../api/client'
 import { useUnsavedWork } from '../../utils/unsavedWork.js'
 import { navigateTo } from '../../utils/navigate.js'
@@ -42,6 +42,10 @@ import {
 } from './sendModel.js'
 import { bumpMailPreviewContent, mailPreviewContentRev } from './mailPreviewFetch.js'
 import RecipientsSummary from './RecipientsSummary.jsx'
+// Hazırlık rehberi (2026-11-20, B paketi): eksik / uyarı özeti, panel, onay özetleri; şablon onayında silineceklerin adları
+import { NextStepHint, ReadinessChip, ReadinessSheet, readinessConfirmText } from './ReadinessParts.jsx'
+import { approvalLockFingerprint, approvalLockState, isBlankReport, readinessKey, readinessTarget, reportReadiness } from './readinessModel.js'
+import TemplateLossList, { hasLossLists } from './TemplateLossList.jsx'
 // Kanal notları kartı (2026-11-20): hafif kabuk — görüntüleyici (react-markdown) kart İLK açıldığında tembel yüklenir
 import ChannelNotesCard from './notes/ChannelNotesCard.jsx'
 import {
@@ -287,6 +291,13 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
   const catchUpDone = useRef(false)
   const linksSeq = useRef(0)
   const [focusAfter, setFocusAfter] = useState(null)
+  // Onay kilidi (B3): açılan kilidin parmak izi (durum | istek zamanı | karar zamanı) — yalnız bu düzenleyicide, tam
+  // yeniden yüklemede sıfırlanır
+  const [unlockedFp, setUnlockedFp] = useState(null)
+  // Hazırlık rehberi (B1): panel ve "Git" hedefi ({ selector, tries }) — bölüm / konu açılıp çizilene dek kısa denemeler
+  const [readyOpen, setReadyOpen] = useState(false)
+  const [goTarget, setGoTarget] = useState(null)
+  const readyChipRef = useRef(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [mailPreviewOpen, setMailPreviewOpen] = useState(false)   // e-posta önizlemesi (10. sürüm)
   const [sendDialog, setSendDialog] = useState(null)              // gönderim penceresi (R18 / C13): { error } | null
@@ -389,6 +400,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
     }
     if (!keepDraft) {
       setAutoHold(false)
+      setUnlockedFp(null)              // onay kilidi tam yeniden yüklemede yeniden uygulanır (B3)
       const b = readBackup(reportId)
       const same = b && canonWith(normalizeValues(b.values), nextTpl) === json
       setBackup(b && !same ? b : null)
@@ -433,11 +445,24 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
   }, [hasData, focusTitleRef])
 
   const dirty = draft != null && base.json != null && !isSavedJson(canonJson(draft))
-  const readOnly = !data?.can_edit
+  // Düzenleme YETKİSİ (sunucunun kararı). `readOnly` buna ek olarak ONAY KİLİDİNİ de kapsar (2026-11-20, B3): onay bekleyen
+  // ya da onaylanmış (eskimemiş) rapor kilitli açılır — PO'nun incelediği sürüm sessizce değişmesin. Eylemler (gönder,
+  // onaya gönder, yöneticilere gönder, şablonu aç) YETKİYE (`noEdit`) bakar; düzenleme, otomatik kayıt, görsel alma, olay
+  // kaydından alma `readOnly`'ye. Kilit bu düzenleyicide "Düzenlemeyi aç" ile (onayla) açılır; tam yeniden yüklemede ya da
+  // onay durumu değişince (yeni istek, karar — parmak izi değişir) YERİNDE yeniden kilitlenir: taslak korunur, kaydetmek
+  // için kilit yeniden açılır (inceleme 2026-11-20 — açık kalsaydı sıradaki otomatik kayıt yeni isteği sessizce eskitirdi)
+  const noEdit = !data?.can_edit
+  const lockState = approvalLockState(data)
+  const lockFp = approvalLockFingerprint(data)
+  const approvalLocked = lockFp != null && unlockedFp !== lockFp
+  const relocked = approvalLocked && unlockedFp != null
+  const unlockedFpRef = useRef(unlockedFp)
+  unlockedFpRef.current = unlockedFp
+  const readOnly = noEdit || approvalLocked
   const readOnlyRef = useRef(readOnly)
   readOnlyRef.current = readOnly
   // Gönderim / onay isteği takımın kendi kapsamı: paylaşımla düzenleyen (9. sürüm) `can_send:false` alır; eski sunucuda can_edit
-  const canSend = data?.can_send != null ? !!data.can_send : !readOnly
+  const canSend = data?.can_send != null ? !!data.can_send : !noEdit
   // Anomali konularının istemci denetimi (2026-10-18; sunucu kuralının aynası — techErrorModel.issueProblems): kaydı kilitler,
   // otomatik kayıt bu alanları kayıtlı değerinde gönderir
   // Ay adı ARAYÜZ dilinde (inceleme 2026-10-18: İngilizce arayüzde Türkçe ay adı çıkıyordu)
@@ -513,8 +538,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
     return () => window.removeEventListener('beforeunload', h)
   }, [unsaved])
 
-  // Grafik yuvasının DIŞINA bırakılan dosya tarayıcıyı görsele götürmesin (kaydedilmemiş taslak kaybolurdu)
-  useFileDropGuard(!readOnly)
+  // Grafik yuvasının DIŞINA bırakılan dosya tarayıcıyı görsele götürmesin (kaydedilmemiş taslak kaybolurdu). Onay kilidinde
+  // de (B3): yuvalar bırakmayı kabul etmez, sayfa dosyaya gitmesin
+  useFileDropGuard(!noEdit)
 
   const tpl = data?.template
   const report = data?.report
@@ -908,7 +934,14 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
   }
 
   async function ensureSaved() {
-    if (readOnly) return true
+    if (noEdit) return true
+    // Onay kilidi (B3): kilitliyken kayıt yapılmaz — kayıtlı içerik kullanılır; taslakta kaydedilmemiş değişiklik varsa
+    // (kilit yerinde yeniden uygulandı) sessizce atlanmaz: söylenir, işlem durur (inceleme 2026-11-20)
+    if (approvalLocked) {
+      if (isSavedJson(canonJson(draftRef.current))) return true
+      toast.error(t('te.lock.unsavedLocked'))
+      return false
+    }
     await settleSave()
     if (blockingNow()) { revealErrors(); toast.error(t('te.fixFieldErrors')); return false }
     if (isSavedJson(canonJson(draftRef.current))) return true
@@ -940,9 +973,12 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
   async function requestApproval() {
     if (!(await ensureSaved())) return
     const names = (approvalDetail?.approvers || []).map((a) => a?.name).filter(Boolean)
+    // Hazırlık özeti (B1): eksik / uyarı varsa onayda söylenir — engellemez ("yine de onaya gönderebilirsiniz")
+    const ready = readinessConfirmText(readinessRef.current, t, 'approval')
     const ok = await showConfirm({
       title: t('te.appr.requestTitle'),
-      message: t('te.appr.requestBody', names.length, names.join(', ') || '—', approvalDetail?.executive_count || 0),
+      message: t('te.appr.requestBody', names.length, names.join(', ') || '—', approvalDetail?.executive_count || 0)
+        + (ready ? `\n\n${ready}` : ''),
       variant: 'info', confirmText: t('te.appr.requestConfirm'), cancelText: t('te.cancel'),
     })
     if (!ok) return
@@ -1346,6 +1382,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
       if (fresh.data.report.version !== baseRef.current.version && !clean) { setConflict(conflictOf(fresh.data.report)); return }
       // Temiz taslak: başkasının kaydı sorun değil — taze hâl alınır (sahte çakışma uyarısı yok)
       applyLoaded(fresh.data, true)
+      // Taze okuma raporu onay sürecinde gösteriyorsa (bu düzenleyicide o parmak izi için açılmadıysa) uygulanmaz (B3)
+      const freshFp = approvalLockFingerprint(fresh.data)
+      if (freshFp != null && freshFp !== unlockedFpRef.current) { toast.info(t('te.lock.blockedAction')); return }
       const upd = fresh.data.template_update
       if (!upd?.differs) {
         toast.info(t('te.applyTemplateNone'))
@@ -1357,9 +1396,12 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
       // Yeni şablon "konuyu rapora alma" diyorsa müşteri etkisi olmayan (0 müşteriden çıkarılan dahil) konular PDF / e-postadan
       // düşer — sessiz kalmasın (inceleme 2026-10-18)
       const hidden = upd.hidden_topics > 0 ? ` ${t('te.applyTemplateHidden', upd.hidden_topics)}` : ''
+      // Silinecek alanların / görsellerin ADLARI (2026-11-20, B4): sunucu listeleri gönderdiyse sayının altında kaydırılabilir
+      // liste; eski sunucu göndermez → yalnız sayılar (bugünkü metin)
       const ok = await showConfirm({
         title: t('te.applyTemplateTitle'),
         message: (loss ? t('te.applyTemplateLoss', upd.lost_values || 0, upd.lost_images || 0) : t('te.applyTemplateBody')) + recalc + hidden,
+        body: loss && hasLossLists(upd) ? <TemplateLossList upd={upd} /> : undefined,
         variant: loss ? 'danger' : 'warning',
         confirmText: t('te.applyTemplateConfirm'), cancelText: t('te.cancel'),
       })
@@ -1546,7 +1588,31 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
     const i = p.lastIndexOf(':')
     return [p.slice(0, i), Number(p.slice(i + 1))]
   }) : []), [countsKey])
-  const sectionCtx = useSectionOpenValue(openState, invalidCounts)
+  // Hazırlık rehberi (2026-11-20, B1): boş rakamlar, boş görsel yuvaları, konuların boş zorunlu cevapları, özete girmeyen
+  // cümleler, birim / toplam soruları (B2), kesinti çelişkisi, alıcı / onay önkoşulları. Her çizimde hesaplanır (ucuz);
+  // bölüm rozetlerinin Map'i yalnız SAYILAR değişince yenilenir (bölüm bileşenleri memo — her tuşta yeniden çizilmesin)
+  const approverCount = Array.isArray(approvalDetail?.approvers) && approvalDetail.approvers.length > 0
+    ? approvalDetail.approvers.length
+    : (approvalDetail?.approver_count ?? (Array.isArray(approvalDetail?.approvers) ? 0 : null))
+  // Alıcı denetimi yalnız gönderebilen için (paylaşımla düzenleyen gönderemez — takım adresi onun işi değil)
+  const recipientsReady = canSend && !noEdit
+    ? { approvalRequired, approverCount, teamEmailCount: data?.team_email_count, teamEmailSet: data?.team_email_set }
+    : null
+  const readiness = useMemo(() => (data && draft ? reportReadiness({
+    template: tpl, values: draft, fields: shownFields, calc, previousFields: prevFields, images,
+    issueChecks, recipients: recipientsReady,
+  }) : null),
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- alıcı nesnesi her çizimde yeni; içeriği (ilkel değerler) izlenir
+  [data, draft, tpl, shownFields, calc, prevFields, images, issueChecks,
+    recipientsReady?.approvalRequired, recipientsReady?.approverCount, recipientsReady?.teamEmailCount, recipientsReady?.teamEmailSet])
+  const readinessRef = useRef(readiness)
+  readinessRef.current = readiness
+  const readyKey = readinessKey(readiness?.bySection)
+  const readyCounts = useMemo(() => new Map(readyKey ? readyKey.split('|').map((p) => {
+    const i = p.lastIndexOf(':')
+    return [p.slice(0, i), Number(p.slice(i + 1))]
+  }) : []), [readyKey])
+  const sectionCtx = useSectionOpenValue(openState, invalidCounts, readyCounts)
   // Hata YENİ gelen bölüm kendiliğinden açılır (sunucunun alan hatası, kapalı bölümdeki bağlı alan)
   const errSections = useRef(new Set())
   const { openMany } = openState
@@ -1905,6 +1971,60 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
     return () => clearTimeout(h)
   }, [focusAfter, gen])
 
+  // Hazırlık panelinin "Git"i (B1): panel kapanır (odak çipe DÖNMEZ — alana gidilir), bölüm (ve konu) açılır, hedef çizilince
+  // odaklanılır: en çok 10 × 50 ms; bulunamazsa yalnız kaydırılır. Zorunlu konu cevabı gösterilir (alanın altında hata)
+  const readyGoing = useRef(false)
+  const goToReady = useLatestCallback((item) => {
+    const target = readinessTarget(item)
+    if (!target) return
+    readyGoing.current = readyOpen
+    setReadyOpen(false)
+    if (target.sectionId) openMany([target.sectionId])
+    if (target.topic) openTopicsMany([topicOpenId(target.topic[0], target.topic[1])])
+    if (item.kind === 'topic') setShowRequired(true)
+    setGoTarget({ selector: target.selector, tries: 0, fromSheet: readyOpen })
+  })
+  useEffect(() => {
+    if (!goTarget) return undefined
+    const el = globalThis.document?.querySelector(goTarget.selector)
+    const visible = el && !el.closest('[hidden]')
+    if (visible || goTarget.tries >= 10) {
+      setGoTarget(null)
+      // Odaklanacak bir şey yoksa (alıcı kalemi, kilitli / salt okunur görünümde kapalı giriş) odak gövdeye düşmesin: çipe döner
+      const backToChip = () => { if (goTarget.fromSheet) { try { readyChipRef.current?.focus?.() } catch { /* yok */ } } }
+      if (!el) { backToChip(); return undefined }
+      try {
+        const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+        el.scrollIntoView?.({ block: 'center', behavior: reduce ? 'auto' : 'smooth' })
+      } catch { /* jsdom */ }
+      // Odak: kendisi odaklanabilir kap (görsel yuvası) → içindeki ilk etkin giriş → programla odaklanabilir kap (uyarı satırı)
+      // (seçici listesi belge sırasındaki İLK eşleşmeyi döndürür — etiketin kopyala düğmesi girişten önce gelir: önce girişler)
+      const focusable = (el.matches?.('[tabindex]:not([tabindex="-1"])') ? el
+        : el.querySelector('input:not([type="hidden"]):not(:disabled), textarea:not(:disabled):not(.hidden), [role="radio"]:not(:disabled)'))
+        || (el.hasAttribute?.('tabindex') ? el : null)
+        || [...el.querySelectorAll('button:not(:disabled)')].find((b) => !b.closest('[data-slot="te-copy"]'))
+      try { focusable?.focus?.({ preventScroll: true }) } catch { /* odaklanamaz */ }
+      if (!focusable || document.activeElement !== focusable) backToChip()
+      return undefined
+    }
+    const h = setTimeout(() => setGoTarget((g) => (g ? { ...g, tries: g.tries + 1 } : g)), 50)
+    return () => clearTimeout(h)
+  }, [goTarget])
+
+  // Onay kilidini açma (B3): ne olacağını söyleyen onaydan sonra — kilit açılınca düzenleme ve otomatik kayıt bu
+  // düzenleyicide normal çalışır; ilk kayıt onayı ESKİTİR (sunucu)
+  const lockFpRef = useRef(lockFp)
+  lockFpRef.current = lockFp
+  async function unlockEditing() {
+    const ok = await showConfirm({
+      title: t('te.lock.unlockTitle'),
+      message: t(lockState === 'pending' ? 'te.lock.unlockBodyPending' : 'te.lock.unlockBodyApproved'),
+      variant: 'warning', confirmText: t('te.lock.unlockConfirm'), cancelText: t('te.cancel'),
+    })
+    if (!ok || !lockFpRef.current) return
+    setUnlockedFp(lockFpRef.current)
+  }
+
   // Otomatik kayıt: 30 sn'de bir ve sekme gizlenirken; değişiklik yoksa, salt okunurda, çakışmada, başka bir işlem ya da
   // kayıt / yükleme sürerken atlanır
   const autoRef = useRef(null)
@@ -1934,7 +2054,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
   // Açık pencere / menü varken, IME bileşimi sürerken etkisiz.
   const kbdRef = useRef(null)
   kbdRef.current = {
-    readOnly, dirty, busy, save,
+    readOnly, dirty, busy, save, locked: approvalLocked && !noEdit,
+    lockedNotice: () => toast.info(t('te.lock.blockedAction')),
     blocked: () => hasAny(pendingRef.current) || hasAny(clientErrorsRef.current),
     reveal: () => { revealErrors(); toast.error(t('te.fixFieldErrors')) },
   }
@@ -1947,7 +2068,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
       if (!k) return
       const key = typeof e.key === 'string' ? e.key : ''
       if (isSaveShortcut(e)) {
-        if (hasOpenOverlay(document) || k.readOnly) return
+        if (hasOpenOverlay(document)) return
+        // Onay kilidi (B3): tarayıcının "sayfayı kaydet"i açılmasın — ne olduğu söylenir (inceleme 2026-11-20)
+        if (k.locked) { e.preventDefault(); k.lockedNotice(); return }
+        if (k.readOnly) return
         e.preventDefault()
         const ae = document.activeElement
         const inEditor = !!ae && ae !== document.body && !!rootRef.current?.contains(ae)
@@ -2047,6 +2171,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
             </nav>
           ) : <span />}
           <div className="flex flex-wrap items-center gap-2">
+            {/* Hazırlık çipi (B1): "Görsel 12/15 · 2 boş alan · 1 uyarı" — tıklanınca panel */}
+            {readiness && <ReadinessChip ref={readyChipRef} readiness={readiness} onOpen={() => setReadyOpen(true)} />}
             {sectionIds.length > 0 && (
               <ExpandAllButton allOpen={allSectionsOpen(openState.state, sectionIds)} onToggle={openState.setAll} />
             )}
@@ -2090,7 +2216,30 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
           {state.error}
         </AlertBanner>
       )}
-      {readOnly && <AlertBanner tone="info" title={t('te.readOnlyTitle')}>{t('te.readOnlyBody')}</AlertBanner>}
+      {noEdit && <AlertBanner tone="info" title={t('te.readOnlyTitle')}>{t('te.readOnlyBody')}</AlertBanner>}
+      {/* Onay kilidi (B3): PO'nun incelediği / onayladığı sürüm sessizce değişmesin — açmak onay ister */}
+      {approvalLocked && (
+        <div data-slot="te-approval-lock" data-state={lockState} data-relocked={relocked ? 'true' : undefined}>
+          <AlertBanner tone="info" icon={Lock} title={t(lockState === 'pending' ? 'te.lock.titlePending' : 'te.lock.titleApproved')}
+            actions={(
+              <Button type="button" size="sm" variant="outline" className="pointer-coarse:min-h-10" data-slot="te-lock-unlock"
+                disabled={busy != null} onClick={unlockEditing}>
+                <LockOpen aria-hidden="true" /> {t('te.lock.unlock')}
+              </Button>
+            )}>
+            {relocked && (
+              <span className="block font-medium" data-slot="te-lock-relocked">
+                {t(dirty ? 'te.lock.relockedDraft' : 'te.lock.relocked')}{' '}
+              </span>
+            )}
+            {t(lockState === 'pending' ? 'te.lock.bodyPending' : 'te.lock.bodyApproved')}
+          </AlertBanner>
+        </div>
+      )}
+      {/* Yeni (boş) rapor (B1): nereden başlanacağı */}
+      {!readOnly && readiness && isBlankReport(draft, images) && (
+        <NextStepHint readiness={readiness} template={tpl} resolve={resolve} onGo={goToReady} />
+      )}
       {conflict && (
         <div data-slot="te-conflict" data-known={typeof conflict === 'object' ? 'true' : 'false'}>
           <AlertBanner tone="warning" title={t('te.conflictTitle')}
@@ -2137,10 +2286,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
         </AlertBanner>
       )}
       {/* Onay akışlı kanalda rapor YÖNETİCİLERE gider, takım adresi yalnız CC (UIA-E4): "gönderilemez" uyarısı yanlıştı */}
-      {!readOnly && canSend && !approvalRequired && data.team_email_set === false && (
+      {!noEdit && canSend && !approvalRequired && data.team_email_set === false && (
         <AlertBanner tone="warning" icon={MailWarning} title={t('te.noTeamEmailTitle')}>{t('te.noTeamEmailBody')}</AlertBanner>
       )}
-      {report.status === 'changed' && !readOnly && canSend && (
+      {report.status === 'changed' && !noEdit && canSend && (
         <AlertBanner tone="info" title={t('te.changedTitle')}>{t('te.changedBody')}</AlertBanner>
       )}
       {upd?.differs && !readOnly && (
@@ -2222,12 +2371,12 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
       {mailPreviewOpen && (
         <MailPreviewDialog reportId={reportId} reportVersion={report.version ?? null} contentRev={previewRev} open
           onClose={() => setMailPreviewOpen(false)} uiLang={uiLang}
-          onSend={!readOnly && canSend && busy == null && report.status !== 'sending'
+          onSend={!noEdit && canSend && busy == null && report.status !== 'sending'
             && (approvalRequired ? !!approvalDetail?.can_send_executive : data.team_email_set !== false) ? send : null}
           sendLabel={approvalRequired ? t('te.appr.sendExec') : (report.last_sent_at ? t('te.resend') : t('te.send'))}
           // Onay eylemleri (A2): eylem çubuğu / onay kartıyla AYNI kural ve işleyici; akışsız kanalda yok
           // (meşgulken düğmeler devre dışı — pencere sökülmez: karar sürerken `busy` 'approval' olur)
-          onRequestApproval={!readOnly && approvalRequired && approvalDetail?.can_request ? requestApproval : null}
+          onRequestApproval={!noEdit && approvalRequired && approvalDetail?.can_request ? requestApproval : null}
           requestLabel={approvalDetail?.resend ? t('te.appr.resend') : t('te.appr.request')}
           canDecide={approvalRequired && !!approvalDetail?.can_decide}
           actionsDisabled={busy != null}
@@ -2250,19 +2399,24 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
           ? t('te.appr.sendExecBody', resolve(tpl?.title), (approvalDetail?.executive_emails || []).join(', ') || '—')
           : t('te.sendBody', channel?.team_name || '—', resolve(tpl?.title))}
         onConfirm={confirmSend} onCancel={() => { if (busy !== 'send') setSendDialog(null) }}
+        // Hazırlık özeti (B1): eksik varsa pencerede söylenir — gönderimi engellemez
+        readinessText={sendDialog ? readinessConfirmText(readiness, t, 'send') : null}
         onEdit={(v) => {
           if (typeof v === 'string') ccCarry.current = v
           if (sendDialog?.error) setSendDialog((d) => (d ? { ...d, error: null } : d))
         }} />
       <ReportHistorySheet reportId={reportId} open={historyOpen} onClose={() => setHistoryOpen(false)} uiLang={uiLang}
         returnFocusRef={historyBtnRef} />
+      <ReadinessSheet open={readyOpen} onClose={() => setReadyOpen(false)} readiness={readiness} template={tpl} resolve={resolve}
+        values={draft} previous={data.previous} uiLang={uiLang} onGo={goToReady} returnFocusRef={readyChipRef}
+        suppressReturnRef={readyGoing} />
 
       <div ref={actionsBarRef}
         className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-2 rounded-t-xl border-t bg-background/95 px-1 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur"
         data-slot="te-report-actions">
         <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]" aria-live="polite" data-slot="te-save-status"
           data-auto={autoInfo ? (autoInfo.ok ? 'ok' : 'failed') : undefined}>
-          {readOnly ? t('te.readOnlyShort') : autoSaving ? t('te.autoSaving') : (
+          {readOnly ? (approvalLocked ? t(dirty ? 'te.lock.shortDirty' : 'te.lock.short') : t('te.readOnlyShort')) : autoSaving ? t('te.autoSaving') : (
             <>
               <span>{unsaved ? t('te.unsaved') : t('te.allSaved')}</span>
               {/* Otomatik kayıt notu ayrı parça: durum metni aynı kalır, not onu açıklar; vaat edilmeyen kayıt yazılmaz */}
@@ -2283,7 +2437,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
         <div className="flex flex-wrap items-center gap-2">
           {/* İkincil işlemler menüde: telefonda çubuk tek-iki satırda kalsın, içerik örtülmesin (2026-10-13 e2e) */}
           <KebabMenu variant="labeled" label={t('te.moreActions')} rowLabel={resolve(tpl.title)} items={[
-            { label: t('te.openTemplate'), icon: <LayoutTemplate aria-hidden="true" />, onClick: () => leave(() => onOpenTemplate(channel?.id)), hidden: readOnly },
+            { label: t('te.openTemplate'), icon: <LayoutTemplate aria-hidden="true" />, onClick: () => leave(() => onOpenTemplate(channel?.id)), hidden: noEdit },
             { label: t('te.discard'), icon: <Undo2 aria-hidden="true" />, hidden: readOnly || !dirty || busy != null || autoSaving,
               onClick: () => { clearTimeout(backupTimer.current); replaceDraft(normalizeValues(JSON.parse(base.json))); dropBackup(reportId); setAutoHold(false) } },
             { label: t('te.delete'), icon: <Trash2 aria-hidden="true" />, danger: true, hidden: !data.can_delete || busy != null, onClick: remove },
@@ -2297,7 +2451,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
             onClick={async () => { if (!(await ensureSaved())) return; setMailPreviewOpen(true) }}>
             <Eye aria-hidden="true" /> {t('te.mail.preview')}
           </Button>
-          {!readOnly && canSend && !approvalRequired && (
+          {!noEdit && canSend && !approvalRequired && (
             <Button type="button" variant="outline" className="pointer-coarse:min-h-10" data-slot="te-send"
               disabled={busy != null || data.team_email_set === false || report.status === 'sending'} onClick={send}>
               {busy === 'send' ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <Send aria-hidden="true" />}
@@ -2305,14 +2459,14 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
             </Button>
           )}
           {/* Onay akışlı kanal (S6): onaylı rapor yöneticilere; onaysız / değişmiş rapor onaya */}
-          {!readOnly && approvalRequired && approvalDetail?.can_send_executive && (
+          {!noEdit && approvalRequired && approvalDetail?.can_send_executive && (
             <Button type="button" variant="outline" className="pointer-coarse:min-h-10" data-slot="te-send-exec"
               disabled={busy != null || report.status === 'sending'} onClick={send}>
               {busy === 'send' ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <Send aria-hidden="true" />}
               {t('te.appr.sendExec')}
             </Button>
           )}
-          {!readOnly && approvalRequired && approvalDetail?.can_request && (
+          {!noEdit && approvalRequired && approvalDetail?.can_request && (
             <Button type="button" variant="outline" className="pointer-coarse:min-h-10" data-slot="te-approval-request-bar"
               disabled={busy != null} onClick={requestApproval}>
               {busy === 'approval' ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <ShieldCheck aria-hidden="true" />}

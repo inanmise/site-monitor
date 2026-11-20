@@ -4123,6 +4123,139 @@ for (const vp of VIEWPORTS) {
       await page.screenshot({ path: `test-results/te-quickwins-editor-${vp.name}.png` })
     })
 
+    test('hazırlık rehberi (B, 2026-11-20): çip + panel + "Git", bölüm rozeti, birim sorusu, gönderimde özet, onay kilidi, şablonda silinecek adlar; sığar, kesilmez', async ({ page }) => {
+      test.setTimeout(180_000)
+      await mock(page, { openSections: false })
+      await page.addInitScript(() => {
+        try { sessionStorage.setItem('sm.gaps.prompted', 'demo'); localStorage.setItem('site-monitor-lang', 'tr') } catch { /* yoksay */ }
+      })
+      const dialogWith = (text) => page.locator('[role="alertdialog"], [role="dialog"]').filter({ hasText: text })
+      // Açılma canlandırmaları bitsin (kutular son yerinde ölçülür)
+      const settle = (loc) => loc.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => null))))
+
+      // B1 — çip: görsel oranı + boş alan + uyarı (özete girmeyen 2 cümle); kapalı bölüm başlığında rozet
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const editor = page.locator('[data-slot="te-report"]')
+      await expect(editor).toBeVisible({ timeout: 20_000 })
+      const chip = page.locator('[data-slot="te-ready-chip"]')
+      await expect(chip).toHaveText('Görsel 0/3 · 8 boş alan · 2 uyarı')
+      await expect(chip).toHaveAttribute('data-tone', 'warn')
+      await expect(editor.locator('[data-section="summary"] [data-slot="te-section-ready"]')).toHaveText('7 eksik')
+      await expect(editor.locator('[data-section="charts"] [data-slot="te-section-ready"]')).toHaveText('3 eksik')
+      await expect(editor.locator('[data-section="exec"] [data-slot="te-section-ready"]')).toHaveText('2 eksik')
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (hazırlık çipi)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-report"]'), 'kırpılan metin (çip / rozetler)').toEqual([])
+      const chipBox = await chip.boundingBox()
+      expect(chipBox.x + chipBox.width, 'çip ekranda').toBeLessThanOrEqual(vp.width + 1)
+      if (vp.touch) expect(chipBox.height, 'çip ≥ 40 px').toBeGreaterThanOrEqual(39.5)
+
+      // Panel: bölüme göre gruplu, sığar; "Git" bölümü açıp alana odaklanır
+      await chip.click()
+      const sheet = page.locator('[data-slot="te-ready-sheet"]')
+      await expect(sheet).toBeVisible()
+      await expect(sheet.locator('[data-slot="te-ready-group"]')).toHaveCount(4)
+      // Kayarak açılma canlandırması bitsin (ölçüm son yerinde yapılır)
+      await settle(sheet)
+      const sb = await sheet.boundingBox()
+      expect(sb.x, 'panel solda taşmaz').toBeGreaterThanOrEqual(-1)
+      expect(sb.x + sb.width, 'panel sağda taşmaz').toBeLessThanOrEqual(vp.width + 1)
+      expect(await page.evaluate(clipped, '[data-slot="te-ready-sheet"]'), 'kırpılan metin (panel)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-ready-sheet"]'), 'küçük hedef (panel)').toEqual([])
+      await page.screenshot({ path: `test-results/te-readiness-sheet-${vp.name}.png` })
+      await sheet.getByRole('button', { name: 'Git: Toplam işlem adedi boş' }).click()
+      await expect(sheet).toBeHidden()
+      const total = editor.locator('[data-section="summary"]').getByLabel('Toplam işlem adedi', { exact: true })
+      await expect(total).toBeFocused()
+      await expect(editor.locator('[data-section="summary"] [data-slot="te-section-ready"]')).toHaveCount(0)
+
+      // B2 — geçen ay 1.000.000, bu ay 1.000: alanın altında birim sorusu (engellemez), çipte uyarı
+      await total.fill('1000')
+      const scale = editor.locator('[data-field="values.total-tx"] [data-slot="te-scale-warn"]')
+      await expect(scale).toHaveText('Geçen ay 1.000.000 idi, bu ay 1.000 — birim doğru mu?')
+      await expect(chip).toHaveText('Görsel 0/3 · 7 boş alan · 2 uyarı')
+      expect(await page.evaluate(clipped, '[data-field="values.total-tx"]'), 'kırpılan metin (birim sorusu)').toEqual([])
+      await total.fill('1250000')
+      await expect(scale).toHaveCount(0)
+
+      // Gönderim penceresi eksikleri söyler, "Gönder" açık kalır (önce kaydedilmemiş değişiklik kaydedilir)
+      await page.locator('[data-slot="te-report-actions"] [data-slot="te-send"]').click()
+      const saveFirst = dialogWith('Önce kaydedilsin mi?')
+      await expect(saveFirst).toBeVisible()
+      await saveFirst.getByRole('button', { name: 'Kaydet ve devam et' }).click()
+      const sendDlg = page.locator('[data-slot="te-send-dialog"]')
+      await expect(sendDlg).toBeVisible({ timeout: 20_000 })
+      await expect(sendDlg.locator('[data-slot="te-send-readiness"]')).toContainText('— yine de gönderebilirsiniz.')
+      await expect(sendDlg.getByRole('button', { name: 'Gönder', exact: true })).toBeEnabled()
+      await settle(sendDlg)
+      const sdb = await sendDlg.boundingBox()
+      expect(sdb.x + sdb.width, 'gönderim penceresi sağda taşmaz').toBeLessThanOrEqual(vp.width + 1)
+      expect(await page.evaluate(clipped, '[data-slot="te-send-dialog"]'), 'kırpılan metin (gönderim özeti)').toEqual([])
+      await page.keyboard.press('Escape')
+      await expect(sendDlg).toBeHidden()
+
+      // B3 — PO onayı bekleyen rapor kilitli açılır; kilit onayla açılır
+      reportOverride = { ...REPORT, channel: { ...REPORT.channel, approval_required: true, executive_count: 2 },
+        report: { ...REPORT.report, approval: { state: 'pending', requested_at: '2026-10-13T09:00:00Z' } },
+        approval_detail: { required: true, executive_count: 2, executive_emails: ['ceo@example.com', 'cto@example.com'],
+          approvers: [{ name: LONG_PERSON, has_email: true }], requested_by_name: LONG_PERSON, decided_by_name: null,
+          can_request: false, is_approver: false, can_decide: false, can_send_executive: false } }
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const lockBand = page.locator('[data-slot="te-approval-lock"]')
+      await expect(lockBand).toBeVisible({ timeout: 20_000 })
+      await expect(lockBand).toHaveAttribute('data-state', 'pending')
+      await expect(page.locator('[data-slot="te-save-status"]')).toHaveText('Onay sürecinde — kilitli')
+      await expect(page.locator('[data-slot="te-save"]')).toHaveCount(0)
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (kilit bandı)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-approval-lock"]'), 'kırpılan metin (kilit bandı)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-approval-lock"]'), 'küçük hedef (kilit bandı)').toEqual([])
+      await expect(editor.locator('[data-field="values.total-tx"] input')).toBeDisabled()
+      await page.screenshot({ path: `test-results/te-readiness-lock-${vp.name}.png` })
+      await lockBand.locator('[data-slot="te-lock-unlock"]').click()
+      const unlockDlg = dialogWith('Düzenleme kilidi açılsın mı?')
+      await expect(unlockDlg).toBeVisible()
+      await unlockDlg.getByRole('button', { name: 'Düzenlemeyi aç' }).click()
+      await expect(lockBand).toHaveCount(0)
+      // Özet bölümü "Git" ile açılmıştı (kişisel kayıtta hatırlanır); kapalıysa açılır
+      const sumCard = editor.locator('[data-section="summary"]')
+      if ((await sumCard.getAttribute('data-open')) !== 'true') await sumCard.locator('[data-slot="te-section-toggle"]').click()
+      const total2 = sumCard.getByLabel('Toplam işlem adedi', { exact: true })
+      await expect(total2).toBeVisible()
+      await expect(total2).toBeEnabled()
+      await expect(page.locator('[data-slot="te-save"]')).toBeVisible()
+
+      // B4 — "Şablonun son hâlini uygula" onayı silinecek alan / görsel ADLARINI listeler (kaydırılır, adlar sarar)
+      reportOverride = { ...REPORT, template_update: { differs: true, lost_values: 3, lost_images: 2,
+        lost_fields: [
+          { id: 'sla-rate', label: 'Kritik fonksiyonların SLA oranı', section: `${LONG_CHANNEL} Kanalı — Eylül 2026 Özeti`, kind: 'field', count: 1 },
+          { id: 'i-1', label: `${LONG_TOPIC} Konusu ile yaşanan problem`, section: 'Teknik hataların anomali olarak arttığı konular', kind: 'topic', count: 2 },
+        ],
+        lost_slots: [{ id: 'daily-errors', label: `${LONG_CHANNEL} Kanalı Teknik Hata (Günlük)`, section: 'Grafikler', kind: 'slot' }],
+        lost_fields_more: 0, lost_slots_more: 1 } }
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      await expect(editor).toBeVisible({ timeout: 20_000 })
+      await page.getByRole('button', { name: 'Şablonun son hâlini uygula' }).click()
+      const applyDlg = dialogWith('Şablonun son hâli uygulansın mı?')
+      await expect(applyDlg).toBeVisible()
+      const loss = applyDlg.locator('[data-slot="te-tpl-loss"]')
+      await expect(loss).toBeVisible()
+      await expect(loss.locator('[data-slot="te-tpl-loss-fields-item"]')).toHaveCount(2)
+      await expect(loss.locator('[data-slot="te-tpl-loss-slots-item"]')).toHaveCount(1)
+      await expect(loss.locator('[data-slot="te-tpl-loss-slots-more"]')).toHaveText('ve 1 tane daha')
+      await settle(applyDlg)
+      const ab = await applyDlg.boundingBox()
+      expect(ab.x, 'onay penceresi solda taşmaz').toBeGreaterThanOrEqual(-1)
+      expect(ab.x + ab.width, 'onay penceresi sağda taşmaz').toBeLessThanOrEqual(vp.width + 1)
+      expect(ab.y + ab.height, 'onay penceresi ekranda').toBeLessThanOrEqual(vp.height + 1)
+      expect(await page.evaluate(clipped, '[data-slot="te-tpl-loss"]'), 'kırpılan metin (silinecekler)').toEqual([])
+      const lb = await loss.boundingBox()
+      expect(lb.x + lb.width, 'liste pencerede').toBeLessThanOrEqual(ab.x + ab.width + 1)
+      await page.screenshot({ path: `test-results/te-readiness-tplloss-${vp.name}.png` })
+      await applyDlg.getByRole('button', { name: 'Vazgeç' }).click()
+      await expect(applyDlg).toBeHidden()
+    })
+
     if (!vp.touch) {
       // 30 saniyelik aralık (sahte saat): sekme görünürken de kaydedilmemiş değişiklik kendiliğinden kaydedilir
       test('otomatik kayıt 30 saniyede bir (sahte saat)', async ({ page }) => {

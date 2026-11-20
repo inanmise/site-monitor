@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-20T10:41:33Z",
+  "generatedAt": "2026-11-20T12:26:00Z",
   "repo": "inanmise/site-monitor",
-  "count": 870,
+  "count": 871,
   "releases": [
+    {
+      "version": "20.223.0",
+      "tag": "v20.223.0",
+      "releasedAt": "2026-11-20T12:25:49Z",
+      "commit": "88c88a18090f185b13b653f76b234cc8fdc95ad7",
+      "prevVersion": "20.222.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "88c88a18",
+          "subject": "kanal teknik hata raporu — hazırlık rehberi (eksikler, tutarlılık uyarısı, onayda kilit, şablon farkı)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.222.0",
       "tag": "v20.222.0",

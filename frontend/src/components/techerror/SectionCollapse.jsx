@@ -95,7 +95,7 @@ export function useSectionOpenState(storageKey, ids, { max = OPEN_STATE_MAX_IDS,
  * Sağlayıcı değeri: açık mı, aç / kapat, kapalı başlıkta gösterilecek hatalı alan sayısı. `invalidCounts` (Map) yalnız
  * hata kümesi değişince yeni nesne olmalı — her tuşta değil (görsel bölümleri yeniden çizilmesin).
  */
-export function useSectionOpenValue(open, invalidCounts) {
+export function useSectionOpenValue(open, invalidCounts, readyCounts = null) {
   const { state, setOpen, openMany, closeMany } = open
   return useMemo(() => ({
     isOpen: (id) => isSectionOpen(state, id),
@@ -103,7 +103,10 @@ export function useSectionOpenValue(open, invalidCounts) {
     openMany,
     closeMany,
     invalidCount: (id) => invalidCounts?.get(id) || 0,
-  }), [state, setOpen, openMany, closeMany, invalidCounts])
+    // Hazırlık rehberi (2026-11-20, B1): bölümdeki eksik / uyarı sayısı — kapalı başlıkta küçük rozet. `readyCounts` de
+    // yalnız sayılar değişince yeni Map olmalı (her tuşta değil)
+    readyCount: (id) => readyCounts?.get(id) || 0,
+  }), [state, setOpen, openMany, closeMany, invalidCounts, readyCounts])
 }
 
 let untilFound = null
@@ -165,17 +168,19 @@ const SUB = 'flex flex-col gap-1.5 pb-3 pe-4'
  * satırın sağında. `hint`: yalnız açıkken. `icon`: başlığın solunda (dekoratif, okun ardında). `headerEnd`: başlık
  * satırının sağı (ör. taşı / sil düğmeleri — kapalıyken de kullanılır). `toggleLabel`: düğmede başlık yerine gösterilecek
  * içerik. `titleId` (2026-11-20, A7): başlık metninin kimliği — bölümün içindeki tablo / liste adını buradan alır
- * (`aria-labelledby`).
+ * (`aria-labelledby`). `meta` (2026-11-20, B1): başlığın altında her zaman görünen küçük içerik (rozet) — kapalıyken de.
+ * Hazırlık rehberinin bölüm rozeti bağlamdan (`readyCount`) gelir: bölümde eksik / uyarı varsa kapalı başlıkta "N eksik".
  */
 export function CollapsibleCard({
   sectionId, slot, title, copyText, toggleLabel, icon = null, hint = null, headerEnd = null, headerClassName,
-  contentClassName, children, cardProps, titleId,
+  contentClassName, children, cardProps, titleId, meta = null,
 }) {
   const ctx = useContext(SectionOpenContext)
   const t = useT()
   const contentRef = useRef(null)
   const open = ctx ? ctx.isOpen(sectionId) : true
   const invalid = ctx && !open ? ctx.invalidCount(sectionId) : 0
+  const ready = ctx && !open && typeof ctx.readyCount === 'function' ? ctx.readyCount(sectionId) : 0
   const setOpen = ctx?.setOpen
   const copy = copyText === undefined ? title : copyText
   // `data-slot={undefined}` Card'ın kendi data-slot'unu siler (proje sıfırlaması `[data-slot] { border: 0 }`)
@@ -207,7 +212,7 @@ export function CollapsibleCard({
               <span id={titleId} className="min-w-0 flex-1 [overflow-wrap:anywhere]">{toggleLabel ?? title}</span>
             </h3>,
           )}
-          {hint && <div className={cn(SUB, 'ps-4')}>{hint}</div>}
+          {(meta || hint) && <div className={cn(SUB, 'ps-4')}>{meta}{hint}</div>}
         </CardHeader>
         <CardContent className={cn(CONTENT, contentClassName)}>{children}</CardContent>
       </Card>
@@ -231,13 +236,25 @@ export function CollapsibleCard({
               </CollapsibleTrigger>
             </h3>,
           )}
-          {(invalid > 0 || (open && hint)) && (
+          {(invalid > 0 || ready > 0 || meta || (open && hint)) && (
             <div className={cn(SUB, 'ps-10')}>
-              {invalid > 0 && (
-                <Badge variant="destructive" className="w-fit rounded-md overflow-visible whitespace-normal" data-slot="te-section-invalid">
-                  {t('te.sec.invalid', invalid)}
-                </Badge>
+              {(invalid > 0 || ready > 0) && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {invalid > 0 && (
+                    <Badge variant="destructive" className="w-fit rounded-md overflow-visible whitespace-normal" data-slot="te-section-invalid">
+                      {t('te.sec.invalid', invalid)}
+                    </Badge>
+                  )}
+                  {/* Hazırlık rehberi (B1): eksik / uyarı sayısı — engellemez, yalnız söyler */}
+                  {ready > 0 && (
+                    <Badge variant="outline" className="w-fit rounded-md overflow-visible whitespace-normal border-warning/60"
+                      data-slot="te-section-ready" data-count={ready}>
+                      {t(ready === 1 ? 'te.ready.sectionBadge.one' : 'te.ready.sectionBadge', ready)}
+                    </Badge>
+                  )}
+                </div>
               )}
+              {meta}
               {open && hint}
             </div>
           )}

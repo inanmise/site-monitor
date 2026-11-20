@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { CircleAlert, ExternalLink, ImageOff, X } from 'lucide-react'
+import { CircleAlert, ExternalLink, ImageOff, Lock, X } from 'lucide-react'
 import { api } from '../../../api/client'
 import { useLanguage, useT } from '../../../i18n/index.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -10,6 +10,7 @@ import StatusBlock from '../../ui/StatusBlock.jsx'
 import { ImagesBlock } from '../ReportImages.jsx'
 import { periodLabel } from '../TechErrorParts.jsx'
 import { resolvePlaceholders } from '../techErrorModel.js'
+import { approvalLockState } from '../readinessModel.js'
 import { CaptureSessionChip, CaptureStopNotice, useCaptureScope } from './CaptureParts.jsx'
 import { KIND_IMAGES, KIND_REPORT, onImagesChanged } from './imageSync.js'
 import { openInMainWindow } from './panelWindow.js'
@@ -107,7 +108,11 @@ export default function ImagesPanelPage({ reportId }) {
   // Şablon sırasıyla: görsel bölümleri + görsel alan anomali bölümleri (konu görselleri konunun altında — 2026-10-18)
   const sections = useMemo(() => (tpl?.sections || []).filter((s) => s.kind === 'images' || panelIssueSection(s, tpl?.lang)), [tpl])
   const firstImagesId = sections.find((s) => s.kind === 'images')?.id
-  const readOnly = !data?.can_edit
+  // Onay kilidi (B3, inceleme 2026-11-20): onay bekleyen / onaylanmış rapora panelden görsel yüklemek, yapıştırmak ya da
+  // silmek isteği / onayı sessizce eskitirdi — panel kilitli açılır, kilit YALNIZ ana pencerede açılır. Panel odakta ve
+  // eşitleme bildiriminde raporu yeniden okur: ilk kayıt onayı eskitince (durum "stale") panel kendiliğinden açılır
+  const panelLock = approvalLockState(data)
+  const readOnly = !data?.can_edit || panelLock != null
   const canClose = (() => { try { return !!window.opener } catch { return false } })()
 
   if (state.loading && !data) {
@@ -171,7 +176,13 @@ export default function ImagesPanelPage({ reportId }) {
             {state.error}
           </AlertBanner>
         )}
-        {readOnly && <AlertBanner tone="info" title={t('te.readOnlyTitle')}>{t('te.cap.panelReadOnly')}</AlertBanner>}
+        {panelLock ? (
+          <div data-slot="te-panel-lock" data-state={panelLock}>
+            <AlertBanner tone="info" icon={Lock} title={t(panelLock === 'pending' ? 'te.lock.titlePending' : 'te.lock.titleApproved')}>
+              {t('te.lock.panelBody')}
+            </AlertBanner>
+          </div>
+        ) : readOnly && <AlertBanner tone="info" title={t('te.readOnlyTitle')}>{t('te.cap.panelReadOnly')}</AlertBanner>}
         {/* Kanal notları (2026-11-20): görsel toplarken "veriyi nereden alırım" notu elinin altında — salt okunur, kapalı başlar;
             yalnız rapor yanıtında `channel_notes.readable` doğruysa çizilir (panelde düzenleme bağlantısı yok) */}
         <ChannelNotesCard reportId={reportId} channelId={channel?.id} meta={data.channel_notes} />

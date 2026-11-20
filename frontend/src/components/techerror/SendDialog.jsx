@@ -19,6 +19,9 @@ import { MAX_EXTRA_CC, MAX_EXTRA_CC_INPUT, parseExtraCc } from './sendModel.js'
  *
  * `onConfirm(extraCc)`: `extraCc` boşsa `''` — çağıran gövdesiz eski isteği atar.
  *
+ * `readinessText` (2026-11-20, B1): raporun hazırlık özeti ("Raporda 3 eksik var … — yine de gönderebilirsiniz"); yalnız
+ * bilgi, "Gönder" açık kalır.
+ *
  * `failure` (inceleme 2026-10-18): `{ kind: 'retry' | 'unsure', title, message, details, check? }` — yeniden denenebilir
  * gönderim hatası (PDF sırası dolu, kişi başı sınır) pencerenin İÇİNDE gösterilir; pencere açık kalır, yazılan ek Bilgi
  * silinmez, odak alana döner.
@@ -37,7 +40,8 @@ import { MAX_EXTRA_CC, MAX_EXTRA_CC_INPUT, parseExtraCc } from './sendModel.js'
  * 'checking' = rapor yeniden okunuyor (düğmede dönen simge), 'unknown' = okunamadı → "Durumu yeniden denetle"
  * (`onRecheck`). Çağıran durumu çözünce bandı değiştirir (gitmemişse `retry`) ya da pencereyi kapatır.
  */
-export default function SendDialog({ open, title, message, busy, serverError, failure = null, onConfirm, onCancel, onEdit, onRecheck = null, initialCc = '' }) {
+export default function SendDialog({ open, title, message, busy, serverError, failure = null, onConfirm, onCancel, onEdit, onRecheck = null, initialCc = '',
+  readinessText = null }) {
   const t = useT()
   const [value, setValue] = useState('')
   const [clientError, setClientError] = useState(null)
@@ -98,6 +102,12 @@ export default function SendDialog({ open, title, message, busy, serverError, fa
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription className="[overflow-wrap:anywhere]">{message}</DialogDescription>
           </DialogHeader>
+          {/* Hazırlık özeti (2026-11-20, B1): raporda eksik / uyarı varsa söylenir — gönderimi ENGELLEMEZ */}
+          {readinessText && (
+            <div data-slot="te-send-readiness">
+              <AlertBanner tone="info" title={t('te.ready.confirmTitle')}>{readinessText}</AlertBanner>
+            </div>
+          )}
           <Field label={t('te.send.ccLabel')} hint={t('te.send.ccHint', MAX_EXTRA_CC)} error={error} name="extra_cc">
             {({ id, describedBy, invalid }) => (
               <Textarea ref={inputRef} id={id} rows={2} maxLength={MAX_EXTRA_CC_INPUT} value={value} disabled={busy}
