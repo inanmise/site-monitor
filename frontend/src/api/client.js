@@ -1441,6 +1441,41 @@ export const api = {
       `/tech-error-reports/channel-notes/${encodeURIComponent(channelId)}/versions/${encodeURIComponent(version)}`, { withStatus: true }),
     // <img src> için aynı kökenli adres (CSP'de `blob:` yok); oturum çerezi tarayıcıdan gider
     channelNoteImageUrl: (imageId) => `${BASE}/tech-error-reports/channel-notes/images/${encodeURIComponent(imageId)}`,
+    /**
+     * Olay kaydından anomali konusu (2026-11-20, CANLI bağ). Okumalar 30 sn, yazmalar 60 sn ile sınırlı (asılı istek pencereyi
+     * kilitlemesin); `page` 0 tabanlı. Eski pod bu yollara 405 ya da kodsuz / genel (`NOT_FOUND`) 404 döner — çağıran "bu
+     * sürümde yok" der; KODLU 404 (`INCIDENT_NOT_FOUND`, `INCIDENT_LINK_NOT_FOUND`) eski pod değildir (incidentImportModel).
+     */
+    incidentCandidates: (reportId, { q = '', page = 0, size = 10, overlap = false } = {}, { signal } = {}) => {
+      const qs = new URLSearchParams({ page: String(page), size: String(size) })
+      if (q) qs.set('q', q)
+      if (overlap) qs.set('overlap', 'true')
+      return request(`/tech-error-reports/reports/${encodeURIComponent(reportId)}/incident-candidates?${qs.toString()}`,
+        { withStatus: true, timeoutMs: 30_000, ...(signal ? { signal } : {}) })
+    },
+    // Önizleme: hiçbir şey yazmaz — { proposals: [...] }
+    incidentImportPreview: (reportId, body, { signal } = {}) => request(
+      `/tech-error-reports/reports/${encodeURIComponent(reportId)}/incident-imports/preview`,
+      { method: 'POST', body: JSON.stringify(body), withStatus: true, timeoutMs: 30_000, ...(signal ? { signal } : {}) }),
+    // İçe al (hepsi ya da hiçbiri): rapor ayrıntısının şekli + imported; 409 CONCURRENT_MODIFICATION / INCIDENT_ALREADY_IMPORTED,
+    // 400 SECTION_FULL / INCIDENT_NOT_FOUND / INCIDENT_OTHER_TEAM / REPORT_TOO_LARGE (alan incident_ids)
+    importIncidents: (reportId, body) => request(`/tech-error-reports/reports/${encodeURIComponent(reportId)}/incident-imports`,
+      { method: 'POST', body: JSON.stringify(body), withStatus: true, timeoutMs: 60_000 }),
+    // Bayat bağları eşitle (dondurulmuş raporda yazmaz): rapor ayrıntısının şekli
+    syncIncidentLinks: (reportId) => request(`/tech-error-reports/reports/${encodeURIComponent(reportId)}/incident-links/sync`,
+      { method: 'POST', body: '{}', withStatus: true, timeoutMs: 60_000 }),
+    // Tek bağı güncelle (dondurulmuşta da yazar): { version, unpin: [grup…] | "all" } → rapor ayrıntısının şekli
+    refreshIncidentLink: (reportId, sectionId, issueId, body) => request(
+      `/tech-error-reports/reports/${encodeURIComponent(reportId)}/incident-links/${encodeURIComponent(sectionId)}/${encodeURIComponent(issueId)}/refresh`,
+      { method: 'POST', body: JSON.stringify(body), withStatus: true, timeoutMs: 60_000 }),
+    // Bağı kopar: konu sıradan konu olarak kalır (içerik değişmez) → { incident_links }
+    unlinkIncident: (reportId, sectionId, issueId) => request(
+      `/tech-error-reports/reports/${encodeURIComponent(reportId)}/incident-links/${encodeURIComponent(sectionId)}/${encodeURIComponent(issueId)}`,
+      { method: 'DELETE', withStatus: true, timeoutMs: 60_000 }),
+    // Olay kaydının kullanıldığı raporlar (≤ 100; yalnız okunabilen raporlar)
+    incidentUsage: (incidentId, { signal } = {}) => request(
+      `/tech-error-reports/incident-usage?incident_id=${encodeURIComponent(incidentId)}`,
+      { withStatus: true, timeoutMs: 30_000, ...(signal ? { signal } : {}) }),
   },
   /** Sürüm & yayın yüzeyi — kimlikli HERKES (K9). Nav çipi popover'ı + Yardım → Yenilikler. */
   system: {

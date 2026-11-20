@@ -549,6 +549,11 @@ public final class RetentionCatalog {
                 "Kanal notu sürüm geçmişi (2026-11-20): her not kaydının tam kopyası (≤ 60 000 karakter) ve kaydedenin adı. "
                 + "Kanal başına en çok 20 sürüm (eskiler her kayıtta budanır); kanal silinince aynı işlemde silinir, öksüz "
                 + "satır burada temizlenir."),
+        orphan("tech-error-report-incidents-orphan", "tech_error_report_incidents",
+                "report_id NOT IN (SELECT id FROM tech_error_reports)", DataClass.PERSONAL,
+                "Teknik hata raporu anomali konusu ↔ olay kaydı canlı bağı (2026-11-20): rapor, bölüm, konu, olay kimliği, alan "
+                + "parmak izleri, sabitlenmiş alanlar ve içe alanın adı. Konu silinince / şablondan çıkınca, rapor ya da kanal "
+                + "silinince aynı işlemde silinir; eski bir pod'un bıraktığı öksüz satır burada temizlenir."),
         orphan("dbquery-alert-rows-orphan", "dbquery_alert_rows",
                 "NOT EXISTS (SELECT 1 FROM alert_events e WHERE e.id = dbquery_alert_rows.alert_event_id) "
                 + "OR NOT EXISTS (SELECT 1 FROM dbquery_monitors m WHERE m.id = dbquery_alert_rows.monitor_id)", DataClass.PERSONAL,

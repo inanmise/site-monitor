@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-20T06:11:23Z",
+  "generatedAt": "2026-11-20T09:24:16Z",
   "repo": "inanmise/site-monitor",
-  "count": 868,
+  "count": 869,
   "releases": [
+    {
+      "version": "20.221.0",
+      "tag": "v20.221.0",
+      "releasedAt": "2026-11-20T09:24:05Z",
+      "commit": "6e438d3a57fb768f96651892ef0c5b62dd6c30ec",
+      "prevVersion": "20.220.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "6e438d3a",
+          "subject": "olay içe alma — Spinner bileşeni ve bölüm seçim kutularına erişilebilir ad"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "a7d14b47",
+          "subject": "kanal teknik hata raporu — olay kaydından anomali konusu (canlı bağ)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.220.0",
       "tag": "v20.220.0",

@@ -4,6 +4,13 @@ import {
   Trash2, Undo2, ShieldCheck } from 'lucide-react'
 import { api } from '../../api/client'
 import { useUnsavedWork } from '../../utils/unsavedWork.js'
+import { navigateTo } from '../../utils/navigate.js'
+import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
+import IncidentImportDialog from './incidents/IncidentImportDialog.jsx'
+import { IncidentOpContext } from './incidents/IncidentLinkParts.jsx'
+import {
+  failureMessage, hasStaleLink, importFailure, incidentParams, linkKey, linksIndex, reportFrozen,
+} from './incidents/incidentImportModel.js'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -40,7 +47,7 @@ import ChannelNotesCard from './notes/ChannelNotesCard.jsx'
 import {
   allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, dropIssueCaptions, embeddedSections, errorCountsBySection, hostOf,
   normalizeValues, parseIssueSlot, reportErrorSection, reportErrorTopic, fieldExempt, issueDisplayTitle, issueImageAlive, issueOptions,
-  issueValidation, monthName, outageAnswerConflict, resolvePlaceholders,
+  issueLegacy, issueValidation, monthName, outageAnswerConflict, resolvePlaceholders,
   resolveTextPlaceholders, revertInvalidValues, savedTopicOpenIds, stableJson, topicOpenId, trendRefs,
 } from './techErrorModel.js'
 import { storageOwner } from '../../utils/personalStorage.js'
@@ -90,6 +97,18 @@ const NO_SIDS = Object.freeze([])
 const HOT_SECTIONS = 2
 /** Anomali denetimindeki alanın görünen adı (durum satırı): anahtar → i18n; Kesinti ID şablonun etiketi. */
 const ISSUE_FIELD_LABEL = Object.freeze({ date: 'te.iss.date', start: 'te.iss.start', end: 'te.iss.end' })
+/** Olay kaydından alma / güncelleme önce kaydı kaydeder; kaydedilemezse NEDENİ (konu görseli yüklemesinin engelleriyle aynı). */
+/** İçe almada seçimi değiştirmeyi gerektiren retler: pencere seçim adımına döner (bölüm dolu, olay yok / başka takım, sınır). */
+const IMPORT_BACK_KINDS = new Set(['full', 'incident_gone', 'other_team', 'too_large', 'selection', 'section'])
+
+const INC_BLOCK_KEYS = Object.freeze({
+  conflict: 'te.inc.block.conflict',
+  held: 'te.inc.block.held',
+  invalid: 'te.inc.block.invalid',
+  network: 'te.inc.block.network',
+  server: 'te.inc.block.server',
+})
+const NO_LINKS_SRC = Object.freeze({})
 
 /** Raporun gönderim izi (son deneme / son gönderim / sayaç) — "o okumadan beri gönderim oldu mu?" karşılaştırması için. */
 const sendMarkOf = (r) => ({ attempt: r?.last_attempt_at ?? null, sent: r?.last_sent_at ?? null, count: r?.send_count ?? null,
@@ -129,6 +148,31 @@ function imageTopicIds(values, tpl) {
     out[s.id] = (values?.issues?.[s.id] || []).map((i) => i?.id ?? null)
   }
   return JSON.stringify(out)
+}
+
+/** Bölüm başına konu sayısı (içe alma penceresi bölümde kalan yeri bununla hesaplar). */
+function issueCountsBySection(values) {
+  const out = {}
+  for (const [sid, list] of Object.entries(values?.issues || {})) out[sid] = Array.isArray(list) ? list.length : 0
+  return out
+}
+
+/** İçe alma penceresinin bölüm seçenekleri: anomali bölümleri, başlık çözülmüş, soruları (`opts` + `legacy`) ile. */
+function sectionsOfIssues(tpl, resolve) {
+  return (tpl?.sections || []).filter((s) => s?.kind === 'issues' && typeof s.id === 'string').map((s) => {
+    const opts = issueOptions(s, tpl?.lang)
+    return { id: s.id, title: resolve(s.title || ''), opts: { ...opts, legacy: issueLegacy(opts) } }
+  })
+}
+
+/** Bağlı (olay kaydından gelen) konulardan biri iki değer kümesi arasında değişti mi? Silinen konu da değişikliktir. */
+function linkedTopicChanged(index, before, after) {
+  for (const l of index?.list || []) {
+    const a = (before?.issues?.[l.sectionId] || []).find((i) => i?.id === l.issueId)
+    const b = (after?.issues?.[l.sectionId] || []).find((i) => i?.id === l.issueId)
+    if (stableJson(a ?? null) !== stableJson(b ?? null)) return true
+  }
+  return false
 }
 
 /**
@@ -208,6 +252,18 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
   // Son kaydın neden OLMADIĞI (inceleme 2026-10-18): konu görselinden önceki kayıt başarısızsa yuva nedene göre konuşur —
   // 'invalid' | 'conflict' | 'network' | 'server'; başarıda null
   const lastSaveFailure = useRef(null)
+  // Olay kaydından konu (2026-11-20): açık içe alma penceresinin bölümü, süren bağ işlemi (`<bölüm>:<konu>`), açılıştaki tek
+  // eşitleme (yükleme başına bir kez — döngü yok), içe alınan ilk konuya odak
+  const perms = usePermissions()
+  const canViewIncidents = perms.canView('incidents.view')
+  const [importFor, setImportFor] = useState(null)
+  // Süren bağ işlemi `{ key, kind }` (kind: 'refresh' | 'unpin' | 'unlink') — yalnız o konunun kartı "sürüyor" der
+  const [linkOp, setLinkOp] = useState(null)
+  const [syncingLinks, setSyncingLinks] = useState(false)
+  const syncingRef = useRef(false)
+  const catchUpDone = useRef(false)
+  const linksSeq = useRef(0)
+  const [focusAfter, setFocusAfter] = useState(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [mailPreviewOpen, setMailPreviewOpen] = useState(false)   // e-posta önizlemesi (10. sürüm)
   const [sendDialog, setSendDialog] = useState(null)              // gönderim penceresi (R18 / C13): { error } | null
@@ -283,6 +339,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
     const cur = draftRef.current
     const wasClean = cur == null || isSavedJson(canonWith(cur, prevTpl))
     const versionMoved = baseRef.current.version != null && resData.report.version !== baseRef.current.version
+    // Bu yanıtın bağları, ondan ÖNCE başlamış yalnız-bağ okumasından yenidir: geç gelen o okuma bunları ezmesin
+    linksSeq.current++
     setData(resData)
     setImages(resData.images || [])
     if (keepDraft && !wasClean && versionMoved && json === canonWith(cur, nextTpl)) {
@@ -438,6 +496,24 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
   const tpl = data?.template
   const report = data?.report
   const channel = data?.channel
+  // Olay kaydı bağları (2026-11-20): dizin yalnız bağ alanları değişince yeniden kurulur (kayıt yanıtı `data`yı yenilese de).
+  // Alan hiç yoksa (eski pod) 'absent' — hiçbir şey iddia edilmez; okunamadıysa 'error' — bağlı konular "bilinmiyor"
+  const dataLoaded = data != null
+  const linksPresent = dataLoaded && Object.prototype.hasOwnProperty.call(data, 'incident_links')
+  const linksRaw = data?.incident_links
+  const linksError = data?.incident_links_error === true
+  const linkIndex = useMemo(() => linksIndex(!dataLoaded ? null
+    : (linksPresent || linksError ? { incident_links: linksRaw, incident_links_error: linksError } : NO_LINKS_SRC)),
+  [dataLoaded, linksPresent, linksRaw, linksError])
+  const linkIndexRef = useRef(linkIndex)
+  linkIndexRef.current = linkIndex
+  syncingRef.current = syncingLinks
+  // "Olay kaydından al": yazabilen + olay kayıtlarını okuyabilen kullanıcı; eski pod (bağ alanı hiç yok) düğmeyi göstermez
+  const canImport = !readOnly && canViewIncidents && linkIndex.known !== 'absent'
+  // Bir işlem (kayıt, PDF, gönderim, bağ işlemi) ya da açılış eşitlemesi sürerken olay kaydı eylemleri KAPALI (görünür) —
+  // bağlam olarak: kart memo'su bozulmaz, yalnız çubuk / işaret / içe alma düğmesi yeniden çizilir
+  const incidentLocked = busy != null || syncingLinks
+  const incidentOpCtx = useMemo(() => ({ locked: incidentLocked }), [incidentLocked])
   // Bu penceredeki görsel değişikliği sayacı: eşitleme okuması bu pencerenin daha yeni yüklemesini ezmesin
   const imagesGen = useRef(0)
   const imagesRef = useRef(images)
@@ -627,7 +703,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
       if (res?.success && res.data) {
         const values = normalizeValues(res.data.values)
         const baseJson = canonJson(values)
-        const prevTopics = imageTopicIds(parseJsonOr(baseRef.current.json), canonTpl.current)
+        const prevBase = parseJsonOr(baseRef.current.json)
+        const prevTopics = imageTopicIds(prevBase, canonTpl.current)
         applyBase({ json: baseJson, version: res.data.version })
         // Görsel paneli konu görsellerini KAYITLI konulardan listeler (2026-10-18): kayıt görsel alan bir bölümün konu listesini
         // değiştirdiyse (eklenen konu; silinen konu — sunucu görsellerini de bu kayıtta sildi) açık panel yeniden okusun
@@ -659,6 +736,15 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
         setData((d) => (d ? { ...d, report: { ...d.report, version: res.data.version, updated_at: res.data.updated_at,
           updated_by_name: res.data.updated_by_name ?? d.report.updated_by_name,
           status: d.report.status === 'sent' && res.data.changed ? 'changed' : d.report.status } } : d))
+        // Olay kaydı bağları (2026-11-20): sunucu her kayıtta elle değiştirilen alanları "iğneler" ve silinen konunun bağını
+        // siler. Kayıt yanıtı bağları taşıyorsa doğrudan; taşımıyorsa ve bağlı bir konu değiştiyse yalnız bağlar yeniden okunur
+        // (taslağa / tabana dokunulmaz) — "elle değiştirildi" işareti bir sonraki yüklemeyi beklemesin
+        if (Array.isArray(res.data.incident_links)) {
+          linksSeq.current++
+          setData((d) => (d ? { ...d, incident_links: res.data.incident_links, incident_links_error: false } : d))
+        } else if (linkedTopicChanged(linkIndexRef.current, prevBase, values)) {
+          refreshLinksOnly()
+        }
         autoBlocked.current = null
         autoBackoff.current = { until: 0, n: 0 }
         lastSaveFailure.current = null
@@ -1445,11 +1531,276 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
   }
   const beforeIssueUpload = useCallback(async (sid, iid) => (await beforeIssueUploadRef.current?.(sid, iid)) ?? { ok: false, reason: 'server' }, [])
 
+  // ── Olay kaydından konu (2026-11-20, CANLI bağ) ─────────────────────────────────────────────────────────────────────────
+  // Sunucuya yazan her bağ işlemi (içe alma, güncelleme, iğne kaldırma) önce kaydedilmemiş taslağı kaydeder — konu görseli
+  // yüklemesinin engelleriyle aynı: çakışma, eski sürümlü yedek, geçersiz / yarım alan; kayıt başarısızsa nedeni. Yanıt (rapor
+  // ayrıntısının şekli) bir YENİDEN YÜKLEME gibi uygulanır (taban + taslak + görseller + bağlar).
+  const prepareWriteRef = useRef(null)
+  prepareWriteRef.current = async () => {
+    if (readOnly) return { ok: false, reason: 'server' }
+    await settleSave()
+    if (conflictRef.current) return { ok: false, reason: 'conflict' }
+    if (isSavedJson(canonJson(draftRef.current)) && !hasAny(pendingRef.current) && !blockingNow()) return { ok: true }
+    if (autoHoldRef.current) return { ok: false, reason: 'held' }
+    if (blockingNow() || hasAny(pendingRef.current)) { revealErrors(); return { ok: false, reason: 'invalid' } }
+    // Kayıttan ÖNCEKİ taslak: `draftRef` çizimde güncellenir — kayıt sunucunun düzelttiği metni (sondaki boşluk) yazdıysa
+    // ham taslak tabana eşit değildir ama kaydedilmiştir (inceleme 2026-11-20: eskiden "Rapor kaydedilemedi" deniyordu)
+    const before = canonJson(draftRef.current)
+    const ok = await save({ quiet: true })
+    if (ok) {
+      const now = canonJson(draftRef.current)
+      if (isSavedJson(now)) return { ok: true }
+      if (now === before) {
+        // Gönderilen taslak bu; sunucu düzeltip kaydetti — otomatik kayıttaki gibi "kabul edildi" işaretlenir ki yanıtın
+        // uygulanması taslağı temiz saysın
+        accepted.current = { sent: before, base: baseRef.current.json }
+        return { ok: true }
+      }
+    }
+    return { ok: false, reason: lastSaveFailure.current || 'server' }
+  }
+  const blockToast = (reason) => toast.error(t(INC_BLOCK_KEYS[reason] || INC_BLOCK_KEYS.server))
+
+  /** Sunucunun döndürdüğü rapor ayrıntısını yeniden yükleme gibi uygular (taslak temizdi — önce kaydedildi). */
+  function applyServerDetail(resData) {
+    seq.current++
+    loadInFlight.current = false
+    statusGen.current++
+    // Önce uygulanır, SONRA kabul işareti silinir (inceleme 2026-11-20): otomatik kayıttan sonra sunucu sondaki boşluğu
+    // kırptıysa taslak yalnız `accepted` sayesinde temizdir — önce silinseydi yanıt çakışma sayılıp UYGULANMAZDI (konular
+    // görünmez, otomatik kayıt dururdu) ama başarı iletisi çıkardı. Bağ okumasının sırası applyLoaded'da ilerletilir.
+    applyLoaded(resData, true)
+    accepted.current = null
+    autoBlocked.current = null
+    setState((s) => (s.loading || s.error ? { loading: false, error: null, status: null } : s))
+    setPreviewRev(bumpMailPreviewContent(reportId))
+    postImagesChanged(reportId, KIND_REPORT)
+  }
+
+  /** Kayıttan sonra yalnız bağları yeniden okur (iğneler kayıtta sunucuda belirlenir); taslağa / tabana dokunmaz. */
+  async function refreshLinksOnly() {
+    const my = ++linksSeq.current
+    let res
+    try {
+      res = await api.techErrors.report(reportId)
+    } catch {
+      res = null
+    }
+    if (my !== linksSeq.current || !res?.success || !res.data) return
+    if (!Object.prototype.hasOwnProperty.call(res.data, 'incident_links') && res.data.incident_links_error !== true) return
+    setData((d) => (d ? { ...d, incident_links: res.data.incident_links ?? null, incident_links_error: res.data.incident_links_error === true } : d))
+  }
+
+  const issueSectionsForImport = useMemo(() => sectionsOfIssues(tpl, resolve), [tpl, resolve])
+  const openImport = useLatestCallback(async (sid) => {
+    // Düğme işlem sürerken zaten kapalı (IncidentOpContext); bu, eşzamanlı ikinci tıklamaya karşı ek kilit
+    if (busy != null || importFor != null || syncingRef.current) return
+    const prep = await prepareWriteRef.current()
+    if (!prep.ok) { blockToast(prep.reason); return }
+    setImportFor(sid)
+  })
+
+  /**
+   * Olay arada bu rapora başka yerde alındı (409 INCIDENT_ALREADY_IMPORTED): raporun sürümü ilerledi — taslak temizdi (önce
+   * kaydedildi), en son hâl okunur; pencere açık kalır ve bağ listesi (bu raporda olanlar) güncellenir.
+   */
+  const reloadAfterImportRace = useLatestCallback(() => { load({ keepDraft: true }) })
+
+  /** İçe alma (pencerenin onayı): önce kayıt, sonra yazma; sonuç pencereye `{ ok, closed?, kind?, message?, incidentId? }`. */
+  async function runImport(body) {
+    const prep = await prepareWriteRef.current()
+    if (!prep.ok) return { ok: false, kind: 'blocked', message: t(INC_BLOCK_KEYS[prep.reason] || INC_BLOCK_KEYS.server) }
+    setBusy('incident')
+    let res
+    try {
+      res = await api.techErrors.importIncidents(reportId, { version: baseRef.current.version, ...body })
+    } catch {
+      res = null
+    } finally {
+      setBusy(null)
+    }
+    if (res?.success && res.data?.report) {
+      applyServerDetail(res.data)
+      const sid = body.section_id
+      const imported = Array.isArray(res.data.imported) ? res.data.imported : []
+      const ids = imported.map((x) => x?.issue_id).filter((x) => typeof x === 'string' && x)
+      const notes = imported.reduce((a, x) => a + (Array.isArray(x?.notes) ? x.notes.length : 0), 0)
+      if (ids.length) {
+        openMany([sid])
+        openTopicsMany(ids.map((iid) => topicOpenId(sid, iid)))
+        setFocusAfter({ sid, iid: ids[0], tries: 0 })
+      }
+      const n = ids.length || body.incident_ids.length
+      toast.success(`${t(n === 1 ? 'te.inc.done.one' : 'te.inc.done', n)}${notes ? ` ${t('te.inc.doneNotes')}` : ''}`)
+      setImportFor(null)
+      return { ok: true }
+    }
+    const f = importFailure(res)
+    if (f.kind === 'conflict' || f.kind === 'unsure') {
+      // Taslak temizdi: en son hâl yüklenir (içe alma sunucuda tamamlandıysa yeni konular görünür) — körlemesine yeniden denenmez
+      setImportFor(null)
+      if (f.kind === 'conflict') toast.error(t('te.inc.err.conflict'))
+      else toast.info(t('te.inc.importUnsure'), 10000)
+      load({ keepDraft: true })
+      return { ok: false, closed: true }
+    }
+    // Her sunucu kodu kendi cümlesiyle (ham kod yok); türün cümlesi yoksa sunucunun (dilli) metni, o da yoksa genel metin
+    const msg = failureMessage(f)
+    const message = msg ? t(msg.key, ...msg.params) : (res?.error || t('te.inc.importFailed'))
+    return { ok: false, kind: f.kind, incidentId: f.incidentId ?? null, message, back: IMPORT_BACK_KINDS.has(f.kind),
+      retryAfter: f.retryAfter ?? null }
+  }
+
+  /** Bağı güncelle (`unpin` = [] — yalnız eşitle; [grup] — o alanı olaydaki değere döndür; 'all' — hepsini). */
+  async function refreshLink(sid, iid, unpin) {
+    const key = linkKey(sid, iid)
+    const lk = linkIndexRef.current.byTopic.get(key)
+    if (!lk || busy != null || syncingRef.current) return
+    if (lk.state === 'frozen_stale' || reportFrozen(report)) {
+      // Dondurulmuş rapor kendiliğinden değişmez; elle güncelleme raporu "değişti" yapar / onayı eskitir — sorulur
+      const ok = await showConfirm({ title: t('te.inc.updateFrozenTitle'), message: t('te.inc.updateFrozenBody'), variant: 'warning',
+        confirmText: t('te.inc.updateFrozenConfirm'), cancelText: t('te.cancel') })
+      if (!ok) return
+    }
+    const prep = await prepareWriteRef.current()
+    if (!prep.ok) { blockToast(prep.reason); return }
+    setLinkOp({ key, kind: Array.isArray(unpin) && unpin.length === 0 ? 'refresh' : 'unpin' })
+    setBusy('incident')
+    let res
+    try {
+      res = await api.techErrors.refreshIncidentLink(reportId, sid, iid, { version: baseRef.current.version, unpin })
+    } catch {
+      res = null
+    } finally {
+      setLinkOp(null)
+      setBusy(null)
+    }
+    if (res?.success && res.data?.report) {
+      applyServerDetail(res.data)
+      toast.success(t(unpin === 'all' || (Array.isArray(unpin) && unpin.length) ? 'te.inc.unpinned' : 'te.inc.updated'))
+      return
+    }
+    const f = importFailure(res)
+    if (f.kind === 'conflict') { toast.error(t('te.inc.err.conflict')); load({ keepDraft: true }); return }
+    if (f.kind === 'unsure') { toast.info(t('te.inc.updateUnsure'), 10000); load({ keepDraft: true }); return }
+    // Bağ ya da olay artık yok (404 kodlu): bağlar yeniden okunur — çubuk gerçek durumu ("silindi" / "erişim yok") gösterir
+    if (f.kind === 'link_gone') { toast.error(t('te.inc.err.linkGone')); refreshLinksOnly(); return }
+    if (f.kind === 'incident_gone') { toast.error(t('te.inc.err.incidentGoneRefresh')); refreshLinksOnly(); return }
+    const msg = failureMessage(f)
+    toast.error(msg ? t(msg.key, ...msg.params) : (res?.error || t('te.inc.updateFailed')), { details: res?.errorInfo })
+  }
+
+  /** Bağı kopar: konu sıradan konu olarak kalır (içerik değişmez → kayıt gerekmez). */
+  async function unlinkTopic(sid, iid) {
+    const key = linkKey(sid, iid)
+    const lk = linkIndexRef.current.byTopic.get(key)
+    if (!lk || busy != null || syncingRef.current) return
+    const name = lk.title || (lk.incidentId != null ? `#${lk.incidentId}` : '')
+    const ok = await showConfirm({ title: t('te.inc.unlinkTitle'), message: t('te.inc.unlinkBody', name), variant: 'warning',
+      confirmText: t('te.inc.unlinkConfirm'), cancelText: t('te.cancel') })
+    if (!ok) return
+    // İçe alma / güncelleme ile ASLA paralel değil: düzenleyicinin işlem kilidi alınır, her durumda bırakılır
+    setLinkOp({ key, kind: 'unlink' })
+    setBusy('incident')
+    let res
+    try {
+      res = await api.techErrors.unlinkIncident(reportId, sid, iid)
+    } catch {
+      res = null
+    } finally {
+      setLinkOp(null)
+      setBusy(null)
+    }
+    if (res?.success) {
+      linksSeq.current++
+      const next = res.data?.incident_links
+      setData((d) => (d ? { ...d, incident_links: Array.isArray(next) ? next
+        : (Array.isArray(d.incident_links) ? d.incident_links.filter((x) => !(x?.section_id === sid && x?.issue_id === iid)) : d.incident_links) } : d))
+      toast.success(t('te.inc.unlinked'))
+      return
+    }
+    const f = importFailure(res)
+    if (f.kind === 'unsure') { toast.info(t('te.inc.unlinkUnsure'), 10000); refreshLinksOnly(); return }
+    // Bağ zaten yok (başka pencerede koparılmış / konu silinmiş): bağlar yeniden okunur
+    if (f.kind === 'link_gone') { toast.info(t('te.inc.err.linkGone')); refreshLinksOnly(); return }
+    const msg = failureMessage(f)
+    toast.error(msg ? t(msg.key, ...msg.params) : (res?.error || t('te.inc.unlinkFailed')), { details: res?.errorInfo })
+  }
+
+  // Kartların tek, SABİT geri çağrısı (kart memo'su bozulmasın)
+  const onIncidentLink = useLatestCallback((action, sid, iid, arg) => {
+    const lk = linkIndexRef.current.byTopic.get(linkKey(sid, iid))
+    if (action === 'open') {
+      if (lk?.incidentId != null) leave(() => navigateTo('incident-history', incidentParams(lk.incidentId)))
+      return
+    }
+    if (action === 'unlink') { unlinkTopic(sid, iid); return }
+    if (action === 'refresh') { refreshLink(sid, iid, []); return }
+    if (action === 'unpin' && typeof arg === 'string') { refreshLink(sid, iid, [arg]); return }
+    if (action === 'unpinAll') refreshLink(sid, iid, 'all')
+  })
+
+  // Açılışta bayat bağ varsa TEK eşitleme (yükleme başına bir kez; döngü yok). Yanıt yalnız taslak hâlâ temizse uygulanır;
+  // değilse çip "olay değişti" + "Güncelle" kalır (kullanıcının sonraki kaydı 409 / çakışma uyarısı alır)
+  useEffect(() => {
+    if (catchUpDone.current || !hasData || readOnly || !hasStaleLink(linkIndex)) return
+    if (dirty || conflict || autoHold || busy != null || state.loading) return
+    catchUpDone.current = true
+    const loadSeq = seq.current
+    setSyncingLinks(true)
+    syncingRef.current = true
+    ;(async () => {
+      let res
+      try {
+        res = await api.techErrors.syncIncidentLinks(reportId)
+      } catch {
+        res = null
+      } finally {
+        syncingRef.current = false
+        setSyncingLinks(false)
+      }
+      if (!res?.success || !res.data?.report || loadSeq !== seq.current) return
+      await settleSave()
+      // Arada yükleme / yazma oldu: bu yanıt eski — atılır
+      if (loadSeq !== seq.current) return
+      if (!isSavedJson(canonJson(draftRef.current))) {
+        // Kullanıcı bu arada yazdı: sunucu ZATEN yazdı (sürüm ilerledi). Yanıt taslağın yerine geçmez ama çakışma HEMEN
+        // söylenir (taslak korunur) — eskiden sonraki otomatik kayıt yanıltıcı bir 409 alıyordu (inceleme 2026-11-20)
+        applyLoaded(res.data, true)
+        return
+      }
+      if (hasAny(pendingRef.current)) {
+        // Taslak temiz ama yarım yazılmış giriş var: yanıt uygulanırsa giriş yeniden kurulur ve yazılan kaybolurdu —
+        // yalnız çakışma söylenir ("En son hâli yükle" taslağı yedekler)
+        setConflict(true)
+        return
+      }
+      applyServerDetail(res.data)
+    })()
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- yalnız koşullar değişince denenir; çağrı bir kez (catchUpDone)
+  }, [hasData, readOnly, linkIndex, dirty, conflict, autoHold, busy, state.loading])
+
+  // İçe alınan ilk konunun "Konu" alanına odak: konu açılıp çizilene dek kısa denemeler (en çok 5 × 50 ms)
+  useEffect(() => {
+    if (!focusAfter) return undefined
+    const el = globalThis.document?.getElementById(`te-iss-${focusAfter.sid}-${focusAfter.iid}-topic`)
+    if (el && !el.closest('[hidden]')) {
+      setFocusAfter(null)
+      el.focus?.({ preventScroll: false })
+      try { el.scrollIntoView?.({ block: 'center' }) } catch { /* jsdom */ }
+      return undefined
+    }
+    if (focusAfter.tries >= 5) { setFocusAfter(null); return undefined }
+    const h = setTimeout(() => setFocusAfter((f) => (f ? { ...f, tries: f.tries + 1 } : f)), 50)
+    return () => clearTimeout(h)
+  }, [focusAfter, gen])
+
   // Otomatik kayıt: 30 sn'de bir ve sekme gizlenirken; değişiklik yoksa, salt okunurda, çakışmada, başka bir işlem ya da
   // kayıt / yükleme sürerken atlanır
   const autoRef = useRef(null)
   autoRef.current = () => {
-    if (readOnly || conflict || autoHold || busy != null || savePromise.current || loadInFlight.current || !dirty) return
+    // Olay bağlarının açılış eşitlemesi sürerken de beklenir: eşitleme sürümü ilerletir, araya giren otomatik kayıt 409 alırdı
+    if (readOnly || conflict || autoHold || busy != null || savePromise.current || loadInFlight.current || syncingRef.current || !dirty) return
     if (Date.now() < autoBackoff.current.until) return
     save({ quiet: true, auto: true })
   }
@@ -1643,6 +1994,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
       <SectionOpenContext.Provider value={sectionCtx}>
       <TopicOpenContext.Provider value={topicCtx}>
       <PendingInputContext.Provider value={setFieldPending}>
+      <IncidentOpContext.Provider value={incidentOpCtx}>
       {sections.map((s) => {
         const key = `${s.id}:${gen}`
         // Özet kartına gömülü bölüm o kartın içinde çizilir (aşağıda SummaryBlock)
@@ -1660,7 +2012,11 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
             shownFields={hot ? shownFields : viewShownFields} resolve={resolve} uiLang={uiLang} readOnly={readOnly} errors={fieldErrors}
             onIssuesUpdate={updateIssues} onFieldError={setFieldError} onUnit={setUnit} reportId={reportId} images={images}
             onImagesChange={onImagesChange} period={issuePeriod}
-            beforeIssueUpload={beforeIssueUpload} captureNotice={s.id === firstIssueImagesId} />
+            beforeIssueUpload={beforeIssueUpload} captureNotice={s.id === firstIssueImagesId}
+            // Olay kaydından konu (2026-11-20): bölümün bağları + içe alma; geri çağrılar sabit, değerler ilkel
+            links={linkIndex.bySection.get(s.id) || null} linksKnown={linkIndex.known} canImport={canImport} onImport={openImport}
+            onIncidentLink={onIncidentLink} linkBusyKey={linkOp?.key ?? null} linkBusyKind={linkOp?.kind ?? null} syncingLinks={syncingLinks}
+            canOpenIncident={canViewIncidents} />
         }
         if (s.kind === 'summary') {
           return <SummaryBlock key={key} section={s} template={tpl} values={hot ? shownValues : viewShownValues} channelName={channel?.name} year={report?.year}
@@ -1684,6 +2040,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
         return <TextBlock key={key} section={s} values={vals} resolve={resolve} resolveText={resolveText} readOnly={readOnly}
           errors={fieldErrors} onText={textOnChange} />
       })}
+      </IncidentOpContext.Provider>
       </PendingInputContext.Provider>
       </TopicOpenContext.Provider>
       </SectionOpenContext.Provider>
@@ -1694,6 +2051,13 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
           onSend={!readOnly && canSend && busy == null && report.status !== 'sending'
             && (approvalRequired ? !!approvalDetail?.can_send_executive : data.team_email_set !== false) ? send : null}
           sendLabel={approvalRequired ? t('te.appr.sendExec') : (report.last_sent_at ? t('te.resend') : t('te.send'))} />
+      )}
+      {/* Olay kaydından konu al (2026-11-20): her açılışta yeni durum (pencere kapanınca sökülür) */}
+      {importFor != null && (
+        <IncidentImportDialog open reportId={reportId} sections={issueSectionsForImport} initialSectionId={importFor}
+          counts={issueCountsBySection(draft)} importedIds={linkIndex.incidentIds}
+          period={report ? { year: report.year, month: report.month } : null}
+          onClose={() => setImportFor(null)} onImport={runImport} onReportStale={reloadAfterImportRace} />
       )}
       {/* Gönderim penceresi (R18 / C13): eski onay sorusunun metni + bu gönderime ek Bilgi (CC); yalnız gönderebilen açar */}
       <SendDialog open={sendDialog != null} busy={busy === 'send'} serverError={sendDialog?.error || null}

@@ -1,6 +1,7 @@
 import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowDown, ArrowUp, CalendarClock, ChevronRight, EyeOff, FileText, Hash, ImageIcon, Plus, ScrollText, Tag, Trash2, Users, Wand2, Zap,
+  ArrowDown, ArrowUp, CalendarClock, ChevronRight, EyeOff, FileText, Hash, ImageIcon, Import, Link2, Plus, ScrollText, Tag, Trash2, Users,
+  Wand2, Zap,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -19,6 +20,8 @@ import { CollapsibleCard, ExpandAllButton, TopicOpenContext, supportsUntilFound,
 import { ImageSlotTile } from './ReportImages.jsx'
 import { CaptureSessionChip, CaptureStopNotice, useCaptureScope } from './capture/CaptureParts.jsx'
 import { postImagesChanged } from './capture/imageSync.js'
+import { IncidentOpContext, IncidentSourceBar, PinnedMarker } from './incidents/IncidentLinkParts.jsx'
+import { canWriteFromIncident } from './incidents/incidentImportModel.js'
 import {
   ISSUE_IMAGES, ISSUE_LIMITS, LIMITS, allFields, formatCount, formatPercent, issueDayLabel, issueDisplayTitle, issueHidden,
   issueLeadText, issueLegacy, issueOptions, issueRangeLabel, issueShare, issueSlotId, issueUnitKey, move, newIssue, reportMonthBounds,
@@ -56,9 +59,15 @@ const EMPTY = Object.freeze([])
  * konuyu açmak ya da yazmak öbür kartları çizdirmez.
  */
 function IssuesBlockImpl({ section, template, list = EMPTY, units = null, shownFields, resolve, uiLang, readOnly, errors, onIssuesUpdate,
-  onFieldError, onUnit = null, reportId, images = EMPTY, onImagesChange, period, beforeIssueUpload, captureNotice = false }) {
+  onFieldError, onUnit = null, reportId, images = EMPTY, onImagesChange, period, beforeIssueUpload, captureNotice = false,
+  // Olay kaydından konu (2026-11-20): bölümün bağları (konu kimliği → bağ), bağ listesinin bilinirliği ('ok' | 'error' |
+  // 'absent' — eski pod), içe alma düğmesi ve sabit geri çağrılar. Kartlara yalnız İLKEL değerler iner (memo bozulmasın)
+  links = null, linksKnown = 'absent', canImport = false, onImport = null, onIncidentLink = null, linkBusyKey = null, linkBusyKind = null,
+  syncingLinks = false, canOpenIncident = false }) {
   const t = useT()
   const sid = section.id
+  // Düzenleyicide işlem sürerken "Olay kaydından al" kapalı (eskiden tıklama sessizce yutuluyordu)
+  const { locked: incidentLocked } = useContext(IncidentOpContext)
   const topics = useContext(TopicOpenContext)
   const setTopicOpen = topics?.setOpen
   const openTopics = topics?.openMany
@@ -135,6 +144,13 @@ function IssuesBlockImpl({ section, template, list = EMPTY, units = null, shownF
           <span className="[overflow-wrap:anywhere]">{t('te.iss.hiddenCount', hidden)}</span>
         </p>
       )}
+      {/* Bağ listesi okunamadı: bağlı konular "bilinmiyor" — hiçbir kart bağ iddia etmez (eski podda hiç söylenmez) */}
+      {linksKnown === 'error' && list.length > 0 && (
+        <p className="m-0 flex items-start gap-2 text-sm text-muted-foreground" data-slot="te-inc-links-unknown" role="status">
+          <Link2 aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+          <span className="[overflow-wrap:anywhere]">{t('te.inc.linksUnknown')}</span>
+        </p>
+      )}
       <ol className="m-0 flex list-none flex-col gap-3 p-0">
         {list.map((iss, idx) => {
           const tk = topicKeys[idx]
@@ -150,7 +166,10 @@ function IssuesBlockImpl({ section, template, list = EMPTY, units = null, shownF
               open={open} collapsible={!!topics} onToggle={onToggle} invalid={topics && !open ? topics.invalidCount(tk) : 0}
               // Kısaltma üsleri (2026-10-18) kartın KENDİ iki değeri — memo başka konunun üssünde yeniden çizmesin
               onUnit={onUnit} errorsUnit={units?.[issueUnitKey(sid, iss.id, 'errors')] ?? null}
-              customersUnit={units?.[issueUnitKey(sid, iss.id, 'customers')] ?? null} />
+              customersUnit={units?.[issueUnitKey(sid, iss.id, 'customers')] ?? null}
+              // Olay kaydı bağı (2026-11-20): kartın KENDİ bağının ilkel değerleri (başka konunun bağı değişince bu kart çizilmez)
+              {...linkProps(links?.get(iss.id), linkBusyKey, linkBusyKind, topicOpenId(sid, iss.id), syncingLinks)} onIncidentLink={onIncidentLink}
+              canOpenIncident={canOpenIncident} />
           )
         })}
       </ol>
@@ -162,10 +181,25 @@ function IssuesBlockImpl({ section, template, list = EMPTY, units = null, shownF
               <Plus aria-hidden="true" /> {t('te.issues.add')}
             </Button>
           )}
+          {/* Olay kaydından al (2026-11-20): salt okunurda, olay okuma izni yokken ve eski podda (bağ listesi hiç yok) çizilmez;
+              bölüm doluysa devre dışı + nedeni altta */}
+          {!readOnly && canImport && (
+            <Button type="button" variant="outline" className="w-fit pointer-coarse:min-h-10" disabled={list.length >= LIMITS.issues || incidentLocked}
+              aria-describedby={list.length >= LIMITS.issues ? `te-inc-full-${sid}` : undefined} onClick={() => onImport?.(sid)}
+              data-slot="te-inc-import" data-locked={incidentLocked ? 'true' : undefined}>
+              <Import aria-hidden="true" /> {t('te.inc.open')}
+            </Button>
+          )}
           {/* Yalnız bu bölümün konuları (bölümlerin "Tümünü aç"ından bağımsız); salt okunurda da */}
           {topics && list.length > 0 && (
             <ExpandAllButton allOpen={allTopicsOpen} slot="te-issues-all" expandKey="te.iss.expandAll" collapseKey="te.iss.collapseAll"
               className="h-9 pointer-coarse:min-h-10" onToggle={(o) => (o ? openTopics?.(topicKeys) : closeTopics?.(topicKeys))} />
+          )}
+          {!readOnly && canImport && list.length >= LIMITS.issues && (
+            <p id={`te-inc-full-${sid}`} className="m-0 basis-full text-xs text-muted-foreground [overflow-wrap:anywhere]"
+              data-slot="te-inc-import-full">
+              {t('te.inc.openFull', LIMITS.issues)}
+            </p>
           )}
         </div>
       )}
@@ -186,6 +220,28 @@ function cardErrors(errors, sid, iid, idx) {
     if (v && (k.startsWith(a) || k.startsWith(b) || k === legacyKey)) out[k] = v
   }
   return out
+}
+
+const NO_LINK = Object.freeze({ linkIncidentId: null, linkState: null, linkTitle: null, linkStatus: null, linkPinned: '', linkNotes: '',
+  linkBusy: '', linkSyncing: false })
+
+/**
+ * Kartın olay kaydı bağı props'u (2026-11-20) — yalnız İLKEL değerler (iğneli gruplar ve notlar virgüllü metin): kart memo'su
+ * kimlikçe karşılaştırır, bağ nesnesi her okumada yeni olsa da değer aynıysa kart çizilmez. Bağ yoksa hepsi boş. `linkBusy` = bu
+ * konuda süren işlemin türü ('refresh' | 'unpin' | 'unlink') ya da '' — yalnız işlem gören kart yeniden çizilir.
+ */
+function linkProps(link, busyKey, busyKind, key, syncing) {
+  if (!link) return NO_LINK
+  return {
+    linkIncidentId: link.incidentId,
+    linkState: link.state,
+    linkTitle: link.title,
+    linkStatus: link.status,
+    linkPinned: link.pinned.join(','),
+    linkNotes: link.notes.join(','),
+    linkBusy: busyKey != null && busyKey === key ? (busyKind || 'refresh') : '',
+    linkSyncing: !!syncing && link.state === 'stale',
+  }
 }
 
 function shallowObj(a, b) {
@@ -216,7 +272,7 @@ function sameCardProps(prev, next) {
  * başlığı alanın etiketiyle aynı olabilir (açıklama) — etiketle arama iki öğe bulmasın, sayfada 30 adsız bölge oluşmasın.
  * Başlık h5: kartın konu başlığı (h4) altında — "Ne zaman?" hangi konunun olduğu belli olsun (inceleme 2026-10-18).
  */
-function Group({ icon: Icon, title, slot, children, first = false, copy = null }) {
+function Group({ icon: Icon, title, slot, children, first = false, copy = null, marker = null }) {
   return (
     <section data-slot={slot} className={cn('flex min-w-0 flex-col gap-3', !first && 'border-t pt-4')}>
       <div data-slot="te-copy-row" className="text-sm leading-snug [overflow-wrap:anywhere]">
@@ -226,6 +282,8 @@ function Group({ icon: Icon, title, slot, children, first = false, copy = null }
         </h5>
         {copy ? <CopyTextButton text={copy} /> : null}
       </div>
+      {/* Olaydan gelen alan elle değiştirildiyse (olayı izlemiyor) işaret + "Olaydaki değere dön" */}
+      {marker ? <div className="flex min-w-0 flex-wrap gap-2">{marker}</div> : null}
       {children}
     </section>
   )
@@ -309,12 +367,29 @@ const TOPIC_SIDE = 'flex min-h-[2.375rem] shrink-0 items-center pointer-coarse:m
 
 const IssueCard = memo(function IssueCard({ section, template, opts, legacy, issue: iss, index: idx, count, shownFields, resolve,
   uiLang, readOnly, errors, onFieldError, reportId, images, otherBytes, onImagesChange, period, beforeIssueUpload, onPatch, onMove,
-  onRemove, onUnit = null, errorsUnit = null, customersUnit = null, open = true, collapsible = false, onToggle = null, invalid = 0 }) {
+  onRemove, onUnit = null, errorsUnit = null, customersUnit = null, open = true, collapsible = false, onToggle = null, invalid = 0,
+  linkIncidentId = null, linkState = null, linkTitle = null, linkStatus = null, linkPinned = '', linkNotes = '', linkBusy = '',
+  linkSyncing = false, canOpenIncident = false, onIncidentLink = null }) {
   const t = useT()
   const { showConfirm } = useDialog()
   const sid = section.id
   const iid = iss.id
   const base = `te-iss-${sid}-${iid}`
+  // Olay kaydı bağı (2026-11-20): iğneli (elle değiştirilmiş) gruplar ve son eşitlemenin notları virgüllü metinden
+  const linked = linkState != null
+  const pinnedList = useMemo(() => (linkPinned ? linkPinned.split(',') : EMPTY), [linkPinned])
+  const notesList = useMemo(() => (linkNotes ? linkNotes.split(',') : EMPTY), [linkNotes])
+  const linkAction = useCallback((action, arg) => onIncidentLink?.(action, sid, iid, arg), [onIncidentLink, sid, iid])
+  const unpin = useCallback((g) => linkAction('unpin', g), [linkAction])
+  /** Verilen gruplardan iğnelenenlerin işaretleri (hiçbiri iğneli değilse null — boş satır çizilmez). */
+  const markers = (...groups) => {
+    if (!linked) return null
+    const on = groups.filter((g) => pinnedList.includes(g))
+    if (!on.length) return null
+    // 'Olaydaki değere dön' olay kaydını okur: izinsiz / silinmiş / erişilemeyen olayda yalnız işaret kalır
+    const canUnpin = canWriteFromIncident(linkState, { readOnly, canViewIncidents: canOpenIncident })
+    return on.map((g) => <PinnedMarker key={g} group={g} busy={linkBusy} readOnly={!canUnpin} onUnpin={unpin} />)
+  }
   // Katlanır konu: içerik kapalıyken de kurulu kalır (hidden="until-found" — sayfada bul açar)
   const contentRef = useRef(null)
   const onFound = useMemo(() => (collapsible && onToggle ? () => onToggle(iid, true) : null), [collapsible, onToggle, iid])
@@ -365,6 +440,12 @@ const IssueCard = memo(function IssueCard({ section, template, opts, legacy, iss
   }
 
   const chips = []
+  // Olay kaydından gelen konu: başlıkta kaynak çipi (kapalı konu da kaynağını söyler)
+  if (linked) {
+    chips.push({ key: 'incident', icon: Link2,
+      tone: linkState === 'stale' || linkState === 'frozen_stale' ? 'warn' : linkState === 'ok' ? null : 'muted',
+      text: linkState === 'hidden' ? t('te.inc.chipHidden') : t('te.inc.chip', linkIncidentId ?? '—') })
+  }
   if (!legacy && opts.askTime) {
     const day = issueDayLabel(iss.date, uiLang)
     const range = issueRangeLabel(iss, uiLang)
@@ -491,7 +572,12 @@ const IssueCard = memo(function IssueCard({ section, template, opts, legacy, iss
   const body = (
     <>
       <div className="flex flex-col gap-4 border-t px-3 pb-3 pt-4 sm:px-4 sm:pb-4">
-        <Group icon={Tag} title={t('te.iss.groupTopic')} slot="te-issue-topic" first>
+        {linked && (
+          <IncidentSourceBar incidentId={linkIncidentId} state={linkState} title={linkTitle} status={linkStatus} pinned={pinnedList}
+            notes={notesList} busy={linkBusy} syncing={linkSyncing} readOnly={readOnly} canOpenIncident={canOpenIncident}
+            onAction={linkAction} slotBase={base} />
+        )}
+        <Group icon={Tag} title={t('te.iss.groupTopic')} slot="te-issue-topic" first marker={markers('topic')}>
           <div className="grid gap-3 md:grid-cols-2">
             <div className="flex min-w-0 flex-col gap-1.5" data-field={fieldKey('topic')}>
               <label htmlFor={`${base}-topic`} className="text-sm font-medium">{t('te.issues.topic')}</label>
@@ -526,7 +612,8 @@ const IssueCard = memo(function IssueCard({ section, template, opts, legacy, iss
         </Group>
 
         {!legacy && opts.askTime && (
-          <Group icon={CalendarClock} title={resolve(opts.timeLabel)} copy={resolve(opts.timeLabel)} slot="te-issue-when">
+          <Group icon={CalendarClock} title={resolve(opts.timeLabel)} copy={resolve(opts.timeLabel)} slot="te-issue-when"
+            marker={markers('date', 'time')}>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)]">
               <div className="col-span-2 flex min-w-0 flex-col gap-1.5 sm:col-span-1" data-field={fieldKey('date')}>
                 <label htmlFor={`${base}-date`} className="text-sm font-medium">{t('te.iss.date')}</label>
@@ -570,7 +657,8 @@ const IssueCard = memo(function IssueCard({ section, template, opts, legacy, iss
           </Group>
         )}
 
-        <Group icon={Hash} title={t('te.iss.groupCount')} slot="te-issue-count">
+        <Group icon={Hash} title={t('te.iss.groupCount')} slot="te-issue-count"
+          marker={(legacy || !opts.askImpact) ? markers('errors', 'impact') : markers('errors')}>
           <div className={cn('grid gap-3', (shareBlock || (legacy || !opts.askImpact)) && 'sm:grid-cols-2')}>
             {numberField('errors', section.errors_label)}
             {shareBlock}
@@ -579,7 +667,7 @@ const IssueCard = memo(function IssueCard({ section, template, opts, legacy, iss
         </Group>
 
         {!legacy && opts.askOutage && (
-          <Group icon={Zap} title={t('te.iss.groupOutage')} slot="te-issue-outage">
+          <Group icon={Zap} title={t('te.iss.groupOutage')} slot="te-issue-outage" marker={markers('outage')}>
             <div className="flex min-w-0 flex-col gap-1.5" data-field={fieldKey('outage')}>
               <div data-slot="te-copy-row" className="text-sm leading-snug [overflow-wrap:anywhere]">
                 <span id={`${base}-outage-l`} className="inline text-sm font-medium">{resolve(opts.outageLabel)}</span>
@@ -614,7 +702,7 @@ const IssueCard = memo(function IssueCard({ section, template, opts, legacy, iss
         )}
 
         {!legacy && opts.askImpact && (
-          <Group icon={Users} title={t('te.iss.groupImpact')} slot="te-issue-impact">
+          <Group icon={Users} title={t('te.iss.groupImpact')} slot="te-issue-impact" marker={markers('impact')}>
             <div className="flex min-w-0 flex-col gap-1.5" data-field={fieldKey('impact')}>
               <div data-slot="te-copy-row" className="text-sm leading-snug [overflow-wrap:anywhere]">
                 <span id={`${base}-impact-l`} className="inline text-sm font-medium">{resolve(opts.impactLabel)}</span>
@@ -658,7 +746,8 @@ const IssueCard = memo(function IssueCard({ section, template, opts, legacy, iss
           </div>
         )}
 
-        <Group icon={FileText} title={resolve(section.description_label)} copy={resolve(section.description_label)} slot="te-issue-desc">
+        <Group icon={FileText} title={resolve(section.description_label)} copy={resolve(section.description_label)} slot="te-issue-desc"
+          marker={markers('description')}>
           <div className="flex min-w-0 flex-col gap-1.5" data-field={fieldKey('description')}>
             <label htmlFor={`${base}-desc`} className="sr-only">{resolve(section.description_label)}</label>
             <RichTextarea id={`${base}-desc`} rows={4} value={iss.description || ''} disabled={readOnly} maxLength={LIMITS.longText}

@@ -65,11 +65,21 @@ public class TechErrorHistoryService {
     @Transactional
     public TechErrorReportEvent record(TechErrorReport r, String kind, Long actorId, Long reportVersion,
                                        Map<String, Object> detail, Instant at) {
-        return insert(r, kind, actorId, reportVersion, detail, at);
+        return insert(r, kind, actorId, null, reportVersion, detail, at);
+    }
+
+    /**
+     * Olay yazar — yapanın adı AÇIKÇA verilir (2026-11-20, olay kaydı senkronu: kişi yok, ad "SiteMonitor"; {@code actorId}
+     * null ise API {@code system: true} der). {@code actorName} null ise {@code actorId}'nin adı okunur.
+     */
+    @Transactional
+    public TechErrorReportEvent record(TechErrorReport r, String kind, Long actorId, String actorName, Long reportVersion,
+                                       Map<String, Object> detail, Instant at) {
+        return insert(r, kind, actorId, actorName, reportVersion, detail, at);
     }
 
     /** Olay satırı + budama; işlem açmaz (çağıranınkine katılır, yoksa her depo çağrısı kendi işleminde). */
-    private TechErrorReportEvent insert(TechErrorReport r, String kind, Long actorId, Long reportVersion,
+    private TechErrorReportEvent insert(TechErrorReport r, String kind, Long actorId, String actorName, Long reportVersion,
                                         Map<String, Object> detail, Instant at) {
         TechErrorReportEvent e = new TechErrorReportEvent();
         e.setReportId(r.getId());
@@ -77,7 +87,7 @@ public class TechErrorHistoryService {
         e.setTeamId(r.getTeamId());
         e.setEventAt(at);
         e.setActorId(actorId);
-        e.setActorName(nameOf(actorId));
+        e.setActorName(actorName != null ? (actorName.length() > 200 ? actorName.substring(0, 200) : actorName) : nameOf(actorId));
         e.setKind(kind);
         e.setReportVersion(reportVersion);
         e.setDetailJson(json(detail));
@@ -115,6 +125,22 @@ public class TechErrorHistoryService {
     @Transactional
     public boolean recordValues(TechErrorReport saved, Template t, Values before, Values after, String channelName,
                                 Long by, Instant at, boolean auto) {
+        Map<String, Object> detail = changesDetail(saved, t, before, after, channelName);
+        if (auto) {
+            detail.put("auto", true);
+            if (mergeAuto(saved, detail, by, at)) return true;
+            detail.put("saves", 1);
+            detail.put("first_at", at.toString());
+        }
+        record(saved, "VALUES", by, saved.getVersion(), detail, at);
+        return false;
+    }
+
+    /**
+     * Değer farkının olay ayrıntısı ({@code changes} + {@code more}; fark hesaplanamazsa {@code unavailable}). Değer kaydı ve
+     * olay kaydı senkronu (2026-11-20, INCIDENT_IMPORT / INCIDENT_SYNC) aynı biçimi yazar.
+     */
+    public Map<String, Object> changesDetail(TechErrorReport saved, Template t, Values before, Values after, String channelName) {
         Map<String, Object> detail = new LinkedHashMap<>();
         try {
             TechErrorChangeDiff.Result d = TechErrorChangeDiff.diff(t, before, after, channelName, saved.getReportYear(),
@@ -139,14 +165,7 @@ public class TechErrorHistoryService {
             detail.put("changes", List.of());
             detail.put("unavailable", true);
         }
-        if (auto) {
-            detail.put("auto", true);
-            if (mergeAuto(saved, detail, by, at)) return true;
-            detail.put("saves", 1);
-            detail.put("first_at", at.toString());
-        }
-        record(saved, "VALUES", by, saved.getVersion(), detail, at);
-        return false;
+        return detail;
     }
 
     /**
@@ -318,7 +337,7 @@ public class TechErrorHistoryService {
         try {
             Map<String, Object> detail = sendDetail(state, recipients, reason);
             if (extra != null) detail.putAll(extra);
-            insert(r, kind, by, null, detail, at);
+            insert(r, kind, by, null, null, detail, at);
         } catch (RuntimeException e) {
             log.warn("Teknik hata raporu #{} gönderim olayı yazılamadı: {}", r.getId(), e.toString());
         }

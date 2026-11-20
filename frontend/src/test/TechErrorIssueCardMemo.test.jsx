@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from './test-utils.jsx'
+import { render, screen, fireEvent, waitFor, within } from './test-utils.jsx'
+import { pressMenuTrigger } from './helpers/dropdownMenu.js'
 import { channel, overview, reportResponse, templateResponse, TEMPLATE, openAllSections } from './helpers/techErrorFixtures.js'
 
 // Anomali kartları yazarken yeniden ÇİZİLMEZ (inceleme 2026-10-18 — ImagesBlock memo kuralının eşi): bir konunun alanına yazmak
@@ -23,6 +24,7 @@ vi.mock('../api/client', () => ({
     techErrors: {
       overview: vi.fn(), reports: vi.fn(), report: vi.fn(), template: vi.fn(), saveReport: vi.fn(), uploadImage: vi.fn(),
       deleteImage: vi.fn(), imageUrl: (id) => `/api/tech-error-reports/images/${id}`,
+      syncIncidentLinks: vi.fn(), unlinkIncident: vi.fn(), refreshIncidentLink: vi.fn(),
     },
   }),
 }))
@@ -103,5 +105,30 @@ describe('anomali kartı memo', () => {
     expect(toggle('k2')).toHaveAttribute('aria-expanded', 'true')
     expect(renders.get('iss:issues:k1:1')).toBe(k1Now)
     expect(renders.get('iss:issues:k2:1')).toBeGreaterThan(k2Before)
+  })
+  it('olay kaydına bağlı konular (2026-11-20): yazmak ve bir konunun bağını koparmak öbür bağlı konunun kartını çizmez', async () => {
+    const lnk = (iid, id) => ({ section_id: 'issues', issue_id: iid, incident_id: id, state: 'ok', title: `Olay ${id}`, status: 'RESOLVED',
+      occurred_at: '2026-09-12T11:00:00', pinned: [], notes: [], synced_at: '2026-10-01T08:00:00', incident_updated_at: '2026-09-30T08:00:00' })
+    te().report.mockResolvedValue(reportResponse({ template: TPL, values: { fields: { 'error-count': 5000 },
+      issues: { issues: [topic('k1', 'Kart'), topic('k2', 'Fatura')] }, texts: {} }, incident_links: [lnk('k1', 9), lnk('k2', 10)] }))
+    te().unlinkIncident.mockResolvedValue({ success: true, data: { incident_links: [lnk('k2', 10)] } })
+    render(<TechErrorReportsPage />)
+    await screen.findByRole('heading', { name: TITLE })
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="te-issue-incident"]')).toHaveLength(2))
+    const k2Before = renders.get('iss:issues:k2:1')
+    // Bağlı konuya yazmak: bağ props'u ilkel — öbür kart çizilmez
+    const first = document.getElementById('te-iss-issues-k1-topic')
+    for (const v of ['K', 'Ka', 'Kart 2']) fireEvent.change(first, { target: { value: v } })
+    expect(renders.get('iss:issues:k2:1')).toBe(k2Before)
+    // Bağı koparmak (bağ listesi yeni dizi, k2'nin bağı yeni nesne ama aynı değerler): k2 çizilmez
+    pressMenuTrigger(screen.getByRole('button', { name: 'Olay #9 — Olay kaydı işlemleri' }))
+    const menu = await screen.findByRole('menu')
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /Bağı kopar/ }))
+    const dlg = await screen.findByRole('dialog', { name: 'Olay kaydıyla bağ koparılsın mı?' })
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Bağı kopar' }))
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="te-issue-incident"]')).toHaveLength(1))
+    expect(document.querySelector('[data-slot="te-issue-incident"]').getAttribute('data-incident')).toBe('10')
+    expect(renders.get('iss:issues:k2:1')).toBe(k2Before)
+    expect(te().syncIncidentLinks).not.toHaveBeenCalled()
   })
 })

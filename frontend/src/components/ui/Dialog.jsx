@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useRef, useEffect, useId } from 'react'
+import { createContext, useContext, useState, useCallback, useRef, useEffect, useId, useMemo } from 'react'
 import { Trash2, AlertTriangle, Info, CheckCircle, XCircle, LogOut, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/shadcn/button'
@@ -285,8 +285,13 @@ export function DialogProvider({ children }) {
     resolve(false)
   }
 
+  // Bağlam değeri SABİT (2026-11-20): işlevlerin hepsi kararlı; her pencere açılıp kapanışında yeni nesne vermek bütün
+  // tüketicileri (ör. memo'lu anomali konu kartlarını) gereksiz yere yeniden çizdiriyordu
+  const ctxValue = useMemo(() => ({ showConfirm, showPrompt, showAlert, showNoteConfirm }),
+    [showConfirm, showPrompt, showAlert, showNoteConfirm])
+
   return (
-    <DialogCtx.Provider value={{ showConfirm, showPrompt, showAlert, showNoteConfirm }}>
+    <DialogCtx.Provider value={ctxValue}>
       {children}
       {dialog && (
         <DialogModal dialog={dialog} onConfirm={handleConfirm} onCancel={handleCancel} />
