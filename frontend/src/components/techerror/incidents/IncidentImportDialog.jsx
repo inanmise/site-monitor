@@ -478,8 +478,9 @@ export default function IncidentImportDialog({ open, reportId, sections, initial
               <div className="grid gap-2 sm:grid-cols-2">
                 {DESCRIPTION_PARTS.map((p) => (
                   <div key={p} className="flex min-h-10 items-center gap-2.5">
-                    <Checkbox id={`te-inc-part-${p}`} checked={parts.has(p)} onCheckedChange={(c) => togglePart(p, c === true)} />
-                    <label htmlFor={`te-inc-part-${p}`} className="text-sm leading-snug">{t(partLabelKey(p))}</label>
+                    <Checkbox id={`te-inc-part-${p}`} checked={parts.has(p)} onCheckedChange={(c) => togglePart(p, c === true)}
+                      aria-labelledby={`te-inc-part-${p}-label`} />
+                    <label id={`te-inc-part-${p}-label`} htmlFor={`te-inc-part-${p}`} className="text-sm leading-snug">{t(partLabelKey(p))}</label>
                   </div>
                 ))}
               </div>

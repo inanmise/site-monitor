@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react'
-import { ExternalLink, Link2, Loader2, PenLine, RefreshCw, RotateCcw, Unlink } from 'lucide-react'
+import { ExternalLink, Link2, PenLine, RefreshCw, RotateCcw, Unlink } from 'lucide-react'
+import { Spinner } from '@/components/shadcn/spinner'
 import { useT } from '../../../i18n/index.jsx'
 import KebabMenu from '../../ui/KebabMenu.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -78,7 +79,7 @@ export function IncidentSourceBar({ incidentId, state, title, status = null, pin
           data-slot="te-issue-incident-source">{source}</span>
         <Badge variant="outline" className={cn('h-auto gap-1 whitespace-normal rounded-md py-1 text-xs leading-snug overflow-visible', TONE[meta.tone])}
           data-slot="te-issue-incident-state" data-state={state}>
-          {state === 'stale' && syncing ? <Loader2 aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" /> : null}
+          {state === 'stale' && syncing ? <Spinner aria-hidden="true" className="size-3.5" /> : null}
           <span>{t(meta.key)}</span>
         </Badge>
         {!hidden && status ? <IncidentStatusBadge status={status} /> : null}
@@ -88,13 +89,13 @@ export function IncidentSourceBar({ incidentId, state, title, status = null, pin
       {refreshable && (
         <Button type="button" size="sm" variant="outline" className="w-fit pointer-coarse:min-h-10" disabled={off}
           aria-busy={updating || undefined} onClick={() => onAction('refresh')} data-slot="te-issue-incident-update">
-          {updating ? <Loader2 aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : <RefreshCw aria-hidden="true" />}
+          {updating ? <Spinner aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
           {updating ? t('te.inc.updating') : t('te.inc.update')}
         </Button>
       )}
       {busy === 'unlink' && (
         <p className="m-0 flex items-center gap-1.5 text-xs text-muted-foreground" role="status" data-slot="te-issue-incident-busy">
-          <Loader2 aria-hidden="true" className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+          <Spinner aria-hidden="true" className="size-3.5 shrink-0" />
           <span className="[overflow-wrap:anywhere]">{t('te.inc.unlinking')}</span>
         </p>
       )}
