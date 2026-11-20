@@ -10,7 +10,8 @@
  * <p><b>Tel biçimi.</b> Sunucu yanıtları snake_case (`occurred_at`, `team_name`, `created_by`…); istek gövdesi de
  * bu sayfada snake_case yazılır (IncidentService.applyBody aynı adları okur).
  */
-import { formatDuration, parseUtc } from '../../utils/incidentMeta.js'
+import { formatDuration, parseUtc, autoDurationMinutes } from '../../utils/incidentMeta.js'
+import { toIso } from '../../utils/smartDateTime.js'
 
 export const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
 export const STATUSES = ['OPEN', 'INVESTIGATING', 'MITIGATED', 'RESOLVED']
@@ -353,7 +354,6 @@ export const FIELD_SECTION = Object.freeze({
 })
 
 const isBlank = (v) => v == null || String(v).trim() === ''
-const negative = (v) => !isBlank(v) && !(Number.isFinite(Number(v)) && Number(v) >= 0)
 
 // ── Teknik hata adedi · kesinti kaynaklı mı · kesinti ID (2026-11-20) ──────────────────────────────────
 
@@ -436,22 +436,90 @@ export function formFromRow(row) {
 }
 
 /**
- * İstemci doğrulaması — alan → i18n anahtarı. Boş nesne = geçerli. Sunucu aynı zorunlulukları ayrıca uygular;
- * burası anında, alanın yanında geri bildirim içindir.
+ * Metin alanlarının üst sınırları (karakter) — sunucudaki `IncidentService.MAX_*` ile AYNI (kolon uzunlukları; markdown
+ * alanları 20 000). incidentHistoryModel.test.js Java kaynağını okuyup karşılaştırır.
  */
-export function validateIncident(f) {
+export const MAX_LENGTHS = Object.freeze({
+  title: 255, error_code: 100, function_code: 100, channel_code: 100,
+  service: 500, channel: 500, problem_types: 500, affected_systems: 500, runbook_url: 500,
+  affected_services: 255, affected_app: 255, tags: 255,
+  rca_summary: 20000, description: 20000, resolution_steps: 20000, business_impact: 20000,
+})
+/** Tam sayı alanlarının üst sınırı (sunucu: Integer.MAX_VALUE). */
+export const MAX_WHOLE = 2147483647
+/** Hata bütçesi tüketimi (%) üst sınırı — sunucudaki `IncidentService.MAX_ERROR_BUDGET` ile aynı. */
+export const MAX_ERROR_BUDGET = 1e6
+const WHOLE_KEYS = ['affected_customers', 'affected_transactions', 'duration_minutes']
+
+/** Yalnız ASCII rakam (doğrusal) — başta tek '-' varsa negatif sayılır. */
+function wholeProblem(v) {
+  if (isBlank(v)) return null
+  const s = String(v).trim()
+  const neg = s.charCodeAt(0) === 45
+  if (!digitsFrom(s, neg ? 1 : 0)) return Number(s) < 0 ? 'inc.errNonNegative' : 'inc.errWholeNumber'
+  if (neg) return /^-0+$/.test(s) ? null : 'inc.errNonNegative'
+  return Number(s) > MAX_WHOLE ? 'inc.errWholeNumber' : null
+}
+
+/** Ondalık sayı (nokta ayırıcı, üstel yazım yok) 0 … 1.000.000. */
+function decimalProblem(v) {
+  if (isBlank(v)) return null
+  const s = String(v).trim()
+  let dot = false
+  let digit = false
+  const from = s.charCodeAt(0) === 45 ? 1 : 0
+  for (let i = from; i < s.length; i++) {
+    const c = s.charCodeAt(i)
+    if (c === 46) { if (dot) return 'inc.errNumber'; dot = true } else if (c >= 48 && c <= 57) digit = true
+    else return 'inc.errNumber'
+  }
+  if (!digit || s.endsWith('.') || s.charAt(from) === '.') return 'inc.errNumber'
+  if (from === 1 && Number(s) !== 0) return 'inc.errNonNegative'
+  return Number(s) > MAX_ERROR_BUDGET ? 'inc.errNumber' : null
+}
+
+/** Formdaki değer `baseline`'dakiyle (formun açıldığı kayıt) aynı mı — aynıysa yeniden doğrulanmaz (sunucuyla aynı kural). */
+function unchangedFrom(baseline, k, v) {
+  if (baseline == null || typeof baseline !== 'object') return false
+  return canon(k, v) === canon(k, baseline[k])
+}
+
+/**
+ * İstemci doğrulaması — alan → i18n anahtarı (uzunluk hatasında `{ key, params }`). Boş nesne = geçerli. Sunucu aynı
+ * kuralları ayrıca uygular; burası anında, alanın yanında geri bildirim içindir. `baseline` (düzenlemede formun açıldığı
+ * kayıt) verilirse sayı ve uzunluk kuralları YALNIZ değişen değerde uygulanır — eski kayıttan kalan, bugünkü kurala uymayan
+ * değer düzenlemeyi kilitlemez ("Sağlam Kayıt", 2026-11-20).
+ */
+export function validateIncident(f, baseline) {
   const e = {}
-  if (isBlank(f.title)) e.title = 'inc.errTitle'
-  if (isBlank(f.occurred_at)) e.occurred_at = 'inc.errOccurredAt'
-  if (isBlank(f.team_id)) e.team_id = 'inc.errTeam'
+  // Düzenlemede değişmeyen zorunlu alan yeniden denetlenmez (sunucu da gövdede olmayan alana dokunmaz): eski, takımsız ya da
+  // başlıksız kayıt öteki alanları düzeltilerek kaydedilebilir.
+  const same = (k) => unchangedFrom(baseline, k, f[k])
+  if (isBlank(f.title) && !same('title')) e.title = 'inc.errTitle'
+  if (isBlank(f.occurred_at) && !same('occurred_at')) e.occurred_at = 'inc.errOccurredAt'
+  if (isBlank(f.team_id) && !same('team_id')) e.team_id = 'inc.errTeam'
   const occ = parseUtc(f.occurred_at)
   const det = parseUtc(f.detected_at)
   const res = parseUtc(f.resolved_at)
-  if (det && res && res < det) e.resolved_at = 'inc.resolvedBeforeDetected'
-  else if (occ && res && res < occ) e.resolved_at = 'inc.errResolvedBeforeOccurred'
-  if (occ && det && det < occ) e.detected_at = 'inc.errDetectedBeforeOccurred'
-  for (const k of ['error_budget_burn_pct', 'affected_customers', 'affected_transactions', 'duration_minutes']) {
-    if (negative(f[k])) e[k] = 'inc.errNonNegative'
+  // Sıra kuralı yalnız çiftin EN AZ bir ucu değiştiyse (sunucudaki checkOrder ile aynı): kayıtta zaten ters duran eski
+  // zamanlar düzenlemeyi kilitlemez.
+  const pair = (a, b) => !same(a) || !same(b)
+  if (det && res && res < det && pair('detected_at', 'resolved_at')) e.resolved_at = 'inc.resolvedBeforeDetected'
+  else if (occ && res && res < occ && pair('occurred_at', 'resolved_at')) e.resolved_at = 'inc.errResolvedBeforeOccurred'
+  if (occ && det && det < occ && pair('occurred_at', 'detected_at')) e.detected_at = 'inc.errDetectedBeforeOccurred'
+  for (const k of WHOLE_KEYS) {
+    if (unchangedFrom(baseline, k, f[k])) continue
+    const p = wholeProblem(f[k])
+    if (p) e[k] = p
+  }
+  if (!unchangedFrom(baseline, 'error_budget_burn_pct', f.error_budget_burn_pct)) {
+    const p = decimalProblem(f.error_budget_burn_pct)
+    if (p) e.error_budget_burn_pct = p
+  }
+  for (const [k, max] of Object.entries(MAX_LENGTHS)) {
+    if (e[k] || isBlank(f[k]) || unchangedFrom(baseline, k, f[k])) continue
+    const len = String(f[k]).trim().length
+    if (len > max) e[k] = { key: 'inc.errTooLong', params: [max, len] }
   }
   // Üç isteğe bağlı alan (2026-11-20) — sunucunun katı kurallarının aynısı. Kesinti ID yalnız cevap Evet iken denetlenir
   // (aksi halde alan gizlidir ve gövdeye null yazılır).
@@ -533,6 +601,147 @@ export function payloadFromForm(f, baseline) {
     for (const k of OUTAGE_PAYLOAD_KEYS) if (p[k] === was[k]) delete p[k]
   }
   return p
+}
+
+// ── "Sağlam Kayıt" (2026-11-20): yalnız değişenler, taslak farkı, tutarlılık dürtmeleri ─────────────────────────────
+
+/** Düzenleme gövdesine girebilen alanlar — sunucunun yazdığı anahtarlar. `team_name` istemciden alınmaz (sunucu okur). */
+export const EDIT_KEYS = Object.freeze(Object.keys(EMPTY_FORM).filter((k) => k !== 'team_name'))
+const NUM_KEYS = new Set(['affected_customers', 'affected_transactions', 'duration_minutes', 'error_budget_burn_pct', 'team_id', 'tech_error_count'])
+
+/** Karşılaştırma biçimi: boş / null / undefined → ''; sayısal alanda sayı metni sayıya ("0120" = 120); metin kırpılır. */
+function canon(k, v) {
+  if (k === 'sla_breached') return String(v === true)
+  if (v == null) return ''
+  if (typeof v === 'boolean') return String(v)
+  const s = String(v).trim()
+  if (NUM_KEYS.has(k) && s !== '' && /^-?\d+(\.\d+)?$/.test(s)) return String(Number(s))
+  return s
+}
+
+/** Gövde değeri: boş metin → null (açık temizle); geçerli sayı metni → sayı; geçersiz metin olduğu gibi (sunucu alan hatası). */
+function bodyValue(k, v) {
+  if (k === 'sla_breached') return v === true
+  if (v == null) return null
+  if (typeof v === 'number' || typeof v === 'boolean') return v
+  const s = String(v)
+  if (s.trim() === '') return null
+  if (NUM_KEYS.has(k)) {
+    const t = s.trim()
+    return /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : s
+  }
+  return s
+}
+
+/** Formun iki zamanından türetilen (kilitli) süre mi — iki zaman da varken süre alanı otomatiktir. */
+const autoDuration = (f) => !isBlank(f?.occurred_at) && !isBlank(f?.resolved_at)
+
+/**
+ * DÜZENLEME gövdesi: yalnız `baseline`'dan (formun açıldığı — ya da yerine geçen taze — kayıt) FARKLI alanlar + `id` +
+ * `version` (iyimser kilit; kayıt taşıyorsa). Temizlenen alan açık `null` gider ("anahtar yok" = dokunma). `team_name` yalnız
+ * takım değiştiyse eklenir (yeni sunucu onu yok sayar; kademeli dağıtımdaki ESKİ pod yalnız gövdedeki adı yazar). Süre, iki
+ * zaman da varken GÖNDERİLMEZ (sunucu hesaplar); çözülme zamanı silindiğinde formda kalan eski otomatik süre de gönderilmez
+ * (sunucu yeniden açılan kaydın hesaplanmış süresini kendisi siler). Dönüş `{ body, changed }`; `changed` boşsa ve "Mail
+ * gönder" seçilmemişse istek GEREKMEZ.
+ */
+export function editPayload(f, baseline) {
+  const base = baseline && typeof baseline === 'object' ? baseline : {}
+  const now = payloadFromForm(f)
+  const was = payloadFromForm(formFromRow(base))
+  // Eski otomatik süre: bugünkü (aşağı yuvarlanmış) ya da 2026-11-20 öncesi istemcinin (en yakın dakika) hesabı.
+  const autoWas = [
+    autoDurationMinutes(base.occurred_at, base.resolved_at),
+    autoDurationMinutes(base.occurred_at, base.resolved_at, { round: true }),
+  ].filter((v) => v != null).map(String)
+  const body = {}
+  const changed = []
+  for (const k of EDIT_KEYS) {
+    if (k === 'duration_minutes') {
+      if (autoDuration(f)) continue
+      if (autoWas.includes(canon(k, f[k]))) continue
+    }
+    if (canon(k, now[k]) === canon(k, was[k])) continue
+    body[k] = bodyValue(k, now[k])
+    changed.push(k)
+  }
+  if (changed.includes('team_id')) body.team_name = isBlank(f.team_name) ? null : String(f.team_name)
+  if (base.id != null) body.id = base.id
+  const v = Number(base.version)
+  if (base.version != null && base.version !== '' && Number.isInteger(v) && v >= 0) body.version = v
+  if (f.send_notification === true) body.send_notification = true
+  return { body, changed }
+}
+
+/** İki kaydın (ya da kayıt ↔ form) farklı alanları — taze kayıt notu ve taslak için (gövde kurallarıyla aynı karşılaştırma). */
+export function changedKeys(a, b) {
+  const pa = payloadFromForm(formFromRow(a))
+  const pb = payloadFromForm(formFromRow(b))
+  return EDIT_KEYS.filter((k) => canon(k, pa[k]) !== canon(k, pb[k]))
+}
+
+/**
+ * Formun kayda göre DEĞİŞEN alanları (ham form değerleri) — taslak saklanırken. Takım değiştiyse adı da; iki zamandan
+ * türetilen süre saklanmaz (geri yüklenince yeniden hesaplanır). "Mail gönder" taslağa girmez.
+ */
+/**
+ * Gelen kayıt elde tutulandan DAHA ESKİ sürümlü mü (iki tarafta da tam sayı sürüm varsa). Kayıttan önce başlayıp sonra dönen
+ * okuma kaydedilen hâli geri yazmasın diye. Sürüm bilinmiyorsa (eski sunucu) false — bugünkü davranış.
+ */
+export function olderRecord(held, incoming) {
+  const a = Number(held?.version)
+  const b = Number(incoming?.version)
+  if (held?.version == null || incoming?.version == null || held.version === '' || incoming.version === '') return false
+  return Number.isInteger(a) && Number.isInteger(b) && b < a
+}
+
+export function formChanges(f, baseline) {
+  const now = payloadFromForm(f)
+  const was = payloadFromForm(formFromRow(baseline && typeof baseline === 'object' ? baseline : {}))
+  const out = {}
+  for (const k of EDIT_KEYS) {
+    if (k === 'duration_minutes' && autoDuration(f)) continue
+    if (canon(k, now[k]) !== canon(k, was[k])) out[k] = f[k]
+  }
+  if ('team_id' in out) out.team_name = f.team_name ?? ''
+  return out
+}
+
+/**
+ * Durum ↔ zaman tutarlılığı — ENGELLEMEYEN öneriler (kayıt yine yapılabilir):
+ *   - `setResolvedNow`: durum Çözüldü ama çözülme zamanı yok → şimdiyi yaz
+ *   - `markResolved`: çözülme zamanı var ama durum Çözüldü değil → Çözüldü yap
+ *   - `reopenClear`: Çözüldü kaydı yeniden açıldı (açılıştaki durum RESOLVED'di) ama çözülme zamanı duruyor → zamanı ve süreyi temizle
+ */
+export function consistencyNudges(f, baseline) {
+  if (!f) return []
+  const resolved = f.status === 'RESOLVED'
+  const hasRes = !isBlank(f.resolved_at)
+  if (resolved && !hasRes) return ['setResolvedNow']
+  if (!resolved && hasRes) return [baseline?.status === 'RESOLVED' ? 'reopenClear' : 'markResolved']
+  return []
+}
+
+/**
+ * "Çözülme zamanı = şimdi" önerisinin değeri: şimdi, oluş ve tespit zamanlarının EN GEÇ olanı, dakikaya YUKARI yuvarlanır
+ * (form saniye tutmaz). Alarmdan gelen oluş / tespit bu dakikanın içindeyse (saniyeli) "şimdi"nin aşağı yuvarlanmış hâli
+ * ondan önce kalır ve kayıt sıra kuralına takılırdı. Dönüş: UTC ISO, bölge eki yok.
+ */
+export function resolvedNowIso(f, now = new Date()) {
+  let ms = now instanceof Date ? now.getTime() : Number(now)
+  for (const k of ['occurred_at', 'detected_at']) {
+    const d = parseUtc(f?.[k])
+    if (d && d.getTime() > ms) ms = d.getTime()
+  }
+  if (!Number.isFinite(ms)) return ''
+  return toIso(new Date(Math.ceil(ms / 60000) * 60000))
+}
+
+/** Önerinin forma uygulanmış hâli (yeni nesne). `nowIso` = dakikaya yuvarlanmış UTC ISO (bölge eki yok; `resolvedNowIso`). */
+export function applyNudge(f, kind, nowIso) {
+  if (kind === 'setResolvedNow') return { ...f, resolved_at: nowIso }
+  if (kind === 'markResolved') return { ...f, status: 'RESOLVED' }
+  if (kind === 'reopenClear') return { ...f, resolved_at: '', duration_minutes: '' }
+  return f
 }
 
 /** Önizlenecek bildirim türü — sunucunun kayıtta göndereceğiyle aynı karar (yeni / çözüldü / güncellendi). */

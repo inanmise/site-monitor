@@ -43,8 +43,10 @@ describe('autoDurationMinutes', () => {
     expect(autoDurationMinutes('2026-01-15T10:00:00', '2026-01-15T10:50:00')).toBe(50)
   })
 
-  it('saniye → en yakın dakikaya yuvarlar', () => {
-    expect(autoDurationMinutes('2026-01-15T10:00:00', '2026-01-15T10:02:40')).toBe(3)   // 2dk40sn → 3
+  it('saniye → TAMAMLANMIŞ dakika (aşağı; sunucunun minutesBetween kuralı); eski kaydı tanımak için round seçeneği', () => {
+    expect(autoDurationMinutes('2026-01-15T10:00:00', '2026-01-15T10:02:40')).toBe(2)   // 2dk40sn → 2
+    expect(autoDurationMinutes('2026-01-15T10:00:00', '2026-01-15T10:02:59')).toBe(2)
+    expect(autoDurationMinutes('2026-01-15T10:00:00', '2026-01-15T10:02:40', { round: true })).toBe(3)
   })
 
   it('çözülme < oluş (negatif) → null', () => {

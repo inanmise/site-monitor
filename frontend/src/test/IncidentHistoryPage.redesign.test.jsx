@@ -281,6 +281,20 @@ describe('ayrıntı (önce okuma)', () => {
     expect(new URLSearchParams(window.location.search).get('ih_id')).toBeNull()
   })
 
+  it('Sağlam Kayıt: elde tutulandan ESKİ sürümlü taze okuma satırı ve ayrıntıyı geri almaz, "değişti" demez', async () => {
+    api.incidents.list.mockResolvedValue(page([rec({ version: 3, title: 'Yeni hâl' }), ROWS[1]]))
+    render(<IncidentHistoryPage />)
+    await screen.findByText('Yeni hâl')
+    api.incidents.get.mockResolvedValue({ success: true, data: rec({ version: 2, title: 'Eski hâl' }) })
+    fireEvent.click(screen.getByRole('row', { name: /Yeni hâl/ }))
+    const sheet = await screen.findByRole('dialog')
+    await waitFor(() => expect(api.incidents.get).toHaveBeenCalled())
+    await flush()
+    expect(within(sheet).getByRole('heading', { name: 'Yeni hâl' })).toBeInTheDocument()
+    expect(sheet.querySelector('[data-slot="ih-fresh-note"]')).toBeNull()
+    expect(screen.queryByText('Eski hâl')).toBeNull()
+  })
+
   it('açık olay: çizelgede "güncel durum" adımı, çözülme "henüz çözülmedi"', async () => {
     await ready()
     fireEvent.click(screen.getByRole('row', { name: /DNS çözümleme hatası/ }))
@@ -426,8 +440,9 @@ describe('olay formu (beş bölüm)', () => {
     await waitFor(() => expect(api.incidents.update).toHaveBeenCalledTimes(1))
     const first = api.incidents.update.mock.calls[0][1]
     expect(api.incidents.update.mock.calls[0][0]).toBe(1)
-    expect(first).toMatchObject({ id: 1, title: 'Başlık güncellendi', team_id: 1 })
-    for (const k of ['tech_error_count', 'outage_related', 'outage_id']) expect(has(first, k), k).toBe(false)
+    expect(first).toMatchObject({ id: 1, title: 'Başlık güncellendi' })
+    // "Sağlam Kayıt" (2026-11-20): değişmeyen alanlar (takım dahil) gövdeye yazılmaz
+    for (const k of ['tech_error_count', 'outage_related', 'outage_id', 'team_id', 'severity', 'description']) expect(has(first, k), k).toBe(false)
     await waitFor(() => expect(saveBtn(dlg)).not.toBeDisabled())
     // 2) Etki bölümünde adet girildi → yalnız o anahtar eklenir
     fireEvent.mouseDown(dlg.querySelector('[data-section="impact"]'))
@@ -466,6 +481,44 @@ describe('olay formu (beş bölüm)', () => {
     const dlg = await openCreate()
     fireEvent.keyDown(within(dlg).getByRole('textbox', { name: /^(Başlık|Title)/ }), { key: 'Enter', ctrlKey: true })
     expect(await within(dlg).findByText(/Başlık girin\.|Enter a title\./)).toBeInTheDocument()
+  })
+
+  it('Sağlam Kayıt: listeden düzenlenip kaydedilen kayıt liste satırına HEMEN işlenir (liste yeniden yüklenmeyi beklemez)', async () => {
+    await ready()
+    api.incidents.get.mockResolvedValue({ success: true, data: rec({ version: 1 }) })
+    fireEvent.click(screen.getByRole('button', { name: /^Ödeme servisinde gecikme — (Düzenle|Edit)$/ }))
+    const dlg = await screen.findByRole('dialog', { name: /Olayı Düzenle|Edit Incident/ })
+    await waitFor(() => expect(api.incidents.get).toHaveBeenCalled())
+    api.incidents.update.mockResolvedValueOnce({ success: true, data: rec({ title: 'Listeden kaydedildi', version: 2 }) })
+    api.incidents.list.mockImplementation(() => new Promise(() => {}))   // yeniden yükleme hiç dönmez
+    fireEvent.change(within(dlg).getByRole('textbox', { name: /^(Başlık|Title)/ }), { target: { value: 'Listeden kaydedildi' } })
+    fireEvent.click(saveBtn(dlg))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Olayı Düzenle|Edit Incident/ })).toBeNull())
+    expect(screen.getByRole('row', { name: /Listeden kaydedildi/ })).toBeInTheDocument()
+  })
+
+  it('Sağlam Kayıt: kayıttan ÖNCE başlayıp SONRA dönen ayrıntı okuması kaydedilen hâli eski hâliyle ezmez', async () => {
+    await ready()
+    const detailRead = deferred()
+    let n = 0
+    api.incidents.get.mockImplementation(() => (++n === 1 ? detailRead.p : Promise.resolve({ success: true, data: rec({ version: 1 }) })))
+    fireEvent.click(screen.getByRole('row', { name: /Ödeme servisinde gecikme/ }))
+    const sheet = await screen.findByRole('dialog')
+    fireEvent.click(within(sheet).getByRole('button', { name: /^(Düzenle|Edit)$/ }))
+    const dlg = await screen.findByRole('dialog', { name: /Olayı Düzenle|Edit Incident/ })
+    await waitFor(() => expect(api.incidents.get).toHaveBeenCalledTimes(2))
+    api.incidents.update.mockResolvedValueOnce({ success: true, data: rec({ title: 'Kaydedilen başlık', version: 2 }) })
+    api.incidents.list.mockImplementation(() => new Promise(() => {}))
+    fireEvent.change(within(dlg).getByRole('textbox', { name: /^(Başlık|Title)/ }), { target: { value: 'Kaydedilen başlık' } })
+    fireEvent.click(saveBtn(dlg))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Olayı Düzenle|Edit Incident/ })).toBeNull())
+    // kayıttan önce başlamış ayrıntı okuması ŞİMDİ eski hâliyle döner
+    await act(async () => { detailRead.resolve({ success: true, data: rec({ version: 1 }) }) })
+    await flush()
+    const open = screen.getByRole('dialog')
+    expect(within(open).getByRole('heading', { name: 'Kaydedilen başlık' })).toBeInTheDocument()
+    expect(open.querySelector('[data-slot="ih-fresh-note"]')).toBeNull()
+    expect(screen.getByRole('row', { name: /Kaydedilen başlık/ })).toBeInTheDocument()
   })
 
   it('düzenle: ayrıntıdaki Düzenle formu mevcut değerlerle açar; açılışta kirli sayılmaz (türetilmiş süre); kaydedince update(id)', async () => {

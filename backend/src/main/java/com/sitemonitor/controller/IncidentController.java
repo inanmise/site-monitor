@@ -179,7 +179,8 @@ public class IncidentController {
         IncidentRecord cur = service.get(id);
         requireIncidentWrite(session, cur);   // takım kapsamı (IDOR engeli)
         // Takım DEĞİŞİYORSA hedef de kapsamda olmalı (A2) — PUT, /transfer'in atladığı kapıdan geçen ikinci yoldu.
-        // Aynı team_id'yi geri göndermek (form her kayıtta tüm alanları yollar) taşıma değildir → kapıya takılmaz.
+        // Aynı team_id'yi geri göndermek (eski istemci her kayıtta tüm alanları yollar) taşıma değildir → kapıya takılmaz.
+        // Sürüm çakışması (2026-11-20) ve alan doğrulaması servistedir (IncidentService.update → 409 / alan adlı 400).
         if (body.containsKey("team_id") && !java.util.Objects.equals(longVal(body.get("team_id")), cur.getTeamId()))
             requireTransferTarget(session, longVal(body.get("team_id")));
         // Kaynak alarm DEĞİŞİYORSA yeni alarm doğrulanır (aynı değeri geri göndermek kapıya takılmaz).
@@ -449,6 +450,8 @@ public class IncidentController {
         m.put("created_at", e.getCreatedAt());
         m.put("updated_by", e.getUpdatedBy());
         m.put("updated_at", e.getUpdatedAt());
+        // İyimser kilit sürümü (2026-11-20, "Sağlam Kayıt"): düzenleme formu bunu PUT'ta geri gönderir; farklıysa 409.
+        m.put("version", e.getVersion() == null ? 0L : e.getVersion());
         return m;
     }
 

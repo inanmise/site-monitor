@@ -14,18 +14,20 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
 
     /**
      * Filtreli + sayfalı arama. Tüm filtreler opsiyonel (:p IS NULL OR ...).
-     * q: serviste önceden lower-case + %..% sarılmış anahtar kelime (title/service/rca/description'da arar).
+     * q: serviste önceden lower-case (Locale.ROOT) + %..% sarılmış anahtar kelime (title/service/rca/description'da arar).
+     * q / service / channel'daki {@code %}, {@code _} ve {@code !} serviste {@code !} ile KAÇIRILIR ({@code ESCAPE '!'};
+     * 2026-11-20 "Sağlam Kayıt": "%" araması eskiden HER kaydı, "a_b" araması "a-b"yi de buluyordu).
      * Tarihler ISO-String → sıralanabilir, >= / <= güvenli.
      */
     @Query("""
             SELECT i FROM IncidentRecord i
-             WHERE (:q IS NULL OR LOWER(i.title) LIKE :q OR LOWER(i.service) LIKE :q
-                                OR LOWER(i.rcaSummary) LIKE :q OR LOWER(i.description) LIKE :q)
+             WHERE (:q IS NULL OR LOWER(i.title) LIKE :q ESCAPE '!' OR LOWER(i.service) LIKE :q ESCAPE '!'
+                                OR LOWER(i.rcaSummary) LIKE :q ESCAPE '!' OR LOWER(i.description) LIKE :q ESCAPE '!')
                AND (:severity IS NULL OR i.severity = :severity)
                AND (:category IS NULL OR i.category = :category)
                AND (:status   IS NULL OR i.status   = :status)
-               AND (:service  IS NULL OR LOWER(i.service) LIKE :service)
-               AND (:channel  IS NULL OR LOWER(i.channel) LIKE :channel)
+               AND (:service  IS NULL OR LOWER(i.service) LIKE :service ESCAPE '!')
+               AND (:channel  IS NULL OR LOWER(i.channel) LIKE :channel ESCAPE '!')
                AND (:since    IS NULL OR i.occurredAt >= :since)
                AND (:until    IS NULL OR i.occurredAt <= :until)
                AND (:teamId   IS NULL OR i.teamId = :teamId)

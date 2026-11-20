@@ -1254,7 +1254,8 @@ class TechErrorIncidentImportServiceTest {
         assertThat(size).as("sınıra yakın ama altında").isBetween(max - 9_000, max - 1_000);
 
         Map<String, Object> body = new HashMap<>();
-        body.put("rca_summary", "kelime ".repeat(3_000));
+        // Olay kaydının markdown sınırı (20 000, "Sağlam Kayıt" 2026-11-20) içinde ama rapor sınırını aşacak kadar uzun.
+        body.put("rca_summary", "kelime ".repeat(2_800));
         body.put("tech_error_count", 4242);
         incidentService.update(a.getId(), body, "olayci");
         Issue i = topic(r.getId(), iid);

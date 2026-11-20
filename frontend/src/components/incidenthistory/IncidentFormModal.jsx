@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ListChecks, Pencil, FileText, Users, Tags, Stethoscope, Mail, ChevronDown, RefreshCw, Save, AlertOctagon, Info,
+  History, Lightbulb, Trash2, Undo2,
 } from 'lucide-react'
-import { api } from '../../api/client'
+import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
+import { useToast } from '../ui/Toast.jsx'
 import ModalShell from '../ui/ModalShell.jsx'
 import { PHONE_FULLSCREEN } from '../ui/modalClasses.js'
 import AlertBanner from '../ui/AlertBanner.jsx'
 import { Spinner } from '../ui/Progress.jsx'
 import { autoDurationMinutes } from '../../utils/incidentMeta.js'
 import { mailPreviewSrcDoc, MAIL_PREVIEW_SANDBOX } from '../../utils/mailPreview.js'
+import { errorInfoOf } from '../../utils/errorMessages.js'
+import { draftScope, readDraft, writeDraft, removeDraft, applyDraft, DRAFT_DEBOUNCE_MS } from './incidentDraft.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Kbd, KbdGroup } from '@/components/shadcn/kbd'
@@ -19,8 +23,9 @@ import { FieldSet, FieldLegend } from '@/components/shadcn/field'
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/shadcn/collapsible'
 import { cn } from '@/lib/utils'
 import {
-  SEVERITIES, STATUSES, CATEGORIES, PROBLEM_TYPES, SECTIONS, validateIncident, errorCountBySection,
-  firstErrorSection, formSnapshot, previewKind, payloadFromForm, uniqueCaption, formFromRow,
+  SEVERITIES, STATUSES, CATEGORIES, PROBLEM_TYPES, SECTIONS, EMPTY_FORM, EDIT_KEYS, validateIncident, errorCountBySection,
+  firstErrorSection, formSnapshot, previewKind, payloadFromForm, uniqueCaption, formFromRow, editPayload, changedKeys,
+  formChanges, consistencyNudges, applyNudge, resolvedNowIso,
 } from './incidentHistoryModel.js'
 import {
   TextInput, DateInput, SelectInput, CreatableSelect, CreatableMultiSelect, TagField, MdArea, CheckInput, YesNoInput,
@@ -28,14 +33,43 @@ import {
 
 const SECTION_ICON = { summary: FileText, impact: Users, codes: Tags, rca: Stethoscope, notify: Mail }
 
+/** Hatalı alan: aria-invalid taşıyan kontrol ya da hatalı markdown alanının metin kutusu (grup data-invalid taşır). */
+const INVALID_FIELD = '[aria-invalid="true"], [data-slot="ih-md-field"][data-invalid="true"] textarea'
+
+/** Açılışta kaydın taze hâlini okuma süresi (ms) — istemci GET varsayılanı 90 sn; pencere bu kadar beklemez. */
+export const FRESH_TIMEOUT_MS = 20_000
+
 /**
  * Sunucunun alan hatasını (400 `VALIDATION_FAILED` + `fields`) ALANIN ALTINDA gösterebildiğimiz alanlar — formda hata
- * yuvası olan kontroller. Listede olmayan bir alanın hatası (ör. `alert_event_id`) eskisi gibi üstteki bantta kalır.
+ * yuvası olan kontroller (2026-11-20, "Sağlam Kayıt": sunucunun adlandırabildiği her form alanı). Listede olmayan bir
+ * alanın hatası (ör. `alert_event_id`, `version`) eskisi gibi üstteki bantta kalır.
  */
-const SERVER_ERROR_FIELDS = new Set([
-  'title', 'occurred_at', 'team_id', 'detected_at', 'resolved_at', 'duration_minutes', 'affected_customers',
-  'affected_transactions', 'error_budget_burn_pct', 'tech_error_count', 'outage_related', 'outage_id',
+export const SERVER_ERROR_FIELDS = new Set([
+  'title', 'occurred_at', 'team_id', 'severity', 'status', 'category', 'problem_types',
+  'detected_at', 'resolved_at', 'duration_minutes',
+  'channel', 'service', 'affected_services', 'affected_app', 'affected_systems', 'affected_customers',
+  'affected_transactions', 'tech_error_count', 'error_budget_burn_pct', 'sla_breached', 'outage_related', 'outage_id',
+  'business_impact', 'error_code', 'function_code', 'channel_code', 'tags', 'rca_summary', 'description', 'resolution_steps',
 ])
+
+/** Taslağın uygulanabileceği form anahtarları (takım adı takım kimliğiyle birlikte gelir). */
+const DRAFT_KEYS = [...EDIT_KEYS, 'team_name']
+
+/** Form alanlarından biri (metin kutusu / metin alanı / düzenlenebilir içerik) şu an odakta mı — kullanıcı yazıyor sayılır. */
+function focusedEditableIn(root) {
+  const el = typeof document !== 'undefined' ? document.activeElement : null
+  if (!el || !root || typeof root.contains !== 'function' || !root.contains(el)) return false
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable === true
+}
+
+/** Sunucudan gelen tekil kayıt geçerli mi (beklenen kimlik + düz nesne) — eski / sahte gövde formu ezmesin. */
+function validRecord(res, id) {
+  const d = res?.success ? res.data : null
+  return d && typeof d === 'object' && !Array.isArray(d) && d.id != null && String(d.id) === String(id) ? d : null
+}
+
+/** Yanıtın HTTP durumu (sayılamayan künyeden). */
+const statusOf = (res) => errorInfoOf(res)?.status
 
 /**
  * Sunucu alan hataları (`{ alan: ileti }`) → `shown`: formda o an GÖRÜNEN alanların iletileri (yoksa null), `rest`: alanı
@@ -65,7 +99,7 @@ function FocusServerError({ active, tick, handledRef, bodyRef }) {
   useEffect(() => {
     if (!active || tick === handledRef.current) return
     handledRef.current = tick
-    const el = bodyRef.current?.querySelector('[aria-invalid="true"]')
+    const el = bodyRef.current?.querySelector(INVALID_FIELD)
     if (el && typeof el.focus === 'function') { el.focus(); el.scrollIntoView?.({ block: 'center' }) }
   }, [active, tick, handledRef, bodyRef])
   return null
@@ -95,12 +129,29 @@ const GRID = 'grid grid-cols-1 gap-x-4 sm:grid-cols-2 lg:grid-cols-3'
  *
  * <p>Sabit ana alanların hepsi korunur: seçenek ekle/sil (kanal, servis/domain, hata/fonksiyon/kanal kodu), oluş ↔ çözülme
  * farkından otomatik süre, markdown görsel yükleme (yeni kayıtta taslak), "Mail gönder".
+ *
+ * <p><b>Sağlam kayıt (2026-11-20).</b>
+ *   - Düzenleme penceresi liste satırıyla HEMEN açılır, kaydın taze hâli arkada okunur (`FRESH_TIMEOUT_MS`, iptal
+ *     edilebilir). Kullanıcı henüz bir şey yazmadıysa taze kayıt formun yerine geçer (farklıysa bilgi notu); yazmaya
+ *     başladıysa ASLA ezilmez — "kayıt siz düzenlemeye başladıktan sonra değişti" notu + "Son hâli yükle". Okunamadıysa
+ *     liste hâli kalır (sessiz not); 404 → "kayıt silinmiş", kaydetme kapalı.
+ *   - Kayıt yalnız DEĞİŞEN alanları + `version` gönderir (`editPayload`); değişiklik yoksa istek gitmez. Sunucu başka
+ *     birinin arada kaydettiğini söylerse (409 `CONCURRENT_MODIFICATION`) çakışma bandı kim / ne zaman yazar, kaydetme
+ *     kapanır; "Son hâli yükle" yazılanları yerel taslağa koyup kaydın son hâlini açar ve taslağı geri yüklemeyi önerir.
+ *   - Form değişiklikleri ~1 sn duraklamayla yerel taslağa yazılır (`incidentDraft.js`), pencere kapanırken / sayfa
+ *     giderken de; taslak ASLA kendiliğinden uygulanmaz: açılışta bant "Taslağı geri yükle" / "Sil" sorar.
+ *   - Durum ↔ zaman tutarsızlığında ENGELLEMEYEN öneri bantları (`consistencyNudges`).
  */
 export default function IncidentFormModal({
-  mode, initial, teams = [], options = {}, onAddOption, onDeleteOption, onSubmit, onClose,
+  mode, initial, teams = [], options = {}, onAddOption, onDeleteOption, onSubmit, onClose, onFresh,
 }) {
   const t = useT()
+  const toast = useToast()
   const { showConfirm } = useDialog()
+  const creating = mode === 'create'
+  const editId = !creating && initial?.id != null && initial.id !== '' ? initial.id : null
+  // Karşılaştırma tabanı: formun açıldığı kayıt; taze hâl (ya da "son hâli yükle") geldiğinde onunla değişir.
+  const [baseline, setBaseline] = useState(() => (initial && typeof initial === 'object' ? initial : {}))
   const [form, setForm] = useState(() => formFromRow(initial))
   const [section, setSection] = useState('summary')
   const [showErrors, setShowErrors] = useState(false)
@@ -112,9 +163,34 @@ export default function IncidentFormModal({
   const [previewOpen, setPreviewOpen] = useState(false)
   const [preview, setPreview] = useState({ html: null, snapshot: null })
   const [previewing, setPreviewing] = useState(false)
+  // Taze kayıt durumu: loading | same | updated | pending | failed | latest — `changed` farklı alan sayısı için.
+  const [fresh, setFresh] = useState(() => (editId != null ? { state: 'loading', changed: [] } : null))
+  const [gone, setGone] = useState(false)                 // kayıt silinmiş (404) — kaydetme kapalı
+  const [conflict, setConflict] = useState(null)          // { by, at } — 409 çakışma
+  const [latestBusy, setLatestBusy] = useState(false)
+  const [latestFailed, setLatestFailed] = useState(false)
+  const draftKeyScope = useMemo(() => draftScope(mode, initial), []) // eslint-disable-line react-hooks/exhaustive-deps
+  const [draftOffer, setDraftOffer] = useState(() => readDraft(draftKeyScope))
+  const [dismissedNudges, setDismissedNudges] = useState(() => new Set())
   const bodyRef = useRef(null)
   const focusErrorRef = useRef(false)
   const previewSeq = useRef(0)
+  const touchedRef = useRef(false)                        // kullanıcı formda bir şeyi değiştirdi mi
+  const doneRef = useRef(false)                           // kaydedildi / bilerek atıldı → taslak yazılmaz
+  const savingRef = useRef(false)
+  const onFreshRef = useRef(onFresh)
+  onFreshRef.current = onFresh
+  const latestAbortRef = useRef(null)
+  // Açılıştaki taze okuma: "Son hâli yükle" onu geçersiz kılar (sıra + iptal) — geç dönen ilk okuma yeni tabanı ezmesin.
+  const firstReadSeq = useRef(0)
+  const firstReadAbort = useRef(null)
+  // Bileşen DOM'da mı (StrictMode'un çift takılışında yeniden true olur — eski sürüm ikinci takılışta false kalıyordu ve
+  // Ctrl+Enter geliştirme kipinde kaydetmiyordu).
+  const aliveRef = useRef(true)
+  useEffect(() => {
+    aliveRef.current = true
+    return () => { aliveRef.current = false }
+  }, [])
 
   const clearServerError = useCallback((k) => setServerErrors((prev) => {
     if (!prev || !(k in prev)) return prev
@@ -123,6 +199,8 @@ export default function IncidentFormModal({
     return Object.keys(next).length ? next : null
   }), [])
   const set = useCallback((k, v) => {
+    touchedRef.current = true
+    doneRef.current = false
     setForm((f) => (f[k] === v ? f : { ...f, [k]: v }))
     clearServerError(k)
   }, [clearServerError])
@@ -132,10 +210,162 @@ export default function IncidentFormModal({
   const focusOutageIdRef = useRef(false)
   const setOutageRelated = useCallback((v) => {
     focusOutageIdRef.current = v === true
+    touchedRef.current = true
+    doneRef.current = false
     setForm((f) => (f.outage_related === v ? f : { ...f, outage_related: v }))
     clearServerError('outage_related')
     clearServerError('outage_id')
   }, [clearServerError])
+
+  // Güncel form / taban — zamanlayıcılar ve sökülme anı en son değeri okur.
+  const formRef = useRef(form)
+  formRef.current = form
+  const baselineRef = useRef(baseline)
+  baselineRef.current = baseline
+  const draftOfferRef = useRef(draftOffer)
+  draftOfferRef.current = draftOffer
+  const goneRef = useRef(gone)
+  goneRef.current = gone
+
+  /** Formun kayda göre farkını yerel taslağa yazar (boşsa siler). Kayıt / atma sonrası, silinmiş kayıtta ve önerilen eski
+   *  taslak yanıt beklerken yazılmaz (yanıtlanmamış eski taslak ezilmesin). */
+  const flushDraft = useCallback((force = false) => {
+    if (doneRef.current || goneRef.current || savingRef.current) return
+    if (!force && draftOfferRef.current) return
+    const base = baselineRef.current || {}
+    writeDraft(draftKeyScope, {
+      changes: formChanges(formRef.current, base),
+      baseVersion: base.version ?? null,
+      baseUpdatedAt: base.updated_at ?? null,
+    })
+  }, [draftKeyScope])
+
+  // ~1 sn duraklamayla taslak; pencere kapanırken (gezinme, oturum) ve sayfa giderken de.
+  useEffect(() => {
+    if (draftOffer || gone) return undefined
+    const tm = setTimeout(() => flushDraft(), DRAFT_DEBOUNCE_MS)
+    return () => clearTimeout(tm)
+  }, [form, baseline, draftOffer, gone, flushDraft])
+  useEffect(() => {
+    const onHide = () => flushDraft()
+    window.addEventListener('pagehide', onHide)
+    return () => {
+      window.removeEventListener('pagehide', onHide)
+      flushDraft()
+    }
+  }, [flushDraft])
+
+  // Taze kayıt (yalnız düzenleme): liste satırıyla açılan form arkada kaydın son hâlini okur.
+  useEffect(() => {
+    if (editId == null) return undefined
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null
+    firstReadAbort.current = ctl
+    const my = ++firstReadSeq.current
+    let alive = true
+    ;(async () => {
+      let res = null
+      try { res = await api.incidents.get(editId, { timeoutMs: FRESH_TIMEOUT_MS, signal: ctl?.signal }) } catch { res = null }
+      if (!alive || my !== firstReadSeq.current) return
+      const rec = validRecord(res, editId)
+      if (!rec) {
+        if (statusOf(res) === 404) { setGone(true); setFresh({ state: 'gone', changed: [] }) } else setFresh({ state: 'failed', changed: [] })
+        return
+      }
+      onFreshRef.current?.(rec)
+      const next = { ...EMPTY_FORM, ...rec }
+      const changed = changedKeys(initial, rec)
+      const started = touchedRef.current || focusedEditableIn(bodyRef.current)
+      if (!started) {
+        setBaseline(next)
+        setForm(formFromRow(next))
+        setFresh({ state: changed.length ? 'updated' : 'same', changed })
+      } else if (changed.length) {
+        setFresh({ state: 'pending', changed })
+      } else {
+        // Alanlar aynı (yalnız sürüm / damga ilerlemiş olabilir): yazılanlara dokunmadan taban güncellenir.
+        setBaseline((b) => ({ ...b, version: rec.version, updated_at: rec.updated_at, updated_by: rec.updated_by }))
+        setFresh({ state: 'same', changed: [] })
+      }
+    })()
+    return () => { alive = false; ctl?.abort() }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => () => { latestAbortRef.current?.abort() }, [])
+
+  // Önerilen taslak formda zaten olanı söylüyorsa (aynı değerler kaydedilmiş ya da elle yazılmış) bant gereksizdir: silinir.
+  useEffect(() => {
+    if (!draftOffer) return
+    if (formSnapshot(applyDraft(form, draftOffer.changes, DRAFT_KEYS)) !== formSnapshot(form)) return
+    removeDraft(draftKeyScope)
+    setDraftOffer(null)
+  }, [draftOffer, form, draftKeyScope])
+
+  /**
+   * "Son hâli yükle": yazılanlar yerel taslağa konur, kaydın son hâli açılır, taslağı geri yükleme önerilir. Çakışma ve
+   * "arkada değişti" notunun ortak eylemi.
+   */
+  async function loadLatest() {
+    if (latestBusy || savingRef.current || editId == null) return
+    const changes = formChanges(formRef.current, baselineRef.current)
+    if (Object.keys(changes).length) {
+      const base = baselineRef.current || {}
+      writeDraft(draftKeyScope, { changes, baseVersion: base.version ?? null, baseUpdatedAt: base.updated_at ?? null })
+    }
+    firstReadSeq.current++                 // açılıştaki okuma hâlâ yoldaysa artık uygulanmaz
+    firstReadAbort.current?.abort()
+    latestAbortRef.current?.abort()
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null
+    latestAbortRef.current = ctl
+    setLatestBusy(true)
+    setLatestFailed(false)
+    try {
+      let res = null
+      try { res = await api.incidents.get(editId, { timeoutMs: FRESH_TIMEOUT_MS, signal: ctl?.signal }) } catch { res = null }
+      if (!aliveRef.current || ctl?.signal?.aborted) return
+      const rec = validRecord(res, editId)
+      if (!rec) {
+        if (statusOf(res) === 404) { setGone(true); setFresh({ state: 'gone', changed: [] }); setConflict(null) } else setLatestFailed(true)
+        return
+      }
+      onFreshRef.current?.(rec)
+      const next = { ...EMPTY_FORM, ...rec }
+      setBaseline(next)
+      setForm(formFromRow(next))
+      touchedRef.current = false
+      setConflict(null)
+      setFresh({ state: 'latest', changed: [] })
+      setServerErrors(null)
+      setFormError(null)
+      setShowErrors(false)
+      setDraftOffer(Object.keys(changes).length ? readDraft(draftKeyScope) : null)
+    } finally {
+      if (aliveRef.current) setLatestBusy(false)
+    }
+  }
+
+  function restoreDraft() {
+    const d = draftOfferRef.current
+    if (!d) return
+    touchedRef.current = true
+    doneRef.current = false
+    setForm((f) => applyDraft(f, d.changes, DRAFT_KEYS))
+    setServerErrors(null)
+    setDraftOffer(null)
+    toast.info(t('inc.draft.restored'))
+  }
+  function deleteDraft() {
+    removeDraft(draftKeyScope)
+    setDraftOffer(null)
+  }
+
+  function takeNudge(kind) {
+    touchedRef.current = true
+    doneRef.current = false
+    setForm((f) => applyNudge(f, kind, resolvedNowIso(f)))
+    for (const k of ['status', 'resolved_at', 'duration_minutes']) clearServerError(k)
+    setDismissedNudges((s) => new Set(s).add(kind))
+  }
+  const dismissNudge = (kind) => setDismissedNudges((s) => new Set(s).add(kind))
 
   // Süre (dk) otomatik: olayın gerçek toplam süresi = OLUŞ ↔ çözülme farkı (tespit gecikmesi süreden düşmez).
   useEffect(() => {
@@ -145,25 +375,27 @@ export default function IncidentFormModal({
     if (String(form.duration_minutes ?? '') !== String(diff)) setForm((f) => ({ ...f, duration_minutes: diff }))
   }, [form.occurred_at, form.resolved_at]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Kirli-form: açılış anının anlık görüntüsü (türetilmiş süre hariç) ile karşılaştırılır.
-  const initialSnap = useMemo(() => formSnapshot(formFromRow(initial)), []) // eslint-disable-line react-hooks/exhaustive-deps
+  // Kirli-form: karşılaştırma tabanının (açılıştaki ya da yerine geçen taze kayıt) anlık görüntüsü — türetilmiş süre hariç.
+  const baseSnap = useMemo(() => formSnapshot(formFromRow(baseline)), [baseline])
   const snap = formSnapshot(form)
-  const dirty = snap !== initialSnap
-  const errors = useMemo(() => validateIncident(form), [form])
+  const dirty = snap !== baseSnap
+  // Düzenlemede değişmeyen (eski kayıttan kalan) değer yeniden doğrulanmaz — sunucuyla aynı kural.
+  const errors = useMemo(() => validateIncident(form, creating ? null : baseline), [form, baseline, creating])
   // Gösterilen hatalar: alan → METİN. Sunucunun alan iletisi alan düzenlenene dek kalır; istemci doğrulaması (ilk kayıt
-  // denemesinden sonra canlı) aynı alanda onun önüne geçer.
+  // denemesinden sonra canlı) aynı alanda onun önüne geçer. Uzunluk hatası `{ key, params }` taşır.
   const shownErrors = useMemo(() => {
     const out = { ...(serverErrors || {}) }
-    if (showErrors) for (const k of Object.keys(errors)) out[k] = t(errors[k])
+    if (showErrors) {
+      for (const [k, e] of Object.entries(errors)) out[k] = typeof e === 'string' ? t(e) : t(e.key, ...(e.params || []))
+    }
     return out
   }, [serverErrors, showErrors, errors, t])
   const errCounts = errorCountBySection(shownErrors)
   const nErrors = Object.keys(shownErrors).length
   const err = (k) => shownErrors[k] || undefined
+  const nudges = consistencyNudges(form, creating ? null : baseline).filter((k) => !dismissedNudges.has(k))
 
   // Görsel adı tekilleştirme (async yükleme en güncel formu okur).
-  const formRef = useRef(form)
-  formRef.current = form
   const reservedRef = useRef(new Set())
   const makeUniqueCaption = useCallback((desired) => {
     const name = uniqueCaption(desired, formRef.current, reservedRef.current)
@@ -175,7 +407,7 @@ export default function IncidentFormModal({
   useEffect(() => {
     if (!focusErrorRef.current) return
     focusErrorRef.current = false
-    const el = bodyRef.current?.querySelector('[aria-invalid="true"]')
+    const el = bodyRef.current?.querySelector(INVALID_FIELD)
     if (el && typeof el.focus === 'function') { el.focus(); el.scrollIntoView?.({ block: 'center' }) }
   }, [section, showErrors])
 
@@ -202,7 +434,7 @@ export default function IncidentFormModal({
   const dateProblem = (key) => (p) => { dateProblemsRef.current[key] = p }
 
   async function submit() {
-    if (saving) return
+    if (saving || savingRef.current || gone || conflict) return
     const pending = Object.keys(dateProblemsRef.current).find((k) => dateProblemsRef.current[k])
     if (pending) {
       const el = bodyRef.current?.querySelector(`[data-date-field="${pending}"] input`)
@@ -211,7 +443,17 @@ export default function IncidentFormModal({
     }
     // Ctrl/⌘+Enter tarih alanının yazılan değerini çözdükten SONRA (bir sonraki görev) çağırır: güncel form ref'ten okunur
     const form = formRef.current
-    const errs = validateIncident(form)
+    const base = baselineRef.current
+    // Düzenleme: yalnız DEĞİŞEN alanlar + sürüm gider; değişiklik yoksa (ve "Mail gönder" seçilmediyse) istek GİTMEZ.
+    const edit = creating ? null : editPayload(form, base)
+    if (edit && edit.changed.length === 0 && form.send_notification !== true) {
+      if (!draftOfferRef.current) removeDraft(draftKeyScope)
+      doneRef.current = true
+      toast.info(t('inc.nothingToSave'))
+      onClose()
+      return
+    }
+    const errs = validateIncident(form, creating ? null : base)
     if (Object.keys(errs).length) {
       setShowErrors(true)
       const first = firstErrorSection(errs)
@@ -223,33 +465,49 @@ export default function IncidentFormModal({
     setFormError(null)
     setServerErrors(null)
     setSaving(true)
+    savingRef.current = true
     try {
-      // Düzenlemede üç isteğe bağlı anahtardan (teknik hata adedi, kesinti cevabı, kesinti ID) yalnız DEĞİŞEN gönderilir:
-      // dokunulmamış düzenleme, başka birinin bu arada yazdığı değeri ezmez (sunucuda "anahtar yok" = dokunma).
-      const res = await onSubmit(payloadFromForm(form, mode === 'create' ? null : initial))
-      if (!res?.ok) {
-        // Sunucu alan hatası (400 + fields): formda yuvası olan alanın ALTINDA gösterilir, o bölüme gidilir ve alana
-        // odaklanılır. Yuvası olmayan alan (ya da alan bilgisi taşımayan hata) eskisi gibi üstteki bantta kalır.
-        const { shown, rest } = splitServerErrors(res?.fields, form)
-        if (shown) {
-          setServerErrors(shown)
-          const first = firstErrorSection(shown)
-          setServerFocusTick((n) => n + 1)
-          if (first && first !== section) setSection(first)
-        }
-        if (!shown || rest) setFormError(res?.error || t('inc.saveError'))
+      const res = await onSubmit(creating ? payloadFromForm(form, null) : edit.body)
+      if (res?.ok) {
+        // Kaydedildi: taslak silinir; pencere çağıranca kapatılır (kapanmazsa sonraki düzenleme yine taslağa yazılır).
+        doneRef.current = true
+        removeDraft(draftKeyScope)
+        return
       }
+      if (!creating && res?.code === 'CONCURRENT_MODIFICATION') {
+        // Çakışma: yazılanlar hemen taslağa (pencere kapansa da kaybolmaz); kaydetme "son hâli yükle"ye dek kapalı.
+        savingRef.current = false
+        flushDraft(true)
+        setConflict({ by: res?.conflict?.by ?? null, at: res?.conflict?.at ?? null })
+        bodyRef.current?.scrollTo?.({ top: 0 })
+        return
+      }
+      if (!creating && res?.status === 404) {
+        setGone(true)
+        setFresh({ state: 'gone', changed: [] })
+        bodyRef.current?.scrollTo?.({ top: 0 })
+        return
+      }
+      // Sunucu alan hatası (400 + fields): formda yuvası olan alanın ALTINDA gösterilir, o bölüme gidilir ve alana
+      // odaklanılır. Yuvası olmayan alan (ya da alan bilgisi taşımayan hata) eskisi gibi üstteki bantta kalır.
+      const { shown, rest } = splitServerErrors(res?.fields, form)
+      if (shown) {
+        setServerErrors(shown)
+        const first = firstErrorSection(shown)
+        setServerFocusTick((n) => n + 1)
+        if (first && first !== section) setSection(first)
+      }
+      if (!shown || rest) setFormError(res?.error || t('inc.saveError'))
     } catch {
       setFormError(t('inc.saveError'))
     } finally {
-      setSaving(false)
+      savingRef.current = false
+      if (aliveRef.current) setSaving(false)
     }
   }
 
   const submitRef = useRef(submit)
   submitRef.current = submit
-  const aliveRef = useRef(true)
-  useEffect(() => () => { aliveRef.current = false }, [])
 
   async function requestClose() {
     if (saving) return
@@ -260,6 +518,10 @@ export default function IncidentFormModal({
       })
       if (!ok) return
     }
+    // Bilerek kapatıldı (değişiklik yoksa ya da atıldıysa): bu oturumun taslağı silinir — yanıtlanmamış ESKİ taslak
+    // öneriliyorsa o kalır (kullanıcı ona dokunmadı, sonraki açılışta yine sorulur).
+    if (!draftOfferRef.current) removeDraft(draftKeyScope)
+    doneRef.current = true
     onClose()
   }
 
@@ -294,7 +556,6 @@ export default function IncidentFormModal({
   }
   const opts = (arr, pfx) => arr.map((x) => ({ value: x, label: t(pfx + x) }))
   const autoDuration = !!form.occurred_at && !!form.resolved_at
-  const creating = mode === 'create'
 
   const sectionHead = (key) => (
     <p className="mb-3 text-sm text-muted-foreground">{t('inc.sec.' + key + 'Hint')}</p>
@@ -315,13 +576,90 @@ export default function IncidentFormModal({
       </div>
       <div className="flex gap-2 max-sm:*:h-10 max-sm:*:flex-1">
         <Button type="button" variant="outline" onClick={requestClose} disabled={saving}>{t('inc.formCancel')}</Button>
-        <Button type="button" onClick={submit} disabled={saving} aria-busy={saving || undefined} data-action="save">
+        <Button type="button" onClick={submit} disabled={saving || gone || !!conflict} aria-busy={saving || undefined} data-action="save">
           {saving ? <Spinner size={16} decorative /> : <Save aria-hidden="true" />}
           {saving ? t('inc.saving') : t('inc.save')}
         </Button>
       </div>
     </div>
   )
+
+  // ── Bantlar: taze kayıt notu, yerel taslak önerisi (gövdenin başında, kayar); çakışma / silinmiş (yapışık) ──
+  const plural = (n, key) => (n === 1 ? t(key + '.one', n) : t(key, n))
+  const latestButton = (
+    <Button type="button" size="sm" variant="outline" onClick={loadLatest} disabled={latestBusy} aria-busy={latestBusy || undefined}
+      data-action="load-latest" className="max-sm:h-10 pointer-coarse:h-10">
+      {latestBusy ? <Spinner size={14} decorative /> : <RefreshCw aria-hidden="true" />}{t('inc.fresh.loadLatest')}
+    </Button>
+  )
+  const latestFailedNote = latestFailed
+    ? <span data-slot="ih-latest-failed" className="mt-1 block">{t('inc.fresh.latestFailed')}</span>
+    : null
+  let freshNote = null
+  if (fresh?.state === 'updated') {
+    freshNote = (
+      <div data-slot="ih-fresh-note" data-kind="updated">
+        <AlertBanner tone="info" icon={History} className="mb-0" title={plural(fresh.changed.length, 'inc.fresh.updated')}
+          onDismiss={() => setFresh((f) => ({ ...f, state: 'same' }))} dismissLabel={t('app.close')} />
+      </div>
+    )
+  } else if (fresh?.state === 'pending' && !conflict) {
+    freshNote = (
+      <div data-slot="ih-fresh-note" data-kind="pending">
+        <AlertBanner tone="warning" icon={History} className="mb-0" title={t('inc.fresh.pendingTitle')}>
+          <span className="block">{plural(fresh.changed.length, 'inc.fresh.pendingBody')}</span>
+          <span className="mt-2 flex flex-wrap gap-2">{latestButton}</span>
+          {latestFailedNote}
+        </AlertBanner>
+      </div>
+    )
+  } else if (fresh?.state === 'failed') {
+    freshNote = (
+      <p data-slot="ih-fresh-note" data-kind="failed" className="m-0 flex items-start gap-1.5 text-xs text-muted-foreground">
+        <Info aria-hidden="true" className="mt-px size-3.5 shrink-0" />{t('inc.fresh.failed')}
+      </p>
+    )
+  }
+  let draftNote = null
+  if (draftOffer && !gone) {
+    const n = Object.keys(draftOffer.changes || {}).filter((k) => k !== 'team_name').length
+    let when = ''
+    try { when = formatDate(new Date(draftOffer.at).toISOString()) } catch { when = '' }
+    const older = draftOffer.base_version != null && baseline?.version != null
+      && Number(draftOffer.base_version) !== Number(baseline.version)
+    draftNote = (
+      <div data-slot="ih-draft" data-older={older || undefined}>
+        <AlertBanner tone="info" icon={Undo2} className="mb-0" title={t('inc.draft.title')}>
+          <span className="block">{n === 1 ? t('inc.draft.body.one', when, n) : t('inc.draft.body', when, n)}</span>
+          {older && <span data-slot="ih-draft-older" className="mt-1 block">{t('inc.draft.olderBase')}</span>}
+          <span className="mt-2 flex flex-wrap gap-2">
+            <Button type="button" size="sm" onClick={restoreDraft} data-action="draft-restore" className="max-sm:h-10 pointer-coarse:h-10">
+              <Undo2 aria-hidden="true" />{t('inc.draft.restore')}
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={deleteDraft} data-action="draft-delete" className="max-sm:h-10 pointer-coarse:h-10">
+              <Trash2 aria-hidden="true" />{t('inc.draft.delete')}
+            </Button>
+          </span>
+        </AlertBanner>
+      </div>
+    )
+  }
+  const conflictNote = conflict && !gone ? (
+    <div data-slot="ih-conflict">
+      <AlertBanner tone="danger" role="alert" className="mb-0" title={t('inc.conflict.title')}>
+        <span className="block">
+          {conflict.by && conflict.at ? t('inc.conflict.by', conflict.by, formatDate(conflict.at)) : t('inc.conflict.anon')}
+        </span>
+        <span className="mt-2 flex flex-wrap gap-2">{latestButton}</span>
+        {latestFailedNote}
+      </AlertBanner>
+    </div>
+  ) : null
+  const goneNote = gone ? (
+    <div data-slot="ih-fresh-note" data-kind="gone">
+      <AlertBanner tone="danger" role="alert" className="mb-0" title={t('inc.fresh.gone')} />
+    </div>
+  ) : null
 
   return (
     <ModalShell open onClose={requestClose} title={t(creating ? 'inc.newTitle' : 'inc.editTitle')} icon={creating ? ListChecks : Pencil}
@@ -334,6 +672,9 @@ export default function IncidentFormModal({
           // Tarih alanı bu tuşta yazılanı çözer (onChange → yeni çizim); kayıt ondan sonra, güncel formla
           setTimeout(() => { if (aliveRef.current) submitRef.current() }, 0)
         }}>
+        {(freshNote || draftNote) && (
+          <div data-slot="ih-form-notes" className="mb-3 flex min-w-0 flex-col gap-2">{freshNote}{draftNote}</div>
+        )}
         <Tabs value={section} onValueChange={setSection} className="gap-0">
           {/* Bölüm çubuğu + hata özetleri gövdenin üstünde yapışık kalır (uzun bölümde kaydırınca da görünür). */}
           <div className="sticky top-0 z-10 -mx-1 flex flex-col gap-2 bg-background px-1 pb-3">
@@ -359,6 +700,8 @@ export default function IncidentFormModal({
             {nErrors > 0 && (
               <AlertBanner tone="danger" icon={AlertOctagon} className="mb-0" title={t('inc.fixErrors', nErrors)} />
             )}
+            {goneNote}
+            {conflictNote}
             {formError && (
               <AlertBanner tone="danger" role="alert" className="mb-0" title={t('inc.saveError')}
                 onDismiss={() => setFormError(null)} dismissLabel={t('app.close')}>{formError}</AlertBanner>
@@ -369,38 +712,62 @@ export default function IncidentFormModal({
             {focusServerError('summary')}
             {sectionHead('summary')}
             <div className={GRID}>
-              <TextInput label={t('inc.fTitle')} req full value={form.title} autoFocus={creating} error={err('title')}
+              <TextInput label={t('inc.fTitle')} req full name="title" value={form.title} autoFocus={creating} error={err('title')}
                 placeholder={t('inc.titlePlaceholder')} onChange={(v) => set('title', v)} />
               <div data-date-field="occurred_at" className="min-w-0">
-                <DateInput label={t('inc.fOccurredAt')} req value={form.occurred_at} error={err('occurred_at')} hint={t('sdt.hint')}
+                <DateInput label={t('inc.fOccurredAt')} req name="occurred_at" value={form.occurred_at} error={err('occurred_at')} hint={t('sdt.hint')}
                   onProblem={dateProblem('occurred_at')} onChange={(v) => set('occurred_at', v)} />
               </div>
-              <SelectInput label={t('inc.fTeam')} req value={form.team_id != null ? String(form.team_id) : ''} options={teamOptions} error={err('team_id')}
+              <SelectInput label={t('inc.fTeam')} req name="team_id" value={form.team_id != null ? String(form.team_id) : ''} options={teamOptions} error={err('team_id')}
                 onChange={(v) => {
+                  touchedRef.current = true
+                  doneRef.current = false
                   setForm((f) => ({ ...f, team_id: v, team_name: teams.find((tm) => String(tm.id) === String(v))?.name || '' }))
                   clearServerError('team_id')
                 }} />
-              <SelectInput label={t('inc.fSeverity')} value={form.severity} onChange={(v) => set('severity', v)} options={opts(SEVERITIES, 'inc.sev')} />
-              <SelectInput label={t('inc.fStatus')} value={form.status} onChange={(v) => set('status', v)} options={opts(STATUSES, 'inc.st')} />
-              <SelectInput label={t('inc.fCategory')} value={form.category} onChange={(v) => set('category', v)} options={opts(CATEGORIES, 'inc.cat')} />
-              <CreatableMultiSelect label={t('inc.fProblemType')} value={form.problem_types} options={PROBLEM_TYPES}
-                onChange={(v) => set('problem_types', v)} placeholder={t('inc.selectProblemType')} />
+              <SelectInput label={t('inc.fSeverity')} name="severity" value={form.severity} error={err('severity')}
+                onChange={(v) => set('severity', v)} options={opts(SEVERITIES, 'inc.sev')} />
+              <SelectInput label={t('inc.fStatus')} name="status" value={form.status} error={err('status')}
+                onChange={(v) => set('status', v)} options={opts(STATUSES, 'inc.st')} />
+              <SelectInput label={t('inc.fCategory')} name="category" value={form.category} error={err('category')}
+                onChange={(v) => set('category', v)} options={opts(CATEGORIES, 'inc.cat')} />
+              <CreatableMultiSelect label={t('inc.fProblemType')} name="problem_types" value={form.problem_types} options={PROBLEM_TYPES}
+                error={err('problem_types')} onChange={(v) => set('problem_types', v)} placeholder={t('inc.selectProblemType')} />
             </div>
+            {/* Durum ↔ zaman tutarlılığı (2026-11-20): ENGELLEMEYEN öneriler — kayıt yine yapılabilir. */}
+            {nudges.length > 0 && (
+              <div data-slot="ih-nudges" className="mb-3 flex min-w-0 flex-col gap-2">
+                {nudges.map((k) => (
+                  <div key={k} data-slot="ih-nudge" data-kind={k}>
+                    <AlertBanner tone="info" icon={Lightbulb} className="mb-0" title={t('inc.nudge.' + k)}
+                      onDismiss={() => dismissNudge(k)} dismissLabel={t('inc.nudge.dismiss')}>
+                      <span className="block text-xs">{t('inc.nudge.hint')}</span>
+                      <span className="mt-2 flex flex-wrap gap-2">
+                        <Button type="button" size="sm" variant="outline" data-action={'nudge-' + k} onClick={() => takeNudge(k)}
+                          className="h-auto min-h-8 whitespace-normal text-left max-sm:min-h-10 pointer-coarse:min-h-10">
+                          {t('inc.nudge.' + k + 'Action')}
+                        </Button>
+                      </span>
+                    </AlertBanner>
+                  </div>
+                ))}
+              </div>
+            )}
             <FieldSet className="mt-2 min-w-0 gap-0">
               <FieldLegend className="mb-2 text-sm font-semibold">{t('inc.timelineLegend')}</FieldLegend>
               <div className={GRID}>
                 <div data-date-field="detected_at" className="min-w-0">
-                  <DateInput label={t('inc.fDetectedAt')} value={form.detected_at} min={form.occurred_at || undefined}
+                  <DateInput label={t('inc.fDetectedAt')} name="detected_at" value={form.detected_at} min={form.occurred_at || undefined}
                     minLabel={t('inc.fOccurredAt')} error={err('detected_at')} onProblem={dateProblem('detected_at')}
                     anchor={form.occurred_at || undefined} anchorLabel={t('inc.fOccurredAt')} onChange={(v) => set('detected_at', v)} />
                 </div>
                 <div data-date-field="resolved_at" className="min-w-0">
-                  <DateInput label={t('inc.fResolvedAt')} value={form.resolved_at} min={form.detected_at || form.occurred_at || undefined}
+                  <DateInput label={t('inc.fResolvedAt')} name="resolved_at" value={form.resolved_at} min={form.detected_at || form.occurred_at || undefined}
                     minLabel={form.detected_at ? t('inc.fDetectedAt') : t('inc.fOccurredAt')} onProblem={dateProblem('resolved_at')}
                     anchor={form.occurred_at || undefined} anchorLabel={t('inc.fOccurredAt')}
                     error={err('resolved_at')} onChange={(v) => set('resolved_at', v)} />
                 </div>
-                <TextInput label={t('inc.fDuration')} type="number" value={form.duration_minutes} disabled={autoDuration}
+                <TextInput label={t('inc.fDuration')} type="number" name="duration_minutes" value={form.duration_minutes} disabled={autoDuration}
                   hint={autoDuration ? t('inc.durationAuto') : t('inc.durationManual')} error={err('duration_minutes')}
                   onChange={(v) => set('duration_minutes', v)} />
               </div>
@@ -411,28 +778,32 @@ export default function IncidentFormModal({
             {focusServerError('impact')}
             {sectionHead('impact')}
             <div className={GRID}>
-              <CreatableMultiSelect label={t('inc.fChannel')} value={form.channel} options={options.channel || []}
-                onChange={(v) => set('channel', v)} placeholder={t('inc.selectChannel')}
+              <CreatableMultiSelect label={t('inc.fChannel')} name="channel" value={form.channel} options={options.channel || []}
+                error={err('channel')} onChange={(v) => set('channel', v)} placeholder={t('inc.selectChannel')}
                 onCreate={(v) => onAddOption('CHANNEL', v)} onDelete={(v) => onDeleteOption('CHANNEL', v)} />
-              <CreatableMultiSelect label={t('inc.fService')} value={form.service} options={options.domain || []}
-                onChange={(v) => set('service', v)} placeholder={t('inc.selectService')}
+              <CreatableMultiSelect label={t('inc.fService')} name="service" value={form.service} options={options.domain || []}
+                error={err('service')} onChange={(v) => set('service', v)} placeholder={t('inc.selectService')}
                 onCreate={(v) => onAddOption('DOMAIN', v)} onDelete={(v) => onDeleteOption('DOMAIN', v)} />
-              <TextInput label={t('inc.fAffected')} value={form.affected_services} onChange={(v) => set('affected_services', v)} />
-              <TextInput label={t('inc.fAffectedApp')} value={form.affected_app} onChange={(v) => set('affected_app', v)} />
-              <TextInput label={t('inc.fAffectedSystems')} value={form.affected_systems} onChange={(v) => set('affected_systems', v)} />
-              <TextInput label={t('inc.fAffectedCustomers')} type="number" value={form.affected_customers} error={err('affected_customers')}
+              <TextInput label={t('inc.fAffected')} name="affected_services" value={form.affected_services} error={err('affected_services')}
+                onChange={(v) => set('affected_services', v)} />
+              <TextInput label={t('inc.fAffectedApp')} name="affected_app" value={form.affected_app} error={err('affected_app')}
+                onChange={(v) => set('affected_app', v)} />
+              <TextInput label={t('inc.fAffectedSystems')} name="affected_systems" value={form.affected_systems} error={err('affected_systems')}
+                onChange={(v) => set('affected_systems', v)} />
+              <TextInput label={t('inc.fAffectedCustomers')} type="number" name="affected_customers" value={form.affected_customers} error={err('affected_customers')}
                 onChange={(v) => set('affected_customers', v)} />
-              <TextInput label={t('inc.fAffectedTransactions')} type="number" value={form.affected_transactions} error={err('affected_transactions')}
+              <TextInput label={t('inc.fAffectedTransactions')} type="number" name="affected_transactions" value={form.affected_transactions} error={err('affected_transactions')}
                 onChange={(v) => set('affected_transactions', v)} />
               {/* Teknik hata adedi (2026-11-20): metin kutusu + sayısal tuş takımı — yazılan metin olduğu gibi tutulur ki
                   "1.250" / "12,5" sessizce boşa dönmesin, alanın altında nedeni yazsın. Boş = bilinmiyor. */}
               <TextInput label={t('inc.fTechFaultCount')} name="tech_error_count" inputMode="numeric" autoComplete="off"
                 value={form.tech_error_count} error={err('tech_error_count')} hint={t('inc.techFaultCountHint')}
                 onChange={(v) => set('tech_error_count', v)} />
-              <TextInput label={t('inc.fErrorBudget')} type="number" value={form.error_budget_burn_pct} error={err('error_budget_burn_pct')}
+              <TextInput label={t('inc.fErrorBudget')} type="number" name="error_budget_burn_pct" value={form.error_budget_burn_pct} error={err('error_budget_burn_pct')}
                 onChange={(v) => set('error_budget_burn_pct', v)} />
               <div className="flex items-end">
-                <CheckInput label={t('inc.fSla')} hint={t('inc.slaHint')} checked={form.sla_breached} onChange={(v) => set('sla_breached', v)} />
+                <CheckInput label={t('inc.fSla')} hint={t('inc.slaHint')} name="sla_breached" error={err('sla_breached')}
+                  checked={form.sla_breached} onChange={(v) => set('sla_breached', v)} />
               </div>
               {/* Kesinti kaynaklı mı? — üç durumlu (Evet / Hayır / seçilmemiş = bilinmiyor). Kesinti ID yalnız Evet'te. */}
               <YesNoInput label={t('inc.fOutageRelated')} name="outage_related" value={form.outage_related}
@@ -443,7 +814,8 @@ export default function IncidentFormModal({
                   error={err('outage_id')} hint={t('inc.outageIdHint')} placeholder={t('inc.outageIdPlaceholder')}
                   onChange={(v) => set('outage_id', v)} />
               )}
-              <MdArea label={t('inc.fBusinessImpact')} hint={t('inc.businessImpactHint')} value={form.business_impact} incidentId={form.id}
+              <MdArea label={t('inc.fBusinessImpact')} hint={t('inc.businessImpactHint')} name="business_impact" error={err('business_impact')}
+                value={form.business_impact} incidentId={form.id}
                 makeUniqueCaption={makeUniqueCaption} onChange={(v) => set('business_impact', v)} />
             </div>
           </TabsContent>
@@ -452,13 +824,13 @@ export default function IncidentFormModal({
             {focusServerError('codes')}
             {sectionHead('codes')}
             <div className={GRID}>
-              <CreatableSelect label={t('inc.fErrorCode')} value={form.error_code} options={options.errorCode || []}
+              <CreatableSelect label={t('inc.fErrorCode')} name="error_code" error={err('error_code')} value={form.error_code} options={options.errorCode || []}
                 onChange={(v) => set('error_code', v)} onCreate={(v) => onAddOption('ERROR_CODE', v)} onDelete={(v) => onDeleteOption('ERROR_CODE', v)} />
-              <CreatableSelect label={t('inc.fFunctionCode')} value={form.function_code} options={options.functionCode || []}
+              <CreatableSelect label={t('inc.fFunctionCode')} name="function_code" error={err('function_code')} value={form.function_code} options={options.functionCode || []}
                 onChange={(v) => set('function_code', v)} onCreate={(v) => onAddOption('FUNCTION_CODE', v)} onDelete={(v) => onDeleteOption('FUNCTION_CODE', v)} />
-              <CreatableSelect label={t('inc.fChannelCode')} value={form.channel_code} options={options.channelCode || []}
+              <CreatableSelect label={t('inc.fChannelCode')} name="channel_code" error={err('channel_code')} value={form.channel_code} options={options.channelCode || []}
                 onChange={(v) => set('channel_code', v)} onCreate={(v) => onAddOption('CHANNEL_CODE', v)} onDelete={(v) => onDeleteOption('CHANNEL_CODE', v)} />
-              <TagField label={t('inc.fTags')} value={form.tags} onChange={(v) => set('tags', v)} />
+              <TagField label={t('inc.fTags')} name="tags" error={err('tags')} value={form.tags} onChange={(v) => set('tags', v)} />
             </div>
           </TabsContent>
 
@@ -466,11 +838,11 @@ export default function IncidentFormModal({
             {focusServerError('rca')}
             {sectionHead('rca')}
             <div className="grid grid-cols-1">
-              <MdArea label={t('inc.fRca')} hint={t('inc.rcaHint')} value={form.rca_summary} incidentId={form.id}
+              <MdArea label={t('inc.fRca')} hint={t('inc.rcaHint')} name="rca_summary" error={err('rca_summary')} value={form.rca_summary} incidentId={form.id}
                 makeUniqueCaption={makeUniqueCaption} onChange={(v) => set('rca_summary', v)} />
-              <MdArea label={t('inc.fDescription')} value={form.description} incidentId={form.id}
+              <MdArea label={t('inc.fDescription')} name="description" error={err('description')} value={form.description} incidentId={form.id}
                 makeUniqueCaption={makeUniqueCaption} onChange={(v) => set('description', v)} />
-              <MdArea label={t('inc.fResolution')} value={form.resolution_steps} incidentId={form.id}
+              <MdArea label={t('inc.fResolution')} name="resolution_steps" error={err('resolution_steps')} value={form.resolution_steps} incidentId={form.id}
                 makeUniqueCaption={makeUniqueCaption} onChange={(v) => set('resolution_steps', v)} />
             </div>
           </TabsContent>

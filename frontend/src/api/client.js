@@ -1908,7 +1908,11 @@ export const api = {
       const qs = q.toString()
       return request(`/incidents${qs ? '?' + qs : ''}`)
     },
-    get: (id) => request(`/incidents/${id}`),
+    /**
+     * Tek kayıt. `opts` (2026-11-20, "Sağlam Kayıt"): `{ timeoutMs, signal }` — ayrıntı / düzenleme penceresi kaydı açılınca
+     * taze hâlini sınırlı süre ve iptal edilebilir okur. HTTP durumu `errorInfoOf(res).status` ile okunur (404 = silinmiş).
+     */
+    get: (id, opts) => request(`/incidents/${id}`, opts),
     /** Bir alarmdan açılmış (takım kapsamında görünen) olay kayıtları — yalnız alarm DETAYI çağırır. */
     byAlert: (alertId) => request(`/incidents/by-alert/${encodeURIComponent(alertId)}`),
     options: (type) => request(`/incidents/options?type=${encodeURIComponent(type)}`),

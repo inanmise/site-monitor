@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   X, Pencil, Trash2, Siren, Eye, CheckCircle2, Clock, Hourglass, Users, Receipt, Gauge, Hash, CircleDot, Search, ShieldHalf,
-  FileText, Stethoscope, Wrench, Briefcase, Tags, BellRing, ClipboardList, ChevronRight, FilePlus2,
+  FileText, Stethoscope, Wrench, Briefcase, Tags, BellRing, ClipboardList, ChevronRight, FilePlus2, History, Info, AlertOctagon,
 } from 'lucide-react'
 import { formatDate } from '../../api/client'
 import { navigateTo } from '../../utils/navigate.js'
@@ -87,8 +87,14 @@ function MdSection({ icon: Icon, title, value, emptyText }) {
  * <p>`modal={false}` + kendi örtüsü (IncidentDetailSheet gerekçesi): ayrıntının üstünde açılan düzenleme penceresi
  * (ModalShell), onay diyaloğu ve takım üyeleri penceresi body'ye portal'lanır; Radix modal kipi onları tıklanamaz
  * yapardı. Kapatma yolları: örtü, X, Escape.
+ *
+ * <p>`fresh` (2026-11-20, "Sağlam Kayıt"): sayfanın kaydın son hâlini arkada okumasının sonucu — `updated` (liste
+ * açıldıktan sonra değişmişti, son hâli gösteriliyor), `failed` (okunamadı, liste hâli), `gone` (silinmiş; sayfa
+ * düzenleme / silme eylemlerini kapatır). `loading` / `same` / yok → not çizilmez.
  */
-export default function HistoryDetailSheet({ record, onClose, onEdit, onDelete, onPostmortem, allowManage = false, allowDelete = false }) {
+export default function HistoryDetailSheet({
+  record, onClose, onEdit, onDelete, onPostmortem, allowManage = false, allowDelete = false, fresh = null,
+}) {
   const t = useT()
   const dateLocale = useDateLocale()
   // Teknik hata raporuna ekle (2026-11-20): rapor içeriği yazma + modül okuma (kanal listesi) izni + modül görünür + olay
@@ -160,6 +166,24 @@ export default function HistoryDetailSheet({ record, onClose, onEdit, onDelete, 
             <span aria-hidden="true">·</span><span>{t('inc.cat' + r.category) || r.category}</span>
             {r.occurred_at && <><span aria-hidden="true">·</span><span title={r.occurred_at}>{relativeFrom(r.occurred_at, dateLocale)}</span></>}
           </SheetDescription>
+          {/* Taze kayıt notu (2026-11-20, "Sağlam Kayıt"): liste açıldıktan sonra değiştiyse / okunamadıysa / silindiyse */}
+          {fresh?.state === 'updated' && (
+            <p data-slot="ih-fresh-note" data-kind="updated" role="status"
+              className="m-0 flex items-start gap-1.5 rounded-md bg-sky-500/10 px-2 py-1.5 text-xs text-sky-800 dark:text-sky-200">
+              <History aria-hidden="true" className="mt-px size-3.5 shrink-0" />{t('inc.fresh.detailUpdated')}
+            </p>
+          )}
+          {fresh?.state === 'failed' && (
+            <p data-slot="ih-fresh-note" data-kind="failed" className="m-0 flex items-start gap-1.5 text-xs text-muted-foreground">
+              <Info aria-hidden="true" className="mt-px size-3.5 shrink-0" />{t('inc.fresh.detailFailed')}
+            </p>
+          )}
+          {fresh?.state === 'gone' && (
+            <p data-slot="ih-fresh-note" data-kind="gone" role="status"
+              className="m-0 flex items-start gap-1.5 rounded-md bg-destructive/10 px-2 py-1.5 text-xs font-medium text-destructive">
+              <AlertOctagon aria-hidden="true" className="mt-px size-3.5 shrink-0" />{t('inc.fresh.detailGone')}
+            </p>
+          )}
         </SheetHeader>
 
         <div data-slot="ih-detail-body" className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]">

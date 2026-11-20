@@ -2,7 +2,7 @@ import { useEffect, useId, useState } from 'react'
 import { X } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
-import Field from '../ui/Field.jsx'
+import Field, { FieldError } from '../ui/Field.jsx'
 import SmartDateTimeField from '../ui/SmartDateTimeField.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import MarkdownEditor from '../ui/MarkdownEditor.jsx'
@@ -71,9 +71,9 @@ export function YesNoInput({ label, value, onChange, disabled, hint, error, name
  * ("16.11 14:30", "dün 09:00", "şimdi"), hızlı seçim çipleri, ay / yıl açılır takvim + saat / dakika listeleri. `anchor`
  * (tespit / çözüm zamanı için oluş zamanı) verilirse çipler "+N dk" olur ve altında "<anchorLabel> zamanından N sonra" yazar.
  */
-export function DateInput({ label, value, onChange, disabled, req, min, minLabel, error, hint, anchor, anchorLabel, onProblem }) {
+export function DateInput({ label, value, onChange, disabled, req, min, minLabel, error, hint, anchor, anchorLabel, onProblem, name }) {
   return (
-    <Field label={label} required={req} error={error} hint={hint}>
+    <Field label={label} required={req} error={error} hint={hint} name={name}>
       {({ id, describedBy, invalid }) => (
         <SmartDateTimeField id={id} value={value} onChange={onChange} disabled={disabled} clearable={!req} min={min}
           minLabel={minLabel} label={label} anchor={anchor} anchorLabel={anchorLabel} invalid={invalid}
@@ -83,9 +83,9 @@ export function DateInput({ label, value, onChange, disabled, req, min, minLabel
   )
 }
 
-export function SelectInput({ label, value, onChange, disabled, options, req, error, hint }) {
+export function SelectInput({ label, value, onChange, disabled, options, req, error, hint, name }) {
   return (
-    <Field label={label} required={req} error={error} hint={hint}>
+    <Field label={label} required={req} error={error} hint={hint} name={name}>
       {({ id, describedBy, invalid }) => (
         // NativeSelect sarmalayıcısı `w-fit` — alanı doldursun diye doğrudan çocuğa w-full
         <div className="*:w-full">
@@ -99,14 +99,17 @@ export function SelectInput({ label, value, onChange, disabled, options, req, er
   )
 }
 
-/** Yönetilen seçim (hata/fonksiyon/kanal kodu) — sabit liste + yeni değer ekleme / silme (creatable). */
-export function CreatableSelect({ label, value, onChange, options, disabled, onCreate, onDelete, hint }) {
+/**
+ * Yönetilen seçim (hata/fonksiyon/kanal kodu) — sabit liste + yeni değer ekleme / silme (creatable). `error` / `name`
+ * (2026-11-20): sunucunun alan hatası alanın altında, tetikleyici `aria-invalid` + `aria-describedby` ile bağlı.
+ */
+export function CreatableSelect({ label, value, onChange, options, disabled, onCreate, onDelete, hint, error, name }) {
   const opts = [{ value: '', label: '—' }, ...options.map((o) => ({ value: o, label: o }))]
   return (
-    <Field label={label} hint={hint}>
-      {({ id }) => (
+    <Field label={label} hint={hint} error={error} name={name}>
+      {({ id, describedBy, invalid }) => (
         <SearchableSelect id={id} value={value ?? ''} onChange={onChange} disabled={disabled}
-          options={opts} creatable={!disabled} onCreate={onCreate}
+          options={opts} creatable={!disabled} onCreate={onCreate} ariaDescribedBy={describedBy} ariaInvalid={invalid}
           onDelete={disabled ? undefined : onDelete} placeholder="—" />
       )}
     </Field>
@@ -143,7 +146,7 @@ const randomHue = () => Math.floor(Math.random() * 360)
  * Çoklu seçim + creatable — değer CSV ('a, b, c'). Seçilenler kaldırılabilir çip; "ekle" tekil SearchableSelect
  * (seçilenler hariç), seçimden sonra boş kalır.
  */
-export function CreatableMultiSelect({ label, value, onChange, options, disabled, onCreate, onDelete, placeholder, full, hint }) {
+export function CreatableMultiSelect({ label, value, onChange, options, disabled, onCreate, onDelete, placeholder, full, hint, error, name }) {
   const t = useT()
   const selected = csvList(value)
   const add = (v) => {
@@ -157,11 +160,12 @@ export function CreatableMultiSelect({ label, value, onChange, options, disabled
       .map((o) => ({ value: o, label: o })),
   ]
   return (
-    <Field label={label} className={full ? FULL : undefined} hint={hint}>
-      {({ id }) => (
+    <Field label={label} className={full ? FULL : undefined} hint={hint} error={error} name={name}>
+      {({ id, describedBy, invalid }) => (
         <div className="flex min-w-0 flex-col gap-1.5">
           {!disabled && (
             <SearchableSelect id={id} value="" onChange={add} options={opts} creatable
+              ariaDescribedBy={describedBy} ariaInvalid={invalid}
               onCreate={(v) => { onCreate?.(v); add(v) }} onDelete={onDelete} placeholder={placeholder || '—'} />
           )}
           {selected.length > 0 ? (
@@ -182,7 +186,7 @@ export function CreatableMultiSelect({ label, value, onChange, options, disabled
  * Etiket girişi — yazıp Enter (ya da virgül) → RASTGELE renkli çip. Renk eklenince atanır ve oturumda sabit kalır
  * (CSV'ye yazılmaz, her render'da titremez). Odak kaybında yazılan etiket de eklenir.
  */
-export function TagField({ label, value, onChange, disabled, hint }) {
+export function TagField({ label, value, onChange, disabled, hint, error, name }) {
   const t = useT()
   const [text, setText] = useState('')
   const [hues, setHues] = useState({})
@@ -205,11 +209,12 @@ export function TagField({ label, value, onChange, disabled, hint }) {
   }
   const remove = (tag) => onChange(tags.filter((x) => x !== tag).join(', '))
   return (
-    <Field label={label} className={FULL} hint={hint ?? (!disabled ? t('inc.tagsHint') : undefined)}>
-      {({ id, describedBy }) => (
+    <Field label={label} className={FULL} hint={hint ?? (!disabled ? t('inc.tagsHint') : undefined)} error={error} name={name}>
+      {({ id, describedBy, invalid }) => (
         <div className="flex min-w-0 flex-col gap-1.5">
           {!disabled && (
             <Input id={id} type="text" value={text} placeholder={t('inc.tagsPlaceholder')} aria-describedby={describedBy}
+              aria-invalid={invalid}
               onChange={(e) => setText(e.target.value)} onBlur={add}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add() } }} />
           )}
@@ -231,35 +236,43 @@ export function TagField({ label, value, onChange, disabled, hint }) {
  * Zengin metin alanı — Haftalık Raporlar ile AYNI markdown editör. Görsel yükleme açık; kimlik yoksa (yeni kayıt)
  * taslak yüklenir, kaydedince sunucu görseli olaya bağlar. `makeUniqueCaption` aynı olay içinde adları tekilleştirir.
  */
-export function MdArea({ label, hint, value, onChange, incidentId, makeUniqueCaption, height = 220 }) {
+export function MdArea({ label, hint, value, onChange, incidentId, makeUniqueCaption, height = 220, error, name }) {
   const labelId = useId()
+  const errorId = useId()
   const uploadImage = async (file, caption) => {
     const res = await api.incidents.uploadImage(incidentId, file, caption)
     return res?.success ? `/api/incidents/images/${res.data.id}` : null
   }
+  // Sunucu alan hatası (2026-11-20, ör. 20 000 karakter sınırı): grubun altında, grup `aria-describedby` ile bağlı;
+  // `data-invalid` odak kancası (form ilk hatalı alanın metin kutusuna odaklanır).
   return (
-    <div role="group" aria-labelledby={labelId} data-slot="ih-md-field" className={cn(FULL, 'mb-3.5 flex min-w-0 flex-col gap-1.5')}>
+    <div role="group" aria-labelledby={labelId} aria-describedby={error ? errorId : undefined} data-slot="ih-md-field"
+      data-field={name || undefined} data-invalid={error ? true : undefined} className={cn(FULL, 'mb-3.5 flex min-w-0 flex-col gap-1.5')}>
       <span id={labelId} className="text-sm font-semibold">{label}</span>
       {hint && <span className="-mt-1 text-xs text-muted-foreground">{hint}</span>}
       <MarkdownEditor value={value} onChange={onChange} editable height={height}
         uploadImage={uploadImage} makeUniqueCaption={makeUniqueCaption} />
+      {error && <FieldError id={errorId}>{error}</FieldError>}
     </div>
   )
 }
 
-export function CheckInput({ label, hint, checked, onChange, disabled }) {
+export function CheckInput({ label, hint, checked, onChange, disabled, error, name }) {
   const id = useId()
   const hintId = useId()
+  const errorId = useId()
+  const describedBy = [hint ? hintId : null, error ? errorId : null].filter(Boolean).join(' ') || undefined
   return (
-    <div className="mb-3.5 flex min-h-10 items-start gap-0.5 sm:min-h-9">
+    <div className="mb-3.5 flex min-h-10 items-start gap-0.5 sm:min-h-9" data-field={name || undefined}>
       {/* Metinsiz sarmalayıcı etiket: dokunma alanı 40 px (ad yine htmlFor etiketinden gelir). */}
       <Label className="-my-2.5 -ml-3 inline-flex size-10 shrink-0 cursor-pointer items-center justify-center">
-        <Checkbox id={id} checked={!!checked} disabled={disabled} aria-describedby={hint ? hintId : undefined}
-          onCheckedChange={(v) => onChange(v === true)} />
+        <Checkbox id={id} checked={!!checked} disabled={disabled} aria-describedby={describedBy}
+          aria-invalid={error ? true : undefined} onCheckedChange={(v) => onChange(v === true)} />
       </Label>
       <div className="flex min-w-0 flex-col gap-0.5">
         <Label htmlFor={id} className="cursor-pointer leading-snug font-medium">{label}</Label>
         {hint && <span id={hintId} className="text-xs text-muted-foreground">{hint}</span>}
+        {error && <FieldError id={errorId}>{error}</FieldError>}
       </div>
     </div>
   )

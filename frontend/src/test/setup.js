@@ -88,3 +88,18 @@ afterEach(() => {
 // sonraki testte AYNI kimlikle çizilen kartı gizlemesin.
 import { __resetDeletedMarks } from '../utils/recentlyDeleted.js'
 afterEach(() => { __resetDeletedMarks() })
+
+// Olay kaydı formunun yerel taslağı (2026-11-20, "Sağlam Kayıt"): form sökülürken kirli değişiklikleri `sm.ih.draft.*`
+// anahtarına yazar. Bir testin bıraktığı taslak sonraki testte aynı kimlikli formda "taslağı geri yükle" bandı açmasın —
+// her testten ÖNCE silinir (afterEach sırası RTL'nin sökmesine göre değişebilir).
+import { beforeEach } from 'vitest'
+beforeEach(() => {
+  try {
+    const doomed = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (k && k.startsWith('sm.ih.draft.')) doomed.push(k)
+    }
+    doomed.forEach((k) => localStorage.removeItem(k))
+  } catch { /* depolama yok */ }
+})

@@ -243,11 +243,18 @@ class IncidentServiceTest {
         IncidentRecord a = service.create(body("a", "2026-06-14T10:00:00", "LOW", "OTHER"), "admin", 1L, 1L);
         IncidentRecord b = service.create(body("b", "2026-06-15T10:00:00", "LOW", "OTHER"), "admin", 1L, 1L);
 
-        int n = service.transfer(List.of(a.getId(), b.getId()), 99L, "Yeni Takım", "admin");
+        com.sitemonitor.model.Team team = new com.sitemonitor.model.Team();
+        team.setName("Yeni Takım");
+        em.persist(team);
+        em.flush();
+        Long tid = team.getId();
+
+        // Ad veritabanındaki takımdan (2026-11-20, "Sağlam Kayıt"): istemcinin yolladığı ad yazılmaz.
+        int n = service.transfer(List.of(a.getId(), b.getId()), tid, "İstemcinin adı", "admin");
         assertThat(n).isEqualTo(2);
-        assertThat(service.get(a.getId()).getTeamId()).isEqualTo(99L);
+        assertThat(service.get(a.getId()).getTeamId()).isEqualTo(tid);
         assertThat(service.get(a.getId()).getTeamName()).isEqualTo("Yeni Takım");
-        assertThat(service.get(b.getId()).getTeamId()).isEqualTo(99L);
+        assertThat(service.get(b.getId()).getTeamId()).isEqualTo(tid);
 
         assertThat(service.transfer(List.of(), 99L, "X", "admin")).isZero();
         assertThat(service.transfer(List.of(a.getId()), null, "X", "admin")).isZero();
@@ -632,14 +639,18 @@ class IncidentServiceTest {
     }
 
     @Test
-    @DisplayName("mevcut sayısal alanların GEVŞEK ayrıştırması aynen: \"abc\" → null, 12.7 → 12 (yalnız yeni üç alan katı)")
-    void existingNumericFields_stayLenient() {
-        Map<String, Object> b = body("eski alanlar", "2026-11-18T10:00:00", "LOW", "OTHER");
+    @DisplayName("Sağlam Kayıt (2026-11-20): sayısal alanlar artık KATI — \"abc\" / 12.7 alan adlı 400 (eskiden sessizce null / 12); rakam metni kabul")
+    void existingNumericFields_areStrictNow() {
+        Map<String, Object> b = body("sayısal alanlar", "2026-11-18T10:00:00", "LOW", "OTHER");
         b.put("affected_customers", "abc");
+        assertFieldError(() -> service.create(b, "admin", 1L, 1L), "affected_customers");
+        b.put("affected_customers", "120");
         b.put("affected_transactions", 12.7d);
+        assertFieldError(() -> service.create(b, "admin", 1L, 1L), "affected_transactions");
+        b.put("affected_transactions", 12.0d);
         b.put("duration_minutes", "15");
         IncidentRecord e = service.create(b, "admin", 1L, 1L);
-        assertThat(e.getAffectedCustomers()).isNull();
+        assertThat(e.getAffectedCustomers()).isEqualTo(120);
         assertThat(e.getAffectedTransactions()).isEqualTo(12);
         assertThat(e.getDurationMinutes()).isEqualTo(15);
     }
