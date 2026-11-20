@@ -16,6 +16,10 @@ import { KIND_IMAGES, KIND_REPORT, onImagesChanged } from './imageSync.js'
 import { openInMainWindow } from './panelWindow.js'
 import { useFileDropGuard } from './useFileDropGuard.js'
 import PanelIssueImages, { panelIssueSection } from './PanelIssueImages.jsx'
+// Sıralı doldurma, geçen ayın görseli, toplu bırakma (2026-11-20, C2 / C3 / C4) — düzenleyicideki sağlayıcının aynısı
+import { ImageFillProvider } from '../ImageFill.jsx'
+import { carrySource } from '../carryOverModel.js'
+import { PREV_READ_TIMEOUT_MS, createPrevReportLoader } from '../prevReportLoader.js'
 // Kanal notları kartı (2026-11-20): hafif kabuk — görüntüleyici kart İLK açıldığında tembel yüklenir
 import ChannelNotesCard from '../notes/ChannelNotesCard.jsx'
 
@@ -114,6 +118,12 @@ export default function ImagesPanelPage({ reportId }) {
   const panelLock = approvalLockState(data)
   const readOnly = !data?.can_edit || panelLock != null
   const canClose = (() => { try { return !!window.opener } catch { return false } })()
+  // Geçen ayın raporu (C3): yuvaların "Geçen ay" görünümü için tembel, süre sınırlı, paylaşılan okuma
+  const { state: prevState, id: prevId, year: prevYear, month: prevMonth, exact: prevExact } = carrySource(data)
+  const prevImages = useMemo(() => (prevState === 'ok' && prevId != null
+    ? { ...createPrevReportLoader(prevId, (id) => api.techErrors.report(id, { timeoutMs: PREV_READ_TIMEOUT_MS })),
+      year: prevYear, month: prevMonth, exact: prevExact }
+    : null), [prevState, prevId, prevYear, prevMonth, prevExact])
 
   if (state.loading && !data) {
     return (
@@ -188,13 +198,17 @@ export default function ImagesPanelPage({ reportId }) {
         <ChannelNotesCard reportId={reportId} channelId={channel?.id} meta={data.channel_notes} />
         {sections.length === 0 ? (
           <StatusBlock tone="neutral" icon={ImageOff} title={t('te.cap.panelNoImages')} description={t('te.cap.panelNoImagesBody')} />
-        ) : sections.map((s) => (s.kind === 'images' ? (
-          <ImagesBlock key={s.id} section={s} reportId={reportId} images={images} resolve={resolve} uiLang={uiLang}
-            showTotals={s.id === firstImagesId} readOnly={readOnly} onImagesChange={onImagesChange} inPanel />
         ) : (
-          <PanelIssueImages key={s.id} section={s} issues={data.values?.issues?.[s.id] || undefined} reportId={reportId}
-            images={images} uiLang={uiLang} readOnly={readOnly} onImagesChange={onImagesChange} resolve={resolve} />
-        )))}
+          <ImageFillProvider sections={sections} images={images} readOnly={readOnly} resolve={resolve} prev={prevImages} inPanel>
+            {sections.map((s) => (s.kind === 'images' ? (
+              <ImagesBlock key={s.id} section={s} reportId={reportId} images={images} resolve={resolve} uiLang={uiLang}
+                showTotals={s.id === firstImagesId} readOnly={readOnly} onImagesChange={onImagesChange} inPanel />
+            ) : (
+              <PanelIssueImages key={s.id} section={s} issues={data.values?.issues?.[s.id] || undefined} reportId={reportId}
+                images={images} uiLang={uiLang} readOnly={readOnly} onImagesChange={onImagesChange} resolve={resolve} />
+            )))}
+          </ImageFillProvider>
+        )}
       </main>
     </div>
   )

@@ -1,7 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft, ChevronLeft, ChevronRight, CircleAlert, Download, Eye, History, LayoutTemplate, Lock, LockOpen, MailWarning, RefreshCw, Save,
-  Send, Trash2, Undo2, ShieldCheck } from 'lucide-react'
+  ArrowLeft, CalendarSync, ChevronLeft, ChevronRight, CircleAlert, Download, Eye, History, LayoutTemplate, Lock, LockOpen, MailWarning, RefreshCw,
+  Save, Send, Trash2, Undo2, ShieldCheck } from 'lucide-react'
 import { api } from '../../api/client'
 import { useUnsavedWork } from '../../utils/unsavedWork.js'
 import { navigateTo } from '../../utils/navigate.js'
@@ -48,6 +48,11 @@ import { approvalLockFingerprint, approvalLockState, isBlankReport, readinessKey
 import TemplateLossList, { hasLossLists } from './TemplateLossList.jsx'
 // Kanal notları kartı (2026-11-20): hafif kabuk — görüntüleyici (react-markdown) kart İLK açıldığında tembel yüklenir
 import ChannelNotesCard from './notes/ChannelNotesCard.jsx'
+// Aylık tekrarı azaltma (2026-11-20, C paketi): geçen aydan getir, sıralı doldurma, geçen ayın görseli, toplu bırakma
+import CarryOverDialog from './CarryOverDialog.jsx'
+import { applyCarryOver, carrySource, carryTopicIds } from './carryOverModel.js'
+import { ImageFillProvider } from './ImageFill.jsx'
+import { PREV_READ_TIMEOUT_MS, createPrevReportLoader } from './prevReportLoader.js'
 import {
   allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, dropIssueCaptions, embeddedSections, errorCountsBySection, hostOf,
   normalizeValues, parseIssueSlot, reportErrorSection, reportErrorTopic, fieldExempt, issueDisplayTitle, issueImageAlive, issueOptions,
@@ -1767,6 +1772,62 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
     setData((d) => (d ? { ...d, incident_links: res.data.incident_links ?? null, incident_links_error: res.data.incident_links_error === true } : d))
   }
 
+  // ── Aylık tekrarı azaltma (2026-11-20, C paketi) ────────────────────────────────────────────────────────────────────
+  // Geçen ayın raporu: tam önceki ay (`previous`), yoksa en yakın önceki (`neighbors.prev`). "Geçen aydan getir" (C1) ve
+  // yuvaların "Geçen ay" görünümü (C3) AYNI, tembel, süre sınırlı okumayı paylaşır (bu düzenleyici yaşadıkça; başarısızı bırakılır)
+  const carryInfo = carrySource(data)
+  const { state: carryState, id: carryId, year: carryYear, month: carryMonth, exact: carryExact } = carryInfo
+  const prevImages = useMemo(() => (carryState === 'ok' && carryId != null
+    ? { ...createPrevReportLoader(carryId, (id) => api.techErrors.report(id, { timeoutMs: PREV_READ_TIMEOUT_MS })),
+      year: carryYear, month: carryMonth, exact: carryExact }
+    : null), [carryState, carryId, carryYear, carryMonth, carryExact])
+  const [carryOpen, setCarryOpen] = useState(false)
+  // Açık pencere, rapor salt okunur olunca (onay kilidi yeniden uygulandı) ya da kaynak kaybolunca kapanır — kilit kalkınca
+  // sormadan yeniden belirmesin (inceleme 2026-11-20). Çizim sırasında ayarlanır (etkide değil — React 19 kuralı)
+  if (carryOpen && (readOnly || !prevImages)) setCarryOpen(false)
+  const carryPeriod = periodLabel({ year: carryYear, month: carryMonth }, t) || t('te.prev.unknownPeriod')
+  const getDraft = useCallback(() => draftRef.current, [])
+  // Neden kapalı: salt okunur / onay kilidi (düğme hiç çizilmez), önceki rapor yok / bilinmiyor, çakışma ya da bekletilen yedek
+  // gösterilirken (yedeğin üzerine sessizce yazılmasın), bir işlem sürerken
+  const carryBlock = carryState === 'unknown' ? 'unknown' : carryState === 'none' ? 'none'
+    : conflict ? 'conflict' : (backup || autoHold) ? 'held' : busy != null ? 'busy' : null
+  const openSection = useCallback((sid) => { if (sid) openMany([sid]) }, [openMany])
+  /** Pencerenin seçtiklerini TASLAĞA yazar (boşluk yeniden denetlenir); etkilenen bölümler ve yeni konular açılır. */
+  const applyCarry = useLatestCallback((picks, plan) => {
+    const cur = draftRef.current
+    if (!cur || readOnlyRef.current) { setCarryOpen(false); return }
+    // Yeni konu kimlikleri taslağa yazmadan ÖNCE bir kez (işlevsel güncelleme iki kez çağrılsa da aynı kimlikler)
+    const ids = carryTopicIds(cur, plan, picks.topics)
+    const opts = { template: tpl, ids, year: report?.year, month: report?.month, channelName: channel?.name }
+    const pre = applyCarryOver(cur, plan, picks, opts)
+    if (pre.values !== cur) {
+      const sids = new Set()
+      for (const x of plan.texts) if (picks.texts.has(x.id)) sids.add(x.id)
+      for (const x of plan.fields) if (picks.fields.has(x.id)) { const b = blockOfFieldRef.current.get(x.id); if (b) sids.add(b) }
+      for (const a of pre.added) sids.add(a.sectionId)
+      // Etkilenen bölümler anında güncel taslakla çizilsin (ötekiler ertelenmiş taslakla — yazma maliyeti kuralı)
+      for (const sid of sids) markHot(sid)
+      setDraft((d) => applyCarryOver(d, plan, picks, opts).values)
+      openMany([...sids])
+      if (pre.added.length) {
+        openTopicsMany(pre.added.map((a) => topicOpenId(a.sectionId, a.issueId)))
+        setFocusAfter({ sid: pre.added[0].sectionId, iid: pre.added[0].issueId, tries: 0 })
+      }
+    }
+    setCarryOpen(false)
+    const c = pre.counts
+    const filled = c.texts + c.fields
+    if (!filled && !c.topics) {
+      toast.info(t(c.stale ? 'te.carry.doneStale' : 'te.carry.doneNothing'), 8000)
+      return
+    }
+    const parts = [t('te.carry.done', carryPeriod, t(filled === 1 ? 'te.carry.doneTexts.one' : 'te.carry.doneTexts', filled),
+      t(c.topics === 1 ? 'te.carry.doneTopics.one' : 'te.carry.doneTopics', c.topics))]
+    if (c.notFit) parts.push(t(c.notFit === 1 ? 'te.carry.doneNotFit.one' : 'te.carry.doneNotFit', c.notFit))
+    if (c.stale) parts.push(t(c.stale === 1 ? 'te.carry.doneStaleSome.one' : 'te.carry.doneStaleSome', c.stale))
+    toast.success(parts.join(' '), 10000)
+  })
+
   const issueSectionsForImport = useMemo(() => sectionsOfIssues(tpl, resolve), [tpl, resolve])
   const openImport = useLatestCallback(async (sid) => {
     // Düğme işlem sürerken zaten kapalı (IncidentOpContext); bu, eşzamanlı ikinci tıklamaya karşı ek kilit
@@ -2176,6 +2237,20 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
             {sectionIds.length > 0 && (
               <ExpandAllButton allOpen={allSectionsOpen(openState.state, sectionIds)} onToggle={openState.setAll} />
             )}
+            {/* Geçen aydan getir (C1): yalnız düzenleyebilene; kapalıysa nedeni yanında (işlem sürerken yalnız kapalı) */}
+            {!readOnly && (
+              <span className="inline-flex max-w-full flex-wrap items-center gap-2" data-slot="te-carry-wrap">
+                <Button type="button" variant="outline" size="sm" className="pointer-coarse:min-h-10" data-slot="te-carry-open"
+                  disabled={carryBlock != null} aria-describedby={carryBlock && carryBlock !== 'busy' ? 'te-carry-reason' : undefined}
+                  onClick={() => setCarryOpen(true)}>
+                  <CalendarSync aria-hidden="true" /> {carryExact === false ? t('te.carry.openOther') : t('te.carry.open')}
+                </Button>
+                {carryBlock && carryBlock !== 'busy' && (
+                  <span id="te-carry-reason" className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="te-carry-reason"
+                    data-reason={carryBlock}>{t(`te.carry.block.${carryBlock}`)}</span>
+                )}
+              </span>
+            )}
             <Button ref={historyBtnRef} type="button" variant="ghost" size="sm" className="pointer-coarse:min-h-10" data-slot="te-history-open"
               onClick={() => setHistoryOpen(true)}>
               <History aria-hidden="true" /> {t('te.hist.open')}
@@ -2318,6 +2393,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
       <TopicOpenContext.Provider value={topicCtx}>
       <PendingInputContext.Provider value={setFieldPending}>
       <IncidentOpContext.Provider value={incidentOpCtx}>
+      {/* Görsel yuvalarını doldurma (C2 sıralı doldur, C3 geçen ayın görseli, C4 toplu bırakma): değerler kararlı — yazarken
+          görsel bölümleri yeniden çizilmez */}
+      <ImageFillProvider sections={sections} images={images} readOnly={readOnly} onOpenSection={openSection} resolve={resolve}
+        prev={prevImages}>
       {sections.map((s) => {
         const key = `${s.id}:${gen}`
         // Özet kartına gömülü bölüm o kartın içinde çizilir (aşağıda SummaryBlock)
@@ -2363,6 +2442,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
         return <TextBlock key={key} section={s} values={vals} resolve={resolve} resolveText={resolveText} readOnly={readOnly}
           errors={fieldErrors} onText={textOnChange} />
       })}
+      </ImageFillProvider>
       </IncidentOpContext.Provider>
       </PendingInputContext.Provider>
       </TopicOpenContext.Provider>
@@ -2382,6 +2462,12 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
           actionsDisabled={busy != null}
           execCount={Number(approvalDetail?.executive_count) || 0}
           onDecided={() => load({ keepDraft: true })} onBusy={setBusy} />
+      )}
+      {/* Geçen aydan getir (C1): her açılışta yeni durum; okuma yuvaların "Geçen ay" görünümüyle paylaşılır */}
+      {carryOpen && prevImages && !readOnly && (
+        <CarryOverDialog loader={prevImages} source={{ year: carryYear, month: carryMonth, exact: carryExact }} template={tpl}
+          getValues={getDraft} year={report?.year} month={report?.month} channelName={channel?.name} resolve={resolve}
+          onApply={applyCarry} onClose={() => setCarryOpen(false)} />
       )}
       {/* Olay kaydından konu al (2026-11-20): her açılışta yeni durum (pencere kapanınca sökülür) */}
       {importFor != null && (

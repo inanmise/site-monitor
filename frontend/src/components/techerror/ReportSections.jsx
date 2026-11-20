@@ -22,6 +22,7 @@ import { RichText, RichTextarea } from './RichText.jsx'
 import { periodLabel, CopyTextButton } from './TechErrorParts.jsx'
 import { CollapsibleCard } from './SectionCollapse.jsx'
 import { scaleWarning } from './readinessModel.js'
+import { PASTE_MAX_CHARS, isGridText, parseGrid, planTablePaste } from './tablePasteModel.js'
 
 /**
  * Sayı alanının ekrandaki metni: kayıtlı sayı arayüz dilinin biçiminde (çözümleyici aynı biçimi geri okur). Yüzde
@@ -74,8 +75,13 @@ function storedExp(raw, n) {
  */
 export const PendingInputContext = createContext(null)
 
+/*
+ * `pasteRaw` (2026-11-20, C5 — Excel'den tabloya yapıştırma): `{ text, seq }` — `seq` değişince metin YAZILMIŞ GİBİ işlenir
+ * (aynı çözümleyici, kısaltma, hata iletisi, yarım yazım bildirimi). Kurulumda var olan değer yeniden uygulanmaz (görünüm
+ * değişince geçersiz yapıştırma geri gelmesin).
+ */
 export function NumberInput({ id, value, lang, percent = false, negative = false, onChange, onError, describedBy, invalid, disabled, ariaLabel,
-  compact = false, pendingKey, unit, zero = false }) {
+  compact = false, pendingKey, unit, zero = false, pasteRaw = null }) {
   const t = useT()
   const [text, setText] = useState(() => numberText(value, lang, percent, unit))
   const reportPending = useContext(PendingInputContext)
@@ -107,6 +113,28 @@ export function NumberInput({ id, value, lang, percent = false, negative = false
     if (!sameValue || (unit !== undefined && value != null && exp !== shownUnit)) setText(numberText(value, lang, percent, unit))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, lang, unit])
+  /** Yazılan (ya da yapıştırılan) metni işler: yazım olduğu gibi kalır; geçerliyse sayı üst duruma, değilse alanın hatası. */
+  const applyRaw = (raw) => {
+    setText(raw)
+    setPending(isIncompleteNumber(raw))
+    const n = parseNumber(raw, lang, { percent })
+    if (n == null) { onError(null); onChange(null); return }
+    if (Number.isNaN(n) && isIncompleteNumber(raw)) { onError(null); return }
+    if (Number.isNaN(n)) { onError(!percent && isAmbiguousB(raw) ? 'te.err.abbrevB' : notNumber); return }
+    if (!negative && n < 0) { onError('te.err.negative'); return }
+    if (!percent && Math.abs(n) > LIMITS.maxNumber) { onError('te.err.tooLarge'); return }
+    onError(null)
+    // Kısaltmayla yazıldıysa üssü de (2026-10-18): rapor "4,4G" diye gösterir; tam yazılan sayı tam kalır; 6 ondalığa
+    // sığmayan kısaltma üssüz gider (rapor tam sayıyı gösterir — yuvarlanmış kısaltma değeri değiştirirdi)
+    onChange(n, percent ? null : storedExp(raw, n))
+  }
+  const pasteSeen = useRef(pasteRaw?.seq ?? null)
+  useEffect(() => {
+    if (!pasteRaw || pasteRaw.seq == null || pasteRaw.seq === pasteSeen.current) return
+    pasteSeen.current = pasteRaw.seq
+    applyRaw(String(pasteRaw.text ?? ''))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pasteRaw?.seq])
   return (
     <div className="relative">
       {percent && lang !== 'en' && (
@@ -122,21 +150,7 @@ export function NumberInput({ id, value, lang, percent = false, negative = false
           // Yarım kalan yazım alan bırakılınca hata olur (kayıt öncesi düğmeye basmak alanı bırakır)
           if (isIncompleteNumber(text)) onError(!percent && isAmbiguousB(text) ? 'te.err.abbrevB' : notNumber)
         }}
-        onChange={(e) => {
-          const raw = e.target.value
-          setText(raw)
-          setPending(isIncompleteNumber(raw))
-          const n = parseNumber(raw, lang, { percent })
-          if (n == null) { onError(null); onChange(null); return }
-          if (Number.isNaN(n) && isIncompleteNumber(raw)) { onError(null); return }
-          if (Number.isNaN(n)) { onError(!percent && isAmbiguousB(raw) ? 'te.err.abbrevB' : notNumber); return }
-          if (!negative && n < 0) { onError('te.err.negative'); return }
-          if (!percent && Math.abs(n) > LIMITS.maxNumber) { onError('te.err.tooLarge'); return }
-          onError(null)
-          // Kısaltmayla yazıldıysa üssü de (2026-10-18): rapor "4,4G" diye gösterir; tam yazılan sayı tam kalır; 6 ondalığa
-          // sığmayan kısaltma üssüz gider (rapor tam sayıyı gösterir — yuvarlanmış kısaltma değeri değiştirirdi)
-          onChange(n, percent ? null : storedExp(raw, n))
-        }} />
+        onChange={(e) => applyRaw(e.target.value)} />
       {showZero && (
         // Kutunun içinde, sağda (giriş yüksekliğinin ortası — alttaki "= tam sayı" satırına kaymaz); genişlik değişmez
         <ZeroOkMark id={zeroId} className="pointer-events-none absolute right-2.5 top-[18px] size-5 -translate-y-1/2 pointer-coarse:top-5" />
@@ -788,6 +802,42 @@ function TableBlockImpl({ section, values, resolve, uiLang, tplLang, readOnly, e
       if (el?.isConnected && focusedCell.current === el.id && document.activeElement !== el) focusedCell.current = null
     })
   }
+  // EXCEL'DEN YAPIŞTIRMA (2026-11-20, C5): sekmeli / satırlı metin odaklı hücreden başlayarak satır satır dağıtılır — sayı
+  // hücresi metni YAZILMIŞ GİBİ işler (NumberInput `pasteRaw`: aynı çözümleyici, kısaltma, hata iletisi), metin hücresi
+  // yazımın sınırıyla (`maxLength` gibi) alınır. Tek değer (sekme / satır sonu yok) bugünkü gibi tarayıcıya bırakılır.
+  const [pasted, setPasted] = useState(null)        // { [anahtar]: { text, seq } }
+  const pasteSeq = useRef(0)
+  const [pasteNote, setPasteNote] = useState(null)  // { n, outside }
+  const onGridPaste = (e) => {
+    if (readOnly) return
+    const text = e.clipboardData?.getData?.('text/plain')
+    if (typeof text !== 'string' || !isGridText(text)) return
+    const key = e.target?.closest?.('[data-field]')?.getAttribute?.('data-field')
+    const parts = typeof key === 'string' ? key.split('.') : []
+    if (parts.length !== 4 || parts[0] !== 'tables' || parts[1] !== section.id) return
+    const startRow = rows.findIndex((r) => r.id === parts[2])
+    const startCol = cols.findIndex((c) => c.id === parts[3])
+    if (startRow < 0 || startCol < 0) return
+    e.preventDefault()
+    const { rows: grid, cut } = parseGrid(text)
+    const plan = planTablePaste(grid, rows.map((r) => r.id), cols.map((c) => c.id), startRow, startCol)
+    const colType = new Map(cols.map((c) => [c.id, c.type]))
+    const raws = {}
+    let truncated = 0
+    for (const cell of plan.cells) {
+      const k = tableCellKey(section.id, cell.rowId, cell.colId)
+      if (colType.get(cell.colId) === 'text') {
+        onFieldError(k, null)
+        if (cell.raw.length > LIMITS.cellText) truncated++
+        onCell(section.id, cell.rowId, cell.colId, cell.raw === '' ? null : cell.raw.slice(0, LIMITS.cellText))
+      } else {
+        raws[k] = { text: cell.raw, seq: ++pasteSeq.current }
+      }
+    }
+    if (Object.keys(raws).length) setPasted((m) => ({ ...(m || {}), ...raws }))
+    // Okunmayan kuyruk (çok uzun metin) ve sınırda kesilen metin hücreleri de söylenir — sessiz kalmaz (inceleme 2026-11-20)
+    setPasteNote({ n: plan.cells.length, outside: plan.outside, cut, truncated, seq: pasteSeq.current })
+  }
   // İçeriden başlama yalnız bir grup satırının ALTINDAKİ satırlar için (ilk grup satırından önceki satırlar düz)
   const afterGroup = new Set()
   let seenGroup = false
@@ -819,7 +869,7 @@ function TableBlockImpl({ section, values, resolve, uiLang, tplLang, readOnly, e
     ) : (
       <NumberInput id={id} value={v ?? null} lang={uiLang} percent={c.type === 'percent'} negative={c.type === 'percent'}
         disabled={readOnly} ariaLabel={label} invalid={err ? true : undefined} compact={!cards}
-        describedBy={err ? `${id}-e` : undefined} unit={unit}
+        describedBy={err ? `${id}-e` : undefined} unit={unit} pasteRaw={pasted?.[key] || null}
         onChange={(n, exp) => onCell(section.id, r.id, c.id, n, exp)} onError={(k) => onFieldError(key, k ? t(k) : null)} pendingKey={key} />
     )
     return { id, key, err, control }
@@ -828,7 +878,7 @@ function TableBlockImpl({ section, values, resolve, uiLang, tplLang, readOnly, e
   const titleId = `te-tbl-title-${section.id}`
   return (
     <SectionShell title={resolve(section.title)} slot="te-table" sectionId={section.id} hint={t('te.tbl.hint')} titleId={titleId}>
-      <div ref={ref} className="min-w-0" data-layout={layout} onFocus={onFocusIn} onBlur={onFocusOut}>
+      <div ref={ref} className="min-w-0" data-layout={layout} onFocus={onFocusIn} onBlur={onFocusOut} onPaste={readOnly ? undefined : onGridPaste}>
         {cards ? (
           <ol className="m-0 flex list-none flex-col gap-3 p-0" aria-labelledby={titleId} data-slot="te-table-cards">
             {rows.map((r) => (
@@ -889,6 +939,20 @@ function TableBlockImpl({ section, values, resolve, uiLang, tplLang, readOnly, e
           </div>
         )}
       </div>
+      {/* Yapıştırmanın sonucu (C5): kaç hücre dolduruldu, kaç değer tablonun dışında kaldı — sessiz kalmaz */}
+      {!readOnly && (
+        <p className="m-0 text-sm text-muted-foreground [overflow-wrap:anywhere] empty:hidden" role="status" aria-live="polite"
+          data-slot="te-table-paste-note" data-outside={pasteNote?.outside ?? ''} data-cut={pasteNote ? String(!!pasteNote.cut) : ''}
+          data-truncated={pasteNote?.truncated ?? ''}>
+          {pasteNote ? [
+            t(pasteNote.n === 1 ? 'te.tbl.pasted.one' : 'te.tbl.pasted', pasteNote.n),
+            pasteNote.outside ? t(pasteNote.outside === 1 ? 'te.tbl.pasteOutside.one' : 'te.tbl.pasteOutside', pasteNote.outside) : null,
+            pasteNote.truncated ? t(pasteNote.truncated === 1 ? 'te.tbl.pasteTrunc.one' : 'te.tbl.pasteTrunc', pasteNote.truncated,
+              formatNumber(LIMITS.cellText, uiLang)) : null,
+            pasteNote.cut ? t('te.tbl.pasteCut', formatNumber(PASTE_MAX_CHARS, uiLang)) : null,
+          ].filter(Boolean).join(' ') : ''}
+        </p>
+      )}
     </SectionShell>
   )
 }
