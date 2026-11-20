@@ -98,6 +98,10 @@ public class TechErrorReportService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     TechErrorChannelNoteService channelNotes;
 
+    /** Olay kaydı bağları (2026-11-20): değer kaydında sabitleme tespiti, şablon yenilemede uyarlama, rapor / kanal silinince silme (yoksa — dilim testleri — atlanır; saklama kuralı temizler). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    TechErrorIncidentLinkHooks incidentLinks;
+
     public TechErrorReportService(TechErrorChannelRepository channels, TechErrorReportRepository reports,
                                   TechErrorReportImageRepository images, AppUserRepository users,
                                   TechErrorHistoryService history) {
@@ -471,6 +475,7 @@ public class TechErrorReportService {
             for (int i = 0; i < ids.size(); i += 500) images.deleteAllForReports(ids.subList(i, Math.min(ids.size(), i + 500)));
             history.deleteForReports(ids);
             if (approvalTokens != null) for (Long rid : ids) approvalTokens.deleteByReportId(rid);
+            if (incidentLinks != null) incidentLinks.deleteForReports(ids);
         }
         history.deleteForChannel(ch.getId());
         if (reminders != null) reminders.deleteByChannel(ch.getId());
@@ -661,6 +666,8 @@ public class TechErrorReportService {
         boolean merged = history.recordValues(saved, t, before, v, channelName(saved.getChannelId()), by, now, auto);
         // Silinen anomali konusunun görselleri konuyla gider (2026-10-18): aynı işlemde, her biri geçmişte konunun adıyla
         List<String> removed = dropOrphanIssueImages(saved, t, before, v, by, now);
+        // Olay bağları (2026-11-20): kullanıcının değiştirdiği grup sabitlenir, konusu silinen bağ silinir (aynı işlem, kilit altında)
+        if (incidentLinks != null) incidentLinks.afterValuesSaved(saved.getId(), t, v);
         analyticsChanged();
         return new SaveOutcome(saved, merged, removed);
     }
@@ -706,6 +713,8 @@ public class TechErrorReportService {
         detail.put("removed_values", Math.max(0, removedValues));
         detail.put("removed_images", removedImages);
         history.record(saved, "TEMPLATE_REFRESH", by, saved.getVersion(), detail, now);
+        // Olay bağları (2026-11-20): konusu kalan bağ korunur, uyarlamanın değiştirdiği iz yeniden tabanlanır
+        if (incidentLinks != null) incidentLinks.afterTemplateRefresh(saved.getId(), prev, before, next, after);
         analyticsChanged();
         return new RefreshResult(saved, Math.max(0, removedValues), removedImages);
     }
@@ -776,6 +785,7 @@ public class TechErrorReportService {
         images.deleteAllForReport(r.getId());
         history.deleteForReport(r.getId());
         if (approvalTokens != null) approvalTokens.deleteByReportId(r.getId());
+        if (incidentLinks != null) incidentLinks.deleteForReport(r.getId());
         int n = reports.deleteIfAllowed(r.getId(), onlyUnsent, now().minus(TechErrorReportSender.STALE_CLAIM));
         if (n == 0) {
             // İşlem geri alınır (görseller de) — sebep: gönderildi ya da gönderiliyor

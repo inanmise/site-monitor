@@ -66,6 +66,23 @@ public class IncidentService {
     @Value("${site.monitor.incident.image-max-bytes:5242880}")
     private long imageMaxBytes;
 
+    /**
+     * Olay güncellenince yayımlanan olay ({@link IncidentRecordChangedEvent}, 2026-11-20): teknik hata raporu konularının canlı
+     * bağı işlem İŞLENDİKTEN sonra senkronlar. Yoksa (elle kurulan birim testleri) yayımlanmaz.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.context.ApplicationEventPublisher events;
+
+    private void publishChanged(Long id) {
+        if (events == null || id == null) return;
+        try {
+            events.publishEvent(new IncidentRecordChangedEvent(id));
+        } catch (RuntimeException e) {
+            // yayımlama en iyi çaba — olay kaydının kaydı hiçbir koşulda bu yüzden düşmez
+            log.warn("Olay kaydı #{} değişikliği yayımlanamadı: {}", id, e.toString());
+        }
+    }
+
     private String now() { return ISO.format(Instant.now()); }
 
     // ── Read ────────────────────────────────────────────────────────────────
@@ -210,6 +227,7 @@ public class IncidentService {
         e.setUpdatedBy(actorName);
         IncidentRecord saved = repo.save(e);
         linkImages(saved, actorName);
+        publishChanged(saved.getId());
         return saved;
     }
 
@@ -233,6 +251,7 @@ public class IncidentService {
             e.setUpdatedBy(actor);
         }
         repo.saveAll(recs);
+        for (IncidentRecord r : recs) publishChanged(r.getId());
         return recs.size();
     }
 

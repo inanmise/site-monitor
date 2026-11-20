@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 
 public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, Long> {
@@ -244,4 +245,60 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
              GROUP BY i.teamId, i.createdByTeamId
             """)
     List<Object[]> statusPageResolvedSinceCounts(@Param("since") String since);
+
+    // ── Teknik hata raporu anomali konusuna içe alma (2026-11-20) — METİN sütunu okumayan izdüşümler ─────────────────────
+
+    /** İçe alma adayı satırı (TEXT sütunu yok). */
+    interface ImportCandidate {
+        Long getId();
+        String getTitle();
+        String getOccurredAt();
+        String getResolvedAt();
+        String getStatus();
+        String getSeverity();
+        String getChannel();
+        Long getTechErrorCount();
+        Boolean getOutageRelated();
+        Integer getAffectedCustomers();
+        Long getTeamId();
+        Long getCreatedByTeamId();
+    }
+
+    /**
+     * Kanalın takımının olayları, raporun ayında (UTC ISO metin aralığı, Istanbul ay sınırları) başlamış olanlar; {@code overlap}
+     * açıkken ayrıca DAHA ÖNCE başlamış ve ay içinde / sonra çözülmüş ya da hâlâ açık olanlar. En yeni önce, kimlik bağı bozar;
+     * çağıran sayfa boyutuyla sınırlar.
+     */
+    @Query("""
+            SELECT i.id AS id, i.title AS title, i.occurredAt AS occurredAt, i.resolvedAt AS resolvedAt, i.status AS status,
+                   i.severity AS severity, i.channel AS channel, i.techErrorCount AS techErrorCount,
+                   i.outageRelated AS outageRelated, i.affectedCustomers AS affectedCustomers, i.teamId AS teamId,
+                   i.createdByTeamId AS createdByTeamId
+              FROM IncidentRecord i
+             WHERE i.teamId = :teamId
+               AND ((i.occurredAt >= :from AND i.occurredAt < :to)
+                    OR (:overlap = TRUE AND i.occurredAt < :from AND (i.resolvedAt IS NULL OR i.resolvedAt >= :from)))
+             ORDER BY i.occurredAt DESC, i.id DESC
+            """)
+    List<ImportCandidate> findImportCandidates(@Param("teamId") Long teamId, @Param("from") String from, @Param("to") String to,
+                                               @Param("overlap") boolean overlap, Pageable page);
+
+    /** Bağlı olayın durumu (rapor ekranının bağ rozeti) — TEXT sütunu yok. */
+    interface LinkState {
+        Long getId();
+        String getTitle();
+        String getStatus();
+        String getOccurredAt();
+        String getUpdatedAt();
+        Long getTeamId();
+        Long getCreatedByTeamId();
+    }
+
+    @Query("""
+            SELECT i.id AS id, i.title AS title, i.status AS status, i.occurredAt AS occurredAt, i.updatedAt AS updatedAt,
+                   i.teamId AS teamId, i.createdByTeamId AS createdByTeamId
+              FROM IncidentRecord i
+             WHERE i.id IN :ids
+            """)
+    List<LinkState> findLinkStates(@Param("ids") Collection<Long> ids);
 }

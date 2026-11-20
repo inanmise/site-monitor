@@ -70,6 +70,10 @@ public class TechErrorReportController {
     private final PermissionService permissions;
     private final AuditService auditService;
 
+    /** Olay kaydı bağları (2026-11-20): rapor ayrıntısının {@code incident_links}'i ve çıktıdan önce yetişme (yoksa — dilim testleri — atlanır). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.sitemonitor.service.techerror.TechErrorIncidentSyncService incidentLinks;
+
     /** Değişiklik / sürüm geçmişi (2026-10-14). Yoksa (dilim testleri) geçmiş yazılmaz, okuma uçları boş döner. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     com.sitemonitor.service.techerror.TechErrorHistoryService history;
@@ -865,6 +869,15 @@ public class TechErrorReportController {
     @GetMapping("/reports/{id}")
     public ResponseEntity<Map<String, Object>> getReport(@PathVariable Long id, HttpSession session) {
         requireRead(session);
+        return ok(reportDetail(id, session));
+    }
+
+    /**
+     * Rapor ayrıntısının gövdesi ({@code GET /reports/{id}}'nin {@code data}'sı). Olay kaydı içe alma / yenileme uçları
+     * (2026-11-20, {@link TechErrorIncidentController}) yanıtlarını AYNI biçimde verir. Okuma kapsamını denetler (görülemeyen
+     * rapor 404); izin denetimi çağıranda.
+     */
+    Map<String, Object> reportDetail(Long id, HttpSession session) {
         TechErrorReport r = readableReport(id, session);
         if (service.reconcileQueued(List.of(r.getChannelId())) > 0) r = service.report(r.getId());
         TechErrorChannel ch = service.channel(r.getChannelId());
@@ -924,7 +937,36 @@ public class TechErrorReportController {
                 "report_image_max_bytes", TechErrorReportService.MAX_REPORT_IMAGE_BYTES));
         // Kanal notu özeti (2026-11-20, eklemeli — en sonda): rapor ekranındaki salt okunur not kartı bununla karar verir
         data.put("channel_notes", TechErrorChannelNoteController.summaryBlock(channelNotes, session, ch));
-        return ok(data);
+        // Olay kaydı bağları (2026-11-20, eklemeli): tek izdüşüm sorgusu; okunamazsa null + hata bayrağı ("bağ yok" denmez)
+        if (incidentLinks != null) {
+            try {
+                data.put("incident_links", incidentLinks.linksDto(r, now, incidentReader(session)));
+            } catch (RuntimeException e) {
+                log.warn("Teknik hata raporu #{} olay bağları okunamadı: {}", r.getId(), e.toString());
+                data.put("incident_links", null);
+                data.put("incident_links_error", true);
+            }
+        }
+        return data;
+    }
+
+    /**
+     * Bakan olay kaydını okuyabilir mi: {@code incidents.view} izni + olay kaydı okuma kuralı
+     * ({@link IncidentController#canReadIncident}). Bağ durumunda okunamayan olay {@code hidden} döner.
+     */
+    java.util.function.BiPredicate<Long, Long> incidentReader(HttpSession session) {
+        boolean allowed = permissions.allows(session, "incidents.view", "view");
+        return (teamId, createdByTeamId) -> allowed && IncidentController.canReadIncident(session, teamId, createdByTeamId);
+    }
+
+    /**
+     * Çıktıdan (PDF, e-posta önizlemesi, test postası, onay isteği, gönderim) ÖNCE olay bağlarının yetişmesi — en iyi çaba:
+     * dondurulmamış raporun bayat bağları senkronlanır; hata çıktıyı engellemez. Bir şey yazıldıysa rapor yeniden okunur.
+     */
+    private TechErrorReport incidentCatchUp(TechErrorReport r) {
+        if (incidentLinks == null || r == null) return r;
+        // Okunmuş satırla: dondurulmuş rapor / bayat bağ yok → kilit yok (inceleme 2026-11-20)
+        return incidentLinks.catchUpQuietly(r) > 0 ? service.report(r.getId()) : r;
     }
 
     @PutMapping("/reports/{id}")
@@ -1308,15 +1350,17 @@ public class TechErrorReportController {
     @GetMapping("/reports/{id}/pdf")
     public ResponseEntity<?> pdf(@PathVariable Long id, HttpSession session) {
         requireRead(session);
-        TechErrorReport r = readableReport(id, session);
-        TechErrorChannel ch = service.channel(r.getChannelId());
-        Team team = teams.findById(r.getTeamId()).orElse(null);
+        TechErrorReport read = readableReport(id, session);
+        TechErrorChannel ch = service.channel(read.getChannelId());
+        Team team = teams.findById(read.getTeamId()).orElse(null);
         String teamName = team == null ? null : team.getName();
         // Kişi başı sınır kapsam denetiminden SONRA (görülemeyen rapor 404, hak yemez)
         String key = previewKey(session);
         ResponseEntity<Map<String, Object>> limited = beginRender(key);
         if (limited != null) return limited;
         try {
+            // Olay bağlarının yetişmesi sınırdan SONRA (inceleme 2026-11-20): sınıra takılan istek rapor satırını kilitlemez
+            TechErrorReport r = incidentCatchUp(read);
             // İzin görseller belleğe yüklenmeden ÖNCE alınır (renderPdf yükleyiciyi izinle çağırır)
             TechErrorReportService.Rendered out;
             try {
@@ -1438,6 +1482,8 @@ public class TechErrorReportController {
         if (limited != null) return limited;
         TechErrorReportSender.Preview p;
         try {
+            // Olay bağlarının yetişmesi sınırdan SONRA (inceleme 2026-11-20): sınıra takılan istek rapor satırını kilitlemez
+            r = incidentCatchUp(r);
             p = sender.preview(r, ch, team, delivery);
         } catch (TechErrorReportService.PdfBusyException e) {
             cancelRenderReservation(key);
@@ -1532,7 +1578,7 @@ public class TechErrorReportController {
     @PostMapping("/reports/{id}/mail-preview/test")
     public ResponseEntity<Map<String, Object>> mailPreviewTest(@PathVariable Long id, HttpSession session, HttpServletRequest request) {
         requireRead(session);
-        TechErrorReport r = readableReport(id, session);
+        TechErrorReport r = incidentCatchUp(readableReport(id, session));
         TechErrorChannel ch = service.channel(r.getChannelId());
         Team team = teams.findById(r.getTeamId()).orElseThrow(TechErrorReportController::notFoundChannel);
         Long uid = userId(session);
@@ -1602,7 +1648,7 @@ public class TechErrorReportController {
                                                     HttpSession session, HttpServletRequest request) {
         requireWrite(session);
         String extraCc = extraCcOf(body);
-        TechErrorReport r = ownWritableReport(id, session);
+        TechErrorReport r = incidentCatchUp(ownWritableReport(id, session));
         TechErrorChannel ch = service.channel(r.getChannelId());
         Team team = teams.findById(r.getTeamId()).orElseThrow(TechErrorReportController::notFoundChannel);
         // Yönetici alıcısı tanımlı kanal (S6): gönderim yalnız onaylı ve onaydan beri değişmemiş raporda, yöneticilere
@@ -1683,7 +1729,7 @@ public class TechErrorReportController {
     public ResponseEntity<Map<String, Object>> requestApproval(@PathVariable Long id, HttpSession session, HttpServletRequest request) {
         requireWrite(session);
         TechErrorApprovalService a = requireApprovals();
-        TechErrorReport r = ownWritableReport(id, session);
+        TechErrorReport r = incidentCatchUp(ownWritableReport(id, session));
         TechErrorChannel ch = service.channel(r.getChannelId());
         Team team = teams.findById(r.getTeamId()).orElseThrow(TechErrorReportController::notFoundChannel);
         TechErrorApprovalService.RequestResult res;

@@ -937,6 +937,90 @@ async function mock(page, { openSections = true, openTopics = true, target = pag
   })
 }
 
+// Olay kaydından konu (2026-11-20, CANLI bağ): `mock()`tan SONRA kaydedilir — Playwright son kaydedilen yolu önce dener; olay
+// uçları dışındaki her istek `fallback()` ile ana sahte sunucuya düşer. Rapor okuması `incident_links` taşır; izin anlık
+// görüntüsü `incidents.view` içerir. Sunucu gibi: içe alma / güncelleme sürümü bir artırır, yanıt rapor ayrıntısının şeklidir.
+const INC_LONG = 'Ödeme API ve Kart Doğrulama Servislerinde Bağlantı Havuzu Tükenmesi (Mobil / İnternet Şubesi Ortak Altyapı)'
+let inc = null
+const incLink = (iid, id, extra = {}) => ({ section_id: 'issues', issue_id: iid, incident_id: id, state: 'ok',
+  title: id === 9 ? INC_LONG : 'Kart doğrulama gecikmesi', status: 'RESOLVED', occurred_at: '2026-09-12T11:00:00', pinned: [], notes: [],
+  synced_at: '2026-10-01T08:00:00Z', incident_updated_at: '2026-09-30T08:00:00Z', ...extra })
+const incCandidate = (id, title, extra = {}) => ({ id, title, occurred_at: '2026-09-12T11:00:00', resolved_at: '2026-09-12T12:30:00',
+  status: 'RESOLVED', severity: 'CRITICAL', channel: LONG_CHANNEL, tech_error_count: 1250, outage_related: true, affected_customers: 320,
+  imported: false, ...extra })
+const incTopic = (id) => ({ id: `i-${id}`, topic: id === 9 ? INC_LONG : 'Kart doğrulama gecikmesi', title: '', title_auto: true,
+  description: '**Kök neden**\nVeritabanı bağlantı havuzu doldu.', date: '2026-09-12', start: '14:00', end: '15:30', errors: 1250,
+  outage: true, outage_id: 'INC-2026-0915', impact: true, customers: 320 })
+function incDetail() {
+  return { success: true, data: { ...inc.report, incident_links: inc.links } }
+}
+async function mockIncidents(page) {
+  inc = { report: JSON.parse(JSON.stringify(ANOMALY_REPORT)), links: [], candidateCalls: [], previews: [], imports: [], refreshes: [],
+    unlinks: [], syncs: 0, syncTo: null }
+  await page.route((u) => new URL(u).pathname.startsWith('/api/'), async (route) => {
+    const req = route.request()
+    const url = new URL(req.url())
+    const p = url.pathname
+    const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
+    if (p === '/api/me/permissions') {
+      return json({ success: true, data: { 'tech_error_reports.read': { view: true }, 'tech_error_reports.crud': { edit: true },
+        'incidents.view': { view: true } } })
+    }
+    if (p === '/api/tech-error-reports/reports/100' && req.method() === 'GET') return json(incDetail())
+    if (p === '/api/tech-error-reports/reports/100/incident-candidates') {
+      inc.candidateCalls.push(url.searchParams)
+      const items = [incCandidate(9, INC_LONG), incCandidate(11, 'Kart doğrulama gecikmesi', { outage_related: false, affected_customers: null }),
+        incCandidate(12, 'Ay başında çözülen ve bu rapora daha önce alınmış olay', { imported: true })]
+      // Sunucu gibi: istenen boyut (yoksa 20), 'yalnız ilk 2000 olayda arandı' bayrağı (notun sığdığı sınanır)
+      return json({ success: true, data: { items, total: items.length, page: 0, size: Number(url.searchParams.get('size') || 20),
+        period: { year: 2026, month: 9 }, truncated: true } })
+    }
+    if (p === '/api/tech-error-reports/reports/100/incident-imports/preview') {
+      const b = JSON.parse(req.postData() || '{}')
+      inc.previews.push(b)
+      return json({ success: true, data: { proposals: (b.incident_ids || []).map((id) => ({ incident_id: id, title: incTopic(id).topic,
+        fields: { topic: incTopic(id).topic, date: '2026-09-12', start: '14:00', end: '15:30', end_next_day: false, errors: 1250,
+          outage: id === 9, outage_id: id === 9 ? 'INC-2026-0915' : null, impact: true, customers: 320 },
+        description_preview: incTopic(id).description, notes: id === 11 ? ['outage_id_missing'] : (b.images ? ['image_skipped'] : []), hidden: false,
+        // Sunucunun görsel özeti (TechErrorIncidentImportService.imagesDto): istenmediyse boş
+        images: b.images && id === 9 ? { copy: 1, skipped: [{ reason: 'too_large', image_id: 41 }], remaining: 1 } : { copy: 0, skipped: [] } })) } })
+    }
+    if (p === '/api/tech-error-reports/reports/100/incident-imports' && req.method() === 'POST') {
+      const b = JSON.parse(req.postData() || '{}')
+      inc.imports.push(b)
+      for (const id of b.incident_ids || []) {
+        inc.report.values.issues.issues.push(incTopic(id))
+        inc.links.push(incLink(`i-${id}`, id))
+      }
+      inc.report.report = { ...inc.report.report, version: (b.version ?? 4) + 1 }
+      return json({ ...incDetail(), data: { ...incDetail().data,
+        imported: (b.incident_ids || []).map((id) => ({ incident_id: id, issue_id: `i-${id}`, notes: [] })) } })
+    }
+    if (p === '/api/tech-error-reports/reports/100/incident-links/sync' && req.method() === 'POST') {
+      inc.syncs++
+      if (inc.syncTo) inc.links = inc.syncTo
+      inc.report.report = { ...inc.report.report, version: inc.report.report.version + 1 }
+      return json(incDetail())
+    }
+    const refresh = /^\/api\/tech-error-reports\/reports\/100\/incident-links\/issues\/([^/]+)\/refresh$/.exec(p)
+    if (refresh && req.method() === 'POST') {
+      const b = JSON.parse(req.postData() || '{}')
+      inc.refreshes.push({ iid: decodeURIComponent(refresh[1]), ...b })
+      inc.links = inc.links.map((l) => (l.issue_id === decodeURIComponent(refresh[1])
+        ? { ...l, state: 'ok', pinned: b.unpin === 'all' ? [] : l.pinned.filter((g) => !(b.unpin || []).includes(g)) } : l))
+      inc.report.report = { ...inc.report.report, version: (b.version ?? inc.report.report.version) + 1 }
+      return json(incDetail())
+    }
+    const unlink = /^\/api\/tech-error-reports\/reports\/100\/incident-links\/issues\/([^/]+)$/.exec(p)
+    if (unlink && req.method() === 'DELETE') {
+      inc.unlinks.push(decodeURIComponent(unlink[1]))
+      inc.links = inc.links.filter((l) => l.issue_id !== decodeURIComponent(unlink[1]))
+      return json({ success: true, data: { incident_links: inc.links } })
+    }
+    return route.fallback()
+  })
+}
+
 function smallTargets(sel) {
   const root = document.querySelector(sel)
   if (!root) return ['NO_ROOT']
@@ -1710,6 +1794,122 @@ for (const vp of VIEWPORTS) {
       expect(savedReport.values.issues.issues.find((x) => x.id === id).errors).toBe(1250000)
       expect(savedReport.values.fields['error-count']).toBe(50000000)
       await page.screenshot({ path: `test-results/channel-reports-anomaly-${vp.name}.png` })
+    })
+
+    test('olay kaydından konu (2026-11-20): pencere sığar, seç → önizle → al; bağlı konu çubuğu; açılışta tek eşitleme; elle değişen alan ve "Olaydaki değere dön"; bağı kopar', async ({ page }) => {
+      test.setTimeout(180_000)
+      await mock(page)
+      await mockIncidents(page)
+      await page.addInitScript(() => { try { localStorage.setItem('site-monitor-lang', 'tr') } catch { /* yoksay */ } })
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const editor = page.locator('[data-slot="te-report"]')
+      const importBtn = editor.locator('[data-slot="te-inc-import"]')
+      await expect(importBtn).toBeVisible({ timeout: 20_000 })
+      await expect(importBtn).toHaveText(/Olay kaydından al/)
+
+      // Pencere: aday listesi (uzun başlık sarar), "bu raporda" olan seçilemez; telefonda kart, genişte tablo
+      await importBtn.click()
+      const dlg = page.getByRole('dialog', { name: 'Olay kaydından konu al' })
+      await expect(dlg).toBeVisible()
+      await expect(dlg.locator('[data-slot="te-inc-row"]')).toHaveCount(3)
+      expect(inc.candidateCalls[0].get('page')).toBe('0')
+      await expect(dlg.locator('[data-slot="te-inc-list"]')).toHaveAttribute('data-layout', vp.width < 640 ? 'cards' : /table|cards/)
+      await expect(dlg.locator('[data-inc-check="12"]')).toBeDisabled()
+      await expect(dlg.locator('[data-slot="te-inc-row"][data-incident="12"] [data-slot="te-inc-imported"]')).toHaveText('Bu raporda')
+      await expect(dlg.locator('[data-slot="te-inc-truncated"]')).toContainText('yalnız ilk 2.000 olay kaydında arandı')
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (olay penceresi)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-inc-dialog"]'), 'kırpılan metin (olay penceresi)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[role="dialog"]'), 'küçük hedef (olay penceresi)').toEqual([])
+      const dbox = await dlg.boundingBox()
+      expect(dbox.x + dbox.width, 'pencere ekranın içinde').toBeLessThanOrEqual(vp.width + 1)
+
+      await dlg.locator('[data-inc-check="9"]').click()
+      await dlg.locator('[data-inc-check="11"]').click()
+      await expect(dlg.locator('[data-slot="te-inc-selected"]')).toHaveText('2 olay seçildi')
+      await dlg.locator('[data-slot="te-inc-next"]').click()
+      await expect(dlg.locator('[data-slot="te-inc-proposal"]')).toHaveCount(2)
+      expect(inc.previews[0]).toEqual({ section_id: 'issues', incident_ids: [9, 11], parts: ['rca', 'impact', 'resolution'], images: true })
+      await expect(dlg.locator('[data-slot="te-inc-proposal"][data-incident="11"] [data-note="outage_id_missing"]'))
+        .toContainText('Kesinti ID girilmemiş')
+      await expect(dlg.locator('[data-slot="te-inc-proposal"][data-incident="11"] [data-slot="te-inc-pv-row"][data-group="outage"]'))
+        .toHaveAttribute('data-filled', 'true')
+      const img9 = dlg.locator('[data-slot="te-inc-proposal"][data-incident="9"] [data-slot="te-inc-pv-images"]')
+      await expect(img9).toContainText('1 görsel kopyalanacak')
+      await expect(img9.locator('[data-slot="te-inc-pv-img-skip"]')).toHaveText('Görsel #41: Görsel çok büyük (en çok 5 MB, 6000 piksel).')
+      await expect(img9.locator('[data-slot="te-inc-pv-img-remaining"]')).toContainText('1 görsel daha alınmayacak')
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(overflowX), 'yatay taşma (önizleme)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-inc-dialog"]'), 'kırpılan metin (önizleme)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[role="dialog"]'), 'küçük hedef (önizleme)').toEqual([])
+      await dlg.locator('[data-slot="te-inc-import-confirm"]').click()
+      await expect(dlg).toBeHidden()
+      expect(inc.imports[0]).toEqual({ version: 4, section_id: 'issues', incident_ids: [9, 11], parts: ['rca', 'impact', 'resolution'], images: true })
+
+      // Yeni konular açık, bağlı; ilk konunun "Konu" alanı odakta
+      const bar9 = editor.locator('[data-slot="te-issue-incident"][data-incident="9"]')
+      await expect(bar9).toBeVisible()
+      await expect(bar9.locator('[data-slot="te-issue-incident-state"]')).toHaveText(/Olayı izliyor/)
+      await expect(bar9.locator('[data-slot="te-issue-incident-source"]')).toContainText(INC_LONG)
+      await expect(editor.locator('#te-iss-issues-i-9-topic')).toBeFocused()
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (bağlı konu)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-issues"]'), 'kırpılan metin (bağlı konu)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-issues"]'), 'küçük hedef (bağlı konu)').toEqual([])
+
+      // Olay değişti + kullanıcı "Konu"yu elle değiştirmiş: yeniden açılışta TEK eşitleme (taslak temiz) → bağ eşit, iğne kalır
+      inc.links = inc.links.map((l) => (l.issue_id === 'i-9' ? { ...l, state: 'stale', pinned: ['topic'] } : l))
+      inc.syncTo = inc.links.map((l) => (l.issue_id === 'i-9' ? { ...l, state: 'ok', notes: ['time_unknown'] } : l))
+      await page.reload()
+      await expect(bar9.locator('[data-slot="te-issue-incident-state"]')).toHaveText(/Olayı izliyor/, { timeout: 20_000 })
+      expect(inc.syncs).toBe(1)
+      await expect(bar9.locator('[data-slot="te-issue-incident-notes"] [data-note="time_unknown"]')).toBeVisible()
+      const card9 = editor.locator('[data-slot="te-issue"][data-issue="i-9"]')
+      const marker = card9.locator('[data-slot="te-issue-topic"] [data-slot="te-issue-pinned"][data-group="topic"]')
+      await expect(marker).toContainText('Konu elle değiştirildi')
+      await expect(bar9.locator('[data-slot="te-issue-incident-pinned"]')).toContainText('1 alan elle değiştirildi')
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(clipped, '[data-slot="te-issues"]'), 'kırpılan metin (iğneli konu)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-issues"]'), 'küçük hedef (iğneli konu)').toEqual([])
+      await page.waitForTimeout(500)
+      expect(inc.syncs, 'eşitleme döngüsü yok').toBe(1)
+
+      // "Olaydaki değere dön": yalnız o grup, okunan sürümle
+      await marker.getByRole('button', { name: 'Olaydaki değere dön: Konu' }).click()
+      await expect(marker).toHaveCount(0)
+      expect(inc.refreshes).toHaveLength(1)
+      expect(inc.refreshes[0]).toMatchObject({ iid: 'i-9', unpin: ['topic'] })
+      expect(inc.refreshes[0].version).toEqual(expect.any(Number))
+
+      // Bağı kopar: onay → DELETE; konu kalır, kaynak çubuğu gider
+      await card9.getByRole('button', { name: 'Olay #9 — Olay kaydı işlemleri' }).click()
+      await page.getByRole('menuitem', { name: /Bağı kopar/ }).click()
+      const confirm = page.getByRole('dialog', { name: 'Olay kaydıyla bağ koparılsın mı?' })
+      await confirm.getByRole('button', { name: 'Bağı kopar' }).click()
+      await expect(bar9).toHaveCount(0)
+      expect(inc.unlinks).toEqual(['i-9'])
+      await expect(editor.locator('#te-iss-issues-i-9-topic')).toHaveValue(INC_LONG)
+      await expect(editor.locator('[data-slot="te-issue-incident"][data-incident="11"]')).toBeVisible()
+
+      // Olay başka bir takıma taşındı (ya da okuma izni yok): sunucu `hidden` gönderir, başlık / durum yok. Uzun kaynak metni
+      // sarar, rozet sığar; olaydan değer alan eylem (Güncelle) çizilmez; açılışta eşitleme yok (bayat bağ yok)
+      inc.links = inc.links.map((l) => (l.issue_id === 'i-11' ? { ...l, state: 'hidden', title: null, status: null, occurred_at: null } : l))
+      inc.syncTo = null
+      const syncsBefore = inc.syncs
+      await page.reload()
+      const bar11 = editor.locator('[data-slot="te-issue-incident"][data-incident="11"]')
+      await expect(bar11).toHaveAttribute('data-state', 'hidden', { timeout: 20_000 })
+      await expect(bar11.locator('[data-slot="te-issue-incident-source"]'))
+        .toHaveText('Olay kaydı görüntülenemiyor (erişiminiz yok ya da başka bir takıma taşındı)')
+      await expect(bar11.locator('[data-slot="te-issue-incident-state"]')).toHaveText(/Görüntülenemiyor/)
+      await expect(bar11.locator('[data-slot="te-issue-incident-hint"]')).toContainText('başka bir takıma taşındı')
+      await expect(bar11.locator('[data-slot="te-issue-incident-update"]')).toHaveCount(0)
+      await page.waitForTimeout(300)
+      expect(inc.syncs, 'gizli bağ eşitleme tetiklemez').toBe(syncsBefore)
+      expect(await page.evaluate(overflowX), 'yatay taşma (gizli bağ)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-issues"]'), 'kırpılan metin (gizli bağ)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-issues"]'), 'küçük hedef (gizli bağ)').toEqual([])
+      await page.screenshot({ path: `test-results/channel-reports-incident-${vp.name}.png` })
     })
 
     test('konu akordiyonu (2026-10-18): var olan konular kapalı, çipler başlıkta; tıklama + klavye; yeni konu açık ve odakta; Kaydet geçersiz alanlı kapalı konuyu açar; tüm konuları aç / kapat; sığar, kesilmez, dokunma hedefleri', async ({ page }) => {

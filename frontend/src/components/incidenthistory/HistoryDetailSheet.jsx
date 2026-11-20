@@ -1,11 +1,14 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   X, Pencil, Trash2, Siren, Eye, CheckCircle2, Clock, Hourglass, Users, Receipt, Gauge, Hash, CircleDot, Search, ShieldHalf,
-  FileText, Stethoscope, Wrench, Briefcase, Tags, BellRing, ClipboardList, ChevronRight,
+  FileText, Stethoscope, Wrench, Briefcase, Tags, BellRing, ClipboardList, ChevronRight, FilePlus2,
 } from 'lucide-react'
 import { formatDate } from '../../api/client'
 import { navigateTo } from '../../utils/navigate.js'
+import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
+import AddToReportDialog from './AddToReportDialog.jsx'
+import IncidentUsageCard from './IncidentUsageCard.jsx'
 import { alertNavParams } from '../admin/alerts/alertHistoryModel.js'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
@@ -88,6 +91,14 @@ function MdSection({ icon: Icon, title, value, emptyText }) {
 export default function HistoryDetailSheet({ record, onClose, onEdit, onDelete, onPostmortem, allowManage = false, allowDelete = false }) {
   const t = useT()
   const dateLocale = useDateLocale()
+  // Teknik hata raporuna ekle (2026-11-20): rapor içeriği yazma + modül okuma (kanal listesi) izni + modül görünür + olay
+  // kayıtlarını görme (sunucunun içe alma kapısı); kullanım kartı modül okuma + olay görme izniyle (sunucu ikisini de ister)
+  const perms = usePermissions()
+  const moduleVisible = perms.scope?.channel_reports !== false
+  const seesIncidents = perms.canView('incidents.view')
+  const canSeeUsage = moduleVisible && seesIncidents && perms.canView('tech_error_reports.read')
+  const canAddToReport = canSeeUsage && perms.canEdit('tech_error_reports.crud')
+  const [addOpen, setAddOpen] = useState(false)
 
   // Odak iadesi: kapanışta tetikleyiciye (satır / kart).
   useEffect(() => {
@@ -168,6 +179,12 @@ export default function HistoryDetailSheet({ record, onClose, onEdit, onDelete, 
                 <BellRing aria-hidden="true" />{t('inc.sourceAlert', r.alert_event_id)}
               </Button>
             )}
+            {/* Olay kaydından kanal teknik hata raporuna konu (2026-11-20) */}
+            {canAddToReport && (
+              <Button type="button" variant="outline" size="sm" className="h-9 pointer-coarse:h-10" data-slot="ih-add-to-report" onClick={() => setAddOpen(true)}>
+                <FilePlus2 aria-hidden="true" />{t('inc.toReport.open')}
+              </Button>
+            )}
             {allowDelete && (
               <Button type="button" variant="ghost" size="sm"
                 className="ml-auto h-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
@@ -206,6 +223,9 @@ export default function HistoryDetailSheet({ record, onClose, onEdit, onDelete, 
               </Button>
             </Card>
           )}
+
+          {/* Kullanıldığı raporlar (2026-11-20) — kapalı başlar, ilk açılışta okunur */}
+          {canSeeUsage && <IncidentUsageCard incidentId={r.id} />}
 
           {/* Zaman çizelgesi */}
           <section className="min-w-0">
@@ -315,6 +335,7 @@ export default function HistoryDetailSheet({ record, onClose, onEdit, onDelete, 
           <MdSection icon={FileText} title={t('inc.fDescription')} value={r.description} emptyText={t('inc.notEntered')} />
           <MdSection icon={Wrench} title={t('inc.fResolution')} value={r.resolution_steps} emptyText={t('inc.notEntered')} />
         </div>
+        {addOpen && <AddToReportDialog incident={r} onClose={() => setAddOpen(false)} />}
       </SheetContent>
     </Sheet>
   )

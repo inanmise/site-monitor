@@ -61,6 +61,9 @@ public interface TechErrorReportRepository extends JpaRepository<TechErrorReport
 
     List<Row> findByChannelIdOrderByReportYearDescReportMonthDesc(Long channelId);
 
+    /** Verilen raporların METİNSİZ durum satırları (olayın "kullanıldığı raporlar" listesi; 2026-11-20). */
+    List<Row> findByIdIn(Collection<Long> ids);
+
     List<Row> findByChannelIdInAndReportYearAndReportMonth(Collection<Long> channelIds, Integer year, Integer month);
 
     /** Onay hatırlatması adayları (12. sürüm, C10): bekleyen ve en geç {@code before}'da istenmiş onaylar (eskime çağıranda). */

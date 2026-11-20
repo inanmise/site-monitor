@@ -261,6 +261,38 @@ class RequestLoggingFilterTest {
     }
 
     @Test
+    @DisplayName("2026-11-20: olay kaydı içe alma / canlı bağ uçları — olayın kök neden / iş etkisi metni (önizleme ve rapor yanıtı)"
+            + " hiçbir biçimde loglanmaz; başka teknik hata raporu uçları kapsam dışı")
+    void trace_incidentImport_bodiesNeverLogged() throws Exception {
+        logbackLogger.setLevel(Level.TRACE);
+        String requestBody = "{\"version\":4,\"section_id\":\"issues\",\"incident_ids\":[7]}";
+        String response = "{\"data\":{\"proposals\":[{\"description_preview\":\"GIZLI-KOK-NEDEN\"}]}}";
+        for (String uri : new String[] { "/api/tech-error-reports/reports/100/incident-imports",
+                "/api/tech-error-reports/reports/100/incident-imports/preview",
+                "/api/tech-error-reports/reports/100/incident-candidates",
+                "/api/tech-error-reports/reports/100/incident-links/sync",
+                "/api/tech-error-reports/reports/100/incident-links/issues/i-abc/refresh",
+                "/api/tech-error-reports/incident-usage",
+                "/api/tech-error-reports/reports/100/%69ncident-imports" }) {
+            assertThat(RequestLoggingFilter.bodyNeverLogged(new MockHttpServletRequest("POST", uri))).as(uri).isTrue();
+            appender.list.clear();
+            MockHttpServletRequest req = new MockHttpServletRequest("POST", uri);
+            req.setContentType("application/json");
+            req.setContent(requestBody.getBytes(StandardCharsets.UTF_8));
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+            filter.doFilter(req, resp, (request, r2) -> {
+                request.getInputStream().readAllBytes();
+                r2.setContentType("application/json");
+                r2.getOutputStream().write(response.getBytes(StandardCharsets.UTF_8));
+            });
+            String all = appender.list.stream().map(ILoggingEvent::getFormattedMessage).reduce("", (a, b) -> a + "\n" + b);
+            assertThat(all).as(uri).doesNotContain("GIZLI-KOK-NEDEN");
+        }
+        assertThat(RequestLoggingFilter.bodyNeverLogged(
+                new MockHttpServletRequest("PUT", "/api/tech-error-reports/reports/100"))).isFalse();
+    }
+
+    @Test
     @DisplayName("2026-11-20: kanal notu uçları — not metni (istek + yanıt) ve görsel baytı hiçbir biçimde loglanmaz")
     void trace_channelNotes_bodiesNeverLogged() throws Exception {
         logbackLogger.setLevel(Level.TRACE);

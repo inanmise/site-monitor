@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  CircleAlert, FilePlus2, Image as ImageIcon, ImageOff, ImagePlus, LayoutTemplate, MailCheck, PenLine, RefreshCw, Send, Timer, ShieldCheck } from 'lucide-react'
+  CircleAlert, FilePlus2, Image as ImageIcon, ImageOff, ImagePlus, Import, LayoutTemplate, Link2, MailCheck, PenLine, RefreshCw, Send, Timer,
+  ShieldCheck, Unlink } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
@@ -11,12 +12,40 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { cn } from '@/lib/utils'
 import { fmtDateTime } from './TechErrorParts.jsx'
 import { formatBytes, formatNumber, istanbulDay } from './techErrorModel.js'
+import { groupLabelKey } from './incidents/incidentImportModel.js'
 
 const KIND_ICON = {
   CREATE: FilePlus2, VALUES: PenLine, IMAGE_ADD: ImagePlus, IMAGE_REPLACE: ImageIcon, IMAGE_DELETE: ImageOff,
   TEMPLATE_REFRESH: LayoutTemplate, SEND: Send, SEND_RESULT: MailCheck,
   // PO onayı (2026-10-17, S6)
   APPROVAL_REQUEST: ShieldCheck, APPROVAL: ShieldCheck,
+  // Olay kaydından konu (2026-11-20): içe alma, olaydan eşitleme (yazan "SiteMonitor"), bağı koparma
+  INCIDENT_IMPORT: Import, INCIDENT_SYNC: Link2, INCIDENT_UNLINK: Unlink,
+}
+/** Olay olaylarının ayrıntısındaki olay kimlikleri (`incident_ids`, yoksa `incident_id`) — pozitif tam sayılar, tekrarsız. */
+function incidentIdsOf(d) {
+  const raw = Array.isArray(d?.incident_ids) && d.incident_ids.length ? d.incident_ids : d?.incident_id != null ? [d.incident_id] : []
+  return [...new Set(raw.map(Number).filter((n) => Number.isInteger(n) && n > 0))]
+}
+const nonNegInt = (v) => (Number.isInteger(Number(v)) && Number(v) >= 0 && v !== null && v !== '' && typeof v !== 'boolean' ? Number(v) : null)
+/** Olay kaydı bağı geçmiş olaylarının özet satırları (sunucunun ayrıntı alanları; bilinmeyen alan yazılmaz). */
+function incidentSummary(kind, d, t, uiLang) {
+  const out = []
+  const plural = (key, n) => t(n === 1 ? `${key}.one` : key, formatNumber(n, uiLang))
+  if (kind === 'INCIDENT_IMPORT') {
+    const issues = nonNegInt(d.issues_added)
+    const images = nonNegInt(d.images_added)
+    if (issues != null) out.push({ slot: 'te-history-incident-issues', text: plural('te.hist.inc.issuesAdded', issues) })
+    if (images != null && images > 0) out.push({ slot: 'te-history-incident-images', text: plural('te.hist.inc.imagesAdded', images) })
+  }
+  if (kind === 'INCIDENT_SYNC') {
+    out.push({ slot: 'te-history-incident-mode', text: t(d.refresh === true ? 'te.hist.inc.manual' : 'te.hist.inc.auto') })
+    const unpinned = Array.isArray(d.unpinned) ? [...new Set(d.unpinned.filter((g) => typeof g === 'string' && groupLabelKey(g)))] : []
+    if (unpinned.length) {
+      out.push({ slot: 'te-history-incident-unpinned', text: t('te.hist.inc.unpinned', unpinned.map((g) => t(groupLabelKey(g))).join(', ')) })
+    }
+  }
+  return out
 }
 const APPR_TONE = {
   PENDING: 'bg-amber-500/15 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300',
@@ -231,6 +260,39 @@ function EventItem({ event: e, uiLang }) {
 function EventBody({ kind, detail: d, uiLang }) {
   const t = useT()
   const [all, setAll] = useState(false)
+  if (kind === 'INCIDENT_IMPORT' || kind === 'INCIDENT_SYNC' || kind === 'INCIDENT_UNLINK') {
+    // Olay kaydından konu (2026-11-20): hangi olay(lar) + alan satırları (içe almada eklenen konular, eşitlemede değişen alanlar)
+    const ids = incidentIdsOf(d)
+    const changes = Array.isArray(d.changes) ? d.changes : []
+    const shown = all ? changes : changes.slice(0, FOLD_AT)
+    const summary = incidentSummary(kind, d, t, uiLang)
+    return (
+      <div className="flex flex-col gap-1.5" data-slot="te-history-incident">
+        {ids.length > 0 && (
+          <p className="m-0 text-sm [overflow-wrap:anywhere]" data-slot="te-history-incident-ids">
+            {t(ids.length === 1 ? 'te.hist.inc.id' : 'te.hist.inc.ids', ids.map((i) => `#${i}`).join(', '))}
+          </p>
+        )}
+        {typeof d.topic === 'string' && d.topic.trim() && (
+          <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('te.hist.inc.topic', d.topic)}</p>
+        )}
+        {summary.map((line) => (
+          <p key={line.slot} className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot={line.slot}>{line.text}</p>
+        ))}
+        {kind !== 'INCIDENT_UNLINK' && (changes.length > 0 ? (
+          <ul className="m-0 flex list-none flex-col gap-1.5 p-0" data-slot="te-history-changes">
+            {shown.map((c, i) => <ChangeRow key={i} change={c} uiLang={uiLang} />)}
+          </ul>
+        ) : !(d.more > 0) && !summary.length && <p className="m-0 text-sm text-muted-foreground">{t('te.hist.noDetail')}</p>)}
+        {changes.length > FOLD_AT && !all && (
+          <Button type="button" variant="link" size="sm" className="h-auto w-fit p-0 pointer-coarse:min-h-10" onClick={() => setAll(true)}>
+            {t('te.hist.showAll', changes.length)}
+          </Button>
+        )}
+        {d.more > 0 && <p className="m-0 text-xs text-muted-foreground">{t('te.hist.moreChanges', formatNumber(d.more, uiLang))}</p>}
+      </div>
+    )
+  }
   if (kind === 'VALUES') {
     const changes = Array.isArray(d.changes) ? d.changes : []
     // Birleşmiş otomatik kayıtta bir kaydın farkı hesaplanamadıysa diğerlerinin satırları yine görünür (2. tur)

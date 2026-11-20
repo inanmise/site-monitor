@@ -218,6 +218,7 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             String norm = candidate.replaceAll(";[^/]*", "").replaceAll("/{2,}", "/").toLowerCase(Locale.ROOT);
             if (BODY_NEVER_LOGGED.stream().anyMatch(norm::startsWith)) return true;
             if (resourceScanImagePath(norm)) return true;
+            if (incidentImportPath(norm)) return true;
         }
         return false;
     }
@@ -233,6 +234,15 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
         if (!norm.startsWith("/api/monitoring/page/")) return false;
         int scans = norm.indexOf("/resource-scans/");
         return scans >= 0 && norm.indexOf("/image", scans) >= 0;
+    }
+
+    /**
+     * Olay kaydı → teknik hata raporu içe alma uçları (2026-11-20): {@code /api/tech-error-reports/…/incident-…} (adaylar,
+     * önizleme, içe alma, bağ senkronu / yenileme / koparma, kullanım). Gövdeler olay kaydının serbest metnini (kök neden,
+     * iş etkisi, çözüm adımları) ve raporun tüm değerlerini taşır — günlüğe yazılmaz. Kimlik yolun ortasında: doğrusal denetim.
+     */
+    private static boolean incidentImportPath(String norm) {
+        return norm.startsWith("/api/tech-error-reports/") && norm.indexOf("/incident-", "/api/tech-error-reports".length()) >= 0;
     }
 
     private static String percentDecode(String s) {
