@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-20T00:49:23Z",
+  "generatedAt": "2026-11-20T05:18:46Z",
   "repo": "inanmise/site-monitor",
-  "count": 866,
+  "count": 867,
   "releases": [
+    {
+      "version": "20.219.0",
+      "tag": "v20.219.0",
+      "releasedAt": "2026-11-20T05:18:37Z",
+      "commit": "65377829716edcb497c33c51fc3f83609bad744e",
+      "prevVersion": "20.218.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "65377829",
+          "subject": "olay kaydına teknik hata adedi, kesinti kaynaklı mı, Kesinti ID"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.218.1",
       "tag": "v20.218.1",

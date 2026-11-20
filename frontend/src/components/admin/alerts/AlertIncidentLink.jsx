@@ -4,6 +4,7 @@ import { api } from '../../../api/client'
 import { useT } from '../../../i18n/index.jsx'
 import { usePermissions } from '../../../contexts/PermissionsProvider.jsx'
 import { navigateTo } from '../../../utils/navigate.js'
+import { serverFieldErrors } from '../../../utils/formErrors.js'
 import { useToast } from '../../ui/Toast.jsx'
 import { useDialog } from '../../ui/Dialog.jsx'
 import { Button } from '@/components/shadcn/button'
@@ -93,7 +94,8 @@ export default function AlertIncidentLink({ alert: a, teamName, actBlocked = fal
   async function submit(payload) {
     try {
       const res = await api.incidents.create(payload)
-      if (!res?.success) return { ok: false, error: res?.error || t('inc.saveError') }
+      // fields: sunucunun alan hataları (400 VALIDATION_FAILED) — form iletiyi ilgili alanın altında gösterir
+      if (!res?.success) return { ok: false, error: res?.error || t('inc.saveError'), fields: serverFieldErrors(res) }
       toast.success(t('alh.incident.created', res.data?.id ?? ''))
       if (res.data?.id != null) setLinked((l) => [summaryOf(res.data), ...l.filter((x) => x.id !== res.data.id)])
       setForm(null)

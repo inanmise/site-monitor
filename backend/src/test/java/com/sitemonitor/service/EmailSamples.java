@@ -671,6 +671,10 @@ final class EmailSamples {
         res.put("status", "RESOLVED");
         res.put("resolved_at", "2026-09-26T08:10:00");
         res.put("duration_minutes", 90);
+        // Teknik hata adedi + kesinti kaynaklı (2026-11-20): yalnız bu örnek taşır — diğer ikisi "girilmemiş" hâli gösterir.
+        res.put("tech_error_count", 12_450L);
+        res.put("outage_related", Boolean.TRUE);
+        res.put("outage_id", "INC-2026-0926-ODEME-KART-ISLEMLERI");
         addHtml("incident-resolved", "incident", "[Site Monitor] Olay Çözüldü",
                 svc.buildIncidentNotificationHtml(res, "Müdür Bey", "RESOLVED", BASE + "/?tab=incident-history&incident=12"), "ok");
         Map<String, Object> upd = map("title", "Raporlama gecikmesi", "team_name", "Takım A", "severity", "LOW", "status", "MITIGATED",

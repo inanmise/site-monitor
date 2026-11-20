@@ -383,6 +383,66 @@ describe('olay formu (beş bölüm)', () => {
     expect(within(dlg).getByRole('textbox', { name: /^(Başlık|Title)/ })).toHaveValue('X')
   })
 
+  it('2026-11-20: gövde üç isteğe bağlı anahtarı taşır (dokunulmamışsa null); sunucunun ALAN hatası bantta değil alanın altında', async () => {
+    const dlg = await openCreate()
+    fireEvent.change(within(dlg).getByRole('textbox', { name: /^(Başlık|Title)/ }), { target: { value: 'X' } })
+    fireEvent.change(within(dlg).getByRole('textbox', { name: /^(Oluş Zamanı|Occurred)/ }), { target: { value: '2026-09-27T08:00:00' } })
+    fireEvent.change(within(dlg).getByRole('combobox', { name: /^(Takım|Team)/ }), { target: { value: '1' } })
+    const msg = 'Teknik hata adedi tam sayı olmalı (ör. 1250): ondalık, binlik ayraçlı ya da metin değer kabul edilmez.'
+    // Sunucunun 400 gövdesi (GlobalExceptionHandler): code + error + field + fields
+    api.incidents.create.mockResolvedValueOnce({ success: false, code: 'VALIDATION_FAILED', error: msg, field: 'tech_error_count', fields: { tech_error_count: msg } })
+    fireEvent.click(saveBtn(dlg))
+    // Hatalı alanın bölümüne (Etki) geçilir; ileti alanın altındadır, üstte "işlem başarısız" bandı YOK
+    await waitFor(() => expect(dlg.querySelector('[data-section="impact"]')).toHaveAttribute('aria-selected', 'true'))
+    expect(dlg.querySelector('[data-field="tech_error_count"]').textContent).toContain(msg)
+    expect(dlg.querySelector('[data-section="impact"]')).toHaveAttribute('data-invalid', 'true')
+    expect(within(dlg).queryByRole('alert')).toBeNull()
+    expect(saveBtn(dlg)).not.toBeDisabled()
+    expect(api.incidents.create.mock.calls[0][0]).toMatchObject({ tech_error_count: null, outage_related: null, outage_id: null })
+    // Değer girilince: adet SAYI, cevap boolean, kimlik kırpılmış metin
+    const count = dlg.querySelector('[data-field="tech_error_count"] input')
+    fireEvent.change(count, { target: { value: '1250' } })
+    expect(dlg.querySelector('[data-field="tech_error_count"]').textContent).not.toContain(msg)
+    fireEvent.click(within(dlg.querySelector('[data-field="outage_related"]')).getAllByRole('radio')[0])
+    fireEvent.change(dlg.querySelector('[data-field="outage_id"] input'), { target: { value: ' INC-2026-0915 ' } })
+    api.incidents.create.mockResolvedValueOnce({ success: true, data: rec({ id: 9, title: 'X', tech_error_count: 1250, outage_related: true, outage_id: 'INC-2026-0915' }) })
+    fireEvent.click(saveBtn(dlg))
+    await waitFor(() => expect(api.incidents.create).toHaveBeenCalledTimes(2))
+    expect(api.incidents.create.mock.calls[1][0]).toMatchObject({ tech_error_count: 1250, outage_related: true, outage_id: 'INC-2026-0915' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('2026-11-20: düzenleme — ESKİ kayıtta (üç alan boş) dokunulmamış üç anahtar gövdeye YAZILMAZ; değişen yazılır', async () => {
+    const has = (body, k) => Object.prototype.hasOwnProperty.call(body, k)
+    await ready()
+    fireEvent.click(screen.getByRole('row', { name: /Ödeme servisinde gecikme/ }))
+    const sheet = await screen.findByRole('dialog')
+    fireEvent.click(within(sheet).getByRole('button', { name: /^(Düzenle|Edit)$/ }))
+    const dlg = await screen.findByRole('dialog', { name: /Olayı Düzenle|Edit Incident/ })
+    // 1) Yalnız başlık değişti: sunucu hata döndü (form açık kalır) → gövdede üç anahtar YOK, öteki alanlar eskisi gibi var
+    api.incidents.update.mockResolvedValueOnce({ success: false, error: 'Geçici bir sorun oluştu, yeniden deneyin.' })
+    fireEvent.change(within(dlg).getByRole('textbox', { name: /^(Başlık|Title)/ }), { target: { value: 'Başlık güncellendi' } })
+    fireEvent.click(saveBtn(dlg))
+    await waitFor(() => expect(api.incidents.update).toHaveBeenCalledTimes(1))
+    const first = api.incidents.update.mock.calls[0][1]
+    expect(api.incidents.update.mock.calls[0][0]).toBe(1)
+    expect(first).toMatchObject({ id: 1, title: 'Başlık güncellendi', team_id: 1 })
+    for (const k of ['tech_error_count', 'outage_related', 'outage_id']) expect(has(first, k), k).toBe(false)
+    await waitFor(() => expect(saveBtn(dlg)).not.toBeDisabled())
+    // 2) Etki bölümünde adet girildi → yalnız o anahtar eklenir
+    fireEvent.mouseDown(dlg.querySelector('[data-section="impact"]'))
+    await waitFor(() => expect(dlg.querySelector('[data-section="impact"]')).toHaveAttribute('aria-selected', 'true'))
+    fireEvent.change(dlg.querySelector('[data-field="tech_error_count"] input'), { target: { value: '1250' } })
+    api.incidents.update.mockResolvedValueOnce({ success: true, data: rec({ title: 'Başlık güncellendi', tech_error_count: 1250 }) })
+    fireEvent.click(saveBtn(dlg))
+    await waitFor(() => expect(api.incidents.update).toHaveBeenCalledTimes(2))
+    const second = api.incidents.update.mock.calls[1][1]
+    expect(second.tech_error_count).toBe(1250)
+    expect(has(second, 'outage_related')).toBe(false)
+    expect(has(second, 'outage_id')).toBe(false)
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Olayı Düzenle|Edit Incident/ })).toBeNull())
+  })
+
   it('kaydedilmemiş değişiklikte Vazgeç onay sorar: "Düzenlemeye dön" korur, "Değişiklikleri at" kapatır', async () => {
     const dlg = await openCreate()
     fireEvent.change(within(dlg).getByRole('textbox', { name: /^(Başlık|Title)/ }), { target: { value: 'yarım' } })

@@ -224,6 +224,127 @@ class EmailTypeContentTest {
                 .doesNotContain("Olay kaydını açmak için");   // CTA URL'siz → buton yok
     }
 
+    /** Alt bilgideki "Oluşturuldu: gg.aa.yyyy ss:dd" damgası dakikaya göre değişir — gövde karşılaştırmasında sabitlenir. */
+    private static String withoutStamp(String s) {
+        return s.replaceAll("Oluşturuldu: \\d{2}\\.\\d{2}\\.\\d{4} \\d{2}:\\d{2}", "Oluşturuldu: -");
+    }
+
+    private static Map<String, Object> incidentBase() {
+        Map<String, Object> inc = new LinkedHashMap<>();
+        inc.put("title", "Ödeme kesintisi");
+        inc.put("team_name", "Takım A");
+        inc.put("severity", "HIGH");
+        inc.put("status", "OPEN");
+        inc.put("occurred_at", "2026-11-20T06:40:00");
+        return inc;
+    }
+
+    @Test
+    @DisplayName("olay (2026-11-20): alanlar girilmemişse e-posta AYNI — anahtar yok ≡ null ≡ cevapsız kimlik; iki satır da yok (HTML + düz metin)")
+    void incidentOutageRows_unsetIsIdentical() {
+        String cta = BASE + "/?tab=incident-history";
+        Map<String, Object> base = incidentBase();
+        String absent = svc.buildIncidentNotificationHtml(base, "Müdür", "NEW", cta);
+        String absentText = MailKit.plainTextFor(absent);
+
+        Map<String, Object> nulls = new LinkedHashMap<>(base);
+        nulls.put("tech_error_count", null);
+        nulls.put("outage_related", null);
+        nulls.put("outage_id", null);
+        String withNulls = svc.buildIncidentNotificationHtml(nulls, "Müdür", "NEW", cta);
+        String withNullsText = MailKit.plainTextFor(withNulls);
+
+        // Cevap verilmemiş (null) + başıboş kimlik + okunamayan adetler: bilinmeyen "Hayır" YAZILMAZ, satır hiç çizilmez
+        Map<String, Object> stray = new LinkedHashMap<>(base);
+        stray.put("outage_id", "INC-1");
+        stray.put("tech_error_count", "abc");
+        String withStray = svc.buildIncidentNotificationHtml(stray, "Müdür", "NEW", cta);
+        String withStrayText = MailKit.plainTextFor(withStray);
+
+        assertThat(withoutStamp(withNulls)).isEqualTo(withoutStamp(absent));
+        assertThat(withoutStamp(withStray)).isEqualTo(withoutStamp(absent));
+        assertThat(withoutStamp(withNullsText)).isEqualTo(withoutStamp(absentText));
+        assertThat(withoutStamp(withStrayText)).isEqualTo(withoutStamp(absentText));
+        assertThat(absent).doesNotContain("Teknik hata adedi").doesNotContain("Kesinti kaynaklı").doesNotContain("Kesinti ID");
+        assertThat(absentText).doesNotContain("Teknik hata adedi").doesNotContain("Kesinti kaynaklı").doesNotContain("Kesinti ID");
+
+        // Tam sayı olarak okunamayan adet satır çizmez (önizleme yolu formun gövdesini doğrulanmadan verir)
+        for (Object bad : new Object[]{-5, -1L, 12.7d, "12.7", "1.250", "", "  ", Double.NaN, 1.0e16d, "99999999999999999", Boolean.TRUE}) {
+            Map<String, Object> m = new LinkedHashMap<>(base);
+            m.put("tech_error_count", bad);
+            assertThat(withoutStamp(svc.buildIncidentNotificationHtml(m, "Müdür", "NEW", cta)))
+                    .as("adet %s", bad).isEqualTo(withoutStamp(absent));
+        }
+        // Boolean olmayan cevap (önizlemede bozuk gövde) "Evet" / "Hayır" sayılmaz
+        for (Object bad : new Object[]{"true", "false", "evet", 1, 0}) {
+            Map<String, Object> m = new LinkedHashMap<>(base);
+            m.put("outage_related", bad);
+            assertThat(withoutStamp(svc.buildIncidentNotificationHtml(m, "Müdür", "NEW", cta)))
+                    .as("cevap %s", bad).isEqualTo(withoutStamp(absent));
+        }
+    }
+
+    @Test
+    @DisplayName("olay (2026-11-20): teknik hata adedi (binlik ayraçlı) + kesinti kaynaklı Evet · Kesinti ID (kaçışlı) / Evet / Hayır — HTML = düz metin")
+    void incidentOutageRows_whenSet() {
+        String cta = BASE + "/?tab=incident-history";
+
+        // Evet + kimlik + adet
+        Map<String, Object> yes = incidentBase();
+        yes.put("tech_error_count", 1250L);
+        yes.put("outage_related", Boolean.TRUE);
+        yes.put("outage_id", "INC-<2026>&0915");
+        String html = svc.buildIncidentNotificationHtml(yes, "Müdür", "NEW", cta);
+        assertThat(html).contains("Teknik hata adedi</td>").contains(">1.250</td>")
+                .contains("Kesinti kaynaklı</td>").contains(">Evet · Kesinti ID: INC-&lt;2026&gt;&amp;0915</td>")
+                .doesNotContain("INC-<2026>").doesNotContain(">Hayır</td>");
+        assertThat(MailKit.plainTextFor(html)).contains("Teknik hata adedi: 1.250\n")
+                .contains("Kesinti kaynaklı: Evet · Kesinti ID: INC-<2026>&0915\n");
+        // sıra: Error Budget / SLA satırlarından SONRA, kök neden kartından ÖNCE (Olay Künyesi kartının son satırları)
+        assertThat(html.indexOf("Teknik hata adedi</td>")).isGreaterThan(html.indexOf("Oluş Zamanı</td>"))
+                .isLessThan(html.indexOf("Kesinti kaynaklı</td>"));
+        assertThat(html.indexOf("Kesinti kaynaklı</td>")).isLessThan(html.indexOf("Kök Neden (RCA)"));
+
+        // Evet, kimlik yok (boş / yalnız boşluk dâhil) → yalnız "Evet"
+        for (Object id : new Object[]{null, "", "   "}) {
+            Map<String, Object> m = incidentBase();
+            m.put("outage_related", Boolean.TRUE);
+            m.put("outage_id", id);
+            String h = svc.buildIncidentNotificationHtml(m, "Müdür", "NEW", cta);
+            assertThat(h).as("kimlik '%s'", id).contains("Kesinti kaynaklı</td>").contains(">Evet</td>")
+                    .doesNotContain("Kesinti ID").doesNotContain("Teknik hata adedi");
+            assertThat(MailKit.plainTextFor(h)).contains("Kesinti kaynaklı: Evet\n").doesNotContain("Kesinti ID");
+        }
+
+        // Hayır: satır "Hayır"; başıboş kimlik YAZILMAZ
+        Map<String, Object> no = incidentBase();
+        no.put("outage_related", Boolean.FALSE);
+        no.put("outage_id", "INC-ESKI");
+        String noHtml = svc.buildIncidentNotificationHtml(no, "Müdür", "UPDATED", cta);
+        assertThat(noHtml).contains("Kesinti kaynaklı</td>").contains(">Hayır</td>")
+                .doesNotContain("INC-ESKI").doesNotContain("Kesinti ID").doesNotContain("Teknik hata adedi");
+        assertThat(MailKit.plainTextFor(noHtml)).contains("Kesinti kaynaklı: Hayır\n").doesNotContain("INC-ESKI");
+
+        // 0 "girilmiş" bir değerdir (bilinmiyor değil) → satır çizilir; üst sınır ve rakam metni (önizleme) de okunur
+        Map<String, Object> zero = incidentBase();
+        zero.put("tech_error_count", 0);
+        String zeroHtml = svc.buildIncidentNotificationHtml(zero, "Müdür", "RESOLVED", cta);
+        assertThat(zeroHtml).contains("Teknik hata adedi</td>").contains(">0</td>").doesNotContain("Kesinti kaynaklı");
+        assertThat(MailKit.plainTextFor(zeroHtml)).contains("Teknik hata adedi: 0\n");
+
+        Map<String, Object> max = incidentBase();
+        max.put("tech_error_count", 1_000_000_000_000_000L);
+        assertThat(svc.buildIncidentNotificationHtml(max, "Müdür", "NEW", cta)).contains(">1.000.000.000.000.000</td>");
+
+        for (Object preview : new Object[]{"1250", " 1250 ", 1250, 1250.0d, new java.math.BigDecimal("1250")}) {
+            Map<String, Object> m = incidentBase();
+            m.put("tech_error_count", preview);
+            assertThat(svc.buildIncidentNotificationHtml(m, "Müdür", "NEW", null, false))
+                    .as("önizleme değeri %s (%s)", preview, preview.getClass().getSimpleName())
+                    .contains("Teknik hata adedi</td>").contains(">1.250</td>");
+        }
+    }
+
     // ── Sorun bildirimleri: uygulama hatası / kullanıcı bildirimi / günlük özet ──
 
     @Test

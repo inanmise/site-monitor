@@ -7,9 +7,12 @@ import { test, expect } from '@playwright/test'
 
 const NOW = new Date('2026-11-16T12:42:00Z')   // İstanbul 16.11.2026 15:42
 let created = null
+/** Doluysa bir SONRAKİ kayıt isteği bu gövdeyle 400 döner (sunucu alan hatası senaryosu); tek kullanımlık. */
+let createError = null
 
 async function mock(page) {
   created = null
+  createError = null
   await page.addInitScript(() => {
     try {
       localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 }))
@@ -23,7 +26,12 @@ async function mock(page) {
     if (p === '/api/me') body = { success: true, username: 'demo', system_role: 'ADMIN', global_admin: true, team_id: 5, team_ids: [5], tour: { status: 'dismissed', version: 99 } }
     else if (p === '/api/me/permissions') body = { success: true, data: { 'incidents.view': { view: true }, 'incidents.manage': { edit: true } } }
     else if (p === '/api/admin/teams') body = { success: true, data: [{ id: 5, name: 'Dijital Kanallar Mobil Bankacılık ve Uzun Adlı Uygulama Geliştirme Ekibi' }] }
-    else if (p === '/api/incidents' && req.method() === 'POST') {
+    else if (p === '/api/incidents' && req.method() === 'POST' && createError) {
+      const refused = createError
+      createError = null
+      await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify(refused) })
+      return
+    } else if (p === '/api/incidents' && req.method() === 'POST') {
       created = JSON.parse(req.postData() || '{}')
       body = { success: true, data: { id: 9, ...created } }
     } else if (p === '/api/incidents') body = { success: true, data: [], total: 0, page: 0, size: 20 }
@@ -154,6 +162,130 @@ for (const vp of VIEWPORTS) {
       expect(created.detected_at).toBe('2026-11-15T06:30:00')
       expect(created.resolved_at).toBe('2026-11-15T08:45:00')
       expect(Number(created.duration_minutes)).toBe(150)
+    })
+
+    // Etki bölümündeki üç isteğe bağlı alan (2026-11-20): "Teknik hata adedi", üç durumlu "Kesinti kaynaklı mı?" (Evet /
+    // Hayır / seçilmemiş = bilinmiyor) ve yalnız Evet'te açılan "Kesinti ID". Alanlar taşmaz / kırpılmaz, dokunmatik
+    // hedefler ≥ 40 px, geçersiz adet alanın altında söylenir, kayıt gövdesi üç anahtarı taşır.
+    test('Etki bölümü: teknik hata adedi + kesinti kaynaklı mı + Kesinti ID — sığar, kırpılmaz, dokunmatik ≥ 40 px; gövde üç anahtarı taşır', async ({ page }) => {
+      test.setTimeout(120_000)
+      await page.clock.setFixedTime(NOW)
+      await mock(page)
+      await page.goto('/?tab=incident-history')
+      await page.getByRole('button', { name: /^Yeni Olay$/ }).first().click()
+      const dlg = page.getByRole('dialog', { name: /Yeni Olay Kaydı/ })
+      await expect(dlg).toBeVisible()
+
+      // Zorunlu alanlar (Özet bölümü)
+      await dlg.getByRole('textbox', { name: /^Başlık/ }).fill('Ödeme servisinde kesinti')
+      const occurred = dlg.getByRole('textbox', { name: /^Oluş Zamanı/ })
+      await occurred.fill('16.11.2026 10:00')
+      await occurred.press('Tab')
+      await expect(occurred).toHaveValue('16.11.2026 10:00')
+      await dlg.getByRole('combobox', { name: /^Takım/ }).selectOption('5')
+
+      // 1) Etki bölümü: adet kutusu + ipucu, üç durumlu seçim (başta ikisi de seçili DEĞİL), Kesinti ID yok
+      await dlg.getByRole('tab', { name: /^Etki/ }).click()
+      const panel = dlg.locator('[role="tabpanel"]').first()
+      const count = dlg.getByRole('textbox', { name: 'Teknik hata adedi' })
+      await expect(count).toBeVisible()
+      await expect(count).toHaveAttribute('inputmode', 'numeric')
+      await expect(dlg.getByText('Bu olaydan kaynaklanan toplam teknik hata adedi; bilinmiyorsa boş bırakın. Teknik hata raporuna içe alınırken konunun hata adedine yazılır.')).toBeVisible()
+      const group = dlg.getByRole('radiogroup', { name: 'Kesinti kaynaklı mı?' })
+      const yes = group.getByRole('radio', { name: 'Evet' })
+      const no = group.getByRole('radio', { name: 'Hayır' })
+      await expect(group).toHaveAttribute('data-answer', 'unknown')
+      await expect(yes).toHaveAttribute('aria-checked', 'false')
+      await expect(no).toHaveAttribute('aria-checked', 'false')
+      const outageId = dlg.getByRole('textbox', { name: 'Kesinti ID' })
+      await expect(outageId).toHaveCount(0)
+
+      // 2) Evet → Kesinti ID açılır, boşken odak ona gider
+      const ID = 'INC-2026-0915-ODEME-SISTEMLERI-KART-ISLEMLERI-0001'
+      await count.fill('1250')
+      await yes.click()
+      await expect(yes).toHaveAttribute('aria-checked', 'true')
+      await expect(outageId).toBeVisible()
+      await expect(outageId).toBeFocused()
+      await outageId.fill(ID)
+
+      const overflow = (el) => {
+        const lim = el.getBoundingClientRect().right + 1
+        if (el.scrollWidth <= el.clientWidth + 1) return []
+        return [...el.querySelectorAll('*')].filter((n) => n.getBoundingClientRect().right > lim)
+          .map((n) => `${n.tagName}.${(n.getAttribute('data-slot') || n.className || '').toString().slice(0, 60)} ${Math.round(n.getBoundingClientRect().right)}>${Math.round(lim)}`).slice(0, 8)
+      }
+      const checkLayout = async () => {
+        expect(await panel.evaluate(overflow)).toEqual([])
+        for (const name of ['tech_error_count', 'outage_related', 'outage_id']) {
+          const f = dlg.locator(`[data-field="${name}"]`)
+          await expect(f).toBeVisible()
+          expect(await f.evaluate(clipped), name).toEqual([])
+          if (vp.touch) expect(await f.evaluate(smallTargets), name).toEqual([])
+          const fb = await f.boundingBox()
+          expect(fb.x, name).toBeGreaterThanOrEqual(0)
+          expect(fb.x + fb.width, name).toBeLessThanOrEqual(vp.width + 0.5)
+        }
+        // Sayfa da yatay kaymaz
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true)
+      }
+      await checkLayout()
+
+      // 3) Üç durum: seçili Evet'e yeniden bas → bilinmiyor (ID gizlenir); Hayır → ID yok; Evet'e dönünce yazılan kimlik yerinde
+      await yes.click()
+      await expect(group).toHaveAttribute('data-answer', 'unknown')
+      await expect(yes).toHaveAttribute('aria-checked', 'false')
+      await expect(no).toHaveAttribute('aria-checked', 'false')
+      await expect(outageId).toHaveCount(0)
+      await no.click()
+      await expect(group).toHaveAttribute('data-answer', 'no')
+      await expect(outageId).toHaveCount(0)
+      await yes.click()
+      await expect(outageId).toHaveValue(ID)
+
+      // 4) Geçersiz adet: kayıt gitmez, neden ALANIN altında yazar (sığar, kırpılmaz); yazılan metin korunur
+      await count.fill('1.250')
+      await dlg.locator('[data-action="save"]').click()
+      const countField = dlg.locator('[data-field="tech_error_count"]')
+      await expect(countField).toContainText('Yalnız rakamlardan oluşan bir tam sayı yazın')
+      await expect(count).toHaveAttribute('aria-invalid', 'true')
+      await expect(count).toHaveValue('1.250')
+      expect(created).toBeNull()
+      await checkLayout()
+      await count.fill('1250')
+      await expect(count).not.toHaveAttribute('aria-invalid', 'true')
+
+      // 5) SUNUCU alan hatası (400 VALIDATION_FAILED + fields): kullanıcı Özet bölümündeyken kaydeder → Etki bölümüne
+      //    geçilir, ileti Kesinti ID'nin ALTINDA durur, odak o alandadır; üstte "işlem başarısız" bandı YOK
+      const SERVER_MSG = 'Kesinti ID en çok 60 karakter olabilir (girilen: 61). Yalnız kesinti kaydının kimliğini yazın.'
+      createError = { success: false, code: 'VALIDATION_FAILED', error: SERVER_MSG, field: 'outage_id', fields: { outage_id: SERVER_MSG } }
+      await dlg.getByRole('tab', { name: /^Özet/ }).click()
+      await expect(dlg.getByRole('textbox', { name: /^Başlık/ })).toBeVisible()
+      await dlg.locator('[data-action="save"]').click()
+      await expect(dlg.getByRole('tab', { name: /^Etki/ })).toHaveAttribute('aria-selected', 'true')
+      const idField = dlg.locator('[data-field="outage_id"]')
+      await expect(idField).toContainText(SERVER_MSG)
+      await expect(outageId).toHaveAttribute('aria-invalid', 'true')
+      await expect(outageId).toBeFocused()
+      await expect(dlg.getByRole('alert')).toHaveCount(0)
+      await expect(dlg.getByRole('tab', { name: /^Etki/ })).toHaveAttribute('data-invalid', 'true')
+      await expect(outageId).toHaveValue(ID)                          // form kaybolmaz
+      expect(created).toBeNull()
+      await checkLayout()                                             // uzun sunucu iletisi alanın altında sığar, kırpılmaz
+      // Alan düzenlenince sunucunun iletisi kalkar
+      const ID_FIXED = 'INC-2026-0915-ODEME-SISTEMLERI-KART-ISLEMLERI-0002'
+      await outageId.fill(ID_FIXED)
+      await expect(idField).not.toContainText(SERVER_MSG)
+      await expect(outageId).not.toHaveAttribute('aria-invalid', 'true')
+
+      // 6) Kaydet: gövde üç anahtarı taşır — adet SAYI, cevap boolean, kimlik metin
+      await dlg.locator('[data-action="save"]').click()
+      await expect.poll(() => created).not.toBeNull()
+      expect(Object.keys(created)).toEqual(expect.arrayContaining(['tech_error_count', 'outage_related', 'outage_id']))
+      expect(created.tech_error_count).toBe(1250)
+      expect(created.outage_related).toBe(true)
+      expect(created.outage_id).toBe(ID_FIXED)
+      expect(created.title).toBe('Ödeme servisinde kesinti')
     })
   })
 }

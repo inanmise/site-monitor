@@ -28,7 +28,18 @@ export const PROBLEM_TYPES = [
   'Konfigürasyon', 'Dış Firma Kaynaklı', 'Donanım Arızası', 'Plansız Değişiklik', 'Diğer',
 ]
 
-/** Boş form — sunucunun okuduğu alanların TAMAMI (snake_case). */
+/**
+ * Teknik hata adedi üst sınırı (10^15) ve kesinti ID uzunluk sınırı — sunucudaki `IncidentService.MAX_TECH_ERROR_COUNT` /
+ * `MAX_OUTAGE_ID` ile AYNI (incidentHistoryModel.test.js Java kaynağını okuyup karşılaştırır).
+ */
+export const MAX_TECH_ERROR_COUNT = 1e15
+export const MAX_OUTAGE_ID = 60
+
+/**
+ * Boş form — sunucunun okuduğu alanların TAMAMI (snake_case). Son üç alan (2026-11-20) isteğe bağlıdır:
+ * `tech_error_count` metin ('' = bilinmiyor), `outage_related` ÜÇ durumlu (true / false / null = bilinmiyor — null asla
+ * "Hayır" değildir), `outage_id` yalnız cevap Evet iken anlamlıdır.
+ */
 export const EMPTY_FORM = Object.freeze({
   title: '', occurred_at: '', severity: 'HIGH', status: 'OPEN', category: 'APPLICATION',
   error_code: '', function_code: '', channel_code: '', service: '', channel: '', team_id: '', team_name: '',
@@ -37,6 +48,7 @@ export const EMPTY_FORM = Object.freeze({
   affected_services: '', problem_types: '', affected_app: '', affected_systems: '',
   affected_customers: '', affected_transactions: '',
   sla_breached: false, error_budget_burn_pct: '', duration_minutes: '', tags: '',
+  tech_error_count: '', outage_related: null, outage_id: '',
 })
 
 // ── URL ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -333,6 +345,7 @@ export const FIELD_SECTION = Object.freeze({
   category: 'summary', problem_types: 'summary', detected_at: 'summary', resolved_at: 'summary', duration_minutes: 'summary',
   channel: 'impact', service: 'impact', affected_services: 'impact', affected_app: 'impact', affected_systems: 'impact',
   affected_customers: 'impact', affected_transactions: 'impact', sla_breached: 'impact', error_budget_burn_pct: 'impact',
+  tech_error_count: 'impact', outage_related: 'impact', outage_id: 'impact',
   business_impact: 'impact',
   error_code: 'codes', function_code: 'codes', channel_code: 'codes', tags: 'codes',
   rca_summary: 'rca', description: 'rca', resolution_steps: 'rca',
@@ -341,6 +354,86 @@ export const FIELD_SECTION = Object.freeze({
 
 const isBlank = (v) => v == null || String(v).trim() === ''
 const negative = (v) => !isBlank(v) && !(Number.isFinite(Number(v)) && Number(v) >= 0)
+
+// ── Teknik hata adedi · kesinti kaynaklı mı · kesinti ID (2026-11-20) ──────────────────────────────────
+
+/** `s`'in `from` konumundan sonu yalnız ASCII rakam mı (en az bir rakam) — doğrusal, düzenli ifade yok. */
+function digitsFrom(s, from) {
+  if (s.length <= from) return false
+  for (let i = from; i < s.length; i++) {
+    const c = s.charCodeAt(i)
+    if (c < 48 || c > 57) return false
+  }
+  return true
+}
+
+/** 10^15'in rakamları — üst sınır karşılaştırması METİN üzerinde yapılır (çok uzun rakam dizisinde kayan nokta yanılmasın). */
+const MAX_TECH_ERROR_DIGITS = String(MAX_TECH_ERROR_COUNT)
+
+/**
+ * Teknik hata adedi (form metni ya da sayı) → hata i18n anahtarı | null. Sunucudaki `IncidentService.strictTechErrorCount`
+ * ile AYNI kural: boş = bilinmiyor (geçerli); yalnız rakamlardan oluşan tam sayı; ondalık ("12.7"), binlik ayraçlı ("1.250"),
+ * üstel ("1e3"), işaretli ("+5") ya da metin → tam sayı değil; negatif → ayrı ileti; en çok 10^15.
+ */
+export function techErrorCountProblem(v) {
+  if (isBlank(v)) return null
+  const s = String(v).trim()
+  const neg = s.charCodeAt(0) === 45
+  if (!digitsFrom(s, neg ? 1 : 0)) return 'inc.errTechCountWhole'
+  let i = neg ? 1 : 0
+  while (i < s.length - 1 && s.charCodeAt(i) === 48) i++          // baştaki sıfırlar ("0007") değeri değiştirmez
+  const digits = s.slice(i)
+  if (neg) return digits === '0' ? null : 'inc.errTechCountNegative'   // "-0" = 0 (sunucu da kabul eder)
+  if (digits.length > MAX_TECH_ERROR_DIGITS.length
+    || (digits.length === MAX_TECH_ERROR_DIGITS.length && digits > MAX_TECH_ERROR_DIGITS)) return 'inc.errTechCountMax'
+  return null
+}
+
+/** Satır sonu sayılan karakter mi: LF, VT, FF, CR, NEL (0x85), satır / paragraf ayırıcı (0x2028 / 0x2029) — sunucuyla aynı. */
+const isLineBreakCode = (c) => (c >= 0x0A && c <= 0x0D) || c === 0x85 || c === 0x2028 || c === 0x2029
+
+/**
+ * Kesinti ID → hata i18n anahtarı | null. Sunucudaki `IncidentService.strictOutageId` ile AYNI kural: kırpılır; boş geçerli
+ * (zorunlu değil); İÇİNDE satır sonu olamaz; en çok {@link MAX_OUTAGE_ID} karakter.
+ */
+export function outageIdProblem(v) {
+  if (isBlank(v)) return null
+  const s = String(v).trim()
+  for (let i = 0; i < s.length; i++) if (isLineBreakCode(s.charCodeAt(i))) return 'inc.errOutageIdLine'
+  return s.length > MAX_OUTAGE_ID ? 'inc.errOutageIdLong' : null
+}
+
+/** Kesinti cevabı: yalnız GERÇEK boolean sayılır → true | false | null (bilinmiyor). Bilinmeyen asla "Hayır" değildir. */
+export const outageAnswerOf = (r) => (r?.outage_related === true ? true : r?.outage_related === false ? false : null)
+
+/** Kaydın teknik hata adedi → sayı | null (girilmemiş ya da tam sayı olarak okunamıyor — satır / kutu çizilmez). */
+export function techErrorCountOf(r) {
+  const v = r?.tech_error_count
+  if (typeof v !== 'number' && typeof v !== 'string') return null
+  if (isBlank(v) || techErrorCountProblem(v)) return null
+  const n = Number(String(v).trim())
+  return n === 0 ? 0 : n                                          // "-0" → 0 (ekranda "-0" yazmasın)
+}
+
+/** Gösterilecek kesinti ID: yalnız cevap Evet VE değer doluyken (kırpılmış); aksi halde ''. */
+export function outageIdOf(r) {
+  if (r?.outage_related !== true || isBlank(r?.outage_id)) return ''
+  return String(r.outage_id).trim()
+}
+
+/**
+ * Sunucu kaydı (ya da ön doldurma) → form durumu. Üç yeni alan form biçimine çevrilir: adet METİN (null → ''), cevap
+ * kesin true / false / null, kimlik metin (null → ''). Anahtarları hiç taşımayan kayıt (eski pod) "bilinmiyor" açılır.
+ */
+export function formFromRow(row) {
+  const r = row && typeof row === 'object' ? row : {}
+  return {
+    ...EMPTY_FORM, ...r,
+    tech_error_count: r.tech_error_count == null ? '' : String(r.tech_error_count),
+    outage_related: outageAnswerOf(r),
+    outage_id: r.outage_id == null ? '' : String(r.outage_id),
+  }
+}
 
 /**
  * İstemci doğrulaması — alan → i18n anahtarı. Boş nesne = geçerli. Sunucu aynı zorunlulukları ayrıca uygular;
@@ -359,6 +452,14 @@ export function validateIncident(f) {
   if (occ && det && det < occ) e.detected_at = 'inc.errDetectedBeforeOccurred'
   for (const k of ['error_budget_burn_pct', 'affected_customers', 'affected_transactions', 'duration_minutes']) {
     if (negative(f[k])) e[k] = 'inc.errNonNegative'
+  }
+  // Üç isteğe bağlı alan (2026-11-20) — sunucunun katı kurallarının aynısı. Kesinti ID yalnız cevap Evet iken denetlenir
+  // (aksi halde alan gizlidir ve gövdeye null yazılır).
+  const count = techErrorCountProblem(f.tech_error_count)
+  if (count) e.tech_error_count = count
+  if (f.outage_related === true) {
+    const id = outageIdProblem(f.outage_id)
+    if (id) e.outage_id = id
   }
   return e
 }
@@ -389,6 +490,9 @@ export function formSnapshot(f) {
   for (const k of [...Object.keys(EMPTY_FORM), 'send_notification']) {
     if (k === 'team_name') continue
     if (k === 'duration_minutes' && !isBlank(f.occurred_at) && !isBlank(f.resolved_at)) continue
+    // Kesinti ID yalnız cevap Evet iken kaydedilir: cevap Evet değilken alanda kalan metin (Evet → yaz → Hayır) gövdeye
+    // girmez, "kaydedilmemiş değişiklik" de sayılmaz. Evet iken kırpılmış hâli karşılaştırılır (gövdeye de öyle yazılır).
+    if (k === 'outage_id') { out[k] = f.outage_related === true && !isBlank(f[k]) ? String(f[k]).trim() : ''; continue }
     const v = f[k]
     out[k] = typeof v === 'boolean' ? String(v) : (v == null ? '' : String(v))
   }
@@ -397,10 +501,37 @@ export function formSnapshot(f) {
   return JSON.stringify(out)
 }
 
-/** Kayıt gövdesi — boş sayısal alanlar gönderilmez (sunucu "" → sayıya çeviremez). */
-export function payloadFromForm(f) {
+/** Üç isteğe bağlı alanın gövde anahtarları (2026-11-20) — düzenlemede yalnız DEĞİŞEN gönderilir. */
+export const OUTAGE_PAYLOAD_KEYS = Object.freeze(['tech_error_count', 'outage_related', 'outage_id'])
+
+/**
+ * Kayıt gövdesi — boş sayısal alanlar gönderilmez (sunucu "" → sayıya çeviremez).
+ *
+ * <p>Üç isteğe bağlı alan (2026-11-20): `tech_error_count` boşsa null, geçerliyse SAYI (geçersiz metin olduğu gibi gider —
+ * sunucu alan hatası döner, sessizce null'a çevrilmez); `outage_related` true / false / null; `outage_id` yalnız cevap Evet
+ * ve değer doluyken (kırpılmış), aksi halde null.
+ *
+ * <p>`baseline` (DÜZENLEMEDE formun açıldığı kayıt) verilirse bu üç anahtardan yalnız DEĞİŞEN gönderilir (sunucuda "anahtar
+ * yok" = dokunma, açık null = temizle): hiç dokunulmamış bir düzenleme — eski, üçü de boş kayıt dahil — üçünü de GÖNDERMEZ,
+ * başka birinin bu arada yazdığı değer ezilmez. Karşılaştırma gövde biçiminde yapılır ("1250" = 1250; cevap Evet değilken
+ * kimlik = null). `baseline` yoksa (yeni kayıt, mail önizlemesi) üçü de her zaman gövdededir. Öteki alanlar bu kuraldan
+ * ETKİLENMEZ (form eskisi gibi tamamını yazar).
+ */
+export function payloadFromForm(f, baseline) {
   const p = { ...f }
   for (const k of ['error_budget_burn_pct', 'duration_minutes']) if (p[k] === '' || p[k] == null) delete p[k]
+  if (isBlank(f.tech_error_count)) p.tech_error_count = null
+  else {
+    const text = String(f.tech_error_count).trim()
+    const n = techErrorCountProblem(text) ? null : Number(text)
+    p.tech_error_count = n == null ? text : (n === 0 ? 0 : n)
+  }
+  p.outage_related = outageAnswerOf(f)
+  p.outage_id = outageIdOf(f) || null
+  if (baseline != null && typeof baseline === 'object') {
+    const was = payloadFromForm(formFromRow(baseline))
+    for (const k of OUTAGE_PAYLOAD_KEYS) if (p[k] === was[k]) delete p[k]
+  }
   return p
 }
 

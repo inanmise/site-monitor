@@ -436,6 +436,10 @@ public class IncidentController {
         m.put("affected_systems", e.getAffectedSystems());
         m.put("affected_customers", e.getAffectedCustomers());
         m.put("affected_transactions", e.getAffectedTransactions());
+        // Teknik hata raporu konusuna içe alınacak üç alan (2026-11-20) — anahtar HEP vardır; değer yoksa null (bilinmiyor).
+        m.put("tech_error_count", e.getTechErrorCount());
+        m.put("outage_related", e.getOutageRelated());
+        m.put("outage_id", e.getOutageId());
         m.put("sla_breached", e.getSlaBreached());
         m.put("error_budget_burn_pct", e.getErrorBudgetBurnPct());
         m.put("duration_minutes", e.getDurationMinutes());

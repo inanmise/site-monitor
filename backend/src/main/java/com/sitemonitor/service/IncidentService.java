@@ -1,11 +1,13 @@
 package com.sitemonitor.service;
 
+import com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException;
 import com.sitemonitor.model.IncidentImage;
 import com.sitemonitor.model.IncidentOption;
 import com.sitemonitor.model.IncidentRecord;
 import com.sitemonitor.repository.IncidentImageRepository;
 import com.sitemonitor.repository.IncidentOptionRepository;
 import com.sitemonitor.repository.IncidentRecordRepository;
+import com.sitemonitor.util.Msg;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -377,6 +379,18 @@ public class IncidentService {
 
     /** Snake_case body → entity. create=true ise zorunlu alanlar doğrulanır. */
     private void applyBody(IncidentRecord e, Map<String, Object> body, boolean create) {
+        // Teknik hata raporu konusuna içe alınacak üç opsiyonel alan (2026-11-20): teknik hata adedi, kesinti kaynaklı mı,
+        // kesinti ID. Kural öncekilerle aynı — anahtar gövdede YOKSA dokunulmaz (eski istemci / eski pod değerleri silmez),
+        // açık JSON null temizler. Öncekilerden farkı: bu üç alan KATI ayrıştırılır (alan adlı 400); mevcut alanların gevşek
+        // ayrıştırması bilinçli olarak DEĞİŞMEDİ. Doğrulama HERHANGİ bir alan yazılmadan ÖNCE yapılır: geçersiz değerde
+        // (yönetilen) kayıt yarım değişmiş kalmaz.
+        boolean hasTechErrorCount = body.containsKey(F_TECH_ERROR_COUNT);
+        boolean hasOutageRelated  = body.containsKey(F_OUTAGE_RELATED);
+        boolean hasOutageId       = body.containsKey(F_OUTAGE_ID);
+        Long techErrorCount   = hasTechErrorCount ? strictTechErrorCount(body.get(F_TECH_ERROR_COUNT)) : null;
+        Boolean outageRelated = hasOutageRelated ? strictOutageRelated(body.get(F_OUTAGE_RELATED)) : null;
+        String outageId       = hasOutageId ? strictOutageId(body.get(F_OUTAGE_ID)) : null;
+
         if (body.containsKey("title") || create)            e.setTitle(reqStr(body, "title", e.getTitle(), create));
         if (body.containsKey("occurred_at") || create)      e.setOccurredAt(reqStr(body, "occurred_at", e.getOccurredAt(), create));
         if (body.containsKey("severity") || create)         e.setSeverity(reqEnum(body, "severity", SEVERITIES, e.getSeverity(), create));
@@ -409,6 +423,131 @@ public class IncidentService {
         if (body.containsKey("error_budget_burn_pct"))      e.setErrorBudgetBurnPct(toDouble(body.get("error_budget_burn_pct")));
         if (body.containsKey("duration_minutes"))           e.setDurationMinutes(toInt(body.get("duration_minutes")));
         if (create && e.getSlaBreached() == null)           e.setSlaBreached(false);
+        // Üç yeni alan (yukarıda doğrulandı): anahtar gövdede YOKSA dokunulmaz, açık JSON null temizler.
+        if (hasTechErrorCount)                              e.setTechErrorCount(techErrorCount);
+        if (hasOutageRelated)                               e.setOutageRelated(outageRelated);
+        if (hasOutageId)                                    e.setOutageId(outageId);
+        // Kesinti ID yalnız cevap "Evet" iken tutulur: hayır / bilinmiyor → null (yalnız cevabı değiştiren istek de ID'yi siler).
+        if (!Boolean.TRUE.equals(e.getOutageRelated()))     e.setOutageId(null);
+    }
+
+    // ── Teknik hata adedi · kesinti kaynaklı mı · kesinti ID (2026-11-20) — katı doğrulama ─────────────────────────
+
+    static final String F_TECH_ERROR_COUNT = "tech_error_count";
+    static final String F_OUTAGE_RELATED   = "outage_related";
+    static final String F_OUTAGE_ID        = "outage_id";
+    /** Teknik hata adedi üst sınırı (10^15) — teknik hata raporundaki sayı sınırıyla aynı. */
+    static final long MAX_TECH_ERROR_COUNT = 1_000_000_000_000_000L;
+    /** Kesinti ID en çok bu kadar karakter (kolon VARCHAR(60); rapor konusundaki kesinti ID sınırıyla aynı). */
+    static final int MAX_OUTAGE_ID = 60;
+    /** Rakam metni bundan uzunsa sayıya ÇEVRİLMEDEN aralık dışı sayılır (sınırsız girdi üzerinde iş yapılmaz). */
+    private static final int MAX_NUMBER_TEXT = 40;
+    private static final java.math.BigDecimal MAX_TECH_ERROR_COUNT_BD = java.math.BigDecimal.valueOf(MAX_TECH_ERROR_COUNT);
+
+    /**
+     * Teknik hata adedi: null / boş metin → null (bilinmiyor); 0 … 10^15 arası TAM sayı. JSON sayısı (12, 12.0) ya da yalnız
+     * rakamlardan oluşan metin ("1250") kabul edilir; ondalık (12.7), binlik ayraçlı ("1.250"), üstel yazılmış metin, sayı
+     * olmayan değer (metin, boolean, liste), negatif ve 10^15 üstü → alan adlı 400. Mevcut sayısal alanların gevşekliği
+     * ("abc" → null, 12.7 → 12) burada YOK.
+     */
+    static Long strictTechErrorCount(Object v) {
+        if (v == null) return null;
+        java.math.BigDecimal n = null;
+        if (v instanceof Number num) {
+            n = toDecimal(num);
+        } else if (v instanceof String s) {
+            String t = s.strip();
+            if (t.isEmpty()) return null;
+            if (digitsOnly(t)) {
+                // 40 haneden uzun rakam dizisi ayrıştırılmaz: aralık dışı olduğu kesin (işaretine göre "negatif" / "çok büyük")
+                n = t.length() <= MAX_NUMBER_TEXT ? new java.math.BigDecimal(t)
+                        : t.charAt(0) == '-' ? java.math.BigDecimal.ONE.negate() : MAX_TECH_ERROR_COUNT_BD.add(java.math.BigDecimal.ONE);
+            }
+        }
+        if (n == null || n.stripTrailingZeros().scale() > 0) {
+            throw new FieldValidationException(F_TECH_ERROR_COUNT, Msg.t(
+                    "Teknik hata adedi tam sayı olmalı (ör. 1250): ondalık, binlik ayraçlı ya da metin değer kabul edilmez. Yalnız rakam yazın; bilinmiyorsa alanı boş bırakın.",
+                    "Technical error count must be a whole number (e.g. 1250): decimals, thousands separators and text are not accepted. Use digits only, or leave the field empty if the count is unknown."));
+        }
+        if (n.signum() < 0) {
+            throw new FieldValidationException(F_TECH_ERROR_COUNT, Msg.t(
+                    "Teknik hata adedi negatif olamaz. 0 ya da daha büyük bir tam sayı yazın; bilinmiyorsa alanı boş bırakın.",
+                    "Technical error count cannot be negative. Enter a whole number of 0 or more, or leave the field empty if the count is unknown."));
+        }
+        if (n.compareTo(MAX_TECH_ERROR_COUNT_BD) > 0) {
+            throw new FieldValidationException(F_TECH_ERROR_COUNT, Msg.t(
+                    "Teknik hata adedi çok büyük: en çok 1.000.000.000.000.000 (10^15) olabilir. Değeri kontrol edip yeniden yazın.",
+                    "Technical error count is too large: the maximum is 1,000,000,000,000,000 (10^15). Check the value and enter it again."));
+        }
+        return n.longValueExact();
+    }
+
+    /** JSON sayısı → BigDecimal; NaN / sonsuz → null (tam sayı değil). JSON sayı uzunluğunu ayrıştırıcı zaten sınırlar. */
+    private static java.math.BigDecimal toDecimal(Number num) {
+        if (num instanceof Integer || num instanceof Long || num instanceof Short || num instanceof Byte) {
+            return java.math.BigDecimal.valueOf(num.longValue());
+        }
+        if (num instanceof java.math.BigDecimal bd) return bd;
+        if (num instanceof java.math.BigInteger bi) return new java.math.BigDecimal(bi);
+        double d = num.doubleValue();
+        if (Double.isNaN(d) || Double.isInfinite(d)) return null;
+        return java.math.BigDecimal.valueOf(d);
+    }
+
+    /** Yalnız ASCII rakam (başta tek '-' olabilir → negatif olarak okunur) — doğrusal, regex'siz; 1000 karakterden uzun metin sayı sayılmaz. */
+    private static boolean digitsOnly(String t) {
+        if (t.length() > 1000) return false;
+        int from = t.charAt(0) == '-' ? 1 : 0;
+        if (from == t.length()) return false;
+        for (int i = from; i < t.length(); i++) {
+            char c = t.charAt(i);
+            if (c < '0' || c > '9') return false;
+        }
+        return true;
+    }
+
+    /** Kesinti kaynaklı mı: yalnız JSON true / false / null. "true" metni, 1 / 0 ve başka her şey → alan adlı 400. */
+    static Boolean strictOutageRelated(Object v) {
+        if (v == null) return null;
+        if (v instanceof Boolean b) return b;
+        throw new FieldValidationException(F_OUTAGE_RELATED, Msg.t(
+                "\"Kesinti kaynaklı mı?\" cevabı yalnız evet (true), hayır (false) ya da boş (bilinmiyor) olabilir. Evet ya da Hayır seçin; bilinmiyorsa seçimi kaldırın.",
+                "The \"Caused by an outage?\" answer can only be yes (true), no (false) or empty (unknown). Choose Yes or No, or clear the choice if it is unknown."));
+    }
+
+    /**
+     * Kesinti ID: null / boş metin → null; metin baştan ve sondan kırpılır, tek satır ve en çok 60 karakter olmalı. Metin
+     * olmayan değer (sayı, liste, nesne), İÇİNDE satır sonu ya da fazla uzunluk → alan adlı 400. Değerin TUTULUP
+     * tutulmayacağına (cevap "Evet" mi) {@link #applyBody} karar verir; doğrulama cevaptan bağımsızdır — gönderilen değer her
+     * zaman denetlenir.
+     */
+    static String strictOutageId(Object v) {
+        if (v == null) return null;
+        if (!(v instanceof String s)) {
+            throw new FieldValidationException(F_OUTAGE_ID, Msg.t(
+                    "Kesinti ID metin olmalı (ör. \"INC-2026-0915\"). Kesinti kaydının kimliğini tırnak içinde metin olarak gönderin.",
+                    "Outage ID must be text (e.g. \"INC-2026-0915\"). Send the identifier of the outage record as a quoted string."));
+        }
+        String t = s.strip();
+        if (t.isEmpty()) return null;
+        for (int i = 0; i < t.length(); i++) {
+            if (isLineBreak(t.charAt(i))) {
+                throw new FieldValidationException(F_OUTAGE_ID, Msg.t(
+                        "Kesinti ID tek satır olmalı; satır sonu içeremez. Kimliği tek satırda yazın (ör. INC-2026-0915).",
+                        "Outage ID must be a single line; it cannot contain a line break. Enter the identifier on one line (e.g. INC-2026-0915)."));
+            }
+        }
+        if (t.length() > MAX_OUTAGE_ID) {
+            throw new FieldValidationException(F_OUTAGE_ID, Msg.t(
+                    "Kesinti ID en çok " + MAX_OUTAGE_ID + " karakter olabilir (girilen: " + t.length() + "). Yalnız kesinti kaydının kimliğini yazın.",
+                    "Outage ID can be at most " + MAX_OUTAGE_ID + " characters (entered: " + t.length() + "). Enter only the identifier of the outage record."));
+        }
+        return t;
+    }
+
+    /** Satır sonu sayılan karakterler: LF, VT, FF, CR, NEL (0x85), satır ayırıcı (0x2028), paragraf ayırıcı (0x2029). */
+    private static boolean isLineBreak(char c) {
+        return (c >= 0x0A && c <= 0x0D) || c == 0x85 || c == 0x2028 || c == 0x2029;
     }
 
     private static String blankToNull(String s) { return (s == null || s.isBlank()) ? null : s; }
