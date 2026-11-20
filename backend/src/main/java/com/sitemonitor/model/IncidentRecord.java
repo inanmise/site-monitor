@@ -177,4 +177,19 @@ public class IncidentRecord {
     private String createdAt;
     private String updatedAt;
     private String updatedBy;
+
+    /**
+     * İyimser kilit (2026-11-20, "Sağlam Kayıt" paketi): her yazımda Hibernate bir artırır; düzenleme formu açılışta okuduğu
+     * değeri gönderir, farklıysa sunucu 409 {@code CONCURRENT_MODIFICATION} döner ({@code IncidentService.update}).
+     *
+     * <p><b>Kolon ASLA NULL olmaz</b> — NULL sürüm Hibernate'te "yeni kayıt" sayılır ve birleştirme bozulur. Yeni kurulumda
+     * ddl-auto {@code version bigint default 0 not null} yaratır; mevcut tabloya ddl-auto ya da açılış yaması
+     * ({@code ALTER TABLE incident_records ADD COLUMN version BIGINT DEFAULT 0 NOT NULL}) aynı tanımla ekler, mevcut satırlar
+     * 0 alır. Kademeli dağıtımda eski pod'un INSERT'i bu kolonu yazmaz → veritabanı varsayılanı 0 (NULL değil); eski pod'un
+     * UPDATE'i sürümü artırmaz (o pencerede çakışma yakalanmaz — belgelenmiş artık risk).
+     */
+    @Version
+    @Column(name = "version", nullable = false)
+    @org.hibernate.annotations.ColumnDefault("0")
+    private Long version;
 }

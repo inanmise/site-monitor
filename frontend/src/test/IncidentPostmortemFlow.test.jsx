@@ -64,6 +64,9 @@ afterEach(() => { window.history.replaceState({}, '', '/') })
 
 describe('Olay geçmişi — postmortem akışı', () => {
   it('liste rozetleri; ayrıntıdan postmortem penceresi açılır', async () => {
+    // Ayrıntı paneli ve postmortem penceresi kardeş öğeler: anahtarları olay kimliğini ÖNEKLİ taşır,
+    // yoksa React "two children with the same key" uyarır (e2e postmortem.spec günlüğünde görüldü).
+    const errSpy = vi.spyOn(console, 'error')
     render(<IncidentHistoryPage />)
     const badges = await waitFor(() => {
       const el = document.querySelector('[data-slot="pm-badges"]')
@@ -81,6 +84,9 @@ describe('Olay geçmişi — postmortem akışı', () => {
     fireEvent.click(open)
     await waitFor(() => expect(document.querySelector('[data-slot="pm-modal"] [data-slot="pm-section"]')).not.toBeNull())
     expect(apiMock.incidents.postmortem).toHaveBeenCalledWith(7)
+    const dupKey = errSpy.mock.calls.some((args) => args.some((a) => typeof a === 'string' && a.includes('same key')))
+    errSpy.mockRestore()
+    expect(dupKey).toBe(false)
   })
 
   it('Aksiyonlar görünümü: süzgeçler isteğe gider, sahibinin durumu değişir, olayı açar', async () => {

@@ -699,4 +699,90 @@ class IncidentControllerTest {
         assertThat(last.get("outage_related")).isNull();
         assertThat(last.get("outage_id")).isNull();
     }
+
+    // ── "Sağlam Kayıt" paketi (2026-11-20): sürüm, çakışma ve alan adlı doğrulama sözleşmesi ─────────────────────────
+
+    @Test
+    @DisplayName("Sağlam Kayıt: GET ayrıntı ve liste satırı `version` taşır (null sürüm 0 yazılır)")
+    void dtoCarriesVersion() throws Exception {
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
+        IncidentRecord rec = sample();
+        rec.setVersion(7L);
+        when(service.get(1L)).thenReturn(rec);
+        mvc.perform(get("/api/incidents/1").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.version").value(7));
+        IncidentRecord legacy = sample();
+        when(service.list(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(legacy)));
+        mvc.perform(get("/api/incidents").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].version").value(0));
+    }
+
+    @Test
+    @DisplayName("Sağlam Kayıt: sürüm çakışması → 409 CONCURRENT_MODIFICATION + current_version / updated_by / updated_at; denetim kaydı ve posta YOK")
+    void update_versionConflict_409() throws Exception {
+        allowManage();
+        IncidentRecord rec = sample();
+        when(service.get(1L)).thenReturn(rec);
+        java.util.Map<String, Object> extra = new java.util.LinkedHashMap<>();
+        extra.put("current_version", 4L);
+        extra.put("updated_by", "ayse");
+        extra.put("updated_at", "2026-11-20T09:00:00");
+        when(service.update(eq(1L), any(), any())).thenThrow(new com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException(
+                "CONCURRENT_MODIFICATION", "Kayıt siz düzenlerken ayse tarafından değiştirildi; değişikliğiniz kaydedilmedi.", extra));
+        mvc.perform(put("/api/incidents/1").session(adminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"yeni\",\"version\":3,\"send_notification\":true}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("CONCURRENT_MODIFICATION"))
+                .andExpect(jsonPath("$.current_version").value(4))
+                .andExpect(jsonPath("$.updated_by").value("ayse"))
+                .andExpect(jsonPath("$.updated_at").value("2026-11-20T09:00:00"));
+        verify(auditService, never()).recordAction(eq("INCIDENT_UPDATE"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), anyString(), anyString(), anyString());
+        verify(notificationService, never()).notifyIncident(any(), any());
+    }
+
+    @Test
+    @DisplayName("Sağlam Kayıt: yarışta Hibernate sürüm hatası da 409 CONCURRENT_MODIFICATION")
+    void update_optimisticLockRace_409() throws Exception {
+        allowManage();
+        when(service.get(1L)).thenReturn(sample());
+        when(service.update(eq(1L), any(), any())).thenThrow(
+                new org.springframework.orm.ObjectOptimisticLockingFailureException(IncidentRecord.class, 1L));
+        mvc.perform(put("/api/incidents/1").session(adminSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"title\":\"yeni\",\"version\":0}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONCURRENT_MODIFICATION"));
+    }
+
+    @Test
+    @DisplayName("Sağlam Kayıt: alan doğrulaması → 400 VALIDATION_FAILED + field + fields (form alanın altına yazar)")
+    void update_fieldValidation_400() throws Exception {
+        allowManage();
+        when(service.get(1L)).thenReturn(sample());
+        when(service.update(eq(1L), any(), any())).thenThrow(new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(
+                "detected_at", "Tespit zamanı oluş zamanından önce olamaz. İki zamanı kontrol edin."));
+        mvc.perform(put("/api/incidents/1").session(adminSession())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"detected_at\":\"2026-06-14T09:00:00\",\"version\":0}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.field").value("detected_at"))
+                .andExpect(jsonPath("$.fields.detected_at").exists());
+    }
+
+    @Test
+    @DisplayName("Sağlam Kayıt: liste tarih süzgeci okunamazsa 400 alan adlı (since / until)")
+    void list_invalidSince_400() throws Exception {
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
+        when(service.list(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenThrow(new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(
+                        "since", "Başlangıç tarihi okunamadı. Tarihi yyyy-MM-ddTHH:mm:ss biçiminde gönderin."));
+        mvc.perform(get("/api/incidents").param("since", "dün").session(adminSession()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("since"));
+    }
 }

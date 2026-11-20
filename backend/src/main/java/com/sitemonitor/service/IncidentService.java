@@ -7,6 +7,7 @@ import com.sitemonitor.model.IncidentRecord;
 import com.sitemonitor.repository.IncidentImageRepository;
 import com.sitemonitor.repository.IncidentOptionRepository;
 import com.sitemonitor.repository.IncidentRecordRepository;
+import com.sitemonitor.service.incident.IncidentPostmortemService;
 import com.sitemonitor.util.Msg;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -73,6 +74,23 @@ public class IncidentService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private org.springframework.context.ApplicationEventPublisher events;
 
+    /**
+     * Takım adının kaynağı (2026-11-20, "Sağlam Kayıt"): {@code team_name} artık istemciden ALINMAZ, {@code team_id}'nin
+     * veritabanındaki takımından okunur (istemci eski / yanlış adı yazamaz). Bean yoksa (elle kurulan birim testleri)
+     * eski davranış: gövdedeki {@code team_name}.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.TeamRepository teamRepo;
+
+    /**
+     * Takım adı veritabanından; takım yok / depo yok → boş. Okuma hatası YAKALANMAZ: işlem içinde yutulan depo hatası işlemi
+     * "yalnız geri al" işaretler ve kayıt yine düşerdi — hata olduğu gibi yükselir (503 / 500, kayıt yazılmaz).
+     */
+    private Optional<String> teamNameOf(Long teamId) {
+        if (teamId == null || teamRepo == null) return Optional.empty();
+        return teamRepo.findById(teamId).map(com.sitemonitor.model.Team::getName);
+    }
+
     private void publishChanged(Long id) {
         if (events == null || id == null) return;
         try {
@@ -93,16 +111,64 @@ public class IncidentService {
                                      String service, String channel, String since, String until,
                                      Long teamId, Boolean slaBreached, Boolean open,
                                      List<Long> scope, Pageable pageable) {
+        // Tarih sınırları ÖNCE doğrulanır (2026-11-20, "Sağlam Kayıt"): okunamayan değer alan adlı 400 — eskiden metin
+        // olduğu gibi karşılaştırılıyor, "dün" gibi bir değer sessizce boş liste döndürüyordu.
+        String from = filterStamp(since, "since");
+        String to   = filterStamp(until, "until");
         boolean scoped = scope != null;
         if (scoped && scope.isEmpty()) return Page.empty(pageable);
         List<Long> scopeList = scoped ? scope : List.of(-1L);   // global'de dummy (scoped=false kısa-devre)
-        String like = (q != null && !q.isBlank()) ? "%" + q.trim().toLowerCase() + "%" : null;
-        String svc  = (service != null && !service.isBlank()) ? "%" + service.trim().toLowerCase() + "%" : null;
+        // LIKE kalıpları: Locale.ROOT ile küçük harf + %, _, ! kaçışlı (sorguda ESCAPE '!') — "%" araması her kaydı bulmaz.
+        String like = likePattern(q);
+        String svc  = likePattern(service);
         // channel artık CSV saklanabildiğinden TAM eşleşme yerine CSV-içinde-geçen (LIKE) eşleşme.
-        String chn  = (channel != null && !channel.isBlank()) ? "%" + channel.trim().toLowerCase() + "%" : null;
+        String chn  = likePattern(channel);
         return repo.findFiltered(like, blankToNull(severity), blankToNull(category), blankToNull(status),
-                svc, chn, blankToNull(since), blankToNull(until), teamId, slaBreached, open,
+                svc, chn, from, to, teamId, slaBreached, open,
                 scoped, scopeList, pageable);
+    }
+
+    /**
+     * Arama metni → LIKE kalıbı: boş → null; kırpılır, {@link Locale#ROOT} ile küçük harfe çevrilir (sunucunun yerel ayarı
+     * Türkçe olsa da "I" → "ı" olmaz), {@code !} {@code %} {@code _} karakterleri {@code !} ile kaçırılır (sorgularda
+     * {@code ESCAPE '!'}). {@code AlertEventRepository.incidentLike} ile aynı kural.
+     */
+    static String likePattern(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        String s = raw.trim().toLowerCase(Locale.ROOT)
+                .replace("!", "!!").replace("%", "!%").replace("_", "!_");
+        return "%" + s + "%";
+    }
+
+    /**
+     * Liste / trend tarih sınırı → karşılaştırılabilir metin. Boş → null. Gün ({@code yyyy-MM-dd}) olduğu gibi kalır (eski
+     * istemciler); bölgesiz / Z'li / ofsetli zaman damgası {@link IncidentPostmortemService#norm} ile
+     * {@code yyyy-MM-ddTHH:mm:ss} UTC'ye çevrilir. Okunamayan değer → alan adlı 400 ({@code since} / {@code until}).
+     */
+    static String filterStamp(String raw, String field) {
+        if (raw == null || raw.isBlank()) return null;
+        String s = raw.trim();
+        if (s.length() == 10 && isDay(s)) return s;
+        String n = IncidentPostmortemService.norm(s);
+        if (n == null || !yearInRange(n)) {
+            String shown = s.length() > 40 ? s.substring(0, 40) + "…" : s;
+            boolean start = "since".equals(field);
+            throw new FieldValidationException(field, Msg.t(
+                    (start ? "Başlangıç" : "Bitiş") + " tarihi okunamadı (\"" + shown + "\"). Tarihi yyyy-MM-ddTHH:mm:ss "
+                            + "biçiminde (UTC) gönderin ya da tarih süzgecini temizleyip yeniden deneyin.",
+                    "The " + (start ? "start" : "end") + " date could not be read (\"" + shown + "\"). Send it as "
+                            + "yyyy-MM-ddTHH:mm:ss (UTC), or clear the date filter and try again."));
+        }
+        return n;
+    }
+
+    private static boolean isDay(String s) {
+        try {
+            java.time.LocalDate.parse(s);
+            return true;
+        } catch (java.time.format.DateTimeParseException e) {
+            return false;
+        }
     }
 
     public IncidentRecord get(Long id) {
@@ -113,7 +179,7 @@ public class IncidentService {
     public Map<String, Object> trends(String since, String until, List<Long> scope) {
         boolean scoped = scope != null;                                          // null = global (admin/AUDIT)
         List<Long> scopeList = (scope != null && !scope.isEmpty()) ? scope : List.of(-1L); // boş kapsam → hiçbir şey eşleşmez
-        String s = blankToNull(since), u = blankToNull(until);
+        String s = filterStamp(since, "since"), u = filterStamp(until, "until");   // listeyle aynı kural (okunamayan → 400)
 
         // Günlük trend — olay zamanını UTC'den Europe/Istanbul'a çevirip YEREL güne göre grupla + ÖNEM kırılımı
         // (tabloda saatler IST gösterildiğinden; ham UTC günü gece-yarısı kayıtlarını bir önceki güne kaydırırdı).
@@ -219,16 +285,55 @@ public class IncidentService {
         return saved;
     }
 
+    /**
+     * Kısmi güncelleme (2026-11-20, "Sağlam Kayıt"): gövdede OLMAYAN anahtar dokunulmaz, açık JSON null temizler.
+     *
+     * <p><b>Çakışma koruması.</b> Gövde {@code version} taşıyorsa (düzenleme formu açılışta okuduğu değeri gönderir) kayıttaki
+     * sürümle karşılaştırılır; farklıysa 409 {@code CONCURRENT_MODIFICATION} + {@code current_version}, {@code updated_by},
+     * {@code updated_at} — hiçbir alan yazılmaz. {@code version} YOKSA bugünkü davranış (son yazan kazanır; eski istemci /
+     * eski pod / iç çağıranlar). Okuma ile yazma arasındaki yarış Hibernate'in kendi sürüm denetimine düşer
+     * ({@code saveAndFlush} → {@code ObjectOptimisticLockingFailureException} → aynı 409). Yanıttaki kayıt YENİ sürümü taşır.
+     */
     @Transactional
     public IncidentRecord update(Long id, Map<String, Object> body, String actorName) {
         IncidentRecord e = get(id);
+        requireVersion(e, body);
         applyBody(e, body, false);
         e.setUpdatedAt(now());
         e.setUpdatedBy(actorName);
-        IncidentRecord saved = repo.save(e);
+        IncidentRecord saved = repo.saveAndFlush(e);
         linkImages(saved, actorName);
         publishChanged(saved.getId());
         return saved;
+    }
+
+    /**
+     * İstemcinin gördüğü sürüm ({@code version}) kayıttakiyle aynı mı. Anahtar yok / null / boş metin → denetim yok
+     * (bugünkü davranış). Negatif olmayan tam sayı değilse alan adlı 400; farklıysa 409 {@code CONCURRENT_MODIFICATION}.
+     */
+    static void requireVersion(IncidentRecord e, Map<String, Object> body) {
+        if (body == null || !body.containsKey("version")) return;
+        Object raw = body.get("version");
+        if (raw == null || (raw instanceof String s && s.isBlank())) return;
+        Long sent = strictWhole(raw, Long.MAX_VALUE);
+        if (sent == null) {
+            throw new FieldValidationException("version", Msg.t(
+                    "Kayıt sürümü okunamadı: 0 ya da daha büyük bir tam sayı olmalı. Sayfayı yenileyip kaydı yeniden açın.",
+                    "The record version could not be read: it must be a whole number of 0 or more. Reload the page and open the record again."));
+        }
+        long current = e.getVersion() == null ? 0L : e.getVersion();
+        if (sent == current) return;
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("current_version", current);
+        extra.put("updated_by", e.getUpdatedBy());
+        extra.put("updated_at", e.getUpdatedAt());
+        String who = e.getUpdatedBy() == null || e.getUpdatedBy().isBlank() ? null : e.getUpdatedBy();
+        throw new com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException("CONCURRENT_MODIFICATION", Msg.t(
+                "Kayıt siz düzenlerken " + (who != null ? who + " tarafından " : "başka biri tarafından ")
+                        + "değiştirildi; değişikliğiniz kaydedilmedi. Son hâlini yükleyip değişikliğinizi yeniden uygulayın.",
+                "This record was changed by " + (who != null ? who : "someone else")
+                        + " while you were editing it, so your change wasn't saved. Load the latest version and apply your change again."),
+                extra);
     }
 
     @Transactional
@@ -238,15 +343,22 @@ public class IncidentService {
         return e;
     }
 
-    /** Toplu takım transferi — seçili olayların takımını (teamId+teamName) değiştirir. */
+    /**
+     * Toplu takım transferi — seçili olayların takımını (teamId+teamName) değiştirir. Takım adı veritabanındaki takımdan
+     * okunur (2026-11-20; satır yoksa null — PUT ile aynı; istemcinin adı yalnız takım deposu yokken). Her kaydın sürümü artar
+     * (Hibernate @Version): o sırada açık bir düzenleme formu kaydederken 409 alır.
+     */
     @Transactional
     public int transfer(List<Long> ids, Long teamId, String teamName, String actor) {
         if (ids == null || ids.isEmpty() || teamId == null) return 0;
         List<IncidentRecord> recs = repo.findAllById(ids);
         String ts = now();
+        // Ad yalnız veritabanındaki takım satırından (PUT ile aynı kural); satır yoksa null. İstemcinin adı yalnız takım deposu
+        // yokken (elle kurulan birim testleri — eski davranış) kullanılır.
+        String name = teamRepo == null ? teamName : teamNameOf(teamId).orElse(null);
         for (IncidentRecord e : recs) {
             e.setTeamId(teamId);
-            e.setTeamName(teamName);
+            e.setTeamName(name);
             e.setUpdatedAt(ts);
             e.setUpdatedBy(actor);
         }
@@ -396,13 +508,18 @@ public class IncidentService {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    /** Snake_case body → entity. create=true ise zorunlu alanlar doğrulanır. */
+    /**
+     * Snake_case body → entity. create=true ise zorunlu alanlar doğrulanır.
+     *
+     * <p>Kurallar (2026-11-20, "Sağlam Kayıt"): anahtar gövdede YOKSA alan dokunulmaz, açık JSON null temizler; YALNIZ
+     * gövdede olan ve kayıttakinden FARKLI değer doğrulanır (eski, bugünkü kurala uymayan değer düzenlemeyi kilitlemez);
+     * hata alan adlı 400 ({@link FieldValidationException}); hiçbir alan doğrulama bitmeden yazılmaz. {@code team_name}
+     * istemciden alınmaz (takım deposundan). Süre gönderilmezse iki zamandan hesaplanır.
+     */
     private void applyBody(IncidentRecord e, Map<String, Object> body, boolean create) {
+        if (body == null) body = Map.of();
         // Teknik hata raporu konusuna içe alınacak üç opsiyonel alan (2026-11-20): teknik hata adedi, kesinti kaynaklı mı,
-        // kesinti ID. Kural öncekilerle aynı — anahtar gövdede YOKSA dokunulmaz (eski istemci / eski pod değerleri silmez),
-        // açık JSON null temizler. Öncekilerden farkı: bu üç alan KATI ayrıştırılır (alan adlı 400); mevcut alanların gevşek
-        // ayrıştırması bilinçli olarak DEĞİŞMEDİ. Doğrulama HERHANGİ bir alan yazılmadan ÖNCE yapılır: geçersiz değerde
-        // (yönetilen) kayıt yarım değişmiş kalmaz.
+        // kesinti ID. Bu üçü gönderildiğinde HER ZAMAN doğrulanır (değişmemiş olsa da — kayıtlı değerleri zaten geçerlidir).
         boolean hasTechErrorCount = body.containsKey(F_TECH_ERROR_COUNT);
         boolean hasOutageRelated  = body.containsKey(F_OUTAGE_RELATED);
         boolean hasOutageId       = body.containsKey(F_OUTAGE_ID);
@@ -410,37 +527,66 @@ public class IncidentService {
         Boolean outageRelated = hasOutageRelated ? strictOutageRelated(body.get(F_OUTAGE_RELATED)) : null;
         String outageId       = hasOutageId ? strictOutageId(body.get(F_OUTAGE_ID)) : null;
 
-        if (body.containsKey("title") || create)            e.setTitle(reqStr(body, "title", e.getTitle(), create));
-        if (body.containsKey("occurred_at") || create)      e.setOccurredAt(reqStr(body, "occurred_at", e.getOccurredAt(), create));
-        if (body.containsKey("severity") || create)         e.setSeverity(reqEnum(body, "severity", SEVERITIES, e.getSeverity(), create));
-        if (body.containsKey("status") || create)           e.setStatus(reqEnum(body, "status", STATUSES, e.getStatus(), create));
-        if (body.containsKey("category") || create)         e.setCategory(reqEnum(body, "category", CATEGORIES, e.getCategory(), create));
-        if (body.containsKey("error_code"))                 e.setErrorCode(str(body, "error_code"));
-        if (body.containsKey("function_code"))              e.setFunctionCode(str(body, "function_code"));
-        if (body.containsKey("channel_code"))               e.setChannelCode(str(body, "channel_code"));
-        if (body.containsKey("service"))                    e.setService(str(body, "service"));
-        if (body.containsKey("channel"))                    e.setChannel(str(body, "channel"));
-        if (body.containsKey("team_id"))                    e.setTeamId(toLong(body.get("team_id")));
-        if (body.containsKey("team_name"))                  e.setTeamName(str(body, "team_name"));
+        // ── Öteki alanlar (2026-11-20, "Sağlam Kayıt"): YALNIZ gövdede olan ve kayıttakinden FARKLI değer doğrulanır —
+        // değişmeyen (eski kayıttan kalma, bugünkü kurala uymayan) değer düzenlemeyi kilitlemez. Hepsi önce bir yazım
+        // listesine doğrulanır, HİÇBİR alan doğrulama bitmeden yazılmaz (geçersiz değerde kayıt yarım değişmez).
+        List<Runnable> w = new ArrayList<>();
+        text(body, "title", e.getTitle(), create, true, MAX_TITLE, w, e::setTitle);
+        String occ = stamp(body, "occurred_at", e.getOccurredAt(), create, true, w, e::setOccurredAt);
+        String det = stamp(body, "detected_at", e.getDetectedAt(), create, false, w, e::setDetectedAt);
+        String res = stamp(body, "resolved_at", e.getResolvedAt(), create, false, w, e::setResolvedAt);
+        boolean occChanged = occ != KEEP, detChanged = det != KEEP, resChanged = res != KEEP;
+        String occEff = occChanged ? occ : e.getOccurredAt();
+        String detEff = detChanged ? det : e.getDetectedAt();
+        String resEff = resChanged ? res : e.getResolvedAt();
+        checkOrder(occEff, detEff, resEff, occChanged, detChanged, resChanged);
+        choice(body, "severity", SEVERITIES, e.getSeverity(), create, w, e::setSeverity);
+        choice(body, "status", STATUSES, e.getStatus(), create, w, e::setStatus);
+        choice(body, "category", CATEGORIES, e.getCategory(), create, w, e::setCategory);
+        text(body, "error_code", e.getErrorCode(), create, false, MAX_CODE, w, e::setErrorCode);
+        text(body, "function_code", e.getFunctionCode(), create, false, MAX_CODE, w, e::setFunctionCode);
+        text(body, "channel_code", e.getChannelCode(), create, false, MAX_CODE, w, e::setChannelCode);
+        text(body, "service", e.getService(), create, false, MAX_LIST, w, e::setService);
+        text(body, "channel", e.getChannel(), create, false, MAX_LIST, w, e::setChannel);
+        text(body, "affected_services", e.getAffectedServices(), create, false, MAX_SHORT, w, e::setAffectedServices);
+        text(body, "problem_types", e.getProblemTypes(), create, false, MAX_LIST, w, e::setProblemTypes);
+        text(body, "affected_app", e.getAffectedApp(), create, false, MAX_SHORT, w, e::setAffectedApp);
+        text(body, "affected_systems", e.getAffectedSystems(), create, false, MAX_LIST, w, e::setAffectedSystems);
+        text(body, "runbook_url", e.getRunbookUrl(), create, false, MAX_LIST, w, e::setRunbookUrl);
+        text(body, "tags", e.getTags(), create, false, MAX_SHORT, w, e::setTags);
+        text(body, "rca_summary", e.getRcaSummary(), create, false, MAX_MARKDOWN_CHARS, w, e::setRcaSummary);
+        text(body, "description", e.getDescription(), create, false, MAX_MARKDOWN_CHARS, w, e::setDescription);
+        text(body, "resolution_steps", e.getResolutionSteps(), create, false, MAX_MARKDOWN_CHARS, w, e::setResolutionSteps);
+        text(body, "business_impact", e.getBusinessImpact(), create, false, MAX_MARKDOWN_CHARS, w, e::setBusinessImpact);
+        whole(body, "affected_customers", e.getAffectedCustomers(), w, e::setAffectedCustomers);
+        whole(body, "affected_transactions", e.getAffectedTransactions(), w, e::setAffectedTransactions);
+        boolean durationSent = body.containsKey("duration_minutes");
+        whole(body, "duration_minutes", e.getDurationMinutes(), w, e::setDurationMinutes);
+        budget(body, e.getErrorBudgetBurnPct(), w, e::setErrorBudgetBurnPct);
+        slaBreached(body, e.getSlaBreached(), w, e::setSlaBreached);
+        team(body, e, create, w);
         // Kaynak alarm bağı — varlık + görünürlük doğrulaması controller'da (IncidentAlertLinkService.validate).
-        if (body.containsKey("alert_event_id"))             e.setAlertEventId(toLong(body.get("alert_event_id")));
-        if (body.containsKey("detected_at"))                e.setDetectedAt(str(body, "detected_at"));
-        if (body.containsKey("resolved_at"))                e.setResolvedAt(str(body, "resolved_at"));
-        if (body.containsKey("rca_summary"))                e.setRcaSummary(str(body, "rca_summary"));
-        if (body.containsKey("description"))                e.setDescription(str(body, "description"));
-        if (body.containsKey("resolution_steps"))           e.setResolutionSteps(str(body, "resolution_steps"));
-        if (body.containsKey("business_impact"))            e.setBusinessImpact(str(body, "business_impact"));
-        if (body.containsKey("affected_services"))          e.setAffectedServices(str(body, "affected_services"));
-        if (body.containsKey("problem_types"))              e.setProblemTypes(str(body, "problem_types"));
-        if (body.containsKey("affected_app"))               e.setAffectedApp(str(body, "affected_app"));
-        if (body.containsKey("affected_systems"))           e.setAffectedSystems(str(body, "affected_systems"));
-        if (body.containsKey("affected_customers"))         e.setAffectedCustomers(toInt(body.get("affected_customers")));
-        if (body.containsKey("affected_transactions"))      e.setAffectedTransactions(toInt(body.get("affected_transactions")));
-        if (body.containsKey("runbook_url"))                e.setRunbookUrl(str(body, "runbook_url"));
-        if (body.containsKey("tags"))                       e.setTags(str(body, "tags"));
-        if (body.containsKey("sla_breached"))               e.setSlaBreached(Boolean.TRUE.equals(toBool(body.get("sla_breached"))));
-        if (body.containsKey("error_budget_burn_pct"))      e.setErrorBudgetBurnPct(toDouble(body.get("error_budget_burn_pct")));
-        if (body.containsKey("duration_minutes"))           e.setDurationMinutes(toInt(body.get("duration_minutes")));
+        if (body.containsKey("alert_event_id")) {
+            Long alert = toLong(body.get("alert_event_id"));
+            w.add(() -> e.setAlertEventId(alert));
+        }
+        // Süre (dk) kayıtta yoksa ve iki zaman da biliniyorsa sunucu hesaplar (aşağı yuvarlanmış dakika, ≥ 0). Gövdedeki
+        // açık süre ASLA ezilmez. Çözülme zamanı bu istekte silinen (yeniden açılan) kaydın HESAPLANMIŞ süresi de silinir.
+        Integer stored = e.getDurationMinutes();
+        Integer oldComputed = minutesBetween(e.getOccurredAt(), e.getResolvedAt(), false);
+        Integer oldRounded = minutesBetween(e.getOccurredAt(), e.getResolvedAt(), true);
+        Integer computed = minutesBetween(occEff, resEff, false);
+        boolean reopened = resChanged && res == null && e.getResolvedAt() != null;
+
+        for (Runnable r : w) r.run();     // ← doğrulama bitti: yazım burada başlar
+
+        if (!durationSent) {
+            if (reopened) {
+                if (stored != null && (stored.equals(oldComputed) || stored.equals(oldRounded))) e.setDurationMinutes(null);
+            } else if (computed != null && (create || occChanged || resChanged || stored == null)) {
+                e.setDurationMinutes(computed);
+            }
+        }
         if (create && e.getSlaBreached() == null)           e.setSlaBreached(false);
         // Üç yeni alan (yukarıda doğrulandı): anahtar gövdede YOKSA dokunulmaz, açık JSON null temizler.
         if (hasTechErrorCount)                              e.setTechErrorCount(techErrorCount);
@@ -448,6 +594,357 @@ public class IncidentService {
         if (hasOutageId)                                    e.setOutageId(outageId);
         // Kesinti ID yalnız cevap "Evet" iken tutulur: hayır / bilinmiyor → null (yalnız cevabı değiştiren istek de ID'yi siler).
         if (!Boolean.TRUE.equals(e.getOutageRelated()))     e.setOutageId(null);
+    }
+
+    // ── Alan doğrulaması (2026-11-20, "Sağlam Kayıt") ─────────────────────────────────────────────────────────────
+
+    /** Kolon sınırları — entity'deki {@code @Column(length)} ile AYNI (IncidentServiceRobustTest entity'den okuyup karşılaştırır). */
+    static final int MAX_TITLE = 255;
+    static final int MAX_CODE = 100;
+    static final int MAX_SHORT = 255;
+    static final int MAX_LIST = 500;
+    /** Markdown alanları (TEXT kolon) — postmortem bölümüyle aynı üst sınır. */
+    static final int MAX_MARKDOWN_CHARS = 20_000;
+    /** Hata bütçesi tüketimi (%) üst sınırı — anlamsız büyük değer reddedilir. */
+    static final double MAX_ERROR_BUDGET = 1_000_000d;
+
+    /** "Bu alan bu istekte değişmedi" işareti ({@link #stamp} dönüşü; == ile karşılaştırılır). */
+    private static final String KEEP = new String("\u0000keep");
+
+    /** Alan adı → {TR, EN} etiket (hata iletilerinde). */
+    private static final Map<String, String[]> LABELS = Map.ofEntries(
+            Map.entry("title", new String[]{"Başlık", "Title"}),
+            Map.entry("occurred_at", new String[]{"Oluş zamanı", "Occurred at"}),
+            Map.entry("detected_at", new String[]{"Tespit zamanı", "Detected at"}),
+            Map.entry("resolved_at", new String[]{"Çözülme zamanı", "Resolved at"}),
+            Map.entry("severity", new String[]{"Önem", "Severity"}),
+            Map.entry("status", new String[]{"Durum", "Status"}),
+            Map.entry("category", new String[]{"Kategori", "Category"}),
+            Map.entry("error_code", new String[]{"Hata kodu", "Error code"}),
+            Map.entry("function_code", new String[]{"Fonksiyon kodu", "Function code"}),
+            Map.entry("channel_code", new String[]{"Kanal kodu", "Channel code"}),
+            Map.entry("service", new String[]{"Servis / domain", "Service / domain"}),
+            Map.entry("channel", new String[]{"Kanal", "Channel"}),
+            Map.entry("affected_services", new String[]{"Etkilenen servisler", "Affected services"}),
+            Map.entry("problem_types", new String[]{"Problem tipi", "Problem type"}),
+            Map.entry("affected_app", new String[]{"Etkilenen uygulama", "Affected application"}),
+            Map.entry("affected_systems", new String[]{"Etkilenen sistemler", "Affected systems"}),
+            Map.entry("runbook_url", new String[]{"Runbook adresi", "Runbook URL"}),
+            Map.entry("tags", new String[]{"Etiketler", "Tags"}),
+            Map.entry("rca_summary", new String[]{"Kök neden özeti", "Root cause summary"}),
+            Map.entry("description", new String[]{"Açıklama", "Description"}),
+            Map.entry("resolution_steps", new String[]{"Çözüm adımları", "Resolution steps"}),
+            Map.entry("business_impact", new String[]{"İş etkisi", "Business impact"}),
+            Map.entry("affected_customers", new String[]{"Etkilenen müşteri adedi", "Affected customers"}),
+            Map.entry("affected_transactions", new String[]{"Etkilenen işlem adedi", "Affected transactions"}),
+            Map.entry("duration_minutes", new String[]{"Süre (dk)", "Duration (min)"}),
+            Map.entry("error_budget_burn_pct", new String[]{"Error budget tüketimi (%)", "Error budget burn (%)"}),
+            Map.entry("sla_breached", new String[]{"SLA ihlali", "SLA breached"}),
+            Map.entry("team_id", new String[]{"Takım", "Team"}));
+
+    private static String tr(String field) { String[] l = LABELS.get(field); return l == null ? field : l[0]; }
+    private static String en(String field) { String[] l = LABELS.get(field); return l == null ? field : l[1]; }
+
+    private static FieldValidationException required(String field) {
+        return new FieldValidationException(field, Msg.t(
+                tr(field) + " zorunludur ve boş bırakılamaz. Alanı doldurup yeniden kaydedin.",
+                en(field) + " is required and cannot be left empty. Fill in the field and save again."));
+    }
+
+    /** Gövdedeki metin değer ham hâliyle kayıttakine eşit mi (kırpılmamış eski değer de "değişmedi" sayılır). */
+    private static boolean sameText(Object raw, String v, String stored) {
+        return java.util.Objects.equals(v, stored) || (raw instanceof String s && s.equals(stored));
+    }
+
+    /** Liste / nesne gibi metin olmayan değer → alan adlı 400 (eskiden {@code toString} ile "[a, b]" yazılırdı). */
+    private static void requireScalar(String field, Object raw) {
+        if (raw == null || raw instanceof String || raw instanceof Number || raw instanceof Boolean) return;
+        throw new FieldValidationException(field, Msg.t(
+                tr(field) + " metin olmalı; liste ya da nesne gönderilemez. Değeri tek bir metin olarak yazın.",
+                en(field) + " must be text; a list or an object cannot be sent. Enter the value as a single piece of text."));
+    }
+
+    /** Metin alanı: kırpılır, boş → null; değişmişse uzunluk (ve zorunluluk) denetlenir. */
+    private static void text(Map<String, Object> body, String field, String stored, boolean create, boolean required,
+                             int max, List<Runnable> w, java.util.function.Consumer<String> set) {
+        if (!body.containsKey(field)) {
+            if (create && required) throw required(field);
+            return;
+        }
+        Object raw = body.get(field);
+        String v = str(body, field);
+        if (!create && sameText(raw, v, stored)) return;
+        requireScalar(field, raw);
+        if (v == null) {
+            if (required) throw required(field);
+        } else if (v.length() > max) {
+            throw new FieldValidationException(field, Msg.t(
+                    tr(field) + " en çok " + max + " karakter olabilir (girilen: " + v.length() + "). Metni kısaltıp yeniden kaydedin.",
+                    en(field) + " can be at most " + max + " characters (entered: " + v.length() + "). Shorten the text and save again."));
+        }
+        w.add(() -> set.accept(v));
+    }
+
+    /** Sabit seçenekli alan (önem / durum / kategori): büyük harfe çevrilir; değişmişse listede olmalı. */
+    private static void choice(Map<String, Object> body, String field, Set<String> allowed, String stored, boolean create,
+                               List<Runnable> w, java.util.function.Consumer<String> set) {
+        if (!body.containsKey(field)) {
+            if (create) throw required(field);
+            return;
+        }
+        Object raw = body.get(field);
+        requireScalar(field, raw);
+        String v = str(body, field);
+        if (v == null) throw required(field);
+        String up = v.toUpperCase(Locale.ROOT);
+        if (!create && up.equals(stored)) return;
+        if (!allowed.contains(up)) {
+            String shown = v.length() > 40 ? v.substring(0, 40) + "…" : v;
+            String list = String.join(", ", new TreeSet<>(allowed));
+            throw new FieldValidationException(field, Msg.t(
+                    tr(field) + " değeri geçersiz (\"" + shown + "\"). Şunlardan birini seçin: " + list + ".",
+                    en(field) + " has an invalid value (\"" + shown + "\"). Choose one of: " + list + "."));
+        }
+        w.add(() -> set.accept(up));
+    }
+
+    /**
+     * Zaman damgası alanı. Dönüş: {@link #KEEP} = bu istekte değişmedi; null = temizlendi; aksi halde yazılacak normal
+     * biçim ({@code yyyy-MM-ddTHH:mm:ss} UTC, {@link IncidentPostmortemService#norm}). Değişen değer okunabilmeli ve yılı
+     * 1970–2100 arasında olmalı.
+     */
+    private static String stamp(Map<String, Object> body, String field, String stored, boolean create, boolean required,
+                                List<Runnable> w, java.util.function.Consumer<String> set) {
+        if (!body.containsKey(field)) {
+            if (create && required) throw required(field);
+            return KEEP;
+        }
+        Object raw = body.get(field);
+        String v = str(body, field);
+        if (!create && sameText(raw, v, stored)) return KEEP;
+        requireScalar(field, raw);
+        if (v == null) {
+            if (required) throw required(field);
+            w.add(() -> set.accept(null));
+            return null;
+        }
+        String n = IncidentPostmortemService.norm(v);
+        if (n == null || !yearInRange(n)) {
+            String shown = v.length() > 40 ? v.substring(0, 40) + "…" : v;
+            throw new FieldValidationException(field, Msg.t(
+                    tr(field) + " okunamadı (\"" + shown + "\"). Tarihi takvimden seçin ya da yyyy-MM-ddTHH:mm:ss biçiminde "
+                            + "(UTC, 1970–2100 arası) yazın.",
+                    en(field) + " could not be read (\"" + shown + "\"). Pick the date from the calendar or write it as "
+                            + "yyyy-MM-ddTHH:mm:ss (UTC, between 1970 and 2100)."));
+        }
+        w.add(() -> set.accept(n));
+        return n;
+    }
+
+    private static boolean yearInRange(String normalized) {
+        try {
+            int y = Integer.parseInt(normalized.substring(0, 4));
+            return y >= 1970 && y <= 2100;
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private static java.time.LocalDateTime parseStamp(String s) {
+        String n = s == null ? null : IncidentPostmortemService.norm(s);
+        if (n == null) return null;
+        try {
+            return java.time.LocalDateTime.parse(n);
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Sıra: oluş ≤ tespit ≤ çözülme. Bir çift YALNIZ iki zamanından biri bu istekte değiştiyse denetlenir (eski, tutarsız
+     * kayıt başlık düzenlemesinde kilitlenmez). Hata her zaman SONRAKİ alana yazılır (istemcideki kuralla aynı alan).
+     */
+    private static void checkOrder(String occ, String det, String res, boolean occChanged, boolean detChanged, boolean resChanged) {
+        java.time.LocalDateTime o = parseStamp(occ), d = parseStamp(det), r = parseStamp(res);
+        if ((occChanged || detChanged) && o != null && d != null && d.isBefore(o)) {
+            throw new FieldValidationException("detected_at", Msg.t(
+                    "Tespit zamanı oluş zamanından önce olamaz. Olay önce oluşur, sonra tespit edilir — iki zamanı kontrol edin.",
+                    "Detected at cannot be earlier than occurred at. An incident occurs first and is detected after — check both times."));
+        }
+        if ((detChanged || resChanged) && d != null && r != null && r.isBefore(d)) {
+            throw new FieldValidationException("resolved_at", Msg.t(
+                    "Çözülme zamanı tespit zamanından önce olamaz. Çözülme, tespitten sonra olmalı — iki zamanı kontrol edin.",
+                    "Resolved at cannot be earlier than detected at. Resolution must come after detection — check both times."));
+        }
+        if ((occChanged || resChanged) && o != null && r != null && r.isBefore(o)) {
+            throw new FieldValidationException("resolved_at", Msg.t(
+                    "Çözülme zamanı oluş zamanından önce olamaz. Olay oluştuktan sonra çözülür — iki zamanı kontrol edin.",
+                    "Resolved at cannot be earlier than occurred at. An incident is resolved after it occurs — check both times."));
+        }
+    }
+
+    /** Oluş ↔ çözülme farkı (dk): aşağı (floor) ya da en yakına (round, istemcinin otomatik süresi) yuvarlanmış; negatif / okunamaz → null. */
+    static Integer minutesBetween(String occurred, String resolved, boolean round) {
+        java.time.LocalDateTime o = parseStamp(occurred), r = parseStamp(resolved);
+        if (o == null || r == null || r.isBefore(o)) return null;
+        long sec = java.time.Duration.between(o, r).getSeconds();
+        long min = round ? Math.round(sec / 60d) : sec / 60;
+        return min > Integer.MAX_VALUE ? null : (int) min;
+    }
+
+    /**
+     * Sayıyı karşılaştırılabilir hâle getirir: JSON sayısı ya da yalnız rakam / tek nokta içeren metin → BigDecimal;
+     * okunamazsa null. Doğrusal, düzenli ifade yok; 40 karakterden uzun metin okunmaz.
+     */
+    private static java.math.BigDecimal decimalOf(Object v) {
+        if (v instanceof Number num) return toDecimal(num);
+        if (!(v instanceof String s)) return null;
+        String t = s.strip();
+        if (t.isEmpty() || t.length() > MAX_NUMBER_TEXT) return null;
+        int from = t.charAt(0) == '-' ? 1 : 0;
+        if (from == t.length()) return null;
+        boolean dot = false, digit = false;
+        for (int i = from; i < t.length(); i++) {
+            char c = t.charAt(i);
+            if (c == '.') {
+                if (dot) return null;
+                dot = true;
+            } else if (c >= '0' && c <= '9') {
+                digit = true;
+            } else {
+                return null;
+            }
+        }
+        if (!digit || t.charAt(t.length() - 1) == '.' || t.charAt(from) == '.') return null;
+        return new java.math.BigDecimal(t);
+    }
+
+    /** Gövdedeki sayı kayıttakiyle AYNI mı (ör. "15" = 15, 12.0 = 12) — aynıysa doğrulanmaz, dokunulmaz. */
+    private static boolean sameNumber(Object raw, Number stored) {
+        if (raw == null || (raw instanceof String s && s.isBlank())) return stored == null;
+        if (stored == null) return false;
+        java.math.BigDecimal a = decimalOf(raw);
+        java.math.BigDecimal b = toDecimal(stored);                       // NaN / sonsuz kayıtlı değer → null
+        return a != null && b != null && a.compareTo(b) == 0;
+    }
+
+    /** Negatif olmayan TAM sayı (JSON tam sayı, 12.0 ya da yalnız rakam metni) ≤ max; aksi halde null. */
+    private static Long strictWhole(Object raw, long max) {
+        if (raw instanceof String s && s.strip().indexOf('.') >= 0) return null;   // "12.0" metni tam sayı değildir
+        java.math.BigDecimal d = decimalOf(raw);
+        if (d == null || d.signum() < 0 || d.stripTrailingZeros().scale() > 0) return null;
+        if (d.compareTo(java.math.BigDecimal.valueOf(max)) > 0) return null;
+        return d.longValueExact();
+    }
+
+    /** Tam sayı alanı (müşteri / işlem adedi, süre): boş → null; değişmişse 0 … 2.147.483.647 arası tam sayı olmalı. */
+    private static void whole(Map<String, Object> body, String field, Integer stored, List<Runnable> w,
+                              java.util.function.Consumer<Integer> set) {
+        if (!body.containsKey(field)) return;
+        Object raw = body.get(field);
+        if (sameNumber(raw, stored)) return;
+        if (raw == null || (raw instanceof String s && s.isBlank())) {
+            w.add(() -> set.accept(null));
+            return;
+        }
+        Long n = strictWhole(raw, Integer.MAX_VALUE);
+        if (n == null) {
+            java.math.BigDecimal d = decimalOf(raw);
+            boolean negative = d != null && d.signum() < 0;
+            throw new FieldValidationException(field, negative
+                    ? Msg.t(tr(field) + " negatif olamaz. 0 ya da daha büyük bir tam sayı yazın; bilinmiyorsa alanı boş bırakın.",
+                            en(field) + " cannot be negative. Enter a whole number of 0 or more, or leave the field empty if it is unknown.")
+                    : Msg.t(tr(field) + " 0 ile 2.147.483.647 arasında bir tam sayı olmalı (ör. 120): ondalık, binlik ayraçlı ya da "
+                                    + "metin değer kabul edilmez. Yalnız rakam yazın; bilinmiyorsa alanı boş bırakın.",
+                            en(field) + " must be a whole number between 0 and 2,147,483,647 (e.g. 120): decimals, thousands "
+                                    + "separators and text are not accepted. Use digits only, or leave the field empty if it is unknown."));
+        }
+        int value = n.intValue();
+        w.add(() -> set.accept(value));
+    }
+
+    /** Hata bütçesi tüketimi (%): boş → null; değişmişse 0 … 1.000.000 arası sonlu, düz ondalık sayı (üstel yazım yok). */
+    private static void budget(Map<String, Object> body, Double stored, List<Runnable> w,
+                               java.util.function.Consumer<Double> set) {
+        String field = "error_budget_burn_pct";
+        if (!body.containsKey(field)) return;
+        Object raw = body.get(field);
+        if (sameNumber(raw, stored)) return;
+        if (raw == null || (raw instanceof String s && s.isBlank())) {
+            w.add(() -> set.accept(null));
+            return;
+        }
+        java.math.BigDecimal d = decimalOf(raw);
+        if (d == null || d.signum() < 0 || d.compareTo(java.math.BigDecimal.valueOf(MAX_ERROR_BUDGET)) > 0) {
+            throw new FieldValidationException(field, Msg.t(
+                    tr(field) + " 0 ile 1.000.000 arasında bir sayı olmalı (ör. 12.5). Ondalık ayırıcı olarak nokta kullanın; "
+                            + "bilinmiyorsa alanı boş bırakın.",
+                    en(field) + " must be a number between 0 and 1,000,000 (e.g. 12.5). Use a dot as the decimal separator, "
+                            + "or leave the field empty if it is unknown."));
+        }
+        double value = d.doubleValue();
+        w.add(() -> set.accept(value));
+    }
+
+    /** SLA ihlali: JSON true / false, "true" / "false" metni; null / boş → false (sütun NOT NULL). Başka değer → 400. */
+    private static void slaBreached(Map<String, Object> body, Boolean stored, List<Runnable> w,
+                                    java.util.function.Consumer<Boolean> set) {
+        String field = "sla_breached";
+        if (!body.containsKey(field)) return;
+        Object raw = body.get(field);
+        Boolean v;
+        if (raw == null) v = false;
+        else if (raw instanceof Boolean b) v = b;
+        else if (raw instanceof String s && s.isBlank()) v = false;
+        else if (raw instanceof String s && "true".equalsIgnoreCase(s.strip())) v = true;
+        else if (raw instanceof String s && "false".equalsIgnoreCase(s.strip())) v = false;
+        else throw new FieldValidationException(field, Msg.t(
+                    "SLA ihlali yalnız evet (true) ya da hayır (false) olabilir. Kutuyu işaretleyin ya da işareti kaldırın.",
+                    "SLA breached can only be yes (true) or no (false). Tick the box or clear it."));
+        if (v.equals(stored)) return;
+        Boolean value = v;
+        w.add(() -> set.accept(value));
+    }
+
+    /**
+     * Takım: {@code team_id} katı (pozitif tam sayı ya da boş); ad VERİTABANINDAN okunur. Gövdedeki {@code team_name}
+     * yalnız takım deposu yoksa (elle kurulan birim testleri — eski davranış) kullanılır. Takım değişmediyse ad yalnız takım
+     * satırı bulunursa tazelenir (takım yeniden adlandırıldıysa); bulunamazsa kayıttaki ad kalır.
+     */
+    private void team(Map<String, Object> body, IncidentRecord e, boolean create, List<Runnable> w) {
+        if (teamRepo == null) {                                       // eski davranış (yalnız depo yokken)
+            if (body.containsKey("team_id")) {
+                Long id = toLong(body.get("team_id"));
+                w.add(() -> e.setTeamId(id));
+            }
+            if (body.containsKey("team_name")) {
+                String name = str(body, "team_name");
+                w.add(() -> e.setTeamName(name));
+            }
+            return;
+        }
+        if (!body.containsKey("team_id")) return;                     // team_name tek başına yok sayılır
+        Object raw = body.get("team_id");
+        Long id;
+        if (raw == null || (raw instanceof String s && s.isBlank())) id = null;
+        else {
+            Long n = strictWhole(raw, Long.MAX_VALUE);
+            if (n == null || n <= 0) {
+                throw new FieldValidationException("team_id", Msg.t(
+                        "Takım kimliği okunamadı. Listeden bir takım seçip yeniden kaydedin.",
+                        "The team id could not be read. Choose a team from the list and save again."));
+            }
+            id = n;
+        }
+        boolean changed = create || !java.util.Objects.equals(id, e.getTeamId());
+        Optional<String> dbName = teamNameOf(id);
+        if (changed) {
+            String name = dbName.orElse(null);
+            w.add(() -> { e.setTeamId(id); e.setTeamName(name); });
+        } else if (dbName.isPresent()) {
+            String name = dbName.get();
+            w.add(() -> e.setTeamName(name));
+        }
     }
 
     // ── Teknik hata adedi · kesinti kaynaklı mı · kesinti ID (2026-11-20) — katı doğrulama ─────────────────────────
@@ -596,41 +1093,6 @@ public class IncidentService {
         return s.isEmpty() ? null : s;
     }
 
-    private static String reqStr(Map<String, Object> body, String key, String current, boolean create) {
-        String v = str(body, key);
-        if (v == null) {
-            if (create) throw new IllegalArgumentException(key + " zorunludur");
-            return current;
-        }
-        return v;
-    }
-
-    private static String reqEnum(Map<String, Object> body, String key, Set<String> allowed, String current, boolean create) {
-        String v = str(body, key);
-        if (v == null) {
-            if (create) throw new IllegalArgumentException(key + " zorunludur");
-            return current;
-        }
-        String up = v.toUpperCase();
-        if (!allowed.contains(up)) throw new IllegalArgumentException("Geçersiz " + key + ": " + v);
-        return up;
-    }
-
-    private static Boolean toBool(Object v) {
-        if (v == null) return null;
-        if (v instanceof Boolean b) return b;
-        return "true".equalsIgnoreCase(v.toString());
-    }
-    private static Double toDouble(Object v) {
-        if (v == null) return null;
-        if (v instanceof Number n) return n.doubleValue();
-        try { return Double.parseDouble(v.toString()); } catch (Exception e) { return null; }
-    }
-    private static Integer toInt(Object v) {
-        if (v == null) return null;
-        if (v instanceof Number n) return n.intValue();
-        try { return Integer.parseInt(v.toString()); } catch (Exception e) { return null; }
-    }
     private static Long toLong(Object v) {
         if (v == null) return null;
         if (v instanceof Number n) return n.longValue();

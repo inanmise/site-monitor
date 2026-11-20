@@ -27,13 +27,15 @@ import HistoryToolbar from './HistoryToolbar.jsx'
 import HistoryList, { HistorySkeleton } from './HistoryList.jsx'
 import HistoryTrendChart from './HistoryTrendChart.jsx'
 import HistoryDetailSheet from './HistoryDetailSheet.jsx'
-import IncidentFormModal from './IncidentFormModal.jsx'
+import IncidentFormModal, { FRESH_TIMEOUT_MS } from './IncidentFormModal.jsx'
+import { errorInfoOf } from '../../utils/errorMessages.js'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import PostmortemModal from './postmortem/PostmortemModal.jsx'
 import ActionItemsView from './postmortem/ActionItemsView.jsx'
 import {
   EMPTY_FORM, DETAIL_KEY, LEGACY_DETAIL_KEY, FILTER_DEFAULTS, filtersFromUrl, filtersToUrl, initialDetailId, serverParams,
   localDayToUtcIso, activeFilters, patchFilters, isCardActive, applyCardFilter, toggleDayFilter, dailySeries, trendWindow,
+  changedKeys, olderRecord,
 } from './incidentHistoryModel.js'
 
 /** Arama kutusu bu kadar duraklamadan sonra uygulanır (her tuşta istek yok); Enter hemen uygular. */
@@ -231,6 +233,55 @@ export default function IncidentHistoryPage() {
   useEffect(() => { setSelected(new Set()) }, [requestKey])
 
   const refreshAll = useCallback(() => { load(); loadTrends(); loadTrendDaily() }, [load, loadTrends, loadTrendDaily])
+  const loadRef = useRef(load)
+  loadRef.current = load
+
+  // ── Ayrıntının taze hâli (2026-11-20, "Sağlam Kayıt") ──
+  // Ayrıntı liste satırıyla HEMEN açılır; kaydın son hâli arkada okunur (sınırlı süre, iptal edilebilir, yalnız EN SON
+  // açılışın yanıtı uygulanır). Farklıysa satır + yedek güncellenir ve Sheet "liste açıldıktan sonra değişti" der; okunamadıysa
+  // satır kalır (sessiz not); 404 → "silinmiş" (düzenleme kapalı, liste yenilenir).
+  const [detailFresh, setDetailFresh] = useState(null)   // { id, state: loading|same|updated|failed|gone, changed }
+  const detailSeq = useRef(0)
+  const detailAbort = useRef(null)
+  useEffect(() => () => { detailAbort.current?.abort() }, [])
+
+  /**
+   * Sunucudan gelen kaydı listeye ve ayrıntı yedeğine işler (liste satırının yalnız listede olan alanları korunur). Elde
+   * tutulandan DAHA ESKİ sürümlü kayıt (kayıttan önce başlayıp sonra dönen okuma) yazılmaz — kaydedilen hâli geri almaz.
+   */
+  const mergeRecord = useCallback((rec) => {
+    if (!rec || typeof rec !== 'object' || Array.isArray(rec) || rec.id == null) return
+    const merge = (held) => (olderRecord(held, rec) ? held : { ...held, ...rec })
+    setRows((rs) => rs.map((r) => (String(r.id) === String(rec.id) ? merge(r) : r)))
+    setFallback((f) => (f && String(f.id) === String(rec.id) ? merge(f) : f))
+  }, [])
+
+  const refreshDetail = useCallback((r) => {
+    if (!r || r.id == null) return
+    const my = ++detailSeq.current
+    detailAbort.current?.abort()
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null
+    detailAbort.current = ctl
+    const id = r.id
+    setDetailFresh({ id, state: 'loading', changed: [] })
+    Promise.resolve()
+      .then(() => api.incidents.get(id, { timeoutMs: FRESH_TIMEOUT_MS, signal: ctl?.signal }))
+      .then((res) => {
+        if (my !== detailSeq.current) return
+        const d = res?.success ? res.data : null
+        if (d && typeof d === 'object' && !Array.isArray(d) && String(d.id) === String(id)) {
+          const changed = olderRecord(r, d) ? [] : changedKeys(r, d)
+          mergeRecord(d)
+          setDetailFresh({ id, state: changed.length ? 'updated' : 'same', changed })
+        } else if (errorInfoOf(res)?.status === 404) {
+          setDetailFresh({ id, state: 'gone', changed: [] })
+          loadRef.current?.()
+        } else if (!ctl?.signal?.aborted) {
+          setDetailFresh({ id, state: 'failed', changed: [] })
+        }
+      })
+      .catch(() => { if (my === detailSeq.current) setDetailFresh({ id, state: 'failed', changed: [] }) })
+  }, [mergeRecord])
 
   // Derin bağlantı: açılışta `ih_id` / e-postanın `incident`'ı. Kayıt listede olmayabilir → tekil uçtan çekilir.
   // `incident` tüketilir (uygulama anahtarı; sayfa YAZMAZ), açık ayrıntı `ih_id` olarak adreste kalır.
@@ -283,7 +334,8 @@ export default function IncidentHistoryPage() {
 
   // ── Kayıt eylemleri ──
   // Açılan kayıt yedeğe de yazılır: liste yeniden yüklenip kayıt süzgeçten düşse bile ayrıntı açık kalır.
-  const openDetail = (r) => { setFallback(r); setDetailId(String(r.id)) }
+  // Ayrıntı satırla hemen açılır, kaydın son hâli arkada okunur (refreshDetail).
+  const openDetail = (r) => { setFallback(r); setDetailId(String(r.id)); refreshDetail(r) }
   /** Aksiyonlar görünümünden olay aç: kayıt sayfada olmayabilir → sunucudan alınır (derin bağlantı deseni). */
   const openIncidentById = (id) => {
     setDetailId(String(id))
@@ -292,7 +344,12 @@ export default function IncidentHistoryPage() {
       else { setDetailId(null); toast.error(res?.error || t('inc.deepLinkFail')) }
     }).catch(() => { setDetailId(null); toast.error(t('inc.deepLinkFail')) })
   }
-  const closeDetail = () => setDetailId(null)
+  const closeDetail = () => {
+    detailSeq.current++                 // yoldaki taze okuma artık uygulanmaz
+    detailAbort.current?.abort()
+    setDetailFresh(null)
+    setDetailId(null)
+  }
   const openCreate = () => setForm({ mode: 'create', initial: { ...EMPTY_FORM } })
   const openEdit = (r) => setForm({ mode: 'edit', initial: { ...EMPTY_FORM, ...r } })
 
@@ -302,13 +359,30 @@ export default function IncidentHistoryPage() {
       const res = mode === 'create'
         ? await api.incidents.create(payload)
         : await api.incidents.update(payload.id, payload)
-      // fields: sunucunun alan hataları (400 VALIDATION_FAILED) — form iletiyi ilgili alanın altında gösterir
-      if (!res?.success) return { ok: false, error: res?.error || t('inc.saveError'), fields: serverFieldErrors(res) }
+      // fields: sunucunun alan hataları (400 VALIDATION_FAILED) — form iletiyi ilgili alanın altında gösterir.
+      // code / status / conflict (2026-11-20, "Sağlam Kayıt"): 409 CONCURRENT_MODIFICATION → form çakışma bandını (kim /
+      // ne zaman) gösterir; 404 → kayıt silinmiş.
+      if (!res?.success) {
+        const info = errorInfoOf(res)
+        return {
+          ok: false, error: res?.error || t('inc.saveError'), fields: serverFieldErrors(res),
+          code: info?.code ?? null, status: info?.status ?? null,
+          conflict: info?.code === 'CONCURRENT_MODIFICATION'
+            ? { by: res?.updated_by ?? null, at: res?.updated_at ?? null, version: res?.current_version ?? null }
+            : null,
+        }
+      }
       toast.success(t('inc.saved'))
-      // Ayrıntı açıksa (düzenleme ayrıntıdan açıldı) güncel kaydı hemen göster — liste yeniden yüklenene kadar beklemez.
-      if (res.data && detailId != null && String(res.data.id) === String(detailId)) {
-        setFallback(res.data)
-        setRows((rs) => rs.map((r) => (String(r.id) === String(res.data.id) ? { ...r, ...res.data } : r)))
+      // Kaydedilen kayıt listeye HEMEN işlenir (liste yeniden yüklenene kadar beklemez). Ayrıntı aynı kayıt için açıksa
+      // kayıttan ÖNCE başlamış taze okuma iptal edilir: geç dönerse kaydedilen hâli eski hâliyle ezmesin.
+      if (res.data && typeof res.data === 'object' && res.data.id != null) {
+        if (detailId != null && String(res.data.id) === String(detailId)) {
+          detailSeq.current++
+          detailAbort.current?.abort()
+          setFallback((f) => (f && String(f.id) === String(res.data.id) ? f : res.data))   // birleştirme: mergeRecord
+          setDetailFresh((f) => (f && String(f.id) === String(res.data.id) ? { ...f, state: 'same', changed: [] } : f))
+        }
+        mergeRecord(res.data)
       }
       setForm(null)
       refreshAll()
@@ -490,20 +564,25 @@ export default function IncidentHistoryPage() {
       {results}
       </>)}
 
-      {detail && (
-        <HistoryDetailSheet key={detail.id} record={detail} onClose={closeDetail} onEdit={openEdit} onDelete={removeIncident}
-          onPostmortem={(r) => setPmFor(r)} allowManage={allowManage && detail.can_edit !== false}
-          allowDelete={allowDelete && detail.can_edit !== false} />
-      )}
+      {detail && (() => {
+        const freshState = detailFresh && String(detailFresh.id) === String(detail.id) ? detailFresh : null
+        const gone = freshState?.state === 'gone'
+        return (
+          <HistoryDetailSheet key={`detail:${detail.id}`} record={detail} onClose={closeDetail} onEdit={openEdit} onDelete={removeIncident}
+            onPostmortem={(r) => setPmFor(r)} allowManage={allowManage && detail.can_edit !== false && !gone}
+            allowDelete={allowDelete && detail.can_edit !== false && !gone} fresh={freshState} />
+        )
+      })()}
 
       {pmFor && (
-        <PostmortemModal key={pmFor.id} incident={pmFor} onClose={() => setPmFor(null)} onChanged={refreshAll} />
+        <PostmortemModal key={`pm:${pmFor.id}`} incident={pmFor} onClose={() => setPmFor(null)} onChanged={refreshAll} />
       )}
 
       {form && (
         <IncidentFormModal key={`${form.mode}:${form.initial.id ?? 'new'}`} mode={form.mode} initial={form.initial} teams={teams}
           options={{ channel: channelOpts, domain: domainOpts, errorCode: errorCodeOpts, functionCode: functionCodeOpts, channelCode: channelCodeOpts }}
-          onAddOption={addOption} onDeleteOption={deleteOption} onSubmit={submitIncident} onClose={() => setForm(null)} />
+          onAddOption={addOption} onDeleteOption={deleteOption} onSubmit={submitIncident} onClose={() => setForm(null)}
+          onFresh={mergeRecord} />
       )}
     </section>
   )

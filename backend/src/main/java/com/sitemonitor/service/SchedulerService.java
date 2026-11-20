@@ -1396,6 +1396,11 @@ public class SchedulerService {
         patch("ALTER TABLE incident_records ADD COLUMN tech_error_count BIGINT");
         patch("ALTER TABLE incident_records ADD COLUMN outage_related BOOLEAN");
         patch("ALTER TABLE incident_records ADD COLUMN outage_id VARCHAR(60)");
+        // İyimser kilit sürümü (2026-11-20, "Sağlam Kayıt"): NULL OLAMAZ (NULL sürüm Hibernate'te "yeni kayıt" sayılır).
+        // DEFAULT 0 hem mevcut satırları doldurur hem de kademeli dağıtımda bu kolonu bilmeyen eski pod'un INSERT'ine 0 verir.
+        // ddl-auto aynı tanımla (entity @ColumnDefault("0") + nullable=false) önce ekler; bu satır güvenlik ağı (kolon varsa
+        // hiç çalışmaz). NOT NULL + DEFAULT birlikte eklendiği için geri doldurma (UPDATE) gerekmez: mevcut satırlar 0 alır.
+        patch("ALTER TABLE incident_records ADD COLUMN version BIGINT DEFAULT 0 NOT NULL");
         // Olay görseli taslak yüklemesi: yeni olay henüz kaydedilmeden görsel eklenir (incident_id=null,
         // kaydedince linkImages bağlar). Eski NOT NULL kısıtı taslakları reddediyordu → kaldır (idempotent).
         patch("ALTER TABLE incident_images ALTER COLUMN incident_id DROP NOT NULL");

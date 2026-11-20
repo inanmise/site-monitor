@@ -560,8 +560,11 @@ public class IncidentPostmortemService {
         out.add(m);
     }
 
-    /** Proje zaman damgaları (bölgesiz UTC, Z'li, ofsetli, saniyesiz) → {@code yyyy-MM-ddTHH:mm:ss} UTC; bozuk → null. */
-    static String norm(String raw) {
+    /**
+     * Proje zaman damgaları (bölgesiz UTC, Z'li, ofsetli, saniyesiz) → {@code yyyy-MM-ddTHH:mm:ss} UTC; bozuk → null.
+     * Olay kaydının tarih alanlarını da bu çözer ({@code IncidentService}, 2026-11-20 "Sağlam Kayıt" — tek kural).
+     */
+    public static String norm(String raw) {
         if (raw == null || raw.isBlank() || raw.length() > 40) return null;
         String s = raw.trim();
         try {

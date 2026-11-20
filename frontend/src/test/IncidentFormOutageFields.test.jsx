@@ -164,28 +164,27 @@ describe('olay formu — teknik hata adedi ve kesinti alanları (Etki bölümü)
   it('gövde (DÜZENLEME): yalnız DEĞİŞEN anahtar gönderilir; dokunulmamış ESKİ kayıt (üçü de boş) üçünü de GÖNDERMEZ', async () => {
     const f = await open()                                           // eski kayıt: üç anahtar satırda hiç yok
     f.save()
-    await f.saved(1)
-    expect(sentKeys(f.payload(0))).toEqual([])                       // sunucuda "anahtar yok" = dokunma
-    expect(f.payload(0)).toMatchObject({ id: 9, title: 'Ödeme kesintisi' })   // öteki alanlar eskisi gibi gövdede
+    expect(f.onSubmit).not.toHaveBeenCalled()                        // "Sağlam Kayıt": değişiklik yok → istek yok
 
     fireEvent.change(f.count(), { target: { value: '1250' } })       // yalnız adet değişti
     f.save()
-    await f.saved(2)
-    expect(sentKeys(f.payload(1))).toEqual(['tech_error_count'])
-    expect(f.payload(1).tech_error_count).toBe(1250)
+    await f.saved(1)
+    expect(sentKeys(f.payload(0))).toEqual(['tech_error_count'])
+    expect(f.payload(0).tech_error_count).toBe(1250)
+    expect(f.payload(0)).toMatchObject({ id: 9 })
+    expect(f.payload(0)).not.toHaveProperty('title')                 // değişmeyen öteki alanlar da gönderilmez
 
     fireEvent.click(f.yes())                                         // + cevap + kimlik
     fireEvent.change(f.outageId(), { target: { value: ' INC-2026-0915 ' } })
     f.save()
-    await f.saved(3)
-    expect(sentKeys(f.payload(2))).toEqual(KEYS)
-    expect(f.payload(2)).toMatchObject({ tech_error_count: 1250, outage_related: true, outage_id: 'INC-2026-0915' })
+    await f.saved(2)
+    expect(sentKeys(f.payload(1))).toEqual(KEYS)
+    expect(f.payload(1)).toMatchObject({ tech_error_count: 1250, outage_related: true, outage_id: 'INC-2026-0915' })
 
-    fireEvent.click(f.yes())                                         // hepsi açılıştaki hâline döndü → yine hiçbiri
+    fireEvent.click(f.yes())                                         // hepsi açılıştaki hâline döndü → istek yok
     fireEvent.change(f.count(), { target: { value: '' } })
     f.save()
-    await f.saved(4)
-    expect(sentKeys(f.payload(3))).toEqual([])
+    expect(f.onSubmit).toHaveBeenCalledTimes(2)
     expect(f.dlg.querySelector('[data-slot="ih-form-dirty"]')).toBeNull()
   })
 
@@ -198,46 +197,43 @@ describe('olay formu — teknik hata adedi ve kesinti alanları (Etki bölümü)
     expect(document.activeElement).not.toBe(f.outageId())
     expect(f.dlg.querySelector('[data-slot="ih-form-dirty"]')).toBeNull()
     f.save()
-    await f.saved(1)
-    expect(sentKeys(f.payload(0))).toEqual([])
+    expect(f.onSubmit).not.toHaveBeenCalled()                        // değişiklik yok → istek yok
 
-    // "01250" aynı sayıdır → değişiklik değil
+    // "01250" aynı sayıdır → değişiklik değil → yine istek yok
     fireEvent.change(f.count(), { target: { value: '01250' } })
     f.save()
-    await f.saved(2)
-    expect(sentKeys(f.payload(1))).toEqual([])
+    expect(f.onSubmit).not.toHaveBeenCalled()
     fireEvent.change(f.count(), { target: { value: '1250' } })
 
     // Evet → Hayır: cevap false VE kimlik null gönderilir (adet değişmedi → yok); Kesinti ID alanı gizlenir
     fireEvent.click(f.no())
     expect(f.outageId()).toBeNull()
     f.save()
-    await f.saved(3)
-    expect(sentKeys(f.payload(2))).toEqual(['outage_related', 'outage_id'])
-    expect(f.payload(2)).toMatchObject({ outage_related: false, outage_id: null })
+    await f.saved(1)
+    expect(sentKeys(f.payload(0))).toEqual(['outage_related', 'outage_id'])
+    expect(f.payload(0)).toMatchObject({ outage_related: false, outage_id: null })
 
     // Evet → bilinmiyor (seçimi kaldır): cevap null VE kimlik null
     fireEvent.click(f.no())
     expect(f.group()).toHaveAttribute('data-answer', 'unknown')
     f.save()
-    await f.saved(4)
-    expect(sentKeys(f.payload(3))).toEqual(['outage_related', 'outage_id'])
-    expect(f.payload(3)).toMatchObject({ outage_related: null, outage_id: null })
+    await f.saved(2)
+    expect(sentKeys(f.payload(1))).toEqual(['outage_related', 'outage_id'])
+    expect(f.payload(1)).toMatchObject({ outage_related: null, outage_id: null })
 
-    // Yeniden Evet: aynı oturumda kimlik yerinde → kayıtla aynı → hiçbiri gönderilmez
+    // Yeniden Evet: aynı oturumda kimlik yerinde → kayıtla aynı → istek yok
     fireEvent.click(f.yes())
     expect(f.outageId()).toHaveValue('INC-7')
     f.save()
-    await f.saved(5)
-    expect(sentKeys(f.payload(4))).toEqual([])
+    expect(f.onSubmit).toHaveBeenCalledTimes(2)
 
     // Yalnız kimlik silindi → yalnız outage_id: null; adet 0 → yalnız girilen değer
     fireEvent.change(f.outageId(), { target: { value: '' } })
     fireEvent.change(f.count(), { target: { value: '0' } })
     f.save()
-    await f.saved(6)
-    expect(sentKeys(f.payload(5))).toEqual(['tech_error_count', 'outage_id'])
-    expect(f.payload(5)).toMatchObject({ tech_error_count: 0, outage_id: null })
+    await f.saved(3)
+    expect(sentKeys(f.payload(2))).toEqual(['tech_error_count', 'outage_id'])
+    expect(f.payload(2)).toMatchObject({ tech_error_count: 0, outage_id: null })
   })
 
   it('düzenleme: "Hayır" kayıtlı olay Hayır seçili açılır (kimlik alanı yok); 0 adet "0" görünür', async () => {
@@ -329,6 +325,7 @@ describe('olay formu — teknik hata adedi ve kesinti alanları (Etki bölümü)
     const onSubmit = vi.fn(async () => ({ ok: false, error: msg, fields: { outage_id: msg } }))
     const f = await open({ onSubmit, impact: false, initial: { outage_related: true, outage_id: 'INC-1' } })
     expect(f.tab('summary')).toHaveAttribute('aria-selected', 'true')
+    fireEvent.change(within(f.dlg).getByRole('textbox', { name: /^Başlık/ }), { target: { value: 'Ödeme kesintisi (düzeltildi)' } })
     f.save()
     await waitFor(() => expect(f.tab('impact')).toHaveAttribute('aria-selected', 'true'))
     expect(f.field('outage_id').textContent).toContain(msg)
@@ -346,6 +343,7 @@ describe('olay formu — teknik hata adedi ve kesinti alanları (Etki bölümü)
     const msg = '"Kesinti kaynaklı mı?" cevabı yalnız evet (true), hayır (false) ya da boş (bilinmiyor) olabilir.'
     const onSubmit = vi.fn(async () => ({ ok: false, error: msg, fields: { outage_related: msg } }))
     const f = await open({ onSubmit })
+    fireEvent.change(f.count(), { target: { value: '5' } })          // değişiklik yoksa istek gitmez
     f.save()
     await waitFor(() => expect(f.field('outage_related').textContent).toContain(msg))
     expect(describedText(f.group())).toContain(msg)
@@ -360,6 +358,7 @@ describe('olay formu — teknik hata adedi ve kesinti alanları (Etki bölümü)
       .mockResolvedValueOnce({ ok: false, error: 'Bu olayı düzenleme yetkiniz yok.' })
       .mockResolvedValueOnce({ ok: false, error: 'İki hata', fields: { alert_event_id: 'Kaynak alarm bulunamadı.', tech_error_count: 'Adet geçersiz, yalnız rakam yazın.' } })
     const f = await open({ onSubmit })
+    fireEvent.change(f.count(), { target: { value: '7' } })          // değişiklik yoksa istek gitmez
     f.save()
     await waitFor(() => expect(within(f.dlg).getByRole('alert').textContent).toContain('Kaynak alarm bulunamadı.'))
     expect(f.tab('impact')).not.toHaveAttribute('data-invalid')
