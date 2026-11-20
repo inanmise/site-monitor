@@ -1033,6 +1033,15 @@ function smallTargets(sel) {
     if (r.width === 0 || r.height === 0 || b.disabled || b.type === 'file' || b.getAttribute('role') === 'checkbox') continue
     const cs = getComputedStyle(b)
     if (cs.visibility === 'hidden' || cs.display === 'none' || b.getAttribute('aria-hidden') === 'true') continue
+    // Anahtar (Switch): görünür 18 px; dokunmatikte ::after ile ortalanmış 40×40 vuruş alanı taşır (shadcn/switch.jsx) — o kutu ölçülür
+    if (b.getAttribute('role') === 'switch') {
+      const sa = getComputedStyle(b, '::after')
+      // Yalnız GERÇEK bir ::after vuruş alanı sayılır (genel daldaki gibi: içerik var ve mutlak konumlu); yoksa düğmenin kendisi ölçülür
+      if (sa.content !== 'none' && sa.position === 'absolute') {
+        if (!(parseFloat(sa.height) >= 39.5 && parseFloat(sa.width) >= 39.5)) out.push(`switch ${sa.width}×${sa.height}`)
+        continue
+      }
+    }
     // Radyo (seçim kartı): vuruş alanı kartın tamamı — kapsayan label ölçülür (team-access e2e ile aynı kural)
     let h = r.height
     if (b.getAttribute('role') === 'radio' || b.type === 'radio') h = Math.max(h, b.closest('label')?.getBoundingClientRect().height ?? 0)
@@ -4254,6 +4263,210 @@ for (const vp of VIEWPORTS) {
       await page.screenshot({ path: `test-results/te-readiness-tplloss-${vp.name}.png` })
       await applyDlg.getByRole('button', { name: 'Vazgeç' }).click()
       await expect(applyDlg).toBeHidden()
+    })
+
+    test('geçen aydan ve toplu doldurma (C, 2026-11-20): toplu bırakma, geçen ayın görseli + büyük görünüm, sıralı doldur, Excel\'den tabloya, geçen aydan getir; sığar, kesilmez', async ({ page }) => {
+      test.setTimeout(180_000)
+      await mock(page)
+      persistUploads = true
+      await page.addInitScript(() => {
+        try { sessionStorage.setItem('sm.gaps.prompted', 'demo'); localStorage.setItem('site-monitor-lang', 'tr') } catch { /* yoksay */ }
+      })
+      // Geçen ayın raporu (Ağustos 2026): yalnız isteyince okunur — sayılır
+      let prevReads = 0
+      const PREV_TEXT = 'Ağustos ayında grafikler yeni raporlama aracından alındı; eğilim sayfa 3’teki tabloda ayrıntılı açıklandı.'
+      const PREV_NOTE = 'Map yapılmamış 12 hata kodu sahibi ekibe iletildi; Ekim sonuna kadar eşlenecek.'
+      await page.route((u) => new URL(u).pathname === '/api/tech-error-reports/reports/90', async (route) => {
+        prevReads++
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: {
+          ...REPORT, report: { ...REPORT.report, id: 90, year: 2026, month: 8, status: 'sent', version: 7 },
+          values: { fields: { 'error-rate': 0.5, 'total-tx': 1000000, 'unmapped-note': PREV_NOTE },
+            texts: { 'trend-note': PREV_TEXT },
+            issues: { issues: [{ id: 'p-1', topic: LONG_TOPIC, title: '', title_auto: true,
+              description: 'Servis yanıt süresi uzadı; önbellek yenilendi.', customers: 320, errors: 1700 }] } },
+          images: [{ id: 61, slot_id: 'monthly-tx', file_name: 'agustos-aylik-islem.png', width: 1600, height: 700, size_bytes: 90000 }],
+        } }) })
+      })
+      const settle = (loc) => loc.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished.catch(() => null))))
+      const pngB64 = stripedPng(300, 200).toString('base64')
+      const editor = page.locator('[data-slot="te-report"]')
+      const slot = (id) => editor.locator(`[data-slot-id="${id}"]`)
+
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      await expect(slot('monthly-tx')).toBeVisible({ timeout: 20_000 })
+      expect(prevReads, 'geçen ayın raporu istenmeden okunmaz').toBe(0)
+
+      // ── C4 — bölüme bırakılan dosyalar yuvalara eşlenir (adındaki yuva kimliği, yuva adı), sırayla yüklenir ────────────
+      await editor.locator('[data-slot="te-images"][data-section="charts"]').evaluate((card, b64) => {
+        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+        const dt = new DataTransfer()
+        dt.items.add(new File([bytes], 'tech-errors-pano-20261103-101500.png', { type: 'image/png' }))
+        dt.items.add(new File([bytes], 'Ay Bazlı Toplam İşlem Adetleri - Eylül.png', { type: 'image/png' }))
+        dt.items.add(new File([new Uint8Array([1, 2, 3])], 'notlar.txt', { type: 'text/plain' }))
+        const opts = { dataTransfer: dt, bubbles: true, cancelable: true }
+        card.dispatchEvent(new DragEvent('dragover', opts))
+        card.dispatchEvent(new DragEvent('drop', opts))
+      }, pngB64)
+      const bulk = page.locator('[data-slot="te-bulk"]')
+      await expect(bulk).toBeVisible()
+      await expect(bulk.locator('[data-slot="te-bulk-row"]')).toHaveCount(3)
+      await expect(bulk.locator('[data-slot="te-bulk-row"][data-index="0"]')).toHaveAttribute('data-target', 'tech-errors')
+      await expect(bulk.locator('[data-slot="te-bulk-row"][data-index="1"]')).toHaveAttribute('data-target', 'monthly-tx')
+      await expect(bulk.locator('[data-slot="te-bulk-row"][data-index="2"]')).toHaveAttribute('data-how', 'notImage')
+      const bulkDlg = page.getByRole('dialog', { name: 'Görselleri yuvalara eşleyin' })
+      await settle(bulkDlg)
+      const bb = await bulkDlg.boundingBox()
+      expect(bb.x, 'eşleme penceresi solda taşmaz').toBeGreaterThanOrEqual(-1)
+      expect(bb.x + bb.width, 'eşleme penceresi sağda taşmaz').toBeLessThanOrEqual(vp.width + 1)
+      expect(await page.evaluate(clipped, '[data-slot="te-bulk"]'), 'kırpılan metin (toplu bırakma)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[role="dialog"]'), 'küçük hedef (toplu bırakma)').toEqual([])
+      await page.screenshot({ path: `test-results/te-c-bulk-${vp.name}.png` })
+      // Kilit çakışması (inceleme 2026-11-20): "Aylık işlem" yuvasına yükleme ilk kez 503 LOCK_CONFLICT alır ve o arada öteki
+      // pencere o yuvaya görsel koymuştur — "değiştirilsin mi?" onayı ÇALIŞAN toplu bırakma penceresinin ÜSTÜNDE açılır ve
+      // gerçek tarayıcıda tıklanabilir (Playwright'ın tıklama denetimi örtülü düğmeye tıklamaz)
+      let conflictOnce = true
+      await page.route((u) => /\/api\/tech-error-reports\/reports\/100\/images\/monthly-tx$/.test(new URL(u).pathname), async (route) => {
+        if (route.request().method() !== 'POST' || !conflictOnce) return route.fallback()
+        conflictOnce = false
+        storedImages = [...storedImages.filter((i) => i.slot_id !== 'monthly-tx'),
+          { id: 777, slot_id: 'monthly-tx', content_type: 'image/png', file_name: 'diger-pencere.png', width: 1, height: 1, size_bytes: 100 }]
+        await route.fulfill({ status: 503, contentType: 'application/json', headers: { 'Retry-After': '1' },
+          body: JSON.stringify({ success: false, code: 'LOCK_CONFLICT', error: 'Rapor şu an başka bir işlemle güncelleniyor.', retry_after_seconds: 1 }) })
+      })
+      await bulkDlg.getByRole('button', { name: 'Yükle (2)' }).click()
+      const otherConfirm = page.locator('[role="alertdialog"], [role="dialog"]').filter({ hasText: 'Görsel değiştirilsin mi?' })
+      await expect(otherConfirm).toBeVisible({ timeout: 20_000 })
+      await expect(bulk).toHaveAttribute('data-phase', 'running')
+      await settle(otherConfirm)
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="alert-dialog-content"]'), 'küçük hedef (değiştirme onayı)').toEqual([])
+      await page.screenshot({ path: `test-results/te-c-lockconfirm-${vp.name}.png` })
+      await otherConfirm.getByRole('button', { name: 'Değiştir', exact: true }).click()
+      await expect(otherConfirm).toBeHidden()
+      await expect(bulk).toHaveAttribute('data-phase', 'done', { timeout: 20_000 })
+      expect(uploads).toHaveLength(2)
+      await expect(bulk).toContainText('2 yüklendi, 1 atlandı, 0 yüklenemedi.')
+      await bulkDlg.locator('[data-slot="te-bulk-close"]').click()
+      await expect(bulk).toBeHidden()
+      await expect(slot('monthly-tx')).toHaveAttribute('data-has-image', 'true')
+      await expect(slot('tech-errors')).toHaveAttribute('data-has-image', 'true')
+      await expect(slot('daily-errors')).toHaveAttribute('data-has-image', 'false')
+
+      // ── C3 — "Geçen ay": bir kez okunur, aynı yuvanın görseli; büyük görünümde "Bu ay | Geçen ay" ─────────────────────
+      await slot('monthly-tx').locator('[data-slot="te-image-prev-toggle"]').click()
+      await expect(slot('monthly-tx').locator('[data-slot="te-image-prev-img"]')).toBeVisible()
+      await slot('tech-errors').locator('[data-slot="te-image-prev-toggle"]').click()
+      await expect(slot('tech-errors').locator('[data-slot="te-image-prev-none"]')).toHaveText('Ağustos 2026 raporunda bu yuvada görsel yoktu.')
+      expect(prevReads, 'yuvalar AYNI okumayı paylaşır').toBe(1)
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(overflowX), 'yatay taşma (geçen ay görünümü)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-section="charts"]'), 'kırpılan metin (geçen ay görünümü)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-section="charts"] [data-slot-id="monthly-tx"]'), 'küçük hedef (yuva)').toEqual([])
+      await slot('monthly-tx').locator('[data-slot="te-image-zoom"]').click()
+      const box = page.locator('[data-slot="te-image-lightbox"]')
+      await expect(box).toBeVisible()
+      const view = box.locator('[data-slot="te-image-lightbox-view"]')
+      await expect(view).toHaveAttribute('data-month', 'current')
+      await box.locator('[data-slot="te-image-lightbox-month"]').getByRole('radio', { name: 'Geçen ay' }).click()
+      await expect(view).toHaveAttribute('data-month', 'prev')
+      await expect(view.locator('img')).toHaveAttribute('src', /\/images\/61$/)
+      await settle(box)
+      const lb = await box.boundingBox()
+      expect(lb.x + lb.width, 'büyük görünüm ekranda').toBeLessThanOrEqual(vp.width + 1)
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-image-lightbox"]'), 'küçük hedef (büyük görünüm)').toEqual([])
+      await page.screenshot({ path: `test-results/te-c-prev-${vp.name}.png` })
+      await page.keyboard.press('Escape')
+      await expect(box).toBeHidden()
+
+      // ── C2 — "Sıralı doldur" (masaüstü / tablet): üç pencere düzeyi yapıştırma ardışık BOŞ yuvalara ──────────────────
+      if (vp.width >= 768) {
+        storedImages = []
+        uploads = []
+        await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+        await expect(slot('monthly-tx')).toHaveAttribute('data-has-image', 'false', { timeout: 20_000 })
+        const seq = editor.locator('[data-slot="te-seqfill"]')
+        await expect(seq).toHaveAttribute('data-enabled', 'false')
+        await seq.getByRole('switch', { name: 'Sıralı doldur' }).click()
+        await expect(seq).toHaveAttribute('data-enabled', 'true')
+        const next = seq.locator('[data-slot="te-seqfill-next"]')
+        await expect(next).toHaveAttribute('data-next', 'monthly-tx')
+        const windowPaste = () => page.evaluate((b64) => {
+          const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+          const dt = new DataTransfer()
+          dt.items.add(new File([bytes], 'image.png', { type: 'image/png' }))
+          document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
+        }, pngB64)
+        for (const [i, id, after] of [[1, 'monthly-tx', 'tech-errors'], [2, 'tech-errors', 'daily-errors'], [3, 'daily-errors', '']]) {
+          await windowPaste()
+          await expect.poll(() => uploads.length, { timeout: 15_000 }).toBe(i)
+          await expect(slot(id)).toHaveAttribute('data-has-image', 'true')
+          await expect(next).toHaveAttribute('data-next', after)
+          expect(uploadBodies[uploadBodies.length - 1].toString('latin1')).toMatch(new RegExp(`filename="${id}-pano-\\d{8}-\\d{6}\\.png"`))
+        }
+        await expect(next).toHaveText('Boş yuva kalmadı — bütün yuvalar dolu.')
+        // Dolu yuvaya ASLA yüklenmez
+        await windowPaste()
+        await expect(seq.locator('[data-slot="te-seqfill-msg"]')).toContainText('boş yuva kalmadı')
+        await page.waitForTimeout(300)
+        expect(uploads).toHaveLength(3)
+        expect(await page.evaluate(clipped, '[data-slot="te-seqfill"]'), 'kırpılan metin (sıralı doldur)').toEqual([])
+        if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-seqfill"]'), 'küçük hedef (sıralı doldur)').toEqual([])
+        await page.screenshot({ path: `test-results/te-c-seqfill-${vp.name}.png` })
+      }
+
+      // ── C5 — Excel'den tabloya: odaklı hücreden satır satır; geçersiz değer yazımdaki hatayı verir; dışarıdakiler sayılır ─
+      const pasteText = (sel, text) => page.locator(sel).evaluate((el, x) => {
+        el.focus()
+        const dt = new DataTransfer()
+        dt.setData('text/plain', x)
+        el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
+      }, text)
+      await pasteText('#te-c-sla-total-functions', '12\t1.250.000\r\n7\tabc\r\n')
+      await expect(page.locator('#te-c-sla-total-functions')).toHaveValue('12')
+      await expect(page.locator('#te-c-sla-total-success-tx')).toHaveValue('1.250.000')
+      await expect(page.locator('#te-c-sla-sla-critical-functions')).toHaveValue('7')
+      await expect(page.locator('#te-c-sla-sla-critical-success-tx')).toHaveValue('abc')
+      await expect(page.locator('#te-c-sla-sla-critical-success-tx')).toHaveAttribute('aria-invalid', 'true')
+      const tnote = editor.locator('[data-section="sla"] [data-slot="te-table-paste-note"]')
+      await expect(tnote).toHaveText('4 hücre yapıştırıldı.')
+      await pasteText('#te-c-sla-out-of-sla-volume-share', '1\t2\n3\n')
+      await expect(page.locator('#te-c-sla-out-of-sla-volume-share')).toHaveValue('1')
+      await expect(tnote).toHaveText('1 hücre yapıştırıldı. 2 değer tablonun dışında kaldı ve alınmadı.')
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(overflowX), 'yatay taşma (tablo yapıştırma)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-section="sla"]'), 'kırpılan metin (tablo yapıştırma)').toEqual([])
+
+      // ── C1 — "Geçen aydan getir": boş metin / not ve seçilen konu taslağa; sayı, tarih, görsel gelmez ──────────────────
+      await page.getByRole('button', { name: 'Geçen aydan getir' }).click()
+      const carry = page.locator('[data-slot="te-carry"]')
+      await expect(carry).toHaveAttribute('data-state', 'ok')
+      expect(prevReads, 'aynı düzenleyicide geçen ayın okuması paylaşılır').toBeLessThanOrEqual(2)
+      const carryDlg = page.getByRole('dialog', { name: 'Geçen aydan getir' })
+      await expect(carryDlg.getByRole('checkbox', { name: 'Grafikler hakkında' })).toBeChecked()
+      await expect(carryDlg.getByRole('checkbox', { name: 'Açıklama' })).toBeChecked()
+      const topicBox = carryDlg.getByRole('checkbox', { name: `${LONG_TOPIC} Konusu ile yaşanan problem` })
+      await expect(topicBox).not.toBeChecked()
+      await settle(carryDlg)
+      const cb = await carryDlg.boundingBox()
+      expect(cb.x, 'getir penceresi solda taşmaz').toBeGreaterThanOrEqual(-1)
+      expect(cb.x + cb.width, 'getir penceresi sağda taşmaz').toBeLessThanOrEqual(vp.width + 1)
+      expect(await page.evaluate(clipped, '[data-slot="te-carry"]'), 'kırpılan metin (geçen aydan getir)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[role="dialog"]'), 'küçük hedef (geçen aydan getir)').toEqual([])
+      await page.screenshot({ path: `test-results/te-c-carry-${vp.name}.png` })
+      await topicBox.click()
+      await carryDlg.getByRole('button', { name: 'Getir (3)' }).click()
+      await expect(carryDlg).toBeHidden()
+      await expect(page.locator('#te-t-trend-note')).toHaveValue(PREV_TEXT)
+      await expect(editor.locator('[data-field="values.unmapped-note"] textarea')).toHaveValue(PREV_NOTE)
+      // Sayı getirilmedi (bu ayın boş toplam işlem adedi boş kaldı)
+      await expect(editor.locator('[data-section="summary"]').getByLabel('Toplam işlem adedi', { exact: true })).toHaveValue('')
+      const cards = editor.locator('[data-slot="te-issue"]')
+      await expect(cards).toHaveCount(2)
+      const added = cards.nth(1)
+      await expect(added).not.toHaveAttribute('data-issue', 'p-1')
+      await expect(added.getByLabel('Konu', { exact: true })).toHaveValue(LONG_TOPIC)
+      await expect(page.getByText(/Ağustos 2026 raporundan getirildi: 2 metin \/ not, 1 konu\./)).toBeVisible()
+      await page.waitForTimeout(200)
+      expect(await page.evaluate(overflowX), 'yatay taşma (getirildikten sonra)').toBeLessThanOrEqual(1)
     })
 
     if (!vp.touch) {

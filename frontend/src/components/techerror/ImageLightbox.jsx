@@ -15,11 +15,22 @@ const ZOOMS = ['fit', '100', '200']
  * kaydırarak gezilir. × düğmesi ve Esc kapatır; telefonda tam ekran. Görsel tam çözünürlükte saklandığı için (20.138)
  * %100 gerçek piksellerdir — küçük rakamlar burada okunur.
  */
-export function ImageLightbox({ open, onOpenChange, src, label, width, height, returnFocusRef }) {
+/*
+ * GEÇEN AY (2026-11-20, C3): `prev` (`{ src, width, height, caption, toggle? }` — `toggle`: anahtarın adı, tam önceki ay değilse
+ * "Önceki rapor") verilirse ve bu ayın görseli de varsa başlıkta "Bu ay |
+ * Geçen ay" anahtarı çıkar (`view` / `onViewChange` — denetimli). Bu ayın görseli yoksa yalnız geçen ayınki gösterilir
+ * (anahtar yok). `prev` verilmezse pencere eskisinin AYNISI.
+ */
+export function ImageLightbox({ open, onOpenChange, src, label, width, height, returnFocusRef, prev = null, view = 'current',
+  onViewChange = null }) {
   const t = useT()
   const [zoom, setZoom] = useState('fit')
   const fit = zoom === 'fit'
   const scale = zoom === '200' ? 2 : 1
+  const showPrev = !!prev && (view === 'prev' || !src)
+  const both = !!(src && prev)
+  const shown = showPrev ? prev : { src, width, height }
+  const title = showPrev ? `${label} — ${prev.caption}` : label
   const close = (o) => {
     if (!o) setZoom('fit')
     onOpenChange(o)
@@ -32,8 +43,15 @@ export function ImageLightbox({ open, onOpenChange, src, label, width, height, r
         onCloseAutoFocus={(e) => { if (returnFocusRef?.current) { e.preventDefault(); returnFocusRef.current.focus() } }}
         className={cn('flex h-[94dvh] w-[96vw] max-w-[96vw] flex-col gap-3 p-4 sm:max-w-[96vw] max-sm:w-full', PHONE_FULLSCREEN)}>
         <div className="flex flex-wrap items-start justify-between gap-2">
-          <DialogTitle className="min-w-0 flex-1 text-base leading-snug [overflow-wrap:anywhere] max-sm:basis-full">{label}</DialogTitle>
+          <DialogTitle className="min-w-0 flex-1 text-base leading-snug [overflow-wrap:anywhere] max-sm:basis-full">{title}</DialogTitle>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {both && (
+              <ToggleGroup type="single" variant="outline" size="sm" value={showPrev ? 'prev' : 'current'} aria-label={t('te.prev.switchGroup')}
+                onValueChange={(v) => { if (v === 'prev' || v === 'current') onViewChange?.(v) }} data-slot="te-image-lightbox-month">
+                <ToggleGroupItem value="current" className="px-3 pointer-coarse:min-h-10">{t('te.prev.thisMonth')}</ToggleGroupItem>
+                <ToggleGroupItem value="prev" className="px-3 pointer-coarse:min-h-10">{prev?.toggle || t('te.prev.lastMonth')}</ToggleGroupItem>
+              </ToggleGroup>
+            )}
             <ToggleGroup type="single" variant="outline" size="sm" value={zoom} aria-label={t('te.img.zoomGroup')}
               onValueChange={(v) => { if (ZOOMS.includes(v)) setZoom(v) }} data-slot="te-image-lightbox-zoom">
               <ToggleGroupItem value="fit" className="px-3 pointer-coarse:min-h-10">{t('te.img.zoomFit')}</ToggleGroupItem>
@@ -49,14 +67,15 @@ export function ImageLightbox({ open, onOpenChange, src, label, width, height, r
           </div>
         </div>
         <DialogDescription className="sr-only">{t('te.img.zoomHint')}</DialogDescription>
-        <div className="min-h-0 flex-1 overflow-auto rounded-md border bg-muted/30" data-slot="te-image-lightbox-view" data-zoom={zoom}>
+        <div className="min-h-0 flex-1 overflow-auto rounded-md border bg-muted/30" data-slot="te-image-lightbox-view" data-zoom={zoom}
+          data-month={showPrev ? 'prev' : 'current'}>
           <Button type="button" variant="ghost" onClick={() => setZoom(fit ? '100' : 'fit')}
             aria-label={fit ? t('te.img.zoomTo100') : t('te.img.zoomToFit')}
             className={cn('min-h-10 min-w-10 rounded-none p-0 hover:bg-transparent',
               fit ? 'flex h-full w-full items-center justify-center cursor-zoom-in' : 'block h-auto w-max cursor-zoom-out')}>
-            <img src={src} alt={label} width={width || undefined} height={height || undefined} data-slot="te-image-lightbox-img"
+            <img src={shown.src} alt={title} width={shown.width || undefined} height={shown.height || undefined} data-slot="te-image-lightbox-img"
               className={fit ? 'block h-auto max-h-full w-auto max-w-full object-contain' : 'block h-auto max-w-none'}
-              style={!fit && width ? { width: `${width * scale}px` } : undefined} />
+              style={!fit && shown.width ? { width: `${shown.width * scale}px` } : undefined} />
           </Button>
         </div>
       </DialogContent>
