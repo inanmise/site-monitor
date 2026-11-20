@@ -163,4 +163,21 @@ describe('form (ön dolgu + kayıt)', () => {
     expect(within(dlg).getByRole('alert').textContent).toContain('Bu alarmı görme yetkiniz yok')
     expect(screen.queryByRole('button', { name: /^(Olay kaydı|Incident record) #/ })).toBeNull()
   })
+
+  it('2026-11-20: sunucunun ALAN hatası (400 fields) formda alanın altında; alanı formda olmayan hata (alert_event_id) bantta kalır', async () => {
+    const dlg = await openForm()
+    const msg = 'Teknik hata adedi negatif olamaz. 0 ya da daha büyük bir tam sayı yazın.'
+    api.incidents.create.mockResolvedValueOnce({ success: false, code: 'VALIDATION_FAILED', error: msg, field: 'tech_error_count', fields: { tech_error_count: msg } })
+    await act(async () => { fireEvent.click(dlg.querySelector('[data-action="save"]')) })
+    await waitFor(() => expect(dlg.querySelector('[data-section="impact"]')).toHaveAttribute('aria-selected', 'true'))
+    expect(dlg.querySelector('[data-field="tech_error_count"]').textContent).toContain(msg)
+    expect(within(dlg).queryByRole('alert')).toBeNull()
+    expect(api.incidents.create.mock.calls[0][0]).toMatchObject({ alert_event_id: 50, tech_error_count: null, outage_related: null, outage_id: null })
+
+    const linkMsg = 'Kaynak alarm bulunamadı; alarm silinmiş olabilir.'
+    api.incidents.create.mockResolvedValueOnce({ success: false, code: 'VALIDATION_FAILED', error: linkMsg, field: 'alert_event_id', fields: { alert_event_id: linkMsg } })
+    await act(async () => { fireEvent.click(dlg.querySelector('[data-action="save"]')) })
+    expect(within(dlg).getByRole('alert').textContent).toContain(linkMsg)
+    expect(screen.queryByRole('button', { name: /^(Olay kaydı|Incident record) #/ })).toBeNull()
+  })
 })

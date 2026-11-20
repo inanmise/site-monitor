@@ -534,4 +534,169 @@ class IncidentControllerTest {
         assertThat(IncidentController.canReadIncident(nocOperatorSession(), 99L, null)).isTrue();
         assertThat(IncidentController.inOwnIncidentScope(nocOperatorSession(), 99L, null)).isFalse();
     }
+
+    // -- Kesinti alanları (2026-11-20): tech_error_count / outage_related / outage_id ---------------------------------
+    // Üçü de isteğe bağlı; DTO anahtarları HER ZAMAN taşır (girilmemiş = null — "bilinmiyor", "Hayır" değil).
+
+    @Test
+    @DisplayName("Kesinti alanları: DTO üç anahtarı her zaman taşır — girilmemişse null, girilmişse değeriyle (liste + ayrıntı)")
+    void outageFields_dtoKeysAlwaysPresent() throws Exception {
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
+        IncidentRecord unset = sample();
+        IncidentRecord yes = sample();
+        yes.setId(2L);
+        yes.setTechErrorCount(1_000_000_000_000_000L);
+        yes.setOutageRelated(Boolean.TRUE);
+        yes.setOutageId("INC-2026-0915");
+        IncidentRecord no = sample();
+        no.setId(3L);
+        no.setTechErrorCount(0L);
+        no.setOutageRelated(Boolean.FALSE);
+        when(service.list(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(unset, yes, no)));
+
+        mvc.perform(get("/api/incidents").session(adminSession()))
+                .andExpect(status().isOk())
+                // girilmemiş: anahtar VAR, değer null
+                .andExpect(jsonPath("$.data[0].tech_error_count").hasJsonPath())
+                .andExpect(jsonPath("$.data[0].tech_error_count").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data[0].outage_related").hasJsonPath())
+                .andExpect(jsonPath("$.data[0].outage_related").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data[0].outage_id").hasJsonPath())
+                .andExpect(jsonPath("$.data[0].outage_id").value(org.hamcrest.Matchers.nullValue()))
+                // Evet + kimlik + üst sınırdaki adet (JSON sayısı — metin değil)
+                .andExpect(jsonPath("$.data[1].tech_error_count").value(1_000_000_000_000_000L))
+                .andExpect(jsonPath("$.data[1].outage_related").value(true))
+                .andExpect(jsonPath("$.data[1].outage_id").value("INC-2026-0915"))
+                // Hayır + 0: ikisi de "girilmiş" değerdir (null değil)
+                .andExpect(jsonPath("$.data[2].tech_error_count").value(0))
+                .andExpect(jsonPath("$.data[2].outage_related").value(false))
+                .andExpect(jsonPath("$.data[2].outage_id").hasJsonPath())
+                .andExpect(jsonPath("$.data[2].outage_id").value(org.hamcrest.Matchers.nullValue()));
+
+        when(service.get(2L)).thenReturn(yes);
+        mvc.perform(get("/api/incidents/2").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.tech_error_count").value(1_000_000_000_000_000L))
+                .andExpect(jsonPath("$.data.outage_related").value(true))
+                .andExpect(jsonPath("$.data.outage_id").value("INC-2026-0915"));
+        when(service.get(1L)).thenReturn(unset);
+        mvc.perform(get("/api/incidents/1").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.tech_error_count").hasJsonPath())
+                .andExpect(jsonPath("$.data.outage_related").hasJsonPath())
+                .andExpect(jsonPath("$.data.outage_related").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.outage_id").hasJsonPath());
+    }
+
+    @Test
+    @DisplayName("Kesinti alanları: servis alan hatası → 400 VALIDATION_FAILED + field + fields (POST ve PUT); denetim kaydı ve mail YOK")
+    void outageFields_fieldErrors_400() throws Exception {
+        allowManage();
+        when(service.get(1L)).thenReturn(sample());
+        for (String field : List.of("tech_error_count", "outage_related", "outage_id")) {
+            String message = "Alan hatası: " + field + " — değeri düzeltip yeniden kaydedin.";
+            var ex = new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(field, message);
+            // doThrow: when(...).thenThrow yeniden kurulurken ÖNCEKİ turun istisnasını fırlatırdı
+            doThrow(ex).when(service).create(any(), any(), any(), any());
+            doThrow(ex).when(service).update(eq(1L), any(), any());
+
+            mvc.perform(post("/api/incidents").session(adminSession())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"title\":\"x\",\"occurred_at\":\"2026-11-20T10:00:00\",\"send_notification\":true,"
+                                    + "\"tech_error_count\":\"abc\",\"outage_related\":\"evet\",\"outage_id\":7}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.success").value(false))
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.field").value(field))
+                    .andExpect(jsonPath("$.fields." + field).value(message))
+                    .andExpect(jsonPath("$.error").value(message));
+            mvc.perform(put("/api/incidents/1").session(adminSession())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"send_notification\":true,\"tech_error_count\":-1}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.field").value(field))
+                    .andExpect(jsonPath("$.fields." + field).value(message));
+        }
+        verify(auditService, never()).recordAction(eq("INCIDENT_CREATE"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), any(), any(), any());
+        verify(auditService, never()).recordAction(eq("INCIDENT_UPDATE"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), any(), any(), any());
+        verify(notificationService, never()).notifyIncident(any(), any());
+    }
+
+    @Test
+    @DisplayName("Kesinti alanları: gövde servise OLDUĞU GİBİ gider — gönderilen anahtar (açık null dâhil) var, gönderilmeyen yok")
+    @SuppressWarnings("unchecked")
+    void outageFields_bodyReachesServiceAsSent() throws Exception {
+        allowManage();
+        when(service.create(any(), any(), any(), any())).thenReturn(sample());
+        when(service.get(1L)).thenReturn(sample());
+        when(service.update(eq(1L), any(), any())).thenReturn(sample());
+
+        mvc.perform(post("/api/incidents").session(adminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"x\",\"occurred_at\":\"2026-11-20T10:00:00\","
+                                + "\"tech_error_count\":1250,\"outage_related\":true,\"outage_id\":\"INC-1\"}"))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> created = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(service).create(created.capture(), any(), any(), any());
+        assertThat(created.getValue())
+                .containsEntry("tech_error_count", 1250)
+                .containsEntry("outage_related", Boolean.TRUE)
+                .containsEntry("outage_id", "INC-1");
+
+        // Açık null = "temizle": anahtar haritada null değerle VAR; gönderilmeyen anahtar haritada YOK (= dokunma)
+        mvc.perform(put("/api/incidents/1").session(adminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"x\",\"tech_error_count\":null,\"outage_related\":null}"))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> updated = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(service).update(eq(1L), updated.capture(), any());
+        assertThat(updated.getValue()).containsKey("tech_error_count").containsKey("outage_related").doesNotContainKey("outage_id");
+        assertThat(updated.getValue().get("tech_error_count")).isNull();
+        assertThat(updated.getValue().get("outage_related")).isNull();
+    }
+
+    @Test
+    @DisplayName("Kesinti alanları: bildirime verilen DTO üç anahtarı taşır (posta satırları buradan okunur); yanıt da aynı değerleri döner")
+    @SuppressWarnings("unchecked")
+    void outageFields_notificationDtoCarriesThem() throws Exception {
+        allowManage();
+        IncidentRecord saved = sample();
+        saved.setTechErrorCount(1250L);
+        saved.setOutageRelated(Boolean.TRUE);
+        saved.setOutageId("INC-2026-0915");
+        when(service.create(any(), any(), any(), any())).thenReturn(saved);
+
+        mvc.perform(post("/api/incidents").session(adminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"x\",\"occurred_at\":\"2026-11-20T10:00:00\",\"send_notification\":true,"
+                                + "\"tech_error_count\":1250,\"outage_related\":true,\"outage_id\":\"INC-2026-0915\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.tech_error_count").value(1250))
+                .andExpect(jsonPath("$.data.outage_related").value(true))
+                .andExpect(jsonPath("$.data.outage_id").value("INC-2026-0915"));
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> dto = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(notificationService).notifyIncident(dto.capture(), eq("NEW"));
+        assertThat(dto.getValue())
+                .containsEntry("tech_error_count", 1250L)
+                .containsEntry("outage_related", Boolean.TRUE)
+                .containsEntry("outage_id", "INC-2026-0915");
+
+        // Girilmemiş kayıtta anahtarlar yine VAR (null) — posta bu durumda satır basmaz
+        when(service.create(any(), any(), any(), any())).thenReturn(sample());
+        mvc.perform(post("/api/incidents").session(adminSession())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"x\",\"occurred_at\":\"2026-11-20T10:00:00\",\"send_notification\":true}"))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> plain = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(notificationService, times(2)).notifyIncident(plain.capture(), eq("NEW"));
+        java.util.Map<String, Object> last = plain.getAllValues().get(1);
+        assertThat(last).containsKey("tech_error_count").containsKey("outage_related").containsKey("outage_id");
+        assertThat(last.get("tech_error_count")).isNull();
+        assertThat(last.get("outage_related")).isNull();
+        assertThat(last.get("outage_id")).isNull();
+    }
 }

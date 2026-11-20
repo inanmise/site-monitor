@@ -1246,7 +1246,7 @@ The flow: submit the report for approval, and the product owner receives an HTML
 
 ### 14.19 Incident and Error History
 
-The SRE incident ledger, written by hand rather than derived from monitoring. Each record carries the title, when it happened, when it was detected and resolved, severity, status, category, error and channel codes, the affected service and application, a root-cause summary, the resolution steps, the business impact and whether the service level agreement was breached. Screenshots can be attached. Summary tiles at the top of the screen break the set down by status and by whether the SLA was met.
+The SRE incident ledger, written by hand rather than derived from monitoring. Each record carries the title, when it happened, when it was detected and resolved, severity, status, category, error and channel codes, the affected service and application, a root-cause summary, the resolution steps, the business impact and whether the service level agreement was breached. Three more optional fields sit in the Impact section: the **technical error count** caused by the incident (digits only; leave it empty when unknown), **caused by an outage?** (Yes / No; make no choice when unknown — pressing the selected answer again clears it) and, when the answer is Yes, the **outage ID** (one line, at most 60 characters). A value that was not entered is not shown in the detail panel or in the notification e-mail, and an unknown answer never counts as "No". These fields will later feed the anomaly topics of the channel technical error report. Screenshots can be attached. Summary tiles at the top of the screen break the set down by status and by whether the SLA was met.
 
 ### 14.20 Activity Log
 

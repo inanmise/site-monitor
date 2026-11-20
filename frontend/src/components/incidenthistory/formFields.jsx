@@ -12,6 +12,7 @@ import { Button } from '@/components/shadcn/button'
 import { Checkbox } from '@/components/shadcn/checkbox'
 import { Label } from '@/components/shadcn/label'
 import { NativeSelect, NativeSelectOption } from '@/components/shadcn/native-select'
+import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { cn } from '@/lib/utils'
 import { csvList } from './incidentHistoryModel.js'
 
@@ -22,15 +23,44 @@ import { csvList } from './incidentHistoryModel.js'
  */
 export const FULL = 'col-span-full'
 
-export function TextInput({ label, value, onChange, disabled, type = 'text', req, full, error, hint, autoFocus, placeholder }) {
+/**
+ * `name` → alanın `data-field` kancası (sunucu / doğrulama hatasında o alana odak, testlerde bulma); `inputMode` verilirse
+ * tür varsayılanının yerine geçer (ör. metin kutusunda sayısal tuş takımı). İkisi de verilmezse çıktı eskisiyle aynıdır.
+ */
+export function TextInput({
+  label, value, onChange, disabled, type = 'text', req, full, error, hint, autoFocus, placeholder, name, inputMode, autoComplete,
+}) {
   return (
-    <Field label={label} required={req} className={full ? FULL : undefined} error={error} hint={hint}>
+    <Field label={label} required={req} className={full ? FULL : undefined} error={error} hint={hint} name={name}>
       {({ id, describedBy, invalid }) => (
         <Input id={id} type={type} value={value ?? ''} disabled={disabled} autoFocus={autoFocus} placeholder={placeholder}
           aria-describedby={describedBy} aria-invalid={invalid} aria-required={req || undefined}
-          min={type === 'number' ? 0 : undefined}
-          inputMode={type === 'number' ? 'decimal' : undefined}
+          min={type === 'number' ? 0 : undefined} autoComplete={autoComplete}
+          inputMode={inputMode ?? (type === 'number' ? 'decimal' : undefined)}
           onChange={(e) => onChange(e.target.value)} />
+      )}
+    </Field>
+  )
+}
+
+const YES_NO_ITEM = 'px-4 max-sm:min-h-10 pointer-coarse:min-h-10'
+
+/**
+ * Üç durumlu Evet / Hayır (shadcn ToggleGroup, tek seçim): `true` / `false` / `null` (bilinmiyor). Seçili cevaba yeniden
+ * basmak seçimi KALDIRIR (null) — bilinmeyen "Hayır" değildir, ayrı bir durumdur. Grup adını alan etiketinden alır
+ * (`aria-labelledby`), ipucu ve hata `aria-describedby` ile bağlıdır; telefonda ve dokunmatikte hedef ≥ 40 px.
+ */
+export function YesNoInput({ label, value, onChange, disabled, hint, error, name, yesLabel, noLabel, full }) {
+  const answer = value === true ? 'yes' : value === false ? 'no' : ''
+  return (
+    <Field label={label} className={full ? FULL : undefined} hint={hint} error={error} name={name}>
+      {({ labelId, describedBy }) => (
+        <ToggleGroup type="single" variant="outline" disabled={disabled} value={answer} data-answer={answer || 'unknown'}
+          aria-labelledby={labelId} aria-describedby={describedBy} className="w-fit max-w-full"
+          onValueChange={(x) => onChange(x === 'yes' ? true : x === 'no' ? false : null)}>
+          <ToggleGroupItem value="yes" className={YES_NO_ITEM}>{yesLabel}</ToggleGroupItem>
+          <ToggleGroupItem value="no" className={YES_NO_ITEM}>{noLabel}</ToggleGroupItem>
+        </ToggleGroup>
       )}
     </Field>
   )

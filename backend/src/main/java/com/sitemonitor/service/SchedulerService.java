@@ -1391,6 +1391,11 @@ public class SchedulerService {
         // kayıt kalır) + alarm detayının "bağlı olay kaydı" sorgusu (findLinkedToAlert) için index.
         patch("ALTER TABLE incident_records ADD COLUMN alert_event_id BIGINT");
         patch("CREATE INDEX IF NOT EXISTS idx_inc_alert_event ON incident_records(alert_event_id)");
+        // Teknik hata raporu konusuna içe alınacak üç opsiyonel alan (2026-11-20): teknik hata adedi, kesinti kaynaklı mı
+        // (üç durumlu: null = bilinmiyor), kesinti ID. Hepsi null olabilir; eski satırlar null kalır (bilinmiyor).
+        patch("ALTER TABLE incident_records ADD COLUMN tech_error_count BIGINT");
+        patch("ALTER TABLE incident_records ADD COLUMN outage_related BOOLEAN");
+        patch("ALTER TABLE incident_records ADD COLUMN outage_id VARCHAR(60)");
         // Olay görseli taslak yüklemesi: yeni olay henüz kaydedilmeden görsel eklenir (incident_id=null,
         // kaydedince linkImages bağlar). Eski NOT NULL kısıtı taslakları reddediyordu → kaldır (idempotent).
         patch("ALTER TABLE incident_images ALTER COLUMN incident_id DROP NOT NULL");

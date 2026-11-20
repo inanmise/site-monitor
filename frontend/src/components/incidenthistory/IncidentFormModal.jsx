@@ -19,14 +19,57 @@ import { FieldSet, FieldLegend } from '@/components/shadcn/field'
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/shadcn/collapsible'
 import { cn } from '@/lib/utils'
 import {
-  SEVERITIES, STATUSES, CATEGORIES, PROBLEM_TYPES, EMPTY_FORM, SECTIONS, validateIncident, errorCountBySection,
-  firstErrorSection, formSnapshot, previewKind, payloadFromForm, uniqueCaption,
+  SEVERITIES, STATUSES, CATEGORIES, PROBLEM_TYPES, SECTIONS, validateIncident, errorCountBySection,
+  firstErrorSection, formSnapshot, previewKind, payloadFromForm, uniqueCaption, formFromRow,
 } from './incidentHistoryModel.js'
 import {
-  TextInput, DateInput, SelectInput, CreatableSelect, CreatableMultiSelect, TagField, MdArea, CheckInput,
+  TextInput, DateInput, SelectInput, CreatableSelect, CreatableMultiSelect, TagField, MdArea, CheckInput, YesNoInput,
 } from './formFields.jsx'
 
 const SECTION_ICON = { summary: FileText, impact: Users, codes: Tags, rca: Stethoscope, notify: Mail }
+
+/**
+ * Sunucunun alan hatasını (400 `VALIDATION_FAILED` + `fields`) ALANIN ALTINDA gösterebildiğimiz alanlar — formda hata
+ * yuvası olan kontroller. Listede olmayan bir alanın hatası (ör. `alert_event_id`) eskisi gibi üstteki bantta kalır.
+ */
+const SERVER_ERROR_FIELDS = new Set([
+  'title', 'occurred_at', 'team_id', 'detected_at', 'resolved_at', 'duration_minutes', 'affected_customers',
+  'affected_transactions', 'error_budget_burn_pct', 'tech_error_count', 'outage_related', 'outage_id',
+])
+
+/**
+ * Sunucu alan hataları (`{ alan: ileti }`) → `shown`: formda o an GÖRÜNEN alanların iletileri (yoksa null), `rest`: alanı
+ * gösterilemeyen bir hata da var mı. Kesinti ID alanı yalnız cevap Evet iken çizilir.
+ */
+function splitServerErrors(fields, form) {
+  if (!fields || typeof fields !== 'object' || Array.isArray(fields)) return { shown: null, rest: false }
+  const shown = {}
+  let rest = false
+  for (const [k, msg] of Object.entries(fields).slice(0, 50)) {
+    if (!msg) continue
+    if (SERVER_ERROR_FIELDS.has(k) && (k !== 'outage_id' || form.outage_related === true)) shown[k] = String(msg)
+    else rest = true
+  }
+  return { shown: Object.keys(shown).length ? shown : null, rest }
+}
+
+/**
+ * Sunucu alan hatası gösterildiğinde (sayaç `tick` arttığında) ETKİN bölümdeki ilk hatalı alana odaklanır. Bölüm
+ * içeriğinin İÇİNE çizilir: bölüm değiştiyse Radix Tabs yeni içeriği bir sonraki eşzamanlı çizimde DOM'a koyar; bu
+ * bileşen o içerikle birlikte doğar ve etkisi alanlar DOM'dayken çalışır (üst bileşendeki etki, kayıt isteğinden sonraki
+ * — tıklama olayının dışındaki — çizimde içerik gelmeden çalışıp alanı bulamıyordu). Zamanlayıcı / yeniden deneme YOK:
+ * her sayaç değeri tam BİR kez işlenir (`handledRef`), kullanıcı sonradan bölüm değiştirince odak yeniden taşınmaz.
+ * Eski (terk edilen) bölümün örneği `active=false` olduğu için hiçbir şey yapmaz.
+ */
+function FocusServerError({ active, tick, handledRef, bodyRef }) {
+  useEffect(() => {
+    if (!active || tick === handledRef.current) return
+    handledRef.current = tick
+    const el = bodyRef.current?.querySelector('[aria-invalid="true"]')
+    if (el && typeof el.focus === 'function') { el.focus(); el.scrollIntoView?.({ block: 'center' }) }
+  }, [active, tick, handledRef, bodyRef])
+  return null
+}
 
 /**
  * Pencere boyutu SABİT (kullanıcı kuralı, MonitorDetailModal deseni): ≥640 px'te yükseklik `min(88vh, 100dvh-2rem)`,
@@ -58,11 +101,14 @@ export default function IncidentFormModal({
 }) {
   const t = useT()
   const { showConfirm } = useDialog()
-  const [form, setForm] = useState(() => ({ ...EMPTY_FORM, ...initial }))
+  const [form, setForm] = useState(() => formFromRow(initial))
   const [section, setSection] = useState('summary')
   const [showErrors, setShowErrors] = useState(false)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState(null)
+  // Sunucunun son kayıt denemesinde döndürdüğü alan hataları ({ alan: ileti }) — alanın altında gösterilir, alan
+  // düzenlenince o alanın iletisi kalkar (2026-11-20).
+  const [serverErrors, setServerErrors] = useState(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [preview, setPreview] = useState({ html: null, snapshot: null })
   const [previewing, setPreviewing] = useState(false)
@@ -70,7 +116,26 @@ export default function IncidentFormModal({
   const focusErrorRef = useRef(false)
   const previewSeq = useRef(0)
 
-  const set = useCallback((k, v) => setForm((f) => (f[k] === v ? f : { ...f, [k]: v })), [])
+  const clearServerError = useCallback((k) => setServerErrors((prev) => {
+    if (!prev || !(k in prev)) return prev
+    const next = { ...prev }
+    delete next[k]
+    return Object.keys(next).length ? next : null
+  }), [])
+  const set = useCallback((k, v) => {
+    setForm((f) => (f[k] === v ? f : { ...f, [k]: v }))
+    clearServerError(k)
+  }, [clearServerError])
+
+  // "Kesinti kaynaklı mı?" cevabı: Evet seçilince Kesinti ID alanı açılır ve BOŞSA odak oraya gider (kullanıcı seçimiyle —
+  // Evet kayıtlı bir olayı açmak odak taşımaz). Cevap değişince kimliğin sunucu hatası da geçersizdir.
+  const focusOutageIdRef = useRef(false)
+  const setOutageRelated = useCallback((v) => {
+    focusOutageIdRef.current = v === true
+    setForm((f) => (f.outage_related === v ? f : { ...f, outage_related: v }))
+    clearServerError('outage_related')
+    clearServerError('outage_id')
+  }, [clearServerError])
 
   // Süre (dk) otomatik: olayın gerçek toplam süresi = OLUŞ ↔ çözülme farkı (tespit gecikmesi süreden düşmez).
   useEffect(() => {
@@ -81,14 +146,20 @@ export default function IncidentFormModal({
   }, [form.occurred_at, form.resolved_at]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Kirli-form: açılış anının anlık görüntüsü (türetilmiş süre hariç) ile karşılaştırılır.
-  const initialSnap = useMemo(() => formSnapshot({ ...EMPTY_FORM, ...initial }), []) // eslint-disable-line react-hooks/exhaustive-deps
+  const initialSnap = useMemo(() => formSnapshot(formFromRow(initial)), []) // eslint-disable-line react-hooks/exhaustive-deps
   const snap = formSnapshot(form)
   const dirty = snap !== initialSnap
   const errors = useMemo(() => validateIncident(form), [form])
-  const shownErrors = showErrors ? errors : {}
+  // Gösterilen hatalar: alan → METİN. Sunucunun alan iletisi alan düzenlenene dek kalır; istemci doğrulaması (ilk kayıt
+  // denemesinden sonra canlı) aynı alanda onun önüne geçer.
+  const shownErrors = useMemo(() => {
+    const out = { ...(serverErrors || {}) }
+    if (showErrors) for (const k of Object.keys(errors)) out[k] = t(errors[k])
+    return out
+  }, [serverErrors, showErrors, errors, t])
   const errCounts = errorCountBySection(shownErrors)
   const nErrors = Object.keys(shownErrors).length
-  const err = (k) => (shownErrors[k] ? t(shownErrors[k]) : undefined)
+  const err = (k) => shownErrors[k] || undefined
 
   // Görsel adı tekilleştirme (async yükleme en güncel formu okur).
   const formRef = useRef(form)
@@ -107,6 +178,23 @@ export default function IncidentFormModal({
     const el = bodyRef.current?.querySelector('[aria-invalid="true"]')
     if (el && typeof el.focus === 'function') { el.focus(); el.scrollIntoView?.({ block: 'center' }) }
   }, [section, showErrors])
+
+  // SUNUCU alan hatasında odak: her gösterimde sayaç artar; odaklamayı ETKİN bölümün içine çizilen `FocusServerError`
+  // yapar (bölüm değiştiyse yeni bölümün içeriği DOM'a girdikten sonra çalışır — bkz. bileşenin açıklaması).
+  const [serverFocusTick, setServerFocusTick] = useState(0)
+  const serverFocusHandledRef = useRef(0)
+  const focusServerError = (s) => (
+    <FocusServerError active={section === s} tick={serverFocusTick} handledRef={serverFocusHandledRef} bodyRef={bodyRef} />
+  )
+
+  // Evet seçilince açılan Kesinti ID alanına odak (yalnız kullanıcı seçiminde ve alan boşken).
+  useEffect(() => {
+    if (!focusOutageIdRef.current) return
+    focusOutageIdRef.current = false
+    if (form.outage_related !== true || String(form.outage_id ?? '').trim() !== '') return
+    const el = bodyRef.current?.querySelector('[data-field="outage_id"] input')
+    if (el && typeof el.focus === 'function') el.focus()
+  }, [form.outage_related]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tarih alanlarında okunamayan metin (alan önceki değeri geri getirdi ve nedenini altında yazıyor): kayıt durur, odak oraya
   // gider — fareyle "Kaydet"te de (odak çıkışı tıklamadan önce bu bilgiyi eşzamanlı yazar)
@@ -133,10 +221,24 @@ export default function IncidentFormModal({
       return
     }
     setFormError(null)
+    setServerErrors(null)
     setSaving(true)
     try {
-      const res = await onSubmit(payloadFromForm(form))
-      if (!res?.ok) setFormError(res?.error || t('inc.saveError'))
+      // Düzenlemede üç isteğe bağlı anahtardan (teknik hata adedi, kesinti cevabı, kesinti ID) yalnız DEĞİŞEN gönderilir:
+      // dokunulmamış düzenleme, başka birinin bu arada yazdığı değeri ezmez (sunucuda "anahtar yok" = dokunma).
+      const res = await onSubmit(payloadFromForm(form, mode === 'create' ? null : initial))
+      if (!res?.ok) {
+        // Sunucu alan hatası (400 + fields): formda yuvası olan alanın ALTINDA gösterilir, o bölüme gidilir ve alana
+        // odaklanılır. Yuvası olmayan alan (ya da alan bilgisi taşımayan hata) eskisi gibi üstteki bantta kalır.
+        const { shown, rest } = splitServerErrors(res?.fields, form)
+        if (shown) {
+          setServerErrors(shown)
+          const first = firstErrorSection(shown)
+          setServerFocusTick((n) => n + 1)
+          if (first && first !== section) setSection(first)
+        }
+        if (!shown || rest) setFormError(res?.error || t('inc.saveError'))
+      }
     } catch {
       setFormError(t('inc.saveError'))
     } finally {
@@ -264,6 +366,7 @@ export default function IncidentFormModal({
           </div>
 
           <TabsContent value="summary" className="min-w-0">
+            {focusServerError('summary')}
             {sectionHead('summary')}
             <div className={GRID}>
               <TextInput label={t('inc.fTitle')} req full value={form.title} autoFocus={creating} error={err('title')}
@@ -273,7 +376,10 @@ export default function IncidentFormModal({
                   onProblem={dateProblem('occurred_at')} onChange={(v) => set('occurred_at', v)} />
               </div>
               <SelectInput label={t('inc.fTeam')} req value={form.team_id != null ? String(form.team_id) : ''} options={teamOptions} error={err('team_id')}
-                onChange={(v) => setForm((f) => ({ ...f, team_id: v, team_name: teams.find((tm) => String(tm.id) === String(v))?.name || '' }))} />
+                onChange={(v) => {
+                  setForm((f) => ({ ...f, team_id: v, team_name: teams.find((tm) => String(tm.id) === String(v))?.name || '' }))
+                  clearServerError('team_id')
+                }} />
               <SelectInput label={t('inc.fSeverity')} value={form.severity} onChange={(v) => set('severity', v)} options={opts(SEVERITIES, 'inc.sev')} />
               <SelectInput label={t('inc.fStatus')} value={form.status} onChange={(v) => set('status', v)} options={opts(STATUSES, 'inc.st')} />
               <SelectInput label={t('inc.fCategory')} value={form.category} onChange={(v) => set('category', v)} options={opts(CATEGORIES, 'inc.cat')} />
@@ -302,6 +408,7 @@ export default function IncidentFormModal({
           </TabsContent>
 
           <TabsContent value="impact" className="min-w-0">
+            {focusServerError('impact')}
             {sectionHead('impact')}
             <div className={GRID}>
               <CreatableMultiSelect label={t('inc.fChannel')} value={form.channel} options={options.channel || []}
@@ -317,17 +424,32 @@ export default function IncidentFormModal({
                 onChange={(v) => set('affected_customers', v)} />
               <TextInput label={t('inc.fAffectedTransactions')} type="number" value={form.affected_transactions} error={err('affected_transactions')}
                 onChange={(v) => set('affected_transactions', v)} />
+              {/* Teknik hata adedi (2026-11-20): metin kutusu + sayısal tuş takımı — yazılan metin olduğu gibi tutulur ki
+                  "1.250" / "12,5" sessizce boşa dönmesin, alanın altında nedeni yazsın. Boş = bilinmiyor. */}
+              <TextInput label={t('inc.fTechFaultCount')} name="tech_error_count" inputMode="numeric" autoComplete="off"
+                value={form.tech_error_count} error={err('tech_error_count')} hint={t('inc.techFaultCountHint')}
+                onChange={(v) => set('tech_error_count', v)} />
               <TextInput label={t('inc.fErrorBudget')} type="number" value={form.error_budget_burn_pct} error={err('error_budget_burn_pct')}
                 onChange={(v) => set('error_budget_burn_pct', v)} />
               <div className="flex items-end">
                 <CheckInput label={t('inc.fSla')} hint={t('inc.slaHint')} checked={form.sla_breached} onChange={(v) => set('sla_breached', v)} />
               </div>
+              {/* Kesinti kaynaklı mı? — üç durumlu (Evet / Hayır / seçilmemiş = bilinmiyor). Kesinti ID yalnız Evet'te. */}
+              <YesNoInput label={t('inc.fOutageRelated')} name="outage_related" value={form.outage_related}
+                hint={t('inc.outageRelatedHint')} error={err('outage_related')}
+                yesLabel={t('inc.outageYes')} noLabel={t('inc.outageNo')} onChange={setOutageRelated} />
+              {form.outage_related === true && (
+                <TextInput label={t('inc.fOutageId')} name="outage_id" autoComplete="off" value={form.outage_id}
+                  error={err('outage_id')} hint={t('inc.outageIdHint')} placeholder={t('inc.outageIdPlaceholder')}
+                  onChange={(v) => set('outage_id', v)} />
+              )}
               <MdArea label={t('inc.fBusinessImpact')} hint={t('inc.businessImpactHint')} value={form.business_impact} incidentId={form.id}
                 makeUniqueCaption={makeUniqueCaption} onChange={(v) => set('business_impact', v)} />
             </div>
           </TabsContent>
 
           <TabsContent value="codes" className="min-w-0">
+            {focusServerError('codes')}
             {sectionHead('codes')}
             <div className={GRID}>
               <CreatableSelect label={t('inc.fErrorCode')} value={form.error_code} options={options.errorCode || []}
@@ -341,6 +463,7 @@ export default function IncidentFormModal({
           </TabsContent>
 
           <TabsContent value="rca" className="min-w-0">
+            {focusServerError('rca')}
             {sectionHead('rca')}
             <div className="grid grid-cols-1">
               <MdArea label={t('inc.fRca')} hint={t('inc.rcaHint')} value={form.rca_summary} incidentId={form.id}
@@ -353,6 +476,7 @@ export default function IncidentFormModal({
           </TabsContent>
 
           <TabsContent value="notify" className="min-w-0">
+            {focusServerError('notify')}
             {sectionHead('notify')}
             <div className="flex min-w-0 flex-col gap-3">
               <div className="rounded-lg border bg-card p-3 sm:p-4">

@@ -3566,6 +3566,17 @@ public class EmailNotificationService {
         if (inc.get("duration_minutes") != null) facts.add(Row.of("Süre", inc.get("duration_minutes") + " dk"));
         if (Boolean.TRUE.equals(inc.get("sla_breached"))) facts.add(new Row("SLA", MailKit.strong("İHLAL EDİLDİ", Tone.DESTRUCTIVE.strong), "İHLAL EDİLDİ"));
         if (inc.get("error_budget_burn_pct") != null) facts.add(Row.of("Error Budget Tüketimi", inc.get("error_budget_burn_pct") + "%"));
+        // Teknik hata adedi + kesinti kaynaklı mı (2026-11-20): satır YALNIZ değer girilmişse eklenir — bu alanları taşımayan
+        // (ya da boş bırakılmış) kayıtta e-posta bayt bayt eskisiyle aynıdır. Bilinmeyen (null) cevap "Hayır" YAZILMAZ.
+        Long techErrors = incidentCount(inc.get("tech_error_count"));
+        if (techErrors != null) facts.add(Row.of("Teknik hata adedi", String.format(TR_LOCALE, "%,d", techErrors)));
+        Object outage = inc.get("outage_related");
+        if (Boolean.TRUE.equals(outage)) {
+            String outageId = str(inc.get("outage_id")).strip();
+            facts.add(Row.of("Kesinti kaynaklı", outageId.isEmpty() ? "Evet" : "Evet · Kesinti ID: " + outageId));
+        } else if (Boolean.FALSE.equals(outage)) {
+            facts.add(Row.of("Kesinti kaynaklı", "Hayır"));
+        }
         d.card("Olay Künyesi", null, MailKit.keyValue(facts), kvText(facts));
 
         incidentSection(d, "Kök Neden (RCA)", str(inc.get("rca_summary")), forEmail, true);
@@ -3581,6 +3592,33 @@ public class EmailNotificationService {
         StringBuilder t = new StringBuilder();
         for (Row r : rows) t.append(r.label()).append(": ").append(r.text()).append('\n');
         return t.toString();
+    }
+
+    /** Olay e-postasındaki adetlerin binlik ayracı (1.250) — e-posta Türkçedir. */
+    private static final java.util.Locale TR_LOCALE = java.util.Locale.forLanguageTag("tr-TR");
+
+    /**
+     * Olay haritasındaki teknik hata adedi → negatif olmayan tam sayı (0 … 10^15); değer yoksa ya da tam sayı olarak
+     * okunamıyorsa null (satır çizilmez). Kayıt yolunda değer {@code Long}'dur (IncidentController.dto); önizleme yolunda
+     * formun gövdesi DOĞRULANMADAN gelir (JSON sayısı ya da rakam metni olabilir) — bozuk değer e-postaya yazılmaz.
+     */
+    private static Long incidentCount(Object o) {
+        if (o instanceof Number n) {
+            double v = n.doubleValue();
+            if (Double.isNaN(v) || v < 0 || v > 1e15 || v != Math.rint(v)) return null;
+            return (n instanceof Double || n instanceof Float) ? Long.valueOf((long) v) : Long.valueOf(n.longValue());
+        }
+        if (o instanceof String s) {
+            String t = s.strip();
+            if (t.isEmpty() || t.length() > 16) return null;
+            for (int i = 0; i < t.length(); i++) {
+                char c = t.charAt(i);
+                if (c < '0' || c > '9') return null;
+            }
+            long v = Long.parseLong(t);
+            return v > 1_000_000_000_000_000L ? null : Long.valueOf(v);
+        }
+        return null;
     }
 
     /** Olay bölüm kartı (markdown gövde); {@code always=false} ise boş gövdede kart çizilmez. */

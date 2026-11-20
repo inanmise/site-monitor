@@ -134,6 +134,28 @@ public class IncidentRecord {
     /** Etkilenen işlem adedi — opsiyonel. */
     private Integer affectedTransactions;
 
+    /**
+     * Teknik hata adedi (2026-11-20) — bu olaydan kaynaklanan toplam teknik hata sayısı; opsiyonel, null = bilinmiyor.
+     * Kanal teknik hata raporunun "anomali konusu"na içe alınırken konunun hata adedine yazılacak (etkilenen işlem
+     * adedinden AYRI bir bilgi). 0 … 10^15 tam sayı ({@code IncidentService.MAX_TECH_ERROR_COUNT}).
+     */
+    @Column(name = "tech_error_count")
+    private Long techErrorCount;
+
+    /**
+     * Kesinti kaynaklı mı? (2026-11-20) — ÜÇ durumlu: true = evet, false = hayır, null = bilinmiyor / cevaplanmadı.
+     * Bilinmeyen hiçbir yerde "hayır" sayılmaz.
+     */
+    @Column(name = "outage_related")
+    private Boolean outageRelated;
+
+    /**
+     * Kesinti ID (2026-11-20) — tek satır, kırpılmış, en çok 60 karakter. YALNIZ {@link #outageRelated} true iken tutulur;
+     * cevap hayır ya da bilinmiyorsa sunucu null yazar ({@code IncidentService.applyBody}). Evet iken de zorunlu değildir.
+     */
+    @Column(name = "outage_id", length = 60)
+    private String outageId;
+
     @Column(nullable = false)
     private Boolean slaBreached = false;
 

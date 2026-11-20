@@ -11,6 +11,7 @@ import { useServerPagination } from '../../hooks/useServerPagination.js'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
 import { useDelayedFlag } from '../../hooks/useDelayedFlag.js'
 import { useToast } from '../ui/Toast.jsx'
+import { serverFieldErrors } from '../../utils/formErrors.js'
 import { useDialog } from '../ui/Dialog.jsx'
 import PaginationBar from '../ui/PaginationBar.jsx'
 import StatusBlock from '../ui/StatusBlock.jsx'
@@ -301,7 +302,8 @@ export default function IncidentHistoryPage() {
       const res = mode === 'create'
         ? await api.incidents.create(payload)
         : await api.incidents.update(payload.id, payload)
-      if (!res?.success) return { ok: false, error: res?.error || t('inc.saveError') }
+      // fields: sunucunun alan hataları (400 VALIDATION_FAILED) — form iletiyi ilgili alanın altında gösterir
+      if (!res?.success) return { ok: false, error: res?.error || t('inc.saveError'), fields: serverFieldErrors(res) }
       toast.success(t('inc.saved'))
       // Ayrıntı açıksa (düzenleme ayrıntıdan açıldı) güncel kaydı hemen göster — liste yeniden yüklenene kadar beklemez.
       if (res.data && detailId != null && String(res.data.id) === String(detailId)) {

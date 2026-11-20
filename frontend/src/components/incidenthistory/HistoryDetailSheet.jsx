@@ -19,7 +19,9 @@ import { Badge } from '@/components/shadcn/badge'
 import { Card } from '@/components/shadcn/card'
 import { cn } from '@/lib/utils'
 import { SeverityBadge, StatusBadge, SlaBadge, CsvChips } from './HistoryBadges.jsx'
-import { buildTimeline, csvList, detailLink, durationOf, formatMinutes, relativeFrom } from './incidentHistoryModel.js'
+import {
+  buildTimeline, csvList, detailLink, durationOf, formatMinutes, relativeFrom, techErrorCountOf, outageAnswerOf, outageIdOf,
+} from './incidentHistoryModel.js'
 import PostmortemBadges from './postmortem/PostmortemBadges.jsx'
 
 // Arka plan kaydırma kilidi sayaçlı (ModalShell / IncidentDetailSheet sözleşmesi): iç içe pencerede erken açılmaz.
@@ -33,10 +35,10 @@ const STEP = {
 }
 const STATUS_ICON = { OPEN: CircleDot, INVESTIGATING: Search, MITIGATED: ShieldHalf }
 
-/** Anahtar-değer satırı. */
-function Fact({ label, children, className }) {
+/** Anahtar-değer satırı. `slot` → test / stil kancası (verilmezse öznitelik yazılmaz). */
+function Fact({ label, children, className, slot }) {
   return (
-    <div className={cn('flex min-w-0 flex-col gap-0.5', className)}>
+    <div data-fact={slot} className={cn('flex min-w-0 flex-col gap-0.5', className)}>
       <dt className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{label}</dt>
       <dd className="m-0 min-w-0 text-sm [overflow-wrap:anywhere]">{children}</dd>
     </div>
@@ -109,6 +111,11 @@ export default function HistoryDetailSheet({ record, onClose, onEdit, onDelete, 
   const codes = [['inc.fErrorCode', r.error_code], ['inc.fFunctionCode', r.function_code], ['inc.fChannelCode', r.channel_code]]
   const hasCodes = codes.some(([, v]) => v)
   const num = (v) => (v === '' || v == null ? null : Number(v).toLocaleString(dateLocale))
+  // Teknik hata adedi + kesinti kaynaklı mı (2026-11-20): satırlar YALNIZ değer girilmişse çizilir. Bilinmeyen cevap (null)
+  // "Hayır" diye gösterilmez — satır hiç yoktur; 0 adet ve "Hayır" ise girilmiş değerlerdir.
+  const techFaults = techErrorCountOf(r)
+  const outage = outageAnswerOf(r)
+  const outageId = outageIdOf(r)
 
   return (
     <Sheet open modal={false} onOpenChange={(next) => { if (!next) onClose?.() }}>
@@ -249,6 +256,16 @@ export default function HistoryDetailSheet({ record, onClose, onEdit, onDelete, 
                 <span className="inline-flex items-center gap-1.5"><Gauge aria-hidden="true" className="size-3.5 text-muted-foreground" />
                   {r.error_budget_burn_pct == null || r.error_budget_burn_pct === '' ? <Dash /> : t('inc.pct', Number(r.error_budget_burn_pct).toLocaleString(dateLocale))}</span>
               </Fact>
+              {techFaults != null && (
+                <Fact label={t('inc.dTechFaults')} slot="tech-faults">
+                  <span className="tabular-nums">{techFaults.toLocaleString(dateLocale)}</span>
+                </Fact>
+              )}
+              {outage != null && (
+                <Fact label={t('inc.dOutage')} slot="outage">
+                  {outage ? (outageId ? t('inc.dOutageYesId', outageId) : t('inc.outageYes')) : t('inc.outageNo')}
+                </Fact>
+              )}
               <Fact label={t('inc.dRecordedBy')}>
                 <span className="flex min-w-0 flex-col gap-0.5">
                   <UserBadge username={r.created_by} inline size="sm" nameOnly />

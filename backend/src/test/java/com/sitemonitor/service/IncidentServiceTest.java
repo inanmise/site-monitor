@@ -28,6 +28,7 @@ class IncidentServiceTest {
     @Autowired IncidentService service;
     @Autowired IncidentRecordRepository repo;
     @Autowired com.sitemonitor.repository.IncidentImageRepository imageRepo;
+    @Autowired jakarta.persistence.EntityManager em;
 
     private Map<String, Object> body(String title, String occurredAt, String sev, String cat) {
         Map<String, Object> m = new HashMap<>();
@@ -413,5 +414,233 @@ class IncidentServiceTest {
         assertThat(summary.get("mttr_minutes")).isNull();
         assertThat(((Number) summary.get("mttr_sample")).longValue()).isEqualTo(0L);
         assertThat(((Number) summary.get("total")).longValue()).isEqualTo(1L);
+    }
+
+    // ── Teknik hata adedi · kesinti kaynaklı mı · kesinti ID (2026-11-20) ───────────────────────────────────
+    // Üç OPSİYONEL alan (teknik hata raporu konusuna içe alınacak). Tel adları sabit: tech_error_count, outage_related,
+    // outage_id. Anahtar yoksa dokunulmaz, açık null temizler; yalnız bu üç alan katı doğrulanır (alan adlı 400).
+
+    private static void assertFieldError(org.assertj.core.api.ThrowableAssert.ThrowingCallable call, String field) {
+        assertThatThrownBy(call)
+                .isInstanceOfSatisfying(com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException.class, ex -> {
+                    assertThat(ex.getFields()).as("alan adı = tel adı").containsOnlyKeys(field);
+                    assertThat(ex.getCode()).as("özel kod yok → VALIDATION_FAILED").isNull();
+                    assertThat(ex.getMessage()).as("ne · neden · ne yapmalı").hasSizeGreaterThan(40);
+                });
+    }
+
+    private IncidentRecord withOutage(Long count, Boolean outage, String outageId) {
+        Map<String, Object> b = body("kesinti", "2026-11-18T10:00:00", "HIGH", "APPLICATION");
+        b.put("tech_error_count", count);
+        b.put("outage_related", outage);
+        b.put("outage_id", outageId);
+        return service.create(b, "admin", 1L, 1L);
+    }
+
+    @Test
+    @DisplayName("3 alan: create yazar (kimlik kırpılır); alanlar gönderilmezse null (bilinmiyor) — sla_breached gibi varsayılan YOK")
+    void outageFields_createStoresAndDefaultsToNull() {
+        IncidentRecord e = withOutage(1250L, Boolean.TRUE, "  INC-2026-0915  ");
+        em.flush();
+        em.clear();                                             // birinci düzey önbellekten değil, KOLONLARDAN oku
+        IncidentRecord saved = repo.findById(e.getId()).orElseThrow();
+        assertThat(saved).isNotSameAs(e);
+        assertThat(saved.getTechErrorCount()).isEqualTo(1250L);
+        assertThat(saved.getOutageRelated()).isTrue();
+        assertThat(saved.getOutageId()).isEqualTo("INC-2026-0915");
+
+        IncidentRecord plain = service.create(body("eski istemci", "2026-11-18T11:00:00", "LOW", "OTHER"), "admin", 1L, 1L);
+        assertThat(plain.getTechErrorCount()).isNull();
+        assertThat(plain.getOutageRelated()).as("bilinmiyor ≠ hayır").isNull();
+        assertThat(plain.getOutageId()).isNull();
+    }
+
+    @Test
+    @DisplayName("3 alan: update'te anahtar YOKSA değer aynen kalır (eski istemci silmez); açık null temizler")
+    void outageFields_absentKeyKeepsExplicitNullClears() {
+        IncidentRecord e = withOutage(42L, Boolean.TRUE, "INC-1");
+
+        Map<String, Object> other = new HashMap<>();
+        other.put("status", "MITIGATED");                       // üç anahtar da yok
+        IncidentRecord kept = service.update(e.getId(), other, "sre1");
+        assertThat(kept.getStatus()).isEqualTo("MITIGATED");
+        assertThat(kept.getTechErrorCount()).isEqualTo(42L);
+        assertThat(kept.getOutageRelated()).isTrue();
+        assertThat(kept.getOutageId()).isEqualTo("INC-1");
+
+        Map<String, Object> clearCount = new HashMap<>();
+        clearCount.put("tech_error_count", null);               // açık null
+        IncidentRecord c1 = service.update(e.getId(), clearCount, "sre1");
+        assertThat(c1.getTechErrorCount()).isNull();
+        assertThat(c1.getOutageRelated()).as("gönderilmeyen alan kaldı").isTrue();
+        assertThat(c1.getOutageId()).isEqualTo("INC-1");
+
+        Map<String, Object> clearId = new HashMap<>();
+        clearId.put("outage_id", null);
+        IncidentRecord c2 = service.update(e.getId(), clearId, "sre1");
+        assertThat(c2.getOutageId()).isNull();
+        assertThat(c2.getOutageRelated()).as("kimlik silinince cevap Evet kalır (kimlik zorunlu değil)").isTrue();
+
+        Map<String, Object> clearAnswer = new HashMap<>();
+        clearAnswer.put("outage_related", null);
+        IncidentRecord c3 = service.update(e.getId(), clearAnswer, "sre1");
+        assertThat(c3.getOutageRelated()).isNull();
+    }
+
+    @Test
+    @DisplayName("3 alan: 0 geçerli bir adettir (null değil); boş metin = bilinmiyor; 10^15 sınır dahil")
+    void outageFields_zeroBlankAndUpperBound() {
+        assertThat(withOutage(0L, null, null).getTechErrorCount()).isEqualTo(0L);
+        assertThat(withOutage(IncidentService.MAX_TECH_ERROR_COUNT, null, null).getTechErrorCount())
+                .isEqualTo(1_000_000_000_000_000L);
+
+        IncidentRecord e = withOutage(7L, null, null);
+        Map<String, Object> blank = new HashMap<>();
+        blank.put("tech_error_count", "   ");
+        assertThat(service.update(e.getId(), blank, "sre1").getTechErrorCount()).isNull();
+    }
+
+    @Test
+    @DisplayName("kesinti ID yalnız cevap Evet iken tutulur: Hayır / bilinmiyor → null; yalnız cevabı değiştiren istek de kimliği siler")
+    void outageId_keptOnlyWhileAnswerIsYes() {
+        assertThat(withOutage(null, Boolean.FALSE, "INC-9").getOutageId()).as("Hayır + kimlik → kimlik saklanmaz").isNull();
+        assertThat(withOutage(null, null, "INC-9").getOutageId()).as("bilinmiyor + kimlik → kimlik saklanmaz").isNull();
+
+        IncidentRecord yes = withOutage(null, Boolean.TRUE, "INC-9");
+        Map<String, Object> toNo = new HashMap<>();
+        toNo.put("outage_related", false);                      // kimlik anahtarı gövdede YOK
+        IncidentRecord no = service.update(yes.getId(), toNo, "sre1");
+        assertThat(no.getOutageRelated()).isFalse();
+        assertThat(no.getOutageId()).as("cevap Hayır'a döndü → kimlik silindi").isNull();
+
+        // Cevabı olmayan kayda yalnız kimlik göndermek kimliği YAZMAZ (cevap Evet değil)
+        IncidentRecord unknown = withOutage(null, null, null);
+        Map<String, Object> onlyId = new HashMap<>();
+        onlyId.put("outage_id", "INC-77");
+        assertThat(service.update(unknown.getId(), onlyId, "sre1").getOutageId()).isNull();
+
+        // Cevabı Evet olan kayda yalnız kimlik göndermek kimliği değiştirir
+        IncidentRecord yes2 = withOutage(null, Boolean.TRUE, null);
+        assertThat(yes2.getOutageId()).as("Evet iken kimlik zorunlu değil").isNull();
+        assertThat(service.update(yes2.getId(), onlyId, "sre1").getOutageId()).isEqualTo("INC-77");
+
+        // Tek istekte cevap Evet + kimlik
+        Map<String, Object> both = new HashMap<>();
+        both.put("outage_related", true);
+        both.put("outage_id", "INC-88");
+        IncidentRecord set = service.update(unknown.getId(), both, "sre1");
+        assertThat(set.getOutageRelated()).isTrue();
+        assertThat(set.getOutageId()).isEqualTo("INC-88");
+    }
+
+    @Test
+    @DisplayName("tech_error_count katı: tam sayı değil / negatif / 10^15 üstü → alan adlı hata; rakam metni ve 12.0 kabul")
+    void techErrorCount_strictTable() {
+        // kabul edilenler
+        assertThat(IncidentService.strictTechErrorCount(null)).isNull();
+        assertThat(IncidentService.strictTechErrorCount("")).isNull();
+        assertThat(IncidentService.strictTechErrorCount(5)).isEqualTo(5L);
+        assertThat(IncidentService.strictTechErrorCount(5L)).isEqualTo(5L);
+        assertThat(IncidentService.strictTechErrorCount(12.0d)).as("JSON 12.0 tam sayıdır").isEqualTo(12L);
+        assertThat(IncidentService.strictTechErrorCount(" 1250 ")).as("yalnız rakam metni").isEqualTo(1250L);
+        assertThat(IncidentService.strictTechErrorCount(new java.math.BigInteger("1000000000000000"))).isEqualTo(1_000_000_000_000_000L);
+        assertThat(IncidentService.strictTechErrorCount(1.0e15d)).isEqualTo(1_000_000_000_000_000L);
+
+        assertThat(IncidentService.strictTechErrorCount("12 ")).as("kenar boşluğu kırpılır").isEqualTo(12L);
+
+        // reddedilenler — hepsi alan adı tech_error_count
+        List<Object> bad = List.of(
+                "abc", "12.7", "1.250", "1,250", "1e3", "+5", "1 250", "0x10", "-", 12.7d, 0.5d, Double.NaN, Double.POSITIVE_INFINITY,
+                -1, -1L, "-3", -0.5d, "-" + "9".repeat(60),
+                1_000_000_000_000_001L, "1000000000000001", 1.0e16d, new java.math.BigInteger("99999999999999999999999999"),
+                "9".repeat(41), "9".repeat(2000), Boolean.TRUE, List.of(1), Map.of("n", 1));
+        for (Object v : bad) {
+            assertFieldError(() -> IncidentService.strictTechErrorCount(v), "tech_error_count");
+        }
+        // Negatif ve aralık iletileri ayrı (kullanıcı neyi düzelteceğini bilsin)
+        assertThatThrownBy(() -> IncidentService.strictTechErrorCount(-1)).hasMessageContaining("negatif");
+        assertThatThrownBy(() -> IncidentService.strictTechErrorCount(1_000_000_000_000_001L)).hasMessageContaining("10^15");
+        assertThatThrownBy(() -> IncidentService.strictTechErrorCount("abc")).hasMessageContaining("tam sayı");
+    }
+
+    @Test
+    @DisplayName("outage_related katı: yalnız JSON true / false / null — \"true\" metni, 1, 0, liste → alan adlı hata")
+    void outageRelated_strictTable() {
+        assertThat(IncidentService.strictOutageRelated(null)).isNull();
+        assertThat(IncidentService.strictOutageRelated(Boolean.TRUE)).isTrue();
+        assertThat(IncidentService.strictOutageRelated(Boolean.FALSE)).isFalse();
+        for (Object v : List.<Object>of("true", "false", "evet", "", 1, 0, 1.0d, List.of(true), Map.of())) {
+            assertFieldError(() -> IncidentService.strictOutageRelated(v), "outage_related");
+        }
+    }
+
+    @Test
+    @DisplayName("outage_id katı: kırpılır; 60 karakter sınır dahil, 61 → hata; içinde satır sonu → hata; metin olmayan → hata")
+    void outageId_strictTable() {
+        assertThat(IncidentService.strictOutageId(null)).isNull();
+        assertThat(IncidentService.strictOutageId("   ")).as("boş = yok").isNull();
+        assertThat(IncidentService.strictOutageId("  INC-1\t")).isEqualTo("INC-1");
+        assertThat(IncidentService.strictOutageId("INC-1\n")).as("KENARDAKİ satır sonu kırpılır").isEqualTo("INC-1");
+        assertThat(IncidentService.strictOutageId("Kesinti #42 / ağ")).as("boşluk ve Türkçe karakter serbest").isEqualTo("Kesinti #42 / ağ");
+        String sixty = "K".repeat(60);
+        assertThat(IncidentService.strictOutageId(sixty)).isEqualTo(sixty);
+        assertThat(IncidentService.strictOutageId("  " + sixty + "  ")).as("uzunluk kırpıldıktan SONRA ölçülür").isEqualTo(sixty);
+
+        assertFieldError(() -> IncidentService.strictOutageId("K".repeat(61)), "outage_id");
+        // Satır sonu sayılan karakterler KOD NOKTASIYLA (kaynakta ham / kaçışlı özel karakter yok): LF, VT, FF, CR, NEL, LS, PS
+        for (int cp : new int[]{0x0A, 0x0B, 0x0C, 0x0D, 0x85, 0x2028, 0x2029}) {
+            String withBreak = "INC" + (char) cp + "42";
+            assertFieldError(() -> IncidentService.strictOutageId(withBreak), "outage_id");
+        }
+        assertFieldError(() -> IncidentService.strictOutageId("INC\r\n42"), "outage_id");
+        for (Object v : List.<Object>of(123, 12.5d, Boolean.TRUE, List.of("INC-1"), Map.of("id", "INC-1"))) {
+            assertFieldError(() -> IncidentService.strictOutageId(v), "outage_id");
+        }
+        assertThatThrownBy(() -> IncidentService.strictOutageId("K".repeat(75))).hasMessageContaining("60").hasMessageContaining("75");
+    }
+
+    @Test
+    @DisplayName("3 alan: gönderilen kimlik cevap Hayır olsa da DOĞRULANIR (saklanmayacak olsa bile geçersiz değer 400)")
+    void outageId_validatedEvenWhenItWouldBeDropped() {
+        Map<String, Object> b = body("kesinti", "2026-11-18T10:00:00", "HIGH", "APPLICATION");
+        b.put("outage_related", false);
+        b.put("outage_id", "K".repeat(61));
+        assertFieldError(() -> service.create(b, "admin", 1L, 1L), "outage_id");
+    }
+
+    @Test
+    @DisplayName("3 alan: geçersiz değerde kayıt HİÇ değişmez (doğrulama alanlar yazılmadan önce) — başlık da eski kalır")
+    void outageFields_invalidValueChangesNothing() {
+        IncidentRecord e = withOutage(5L, Boolean.TRUE, "INC-1");
+        Map<String, Object> upd = new HashMap<>();
+        upd.put("title", "yeni başlık");
+        upd.put("tech_error_count", 99);
+        upd.put("outage_related", "evet");                      // geçersiz
+        assertFieldError(() -> service.update(e.getId(), upd, "sre1"), "outage_related");
+        IncidentRecord after = service.get(e.getId());
+        assertThat(after.getTitle()).isEqualTo("kesinti");
+        assertThat(after.getTechErrorCount()).isEqualTo(5L);
+        assertThat(after.getOutageRelated()).isTrue();
+        assertThat(after.getOutageId()).isEqualTo("INC-1");
+
+        // create: geçersiz adet → kayıt oluşmaz
+        long before = repo.count();
+        Map<String, Object> b = body("x", "2026-11-18T10:00:00", "LOW", "OTHER");
+        b.put("tech_error_count", "çok");
+        assertFieldError(() -> service.create(b, "admin", 1L, 1L), "tech_error_count");
+        assertThat(repo.count()).isEqualTo(before);
+    }
+
+    @Test
+    @DisplayName("mevcut sayısal alanların GEVŞEK ayrıştırması aynen: \"abc\" → null, 12.7 → 12 (yalnız yeni üç alan katı)")
+    void existingNumericFields_stayLenient() {
+        Map<String, Object> b = body("eski alanlar", "2026-11-18T10:00:00", "LOW", "OTHER");
+        b.put("affected_customers", "abc");
+        b.put("affected_transactions", 12.7d);
+        b.put("duration_minutes", "15");
+        IncidentRecord e = service.create(b, "admin", 1L, 1L);
+        assertThat(e.getAffectedCustomers()).isNull();
+        assertThat(e.getAffectedTransactions()).isEqualTo(12);
+        assertThat(e.getDurationMinutes()).isEqualTo(15);
     }
 }
