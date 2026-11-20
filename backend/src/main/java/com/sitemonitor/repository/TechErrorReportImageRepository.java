@@ -30,6 +30,12 @@ public interface TechErrorReportImageRepository extends JpaRepository<TechErrorR
 
     List<Meta> findByReportIdOrderByIdAsc(Long reportId);
 
+    /**
+     * Tek görselin baytsız künyesi (2026-11-20, A6): görsel ucu {@code If-None-Match} eşleşince 304'ü kapsam denetiminden
+     * SONRA verir — BYTEA hiç okunmaz (kapalı izdüşüm yalnız künye sütunlarını seçer).
+     */
+    Optional<Meta> findMetaById(Long id);
+
     /** PDF için baytlarla — rapor başına en çok yuva sayısı kadar (≤ 40). */
     List<TechErrorReportImage> findAllByReportIdOrderByIdAsc(Long reportId);
 

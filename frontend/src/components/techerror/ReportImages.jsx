@@ -19,6 +19,7 @@ import {
   CaptureHint, CaptureSessionChip, CaptureStopNotice, ImagesPanelHeaderButton, useCaptureScope,
 } from './capture/CaptureParts.jsx'
 import { postImagesChanged } from './capture/imageSync.js'
+import { UNDO_MS, registerUndo, snapshotImage } from './imageUndo.js'
 
 /** Tarayıcının açıp PNG / JPEG'e çevirebildiği türler (sunucu yalnız PNG / JPEG alır — imagePrep çevirir). */
 const ACCEPT = 'image/png,image/jpeg,image/webp,image/gif,image/bmp,image/avif'
@@ -143,7 +144,8 @@ export const ImagesBlock = memo(function ImagesBlock({ section, reportId, images
  * önce çağrılır (konu henüz kaydedilmediyse düzenleyici raporu kaydeder) ve `{ ok, reason }` döner; olmazsa yükleme yapılmaz,
  * NEDENE göre metin yuvada (`UPLOAD_BLOCK_KEYS`). `hideWidth`: genişlik etiketi gösterilmez (konu görseli her zaman tam
  * genişlik). `contextLabel`: görselin erişilebilir adına eklenen bağlam (konu başlığı — "Görsel 1" iki konuda karışmasın).
- * `onRemoved`: görsel silindikten sonra (konu görselinin açıklaması taslaktan düşer).
+ * `onRemoved`: görsel silindikten sonra (konu görselinin açıklaması taslaktan düşer); bir işlev dönerse "Geri al" başarılı
+ * olunca çağrılır (açıklama geri gelir — inceleme 2026-11-20).
  */
 export function ImageSlotTile(props) {
   return <SlotTile {...props} />
@@ -185,14 +187,97 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
   // Yuvadaki görsel (eşitlenmiş liste) — yeniden okuma yapılamazsa yeniden denemenin karşılaştırması buna düşer
   const imageRef = useRef(image)
   imageRef.current = image
+  const busyRef = useRef(busy)
+  busyRef.current = busy
 
-  async function upload(file) {
+  // Geri alma (2026-11-20, A3): yuva başına EN ÇOK bir bildirim — yeni silme / değiştirme öncekini kapatır; bildirim
+  // kapanınca (süre, X, yuva sökülmesi, oturum sıfırlama) tutulan baytlar bırakılır
+  const undoRef = useRef(null)          // { id, file, expectId }
+  const toastRef = useRef(toast)
+  toastRef.current = toast
+  const dropUndo = useCallback(() => {
+    const u = undoRef.current
+    if (!u) return
+    undoRef.current = null
+    u.file = null
+    u.unregister?.()
+    const tt = toastRef.current
+    if (typeof tt?.dismiss === 'function') tt.dismiss(u.id)
+  }, [])
+  // Yuva sökülünce (rapordan çıkış, konu kartının yeniden kurulması) bildirim kapanır, baytlar bırakılır
+  useEffect(() => () => dropUndo(), [dropUndo])
+
+  // Geri alma için görsel okumaları (inceleme 2026-11-20): yuva sökülünce kesilir; okuma hiç atmaz (kesilince null)
+  const snapAborts = useRef(new Set())
+  const startSnapshot = useCallback((target) => {
+    const ctl = new AbortController()
+    snapAborts.current.add(ctl)
+    const promise = snapshotImage(target, api.techErrors.imageUrl(target.id), { signal: ctl.signal })
+      .finally(() => { snapAborts.current.delete(ctl) })
+    return { promise, abort: () => ctl.abort() }
+  }, [])
+  useEffect(() => () => {
+    for (const ctl of [...snapAborts.current]) ctl.abort()
+    snapAborts.current.clear()
+  }, [])
+
+  /**
+   * Silme / değiştirme başarılı: önceki baytlar okunabildiyse "Geri al" sunulur. `expectId` = işlemden sonra yuvadaki görsel;
+   * `restore` = geri yükleme başarılı olunca çağrılır (konu görselinin açıklaması taslağa geri döner — inceleme 2026-11-20);
+   * `waiting`: yuvada yükleme sürerken basılan "Geri al"ın yeniden sunuluşu (metin bunu söyler).
+   */
+  function offerUndo(kind, file, expectId, restore = null, waiting = false) {
+    if (!file || readOnly || !alive.current || typeof toast.action !== 'function') return
+    dropUndo()
+    const entry = { id: null, file, expectId: expectId ?? null, kind, restore, unregister: null }
+    const msg = waiting ? t('te.undo.busy', fullLabel)
+      : t(kind === 'remove' ? 'te.undo.imageRemoved' : 'te.undo.imageReplaced', fullLabel)
+    const id = toast.action(msg, {
+      label: t('te.undo.action'), duration: UNDO_MS,
+      onAction: () => { undoImage(entry) },
+      onClose: () => {
+        entry.file = null                 // baytlar bırakılır
+        entry.unregister?.()
+        if (undoRef.current === entry) undoRef.current = null
+      },
+    })
+    entry.id = id
+    entry.unregister = registerUndo(() => { if (typeof toast.dismiss === 'function') toast.dismiss(id) })
+    undoRef.current = entry
+  }
+
+  /** "Geri al": eski baytlar NORMAL yükleme yolundan geri yüklenir (hazırlama, doğrulama, kilit çakışması, duyuru). */
+  async function undoImage(entry) {
+    const file = entry?.file
+    if (!file || !alive.current) return
+    // Yuvada başka bir yükleme sürüyor (inceleme 2026-11-20): bildirim kapanır ama geri alma KAYBOLMAZ — aynı baytlarla
+    // yeniden sunulur ("bitince geri alabilirsiniz" sözü doğru kalsın)
+    if (busyRef.current) { offerUndo(entry.kind, file, entry.expectId, entry.restore, true); return }
+    // O arada yuvaya başka bir görsel geldiyse (öteki pencere / yeni yükleme) sormadan ezilmez — kendi metniyle sorulur
+    const cur = imageRef.current?.id ?? null
+    if (cur !== (entry.expectId ?? null)) {
+      const yes = await showConfirm({ title: t('te.undo.replaceNewerTitle'), message: t('te.undo.replaceNewerBody', fullLabel),
+        confirmText: t('te.undo.action'), cancelText: t('te.cancel') })
+      if (!yes || !alive.current) return
+    }
+    const uploaded = await upload(file, { undo: false })
+    if (uploaded && typeof entry.restore === 'function') {
+      try { entry.restore() } catch { /* açıklama geri dönmese de görsel geri geldi */ }
+    }
+  }
+
+  async function upload(file, { undo = true } = {}) {
     const startId = imageRef.current?.id ?? null
+    // Değiştirmenin geri alınabilmesi için yuvadaki görselin baytları hazırlamayla AYNI ANDA okunur (süre sınırlı; okunamazsa
+    // geri alma sunulmaz, yükleme beklemez)
+    const before = undo ? imageRef.current : null
+    const snap = before ? startSnapshot(before) : null
     setError(null)
     setNote(null)
     setKept(null)
     setBusy(true)
     setPhase('prep')
+    let uploaded = null
     try {
 
       // Tarayıcıda hazırla (2026-10-16: çözünürlük korunur): yalnız sunucu sınırını aşan görsel alan ortalamasıyla
@@ -210,8 +295,13 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
         }
         return
       }
-      await send(prepared, startId)
+      uploaded = (await send(prepared, startId)) || null
+      const newId = uploaded?.id ?? null
+      if (uploaded && snap) snap.promise.then((f) => offerUndo('replace', f, newId))
+      return uploaded
     } finally {
+      // Yükleme olmadıysa (ret, ağ hatası, hazırlanamadı) geri alma okuması boşuna sürmez (inceleme 2026-11-20)
+      if (snap && !uploaded) snap.abort()
       setBusy(false)
       setPhase(null)
       if (inputRef.current) inputRef.current.value = ''
@@ -314,6 +404,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
         // Not bildirimde de okunur (yuvanın altındaki not görselle birlikte eklendiği için duyurulmaz); uzun metin → uzun süre
         if (changed) toast.success(`${t('te.img.uploaded', label)} ${noteText(prepared.info)}`, 8000)
         else toast.success(t('te.img.uploaded', label))
+        return uploaded
       } else {
         if (!alive.current) return
         // Sunucunun iletisi yuvada. Yalnız kilit çakışmasında görsel bekletilir; başka bir ret (doğrulama, boyut — "Yeniden
@@ -352,16 +443,23 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
   })
 
   async function remove() {
+    const target = image
     const ok = await showConfirm({ title: t('te.img.removeTitle'), message: t('te.img.removeBody', fullLabel), variant: 'danger',
       confirmText: t('te.img.remove'), cancelText: t('te.cancel') })
-    if (!ok) return
+    if (!ok || !alive.current || !target) return
     setBusy(true)
     try {
-      const res = await api.techErrors.deleteImage(reportId, image.id)
+      // Geri alma için baytlar onaydan SONRA, silmeden ÖNCE okunur (inceleme 2026-11-20: Vazgeç'te hiç istek gitmez; yuva
+      // sökülünce kesilir). Süre sınırlı; görsel ETag + özel önbellekle çoğunlukla tarayıcıdan anında gelir. Okunamazsa /
+      // büyükse geri alma yok, silme yine olur
+      const file = readOnly ? null : await startSnapshot(target).promise
+      if (!alive.current) return
+      const res = await api.techErrors.deleteImage(reportId, target.id)
       if (res?.success) {
         setNote(null)
-        onImagesChange((list) => list.filter((i) => i.id !== image.id))
-        onRemoved?.()
+        onImagesChange((list) => list.filter((i) => i.id !== target.id))
+        const restore = onRemoved?.()
+        if (file) offerUndo('remove', file, null, typeof restore === 'function' ? restore : null)
       }
       else setError(res?.error || t('te.img.removeError'))
     } catch (e) {

@@ -26,13 +26,13 @@ import SendLogView from './SendLogView.jsx'
 import ChannelNotesTab from './notes/ChannelNotesTab.jsx'
 import { TAB_SENDLOG } from './sendModel.js'
 import ChannelXlsxButton from './ChannelXlsxButton.jsx'
-import { StatusBadge, fmtDateTime, periodLabel } from './TechErrorParts.jsx'
+import { ApprovalBadge, StatusBadge, fmtDateTime, periodLabel } from './TechErrorParts.jsx'
 import { canReport } from './ChannelsView.jsx'
 import { YearArchiveMenu, YearArchiveStatus, useYearArchive } from './YearArchiveMenu.jsx'
 import { TAB_NOTES, TAB_REPORTS, TAB_TEMPLATE, groupByYear, periodOptions } from './techErrorModel.js'
 import {
-  REPORT_STATUSES, TE_RPAGE, TE_RPS, TE_RQ, TE_RSTATUS, TE_RYEAR, filterReports, normalizeReportStatus, normalizeReportYear,
-  reportCounts, reportYears,
+  REPORT_APPROVAL_STATUS, REPORT_STATUSES, TE_RPAGE, TE_RPS, TE_RQ, TE_RSTATUS, TE_RYEAR, approvalBadgeKey, filterReports,
+  normalizeReportStatus, normalizeReportYear, reportCounts, reportYears,
 } from './channelListModel.js'
 
 const TABLE_MIN_PX = 760
@@ -82,12 +82,40 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
   const ryear = reports.length ? normalizeReportYear(ryearRaw, years) : (ryearRaw || 'all')
   const counts = useMemo(() => reportCounts(reports), [reports])
   const labelOf = useCallback((r) => periodLabel(r, t), [t])
-  const filtered = useMemo(() => filterReports(reports, { q: rq, status: rstatus, year: ryear }, labelOf), [reports, rq, rstatus, ryear, labelOf])
+  // "Onay bekleyen" (A1) yalnız onay akışlı kanalda sunulur; akışsız kanalda bağlantıdaki değer "tümü" sayılır
+  const approvalFlow = ch?.approval_required === true
+  const effectiveRstatus = rstatus === REPORT_APPROVAL_STATUS && state.data && !approvalFlow ? 'all' : rstatus
+  const filtered = useMemo(() => filterReports(reports, { q: rq, status: effectiveRstatus, year: ryear, channel: ch }, labelOf),
+    [reports, rq, effectiveRstatus, ryear, labelOf, ch])
   const pager = usePagination(filtered, {
     listKey: 'te-reports', preset: 'panel', resetDeps: [rq, rstatus, ryear, channelId], url: { pageKey: TE_RPAGE, sizeKey: TE_RPS },
   })
   const narrow = listWidth > 0 && listWidth < TABLE_MIN_PX
-  const filtersActive = Boolean(rq.trim()) || rstatus !== 'all' || ryear !== 'all'
+  const filtersActive = Boolean(rq.trim()) || effectiveRstatus !== 'all' || ryear !== 'all'
+  // Durum süzgeci değişince sonuç ekran okuyucuya söylenir (araç çubuğunun tek canlı bölgesi — A7) — YALNIZ kullanıcının
+  // yaptığı değişiklikte (inceleme 2026-11-20): ilk açılış / yükleme ve bağlantıdaki değerin "tümü"ne düşmesi söylenmez;
+  // sayfalama çubuğu önce de sonra da görünüyorsa aralığı o söyler
+  const [filterAnnounce, setFilterAnnounce] = useState('')
+  const barShown = filtered.length > 0 && (pager.totalPages > 1 || filtered.length > pager.pageSize)
+  const barShownRef = useRef(barShown)
+  const userFilter = useRef(false)
+  const announcedRstatus = useRef(effectiveRstatus)
+  useEffect(() => {
+    const barBefore = barShownRef.current
+    barShownRef.current = barShown
+    if (announcedRstatus.current === effectiveRstatus) return
+    announcedRstatus.current = effectiveRstatus
+    const userMade = userFilter.current
+    userFilter.current = false
+    if (!userMade || (barBefore && barShown)) return
+    setFilterAnnounce(t(filtered.length === 1 ? 'te.rfilter.announce.one' : 'te.rfilter.announce', filtered.length))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveRstatus, barShown])
+  const pickRstatus = (v) => {
+    if (v === rstatus) return
+    userFilter.current = true
+    setRstatus(v)
+  }
   // Yıl arşivi (ZIP, 2026-10-17): o yılın TÜM raporları (liste süzgeçlerinden bağımsız), sırayla
   const archive = useYearArchive({ channelName: ch?.name || '', reports, resetKey: channelId })
   // Excel'e aktarma ile yıl arşivi aynı anda koşmaz (inceleme 2026-10-18): tek tıklamadan sonra iki otomatik indirme
@@ -102,7 +130,7 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
 
   function clearFilters() {
     setRq('')
-    setRstatus('all')
+    pickRstatus('all')
     setRyear('all')
   }
 
@@ -275,9 +303,12 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
                   </InputGroup>
                   <div className="flex min-w-0 flex-col gap-1.5">
                     <label htmlFor="te-rstatus" className="text-xs font-medium text-muted-foreground">{t('te.rfilter.status')}</label>
-                    <NativeSelect id="te-rstatus" value={rstatus} onChange={(e) => setRstatus(normalizeReportStatus(e.target.value))}
+                    <NativeSelect id="te-rstatus" value={effectiveRstatus} onChange={(e) => pickRstatus(normalizeReportStatus(e.target.value))}
                       className="pointer-coarse:h-10" data-slot="te-rstatus">
                       {REPORT_STATUSES.map((s) => <NativeSelectOption key={s} value={s}>{t(`te.rst.${s}`)}</NativeSelectOption>)}
+                      {approvalFlow && (
+                        <NativeSelectOption value={REPORT_APPROVAL_STATUS}>{t('te.rst.approval_pending')}</NativeSelectOption>
+                      )}
                     </NativeSelect>
                   </div>
                   {years.length > 1 && (
@@ -299,6 +330,7 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
                   <ChannelXlsxButton channel={ch} year={ryear} blocked={!!archive.run} onBusyChange={setXlsxBusy} />
                 </div>
                 <YearArchiveStatus run={archive.run} onCancel={archive.cancel} />
+                <p role="status" aria-live="polite" className="sr-only" data-slot="te-rfilter-status">{filterAnnounce}</p>
                 <p className="m-0 text-sm text-muted-foreground" data-slot="te-rcount">
                   {t('te.rcount', filtered.length, reports.length)}
                 </p>
@@ -331,7 +363,10 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
                               <CardContent className="flex flex-col gap-2 px-4">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <span className="font-semibold">{periodLabel(r, t)}</span>
-                                  <StatusBadge status={r.status} sendState={r.last_send_status} />
+                                  <span className="inline-flex flex-wrap items-center gap-1.5">
+                                    <StatusBadge status={r.status} sendState={r.last_send_status} />
+                                    <ApprovalBadge badgeKey={approvalBadgeKey(r, ch)} />
+                                  </span>
                                 </div>
                                 <p className="m-0 text-sm [overflow-wrap:anywhere]">{r.title}</p>
                                 <p className="m-0 text-xs text-muted-foreground [overflow-wrap:anywhere]">
@@ -371,7 +406,12 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
                               <TableRow key={r.id} data-slot="te-report-row" data-report={r.id}>
                                 <TableCell className="font-medium">{periodLabel(r, t)}</TableCell>
                                 <TableCell className="whitespace-normal [overflow-wrap:anywhere]">{r.title}</TableCell>
-                                <TableCell className="whitespace-normal"><StatusBadge status={r.status} sendState={r.last_send_status} /></TableCell>
+                                <TableCell className="whitespace-normal">
+                                  <span className="inline-flex flex-wrap items-center gap-1.5">
+                                    <StatusBadge status={r.status} sendState={r.last_send_status} />
+                                    <ApprovalBadge badgeKey={approvalBadgeKey(r, ch)} />
+                                  </span>
+                                </TableCell>
                                 <TableCell className="whitespace-normal text-xs text-muted-foreground [overflow-wrap:anywhere]">
                                   {fmtDateTime(r.updated_at, lang)} · {r.updated_by_name || '—'}
                                   {r.last_sent_at && <div>{t('te.sentAt', fmtDateTime(r.last_sent_at, lang))}</div>}

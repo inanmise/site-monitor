@@ -46,6 +46,25 @@ export function StatusBadge({ status, sendState = null, prefix = null, className
   )
 }
 
+/** Onay rozeti tonu (A1): bekleyen bilgi, eskimiş / reddedilmiş uyarı / hata, onaylı-gönderilmemiş bilgi (yeşil DEĞİL — iş bitmedi). */
+const APPROVAL_TONE = { pending: 'info', stale: 'warning', rejected: 'danger', approved_unsent: 'info' }
+
+/**
+ * Onay durumu rozeti (2026-11-20, A1) — kanal satırında / kartında ve rapor satırında dönem durumunun YANINDA ikinci rozet.
+ * `badgeKey` `approvalBadgeKey(report, channel)` sonucudur; null ise hiçbir şey çizilmez (veri yok / gerek yok — "onay
+ * gerekmez" denmez). Metinle yazılır, renk tek başına taşımaz; sarar (kesilmez).
+ */
+export function ApprovalBadge({ badgeKey, className }) {
+  const t = useT()
+  if (!badgeKey || !APPROVAL_TONE[badgeKey]) return null
+  return (
+    <Badge className={cn('rounded-md overflow-visible whitespace-normal [overflow-wrap:anywhere]', TONE_CLASS[APPROVAL_TONE[badgeKey]], className)}
+      data-slot="te-approval-badge" data-approval={badgeKey}>
+      {t(`te.apprBadge.${badgeKey}`)}
+    </Badge>
+  )
+}
+
 /**
  * Yazının HEMEN bitimine küçük kopyalama düğmesi (2026-10-16, kullanıcı isteği: rapor hazırlanırken bölüm başlıkları,
  * alan ve görsel adları başka araçlara kolayca kopyalansın). Ekranda görünen metni (ay / yıl yer tutucuları çözülmüş)

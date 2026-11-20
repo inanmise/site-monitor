@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowDown, ArrowUp, ChartLine, CheckCircle2, CircleAlert, CirclePause, FileClock, FileText, FileWarning, LayoutTemplate,
-  LibraryBig, MailWarning, Plus, Radio, RefreshCw, Search, Users, X,
+  ArrowDown, ArrowUp, ChartLine, CheckCircle2, CircleAlert, CirclePause, FileClock, FileText, FileWarning, Hourglass, LayoutTemplate,
+  LibraryBig, MailWarning, Plus, Radio, RefreshCw, Search, UserCheck, Users, X,
 } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
@@ -29,10 +29,11 @@ import { cn } from '@/lib/utils'
 import { errorInfoOf } from '../../utils/errorMessages.js'
 import ChannelDialog from './ChannelDialog.jsx'
 import { LibraryManagerDialog } from './TemplateLibrary.jsx'
-import { StatusBadge, periodLabel } from './TechErrorParts.jsx'
+import { ApprovalBadge, StatusBadge, periodLabel } from './TechErrorParts.jsx'
 import {
-  CHANNEL_SORTS, CHANNEL_TABLE_MIN_PX, TE_PAGE, TE_PS, TE_Q, TE_SORT, TE_STATUS, applyReorderPlan, channelCounts, filterChannels,
-  fullOrderPlan, inverseReorderPlan, moveInTeam, normalizeChannelSort, normalizeChannelStatus, reorderPlan, sortChannels,
+  CHANNEL_SORTS, CHANNEL_TABLE_MIN_PX, TE_PAGE, TE_PS, TE_Q, TE_SORT, TE_STATUS, applyReorderPlan, approvalBadgeKey, approvalCounts,
+  approverTeamIds, channelCounts, filterChannels, fullOrderPlan, inverseReorderPlan, moveInTeam, normalizeChannelSort,
+  normalizeChannelStatus, reorderPlan, sortChannels,
 } from './channelListModel.js'
 
 const ALL = '__all__'
@@ -136,12 +137,45 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
   const noEmail = teams.filter((tm) => tm.can_edit && !tm.has_email
     && channels.some((c) => c.team_id === tm.id && !c.approval_required))
   const counts = useMemo(() => channelCounts(channels), [channels])
-  const visible = useMemo(() => sortChannels(filterChannels(channels, { q, status }), sort), [channels, q, status, sort])
+  // Onay süzgeçleri (A1): "Onayımı bekleyen" yalnız sunucunun onaylayıcı dediği takım varken (`can_approve === true`) sunulur
+  const approverTeams = useMemo(() => approverTeamIds(teams), [teams])
+  const aCounts = useMemo(() => approvalCounts(channels, approverTeams), [channels, approverTeams])
+  const visible = useMemo(() => sortChannels(filterChannels(channels, { q, status, approverTeams }), sort),
+    [channels, q, status, sort, approverTeams])
+  // Bağlantıdaki onay süzgeci bu kullanıcıya / bu listeye anlamsızsa (onaylayıcı değil, onay akışlı kanal yok) "tümü"ne döner —
+  // boş bir listede mahsur kalmasın. Veri gelmeden karar verilmez.
+  useEffect(() => {
+    if (!data) return
+    if ((status === 'my_approval' && (approverTeams.size === 0 || aCounts.flow === 0)) || (status === 'approval_pending' && aCounts.flow === 0)) setStatus('all')
+  }, [data, status, approverTeams, aCounts.flow])
   // Sıra kipinde komşuluk TÜM listede (süzgeçsiz) hesaplanır; süzgeç / arama açıkken taşıma zaten kapalıdır (orderLocked)
   const orderedAll = useMemo(() => (sort === 'order' ? sortChannels(channels, 'order') : null), [channels, sort])
   const pager = usePagination(visible, {
     listKey: 'te-channels', preset: 'page', resetDeps: [q, status, sort, team], url: { pageKey: TE_PAGE, sizeKey: TE_PS },
   })
+  // Süzgeç değişince sonucu ekran okuyucuya söyle (tek canlı bölge: `te-order-status`) — YALNIZ kullanıcının yaptığı
+  // değişiklikte (inceleme 2026-11-20): ilk açılış ve bağlantıdaki değerin "tümü"ne düşmesi söylenmez; sayfalama çubuğu
+  // değişiklikten önce de sonra da görünüyorsa aralığı o söyler (çift duyuru olmaz)
+  const barShown = pager.totalPages > 1 || visible.length > pager.pageSize
+  const barShownRef = useRef(barShown)
+  const userFilter = useRef(false)
+  const announcedStatus = useRef(status)
+  useEffect(() => {
+    const barBefore = barShownRef.current
+    barShownRef.current = barShown
+    if (announcedStatus.current === status) return
+    announcedStatus.current = status
+    const userMade = userFilter.current
+    userFilter.current = false
+    if (!userMade || (barBefore && barShown)) return
+    setOrderStatus(t(visible.length === 1 ? 'te.filters.announce.one' : 'te.filters.announce', visible.length))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, barShown])
+  const pickStatus = (v) => {
+    if (v === status) return
+    userFilter.current = true
+    setStatus(v)
+  }
   const cardsLayout = listWidth > 0 && listWidth < CHANNEL_TABLE_MIN_PX
   const filtersActive = Boolean(q.trim()) || status !== 'all'
   // Süzgeç / arama açıkken sıra değiştirilmez: komşu, süzgeçle GİZLENMİŞ bir kanal olabilir — sıra değişir ama listede
@@ -171,7 +205,7 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
 
   function clearFilters() {
     setQ('')
-    setStatus('all')
+    pickStatus('all')
   }
 
   async function startReport(ch) {
@@ -357,6 +391,12 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
     { key: 'open', Icon: FileClock, label: t('te.kpi.open'), value: counts.open, cls: 'warning', hint: t('te.kpi.hint.open') },
     { key: 'missing', Icon: FileWarning, label: t('te.kpi.missing'), value: counts.missing, cls: 'alert', hint: t('te.kpi.hint.missing') },
     { key: 'inactive', Icon: CirclePause, label: t('te.kpi.inactive'), value: counts.inactive, cls: 'paused', hint: t('te.kpi.hint.inactive') },
+    // Onay kutucukları (A1, eklemeli): yalnız onay akışlı kanal varken; "Onayımı bekleyen" ayrıca kullanıcı bir takımda
+    // onaylayıcıyken
+    ...(aCounts.flow > 0 ? [{ key: 'approval_pending', Icon: Hourglass, label: t('te.kpi.approvalPending'), value: aCounts.pending,
+      cls: 'warning', hint: t('te.kpi.hint.approvalPending') }] : []),
+    ...(aCounts.flow > 0 && approverTeams.size > 0 ? [{ key: 'my_approval', Icon: UserCheck, label: t('te.kpi.myApproval'), value: aCounts.mine,
+      cls: 'high', hint: t('te.kpi.hint.myApproval') }] : []),
   ]
 
   return (
@@ -378,7 +418,7 @@ export default function ChannelsView({ team, onTeamChange, onOpenChannel, onOpen
       {channels.length > 0 && (
         <div data-slot="te-kpis">
           <MonitorStatsBar items={kpiItems} activeFilter={status} className="mb-0"
-            onStatClick={(key) => setStatus(key === status ? 'all' : key)} />
+            onStatClick={(key) => pickStatus(key === status ? 'all' : key)} />
         </div>
       )}
 
@@ -594,7 +634,10 @@ function ChannelRow({ ch, period, busy, onOpen, onTemplate, onReport, ...actions
       </TableCell>
       <TableCell className="whitespace-normal align-top">
         <div className="flex flex-col items-start gap-2">
-          <StatusBadge status={pr?.status || null} sendState={pr?.last_send_status} />
+          <div className="flex flex-wrap items-center gap-1.5">
+            <StatusBadge status={pr?.status || null} sendState={pr?.last_send_status} />
+            <ApprovalBadge badgeKey={approvalBadgeKey(pr, ch)} />
+          </div>
           <PeriodReportButton ch={ch} period={period} busy={busy} onReport={onReport} />
         </div>
       </TableCell>
@@ -630,6 +673,7 @@ function ChannelCard({ ch, period, busy, onOpen, onTemplate, onReport, ...action
         <div className="flex flex-wrap items-center gap-1.5">
           <ChannelChips ch={ch} />
           <StatusBadge status={pr?.status || null} sendState={pr?.last_send_status} prefix={periodLabel(period, t)} />
+          <ApprovalBadge badgeKey={approvalBadgeKey(pr, ch)} />
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-2 text-sm">

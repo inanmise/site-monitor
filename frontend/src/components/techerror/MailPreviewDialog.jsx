@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CircleAlert, Mail, MailCheck, Monitor, Paperclip, RefreshCw, Send, Smartphone } from 'lucide-react'
+import { CheckCircle2, CircleAlert, Mail, MailCheck, Monitor, Paperclip, RefreshCw, Send, ShieldCheck, Smartphone, XCircle } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils'
 import { fmtDateTime } from './TechErrorParts.jsx'
 import { mailPreviewSrcDoc } from '../../utils/mailPreview.js'
 import { fetchMailPreview } from './mailPreviewFetch.js'
+import ApprovalDecideDialog from './ApprovalDecideDialog.jsx'
 
 /** Önizleme genişlikleri: e-postanın kendi 1000 px kartı (masaüstü istemci) ve telefon tek sütunu. */
 export const PREVIEW_WIDTHS = Object.freeze({ desktop: 1040, phone: 400 })
@@ -49,12 +50,20 @@ export function pdfTooLargeOf(d) {
 /** Onay durumu → i18n anahtarı (bilinmeyen durum "henüz onaya gönderilmedi" sayılır — ham anahtar asla görünmez). */
 const APPROVAL_TEXT_KEYS = Object.freeze({ pending: 'te.mail.appr.pending', none: 'te.mail.appr.none', rejected: 'te.mail.appr.rejected', stale: 'te.mail.appr.stale' })
 
-export default function MailPreviewDialog({ reportId, reportVersion = null, contentRev = null, open, onClose, onSend, sendLabel, uiLang }) {
+/**
+ * Onay eylemleri (2026-11-20, A2): `onRequestApproval` verilirse "Onaya gönder" (düzenleyicinin kuralıyla — kayıt + soru
+ * düzenleyicide; önizleme önce kapanır, "Gönder" gibi). `canDecide` (PO) verilirse "Onayla" / "Reddet": onay kartının karar
+ * penceresi (ApprovalDecideDialog, ret gerekçe ister) önizlemenin ÜSTÜNDE açılır; karar kaydedilince önizleme kapanır ve
+ * düzenleyici yeniden okur (`onDecided`); vazgeçince önizleme açık kalır. Akışsız kanalda bu düğmeler hiç yok.
+ */
+export default function MailPreviewDialog({ reportId, reportVersion = null, contentRev = null, open, onClose, onSend, sendLabel, uiLang,
+  onRequestApproval = null, requestLabel = null, canDecide = false, execCount = 0, onDecided = null, onBusy = null, actionsDisabled = false }) {
   const t = useT()
   const toast = useToast()
   const [state, setState] = useState({ loading: true, failed: false, error: null, data: null })
   const [width, setWidth] = useState('desktop')
   const [testing, setTesting] = useState(false)
+  const [decideMode, setDecideMode] = useState(null)      // 'approve' | 'reject' | null
   const seq = useRef(0)
   const ctrl = useRef(null)
   const alive = useRef(true)
@@ -243,7 +252,7 @@ export default function MailPreviewDialog({ reportId, reportVersion = null, cont
           )}
         </div>
 
-        <DialogFooter className="shrink-0 flex-col-reverse gap-2 sm:flex-row">
+        <DialogFooter className="shrink-0 flex-col-reverse gap-2 sm:flex-row sm:flex-wrap">
           <Button type="button" variant="outline" className="pointer-coarse:min-h-10" onClick={onClose}>{t('te.close')}</Button>
           {/* Yalnız kendine test (R13): her okuyana (paylaşımla okuyan da — posta yalnız kendine); PDF sınırı aşıyorsa
               gönderim gibi test de gidemez → düğme yok (ayrı bayrak: alıcı sorunu da varken `problem` PDF'i söylemez).
@@ -255,6 +264,25 @@ export default function MailPreviewDialog({ reportId, reportVersion = null, cont
               {testing ? t('te.mail.testSending') : t('te.mail.test')}
             </Button>
           )}
+          {/* Onay eylemleri (A2): yalnız önizleme yüklendiyse — kullanıcı gideni gördükten sonra karar verir */}
+          {canDecide && d && (
+            <>
+              <Button type="button" variant="destructive" className="pointer-coarse:min-h-10" data-slot="te-mail-reject"
+                disabled={testing || actionsDisabled} onClick={() => setDecideMode('reject')}>
+                <XCircle aria-hidden="true" /> {t('te.appr.reject')}
+              </Button>
+              <Button type="button" className="pointer-coarse:min-h-10" data-slot="te-mail-approve"
+                disabled={testing || actionsDisabled} onClick={() => setDecideMode('approve')}>
+                <CheckCircle2 aria-hidden="true" /> {t('te.appr.approve')}
+              </Button>
+            </>
+          )}
+          {onRequestApproval && d && (
+            <Button type="button" className="pointer-coarse:min-h-10" data-slot="te-mail-request-approval" disabled={testing || actionsDisabled}
+              onClick={() => { onClose(); onRequestApproval() }}>
+              <ShieldCheck aria-hidden="true" /> {requestLabel || t('te.appr.request')}
+            </Button>
+          )}
           {onSend && d && !d.problem && !pdfTooLarge && (
             <Button type="button" className="pointer-coarse:min-h-10" data-slot="te-mail-send" disabled={testing} onClick={() => { onClose(); onSend() }}>
               <Send aria-hidden="true" /> {sendLabel || t('te.send')}
@@ -262,6 +290,12 @@ export default function MailPreviewDialog({ reportId, reportVersion = null, cont
           )}
           {state.loading && <Button type="button" disabled className="pointer-coarse:min-h-10"><RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> {t('te.loading')}</Button>}
         </DialogFooter>
+        {/* İç içe pencere önizlemenin içeriğinde (React ağacında altında): Esc / dış tıklama yalnız üstteki karar penceresini kapatır */}
+        {canDecide && (
+          <ApprovalDecideDialog reportId={reportId} mode={decideMode} execCount={execCount} onBusy={onBusy}
+            onClose={() => setDecideMode(null)}
+            onDone={(r) => { onDecided?.(); if (r?.ok) onClose() }} />
+        )}
       </DialogContent>
     </Dialog>
   )

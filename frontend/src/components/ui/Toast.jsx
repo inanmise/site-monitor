@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { toast as sonner } from 'sonner'
 import { Toaster } from '@/components/shadcn/sonner'
 import { Badge } from '@/components/shadcn/badge'
+import { Button } from '@/components/shadcn/button'
 import { useT } from '@/i18n/index.jsx'
 import ErrorDetails from './ErrorDetails.jsx'
 
@@ -21,15 +22,22 @@ const MAX_VISIBLE = 4
  * <p>{@code data-toast-id} kutuyu bizim kimliğimize bağlar: Sonner'ın `<li>`'si kimlik taşımıyor,
  * gövdeye tıklayınca kapatma (aşağıda) hangi kaydı düşüreceğini buradan okur.
  */
-function ToastBody({ id, type, message, count, details, onHold }) {
+function ToastBody({ id, type, message, count, details, onHold, action = null }) {
   return (
     <div data-toast-id={id} className="flex min-w-0 flex-col gap-1">
       <span className="flex items-center gap-2">
-        <span className="min-w-0">{message}</span>
+        <span className="min-w-0 [overflow-wrap:anywhere]">{message}</span>
         {count > 1 && (
           <Badge variant="outline" className="border-current/30 text-current tabular-nums">×{count}</Badge>
         )}
       </span>
+      {/* Eylem düğmesi (2026-11-20, "Geri al"): tıklama eylemi çalıştırır, ardından kutu kapanır (sarmalayıcının tıklaması) */}
+      {action && (
+        <Button type="button" size="sm" variant="outline" className="mt-1 w-fit pointer-coarse:min-h-10" data-slot="toast-action"
+          onClick={() => { try { action.onClick?.() } catch { /* eylem kendi hatasını bildirir */ } }}>
+          {action.label}
+        </Button>
+      )}
       {/* Hata bildiriminde katlanır "Teknik ayrıntı" (2026-10-08): künye açıkça verildiyse o, yoksa istemcinin
           metin→künye kaydı. Açılınca kutu kendiliğinden kapanmaz — kullanıcı okuyup kopyalayabilsin. */}
       {type === 'error' && (
@@ -86,6 +94,17 @@ export function ToastProvider({ children }) {
    * bildirimde yeniden çizilmez, altındaki uygulama ağacı da.
    */
   const visible = useRef([])
+  /**
+   * Eylemli bildirimin kapanış geri çağrıları (2026-11-20, "Geri al"): kutu hangi yoldan kapanırsa kapansın (süre, X,
+   * gövdeye tıklama, tavanda düşme, sağlayıcının sökülmesi) BİR KEZ çağrılır — sahibi tuttuğu baytları bırakır.
+   */
+  const closers = useRef(new Map())
+  const runCloser = useCallback((id) => {
+    const fn = closers.current.get(id)
+    if (!fn) return
+    closers.current.delete(id)
+    try { fn() } catch { /* kapanış geri çağrısı hatası bildirimi bozmaz */ }
+  }, [])
 
   const clearTimer = useCallback((id) => {
     const tm = timers.current.get(id)
@@ -95,11 +114,12 @@ export function ToastProvider({ children }) {
   /** Bizim kapattığımız bildirim: defterden düşer, Sonner'a kapanış animasyonu söylenir. */
   const remove = useCallback((id) => {
     clearTimer(id)
+    runCloser(id)
     const cur = visible.current
     if (!cur.some(x => x.id === id)) return
     visible.current = cur.filter(x => x.id !== id)
     sonner.dismiss(id)
-  }, [clearTimer])
+  }, [clearTimer, runCloser])
 
   /**
    * Sonner'ın KENDİ kapattığı bildirim (X düğmesi, kaydırma) — ve bizim {@link remove}'umuzun
@@ -107,8 +127,9 @@ export function ToastProvider({ children }) {
    */
   const forget = useCallback((id) => {
     clearTimer(id)
+    runCloser(id)
     visible.current = visible.current.filter(x => x.id !== id)
-  }, [clearTimer])
+  }, [clearTimer, runCloser])
 
   /** Kullanıcı kutuyla ilgileniyor ("Teknik ayrıntı" açıldı): kendiliğinden kapanma durur, X ile kapanır. */
   const hold = useCallback((id) => {
@@ -130,28 +151,32 @@ export function ToastProvider({ children }) {
    * <p>Tavan da var: farklı mesajlar da olsa aynı anda {@code MAX_VISIBLE} kutudan fazlası
    * ekranı kaplar — en eskisi düşer (zamanlayıcısıyla birlikte).
    */
-  const show = useCallback((type, message, duration = 3500, details = null) => {
+  const show = useCallback((type, message, duration = 3500, details = null, extra = null) => {
     const cur = visible.current
-    const same = cur.find(x => x.type === type && x.message === message)
+    // Eylemli bildirim (extra.action) hiçbir zaman birleştirilmez: her biri kendi geri alınacak şeyini taşır
+    const same = extra?.action ? null : cur.find(x => x.type === type && x.message === message && !x.action)
     let entry
     if (same) {
       entry = { ...same, count: same.count + 1, details: details ?? same.details }
       visible.current = cur.map(x => (x.id === same.id ? entry : x))
     } else {
-      entry = { id: `sm-toast-${++_seq}`, type, message, count: 1, details }
+      entry = { id: `sm-toast-${++_seq}`, type, message, count: 1, details, action: extra?.action || null }
+      if (typeof extra?.onClose === 'function') closers.current.set(entry.id, extra.onClose)
       const next = [...cur, entry]
       // Düşen kutunun zamanlayıcısı da ölmeli: kalsaydı ekranda olmayan bir kutu için işleyip
       // haritayı şişirirdi (unmount temizliğinin kapsamı da gereksiz yere büyürdü).
       while (next.length > MAX_VISIBLE) {
         const dropped = next.shift()
         clearTimer(dropped.id)
+        runCloser(dropped.id)
         sonner.dismiss(dropped.id)
       }
       visible.current = next
     }
     const id = entry.id
     sonner[type](
-      <ToastBody id={id} type={type} message={message} count={entry.count} details={entry.details} onHold={() => hold(id)} />, {
+      <ToastBody id={id} type={type} message={message} count={entry.count} details={entry.details} onHold={() => hold(id)}
+        action={entry.action} />, {
         id,
         toasterId,
         duration: Infinity,
@@ -161,7 +186,7 @@ export function ToastProvider({ children }) {
     // "Teknik ayrıntı" açıldıysa (held) kutu kullanıcı kapatana dek kalır — tekrar gelen aynı hata da süreyi kurmaz.
     if (duration > 0 && !entry.held) timers.current.set(id, setTimeout(() => remove(id), duration))
     return id
-  }, [clearTimer, forget, remove, toasterId, hold])
+  }, [clearTimer, forget, remove, toasterId, hold, runCloser])
 
   // Unmount: bekleyen her zamanlayıcı iptal edilir — sağlayıcı gittikten sonra hiçbir
   // güncelleme tetiklenmemeli. Görünen bildirimler Sonner'ın global deposunda da kapatılır:
@@ -169,11 +194,15 @@ export function ToastProvider({ children }) {
   useEffect(() => {
     const pending = timers.current
     const ledger = visible
+    const closing = closers.current
     return () => {
       for (const tm of pending.values()) clearTimeout(tm)
       pending.clear()
       for (const x of ledger.current) sonner.dismiss(x.id)
       ledger.current = []
+      // Eylemli bildirimlerin sahipleri tuttuklarını bırakır (geri alma baytları vb.)
+      for (const fn of closing.values()) { try { fn() } catch { /* yok */ } }
+      closing.clear()
     }
   }, [])
 
@@ -201,6 +230,13 @@ export function ToastProvider({ children }) {
     success: (msg, d) => show('success', msg, d),
     error:   (msg, opts) => { const o = splitOpts(opts, 5000); return show('error', msg, o.duration, o.details) },
     info:    (msg, d) => show('info',    msg, d),
+    /**
+     * Eylemli bildirim (2026-11-20, "Geri al"): `{ label, onAction, onClose, duration = 10000, type = 'info' }`. Düğme eylemi
+     * çalıştırır ve kutuyu kapatır; `onClose` kutu HER kapanışta bir kez çağrılır (eylemden sonra da). Kimliği döner
+     * (`dismiss` ile erken kapatılır).
+     */
+    action:  (msg, { label, onAction, onClose, duration = 10000, type = 'info' } = {}) =>
+      show(type === 'success' ? 'success' : 'info', msg, duration, null, { action: { label, onClick: onAction }, onClose }),
     dismiss: remove,
   }), [show, remove])
 

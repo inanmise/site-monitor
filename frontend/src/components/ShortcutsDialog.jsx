@@ -4,6 +4,7 @@ import { useT } from '../i18n/index.jsx'
 import ModalShell from './ui/ModalShell.jsx'
 import { Kbd, KbdGroup } from '@/components/shadcn/kbd'
 import { GO_SHORTCUTS, isMacPlatform } from '../utils/keyboardShortcuts.js'
+import { TE_EDITOR_CONTEXT, activeShortcutContexts } from '../utils/shortcutContexts.js'
 
 /**
  * "Klavye kısayolları" listesi (2026-10-02, öneri 24) — KeyboardShortcuts'ın İLK AÇILIŞTA yüklenen penceresi
@@ -45,6 +46,8 @@ export default function ShortcutsDialog({ open, onClose, tabs = [] }) {
     const MOD = mac ? '⌘' : 'Ctrl'
     const ALT = mac ? '⌥' : 'Alt'
     const label = Object.fromEntries(tabs.map((tb) => [tb.id, tb.label]))
+    // Ekrana özgü kısayollar (A4, 2026-11-20): yalnız o ekran kuruluyken (pencere açılırken okunur)
+    const contexts = activeShortcutContexts()
     const go = GO_SHORTCUTS.filter((s) => tabIds.has(s.tab))
       .map((s) => ({ id: `go-${s.key}`, label: label[s.tab], chords: [['G'], [s.key.toUpperCase()]], join: 'then' }))
     return [
@@ -91,6 +94,14 @@ export default function ShortcutsDialog({ open, onClose, tabs = [] }) {
           { id: 'inc-ack', label: t('incov.kbd.ack'), chords: [['A']] },
           { id: 'inc-resolve', label: t('incov.kbd.resolve'), chords: [['R']] },
           { id: 'inc-comment', label: t('incov.kbd.comment'), chords: [['C']] },
+        ],
+      },
+      // Kanal raporu düzenleyicisi (2026-11-20, A4): yalnız düzenleyici açıkken
+      contexts.has(TE_EDITOR_CONTEXT) && {
+        id: 'te-editor', title: t('shortcuts.grp.teEditor'), hint: t('shortcuts.teEditorHint'), rows: [
+          { id: 'te-save', label: t('shortcuts.teSave'), chords: [[MOD, 'S']] },
+          { id: 'te-section-next', label: t('shortcuts.teSectionNext'), chords: [[ALT, '↓']] },
+          { id: 'te-section-prev', label: t('shortcuts.teSectionPrev'), chords: [[ALT, '↑']] },
         ],
       },
     ].filter(Boolean)

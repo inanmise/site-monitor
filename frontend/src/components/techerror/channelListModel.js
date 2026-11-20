@@ -20,8 +20,23 @@ export const TE_RPS = 'te_rps'
 /** Kanal görünümünden ÇIKINCA sayfa kabının sildiği rapor listesi anahtarları. */
 export const REPORT_LIST_KEYS = Object.freeze([TE_RQ, TE_RSTATUS, TE_RYEAR, TE_RPAGE, TE_RPS])
 
-/** Kanalın dönem durumu: `all` süzgeç değeri; `missing` → `open` → `sent` → `inactive` sırası "önce ilgi isteyen". */
-export const CHANNEL_STATUSES = Object.freeze(['all', 'missing', 'open', 'sent', 'inactive'])
+/**
+ * Kanalın dönem durumu: `all` süzgeç değeri; `missing` → `open` → `sent` → `inactive` sırası "önce ilgi isteyen".
+ * Onay süzgeçleri (2026-11-20, A1 — eklemeli; dönem durumundan bağımsız, "Açık" kutucuğunun anlamı değişmez):
+ * `approval_pending` = onay akışlı, etkin kanalın dönem raporu PO onayı bekliyor; `my_approval` = bunlardan sunucunun bu
+ * kullanıcıyı onaylayıcı saydığı (`can_approve === true`) takımlarınki — eksikler penceresinin "Onayınızı bekleyen" kuralı.
+ */
+export const CHANNEL_STATUSES = Object.freeze(['all', 'missing', 'open', 'sent', 'inactive', 'approval_pending', 'my_approval'])
+/** Onay süzgeçleri (A1). */
+export const APPROVAL_FILTERS = Object.freeze(['approval_pending', 'my_approval'])
+/** Rapor listesinin onay süzgeci (A1): yalnız onay akışlı kanalda sunulur. */
+export const REPORT_APPROVAL_STATUS = 'approval_pending'
+/**
+ * Onay rozeti anahtarları (A1, sıra = önem): `pending` onay bekliyor, `stale` onay / istek eskidi (içerik değişti — yeniden
+ * onay), `rejected` reddedildi, `approved_unsent` onaylandı ama gönderilmedi. Gönderilmiş onaylı rapor ve onay isteği hiç
+ * olmayan rapor rozet ALMAZ; veri yoksa (eski sunucu) rozet yok — "onay gerekmez" de denmez.
+ */
+export const APPROVAL_BADGES = Object.freeze(['pending', 'stale', 'rejected', 'approved_unsent'])
 /** `order` (R14, 2026-10-17): takım A→Z → takımın kendi sırası (`sort_order` artan, boş en sonda) → ad; satır menüsünden taşınır. */
 export const CHANNEL_SORTS = Object.freeze(['name', 'status', 'team', 'order'])
 /** Rapor durumu süzgeci: `queued` kuyruktaki ve gönderilmekte olanı birlikte alır (ikisi de "teslim bilinmiyor"). */
@@ -50,7 +65,48 @@ export function normalizeChannelSort(v) {
 }
 
 export function normalizeReportStatus(v) {
-  return REPORT_STATUSES.includes(v) ? v : 'all'
+  return REPORT_STATUSES.includes(v) || v === REPORT_APPROVAL_STATUS ? v : 'all'
+}
+
+/**
+ * Raporun onay rozeti (A1) — yalnız kanal onay akışlıysa (`approval_required === true`; akışsız kanalda raporun eski onay
+ * durumu yok sayılır, sunucu kuralı). `report.approval.state` sunucunun türettiği değer (none | pending | approved | rejected |
+ * stale). Onaylı rapor yalnız gönderilmemişken (taslak ya da gönderimden sonra yeniden onaylanmış) rozet alır; kuyrukta /
+ * gönderiliyor iken alanın kendisi durumu söyler. Bilinmeyen / eksik veri → null.
+ */
+export function approvalBadgeKey(report, channel) {
+  if (channel?.approval_required !== true) return null
+  const a = report?.approval
+  if (!a || typeof a !== 'object' || typeof a.state !== 'string') return null
+  switch (a.state) {
+    case 'pending': return 'pending'
+    case 'stale': return 'stale'
+    case 'rejected': return 'rejected'
+    case 'approved': return report?.status === 'draft' || report?.status === 'changed' ? 'approved_unsent' : null
+    default: return null
+  }
+}
+
+/** Kanalın dönem raporu PO onayı bekliyor mu (etkin, onay akışlı kanal; eskimiş istek değil — eksikler penceresiyle aynı kural). */
+export function isApprovalPending(ch) {
+  return !!ch?.active && ch?.approval_required === true && ch?.period_report?.approval?.state === 'pending'
+}
+
+/** Sunucunun bu kullanıcıyı onaylayıcı saydığı takımlar (`can_approve === true`; null / yok = bilinmiyor → sayılmaz). */
+export function approverTeamIds(teams) {
+  return new Set((teams || []).filter((tm) => tm?.can_approve === true).map((tm) => String(tm.id)))
+}
+
+/** Onay süzgeci sayımları: `pending` onay bekleyen kanal, `mine` bunların onaylayıcısı olduğum takımlardakiler. */
+export function approvalCounts(channels, approverTeams = new Set()) {
+  const out = { pending: 0, mine: 0, flow: 0 }
+  for (const c of channels || []) {
+    if (c?.approval_required === true) out.flow++
+    if (!isApprovalPending(c)) continue
+    out.pending++
+    if (approverTeams.has(String(c.team_id))) out.mine++
+  }
+  return out
 }
 
 /** Sayımlar: `channels` AKTİF kanal sayısı (eski KPI anlamı), `inactive` pasifler, `total` hepsi. */
@@ -66,11 +122,18 @@ export function channelCounts(channels) {
   return out
 }
 
-/** Arama kanal adı, takım adı ve açıklamada (Türkçe katlama); durum süzgeci `channelPeriodStatus` ile. */
-export function filterChannels(channels, { q = '', status = 'all' } = {}) {
+/**
+ * Arama kanal adı, takım adı ve açıklamada (Türkçe katlama); durum süzgeci `channelPeriodStatus` ile, onay süzgeçleri
+ * (A1) `isApprovalPending` (+ `approverTeams` — `my_approval` için onaylayıcı olunan takımlar) ile.
+ */
+export function filterChannels(channels, { q = '', status = 'all', approverTeams = null } = {}) {
   const st = normalizeChannelStatus(status)
   return (channels || []).filter((c) => {
-    if (st !== 'all' && channelPeriodStatus(c) !== st) return false
+    if (st === 'approval_pending') {
+      if (!isApprovalPending(c)) return false
+    } else if (st === 'my_approval') {
+      if (!isApprovalPending(c) || !approverTeams || !approverTeams.has(String(c?.team_id))) return false
+    } else if (st !== 'all' && channelPeriodStatus(c) !== st) return false
     return matchesSearchText(q, [c?.name, c?.team_name, c?.description])
   })
 }
@@ -223,11 +286,14 @@ export function reportYears(reports) {
  * Rapor süzgeci: arama başlıkta ve dönem etiketinde (`labelOf(r)` arayüz dilinde "Eylül 2026"), durum
  * `reportStatusKey`, yıl tam eşleşme (`'all'` hepsi).
  */
-export function filterReports(reports, { q = '', status = 'all', year = 'all' } = {}, labelOf = () => '') {
+export function filterReports(reports, { q = '', status = 'all', year = 'all', channel = null } = {}, labelOf = () => '') {
   const st = normalizeReportStatus(status)
   const y = year === 'all' || year == null || year === '' ? null : Number(year)
   return (reports || []).filter((r) => {
-    if (st !== 'all' && reportStatusKey(r) !== st) return false
+    // Onay bekleyen (A1): yalnız onay akışlı kanalda; akışsız kanalda (ya da kanal bilinmiyorken) süzgeç hiçbir şey eşlemez
+    if (st === REPORT_APPROVAL_STATUS) {
+      if (approvalBadgeKey(r, channel) !== 'pending') return false
+    } else if (st !== 'all' && reportStatusKey(r) !== st) return false
     if (y != null && Number(r?.year) !== y) return false
     return matchesSearchText(q, [r?.title, labelOf(r)])
   })

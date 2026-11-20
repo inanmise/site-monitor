@@ -164,11 +164,12 @@ const SUB = 'flex flex-col gap-1.5 pb-3 pe-4'
  * Bölüm kartı. Başlık bir `h3` içindeki aç / kapat düğmesidir (WAI akordeon deseni); kopyalama ikonu başlığın kardeşi,
  * satırın sağında. `hint`: yalnız açıkken. `icon`: başlığın solunda (dekoratif, okun ardında). `headerEnd`: başlık
  * satırının sağı (ör. taşı / sil düğmeleri — kapalıyken de kullanılır). `toggleLabel`: düğmede başlık yerine gösterilecek
- * içerik.
+ * içerik. `titleId` (2026-11-20, A7): başlık metninin kimliği — bölümün içindeki tablo / liste adını buradan alır
+ * (`aria-labelledby`).
  */
 export function CollapsibleCard({
   sectionId, slot, title, copyText, toggleLabel, icon = null, hint = null, headerEnd = null, headerClassName,
-  contentClassName, children, cardProps,
+  contentClassName, children, cardProps, titleId,
 }) {
   const ctx = useContext(SectionOpenContext)
   const t = useT()
@@ -203,7 +204,7 @@ export function CollapsibleCard({
           {titleRow(
             <h3 className="flex min-w-0 flex-1 items-start gap-2 px-2.5 py-2.5 text-base font-semibold leading-snug">
               {icon}
-              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{toggleLabel ?? title}</span>
+              <span id={titleId} className="min-w-0 flex-1 [overflow-wrap:anywhere]">{toggleLabel ?? title}</span>
             </h3>,
           )}
           {hint && <div className={cn(SUB, 'ps-4')}>{hint}</div>}
@@ -225,7 +226,7 @@ export function CollapsibleCard({
                     className={cn('mt-[3px] size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none',
                       open && 'rotate-90')} />
                   {icon}
-                  <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{toggleLabel ?? title}</span>
+                  <span id={titleId} className="min-w-0 flex-1 [overflow-wrap:anywhere]">{toggleLabel ?? title}</span>
                 </Button>
               </CollapsibleTrigger>
             </h3>,

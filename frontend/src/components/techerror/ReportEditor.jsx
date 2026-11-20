@@ -57,6 +57,9 @@ import { useStickyBottomBar } from '../../hooks/useStickyBottomBar.js'
 import { useVisibleInterval } from '../../hooks/useVisibleInterval.js'
 import { cn } from '@/lib/utils'
 import { useLatestCallback } from '../../hooks/useLatestCallback.js'
+import { hasOpenOverlay, isTypingTarget } from '../../utils/keyboardShortcuts.js'
+import { TE_EDITOR_CONTEXT, registerShortcutContext } from '../../utils/shortcutContexts.js'
+import { isSaveShortcut, sectionToggleStep } from './editorKeys.js'
 
 // Kişisel kayıt: çıkışta ve kullanıcı değişince silinir (utils/personalStorage PERSONAL_PREFIXES)
 export const BACKUP_PREFIX = 'sm.te.draft.'
@@ -109,6 +112,22 @@ const INC_BLOCK_KEYS = Object.freeze({
   server: 'te.inc.block.server',
 })
 const NO_LINKS_SRC = Object.freeze({})
+
+/**
+ * Çakışma durumu (2026-11-20, A5): `false` yok; `true` var ama kim / ne zaman bilinmiyor; nesne `{ by, at }` — rapor arada
+ * başkası (ya da başka sekme) tarafından kaydedildi, son kaydedenin adı ve zamanı biliniyor. Doğruluk değeri her yerde
+ * aynı ("çakışma var").
+ */
+export function conflictOf(report) {
+  const by = typeof report?.updated_by_name === 'string' && report.updated_by_name.trim() ? report.updated_by_name : null
+  const at = typeof report?.updated_at === 'string' && report.updated_at ? report.updated_at : null
+  return by || at ? { by, at } : true
+}
+
+/** Kayıt çakışmasından (409) sonraki kısa yeniden okumanın süre sınırı — kayıt düğmesini uzun süre meşgul tutmasın. */
+export const CONFLICT_READ_TIMEOUT_MS = 15_000
+/** Yanıtı alınamamış (ağ / zaman aşımı / 5xx) en son kayıt gövdeleri — 409'da "sunucudaki bizim önceki kaydımız mı?" sorusu için. */
+const UNCONFIRMED_MAX = 5
 
 /** Raporun gönderim izi (son deneme / son gönderim / sayaç) — "o okumadan beri gönderim oldu mu?" karşılaştırması için. */
 const sendMarkOf = (r) => ({ attempt: r?.last_attempt_at ?? null, sent: r?.last_sent_at ?? null, count: r?.send_count ?? null,
@@ -249,6 +268,10 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
   // alanın altında gösterilir (2026-10-18); geçersiz değer (bitiş başlangıçtan önce, ay dışı tarih) hemen
   const [showRequired, setShowRequired] = useState(false)
   const savePromise = useRef(null)                      // süren kayıt (elle ya da otomatik): sıradaki onu bekler
+  // Yanıtı alınamayan kayıt gövdeleri (A5, 2026-11-20): ağ hatası / zaman aşımı / 5xx'te istek sunucuda yine de işlenmiş
+  // olabilir — sonraki kayıt 409 alırsa sunucudaki içerik bunlardan biriyse çakışma BİZİMDİR (taban benimsenip bir kez
+  // yeniden denenir), başkasının değişikliği değil
+  const unconfirmedSends = useRef([])
   // Son kaydın neden OLMADIĞI (inceleme 2026-10-18): konu görselinden önceki kayıt başarısızsa yuva nedene göre konuşur —
   // 'invalid' | 'conflict' | 'network' | 'server'; başarıda null
   const lastSaveFailure = useRef(null)
@@ -352,8 +375,8 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
     }
     if (keepDraft && !wasClean && versionMoved) {
       // Elde kaydedilmemiş değişiklik var VE kayıt arada başkası tarafından değişti: taban İLERLETİLMEZ — sonraki
-      // kayıt 409 alır, başkasının değişikliği sessizce ezilmez; kullanıcıya çakışma söylenir
-      setConflict(true)
+      // kayıt 409 alır, başkasının değişikliği sessizce ezilmez; kullanıcıya çakışma söylenir (kim / ne zaman — A5)
+      setConflict(conflictOf(resData.report))
       return
     }
     canonTpl.current = nextTpl
@@ -669,19 +692,126 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
     return run
   }
 
-  async function doSave({ quiet = false, auto = false } = {}) {
+  /** Yanıtı alınamayan kayıt gövdesi (bkz. `unconfirmedSends`). */
+  function noteUnconfirmed(json) {
+    const list = unconfirmedSends.current.filter((j) => j !== json)
+    list.push(json)
+    unconfirmedSends.current = list.slice(-UNCONFIRMED_MAX)
+  }
+
+  /**
+   * Kayıt 409 (CONCURRENT_MODIFICATION) aldı — A5 (2026-11-20). Rapor kısa süre sınırıyla yeniden okunur; taslağa ve tabana
+   * DOKUNULMAZ, yalnız karar verilir:
+   *   - `adopt`: sunucu tam olarak bu gönderimi tutuyor (önceki kaydın yanıtı kayboldu) → sessizce benimsenir, çakışma yok;
+   *   - `retry`: sunucu bu sekmenin yanıtı alınamamış ÖNCEKİ bir gönderimini tutuyor → o taban benimsenip kayıt BİR KEZ
+   *     yeniden denenir (başkasının değişikliği değil);
+   *   - `conflict`: başka içerik — kim / ne zaman bilinirse banner söyler; okunamazsa bilinmeyen çakışma.
+   */
+  async function resolveConflict(sentJson) {
+    let res
+    try {
+      res = await api.techErrors.report(reportId, { timeoutMs: CONFLICT_READ_TIMEOUT_MS })
+    } catch {
+      return { kind: 'conflict', info: true }
+    }
+    const rep = res?.success ? res.data?.report : null
+    if (!rep || rep.version == null) return { kind: 'conflict', info: true }
+    const tpl = res.data.template || canonTpl.current
+    const serverJson = stableJson(canonicalValues(normalizeValues(res.data.values), tpl))
+    // Şablon değiştiyse (başkası "şablonu uygula" dedi) karşılaştırma anlamsız: çakışma
+    const sameTpl = !res.data.template || stableJson(res.data.template) === stableJson(canonTpl.current)
+    if (sameTpl && serverJson === sentJson) return { kind: 'adopt', report: rep, json: serverJson, data: res.data }
+    if (sameTpl && unconfirmedSends.current.includes(serverJson)) return { kind: 'retry', report: rep, json: serverJson, data: res.data }
+    return { kind: 'conflict', info: conflictOf(rep), report: rep }
+  }
+
+  /**
+   * Kayıt başarısının TEK defter işi (inceleme 2026-11-20): kayıt yanıtı ve 409 sonrası sessiz benimseme (A5) aynı yoldan
+   * geçer — taban + sürüm, taslak (yalnız gönderilen hâli duruyorsa), yedek, autoHold / zorunlu alan gösterimi / sunucu
+   * hataları, silinen konunun görselleri, Görsel paneli duyurusu, olay kaydı bağları, otomatik kayıt durumu, bildirim.
+   * `status`: sunucunun bildirdiği rapor durumu (benimsemede); yoksa "gönderilmişse ve içerik değiştiyse changed".
+   */
+  function acceptSaved({ values, version, updatedAt, updatedBy, status, changed, incidentLinks, sentJson, auto, quiet }) {
+    const baseJson = canonJson(values)
+    const prevBase = parseJsonOr(baseRef.current.json)
+    const prevTopics = imageTopicIds(prevBase, canonTpl.current)
+    applyBase({ json: baseJson, version })
+    // Görsel paneli konu görsellerini KAYITLI konulardan listeler (2026-10-18): kayıt görsel alan bir bölümün konu listesini
+    // değiştirdiyse (eklenen konu; silinen konu — sunucu görsellerini de bu kayıtta sildi) açık panel yeniden okusun
+    if (imageTopicIds(values, canonTpl.current) !== prevTopics) postImagesChanged(reportId, KIND_REPORT)
+    accepted.current = auto ? { sent: sentJson, base: baseJson } : null
+    // Kayıt sürerken yazılan değişiklik korunur: yanıt yalnız GÖNDERİLEN taslağın yerini alır. Otomatik kayıt taslağa
+    // HİÇ dokunmaz (kullanıcı yazıyor olabilir); yedek yine silinir — içerik sunucuda
+    const untouched = canonJson(draftRef.current) === sentJson
+    if (untouched && !auto) {
+      // Otomatik kayıt "bulunan taslak" uyarısını kaldırmaz (2. tur): kullanıcı ona henüz cevap vermemiş olabilir —
+      // eski taslağın son kopyası o uyarıdadır
+      setDraft(values)
+      dropBackup(reportId)
+      setBackup(null)
+    }
+    if (!auto) setAutoHold(false)
+    if (!auto) setShowRequired(false)
+    // Silinen konunun görselini sunucu bu kayıtta sildi (2026-10-18): yerel liste de aynı kuralla süzülür
+    setImages((list) => {
+      const next = list.filter((i) => issueImageAlive(i.slot_id, canonTpl.current, values))
+      return next.length === list.length ? list : next
+    })
+    setServerErrors({})
+    setState((s) => (s.loading ? { ...s, loading: false } : s))
+    // Durumu YALNIZ içeriği değiştiren kayıt "changed" yapar — ancak o zaman yoklamaya "yerel değişiklik var" denir
+    // (20.157.0 incelemesi: hiçbir şey değiştirmeyen kayıt da sayacı artırıyor, yoklama sonraki "sent"i yazmıyor, bayat
+    // "değişti" rozeti kalıyordu)
+    if (changed) statusGen.current++
+    setData((d) => (d ? { ...d, report: { ...d.report, version, updated_at: updatedAt ?? d.report.updated_at,
+      updated_by_name: updatedBy ?? d.report.updated_by_name,
+      status: status ?? (d.report.status === 'sent' && changed ? 'changed' : d.report.status) } } : d))
+    // Olay kaydı bağları (2026-11-20): sunucu her kayıtta elle değiştirilen alanları "iğneler" ve silinen konunun bağını
+    // siler. Yanıt bağları taşıyorsa doğrudan; taşımıyorsa ve bağlı bir konu değiştiyse yalnız bağlar yeniden okunur
+    // (taslağa / tabana dokunulmaz) — "elle değiştirildi" işareti bir sonraki yüklemeyi beklemesin
+    if (Array.isArray(incidentLinks)) {
+      linksSeq.current++
+      setData((d) => (d ? { ...d, incident_links: incidentLinks, incident_links_error: false } : d))
+    } else if (linkedTopicChanged(linkIndexRef.current, prevBase, values)) {
+      refreshLinksOnly()
+    }
+    autoBlocked.current = null
+    autoBackoff.current = { until: 0, n: 0 }
+    lastSaveFailure.current = null
+    unconfirmedSends.current = []           // sunucu artık bu kaydı tutuyor: önceki belirsiz gönderimler eskidi
+    setAutoInfo(auto ? { at: Date.now(), ok: true } : null)
+    if (!quiet && !auto) toast.success(t('te.saved'))
+  }
+
+  async function doSave({ quiet = false, auto = false, retried = false, resend = null } = {}) {
     if (!draftRef.current || readOnly) return false
-    const invalidKeys = Object.keys(clientErrorsRef.current).filter((k) => clientErrorsRef.current[k])
-    for (const k of Object.keys(issueChecksRef.current)) if (!invalidKeys.includes(k)) invalidKeys.push(k)
-    if (!auto && invalidKeys.length) { lastSaveFailure.current = 'invalid'; revealErrors(); toast.error(t('te.fixFieldErrors')); return false }
-    // Otomatik kayıtta yarım yazılmış sayı da geçersiz gibi kayıtlı değerinde gider
-    if (auto) for (const k of Object.keys(pendingRef.current)) if (!invalidKeys.includes(k)) invalidKeys.push(k)
-    // Otomatik kayıtta geçersiz alan sunucudaki (eski) değerinde kalır; diğer alanlar kaydedilir
-    const source = auto && invalidKeys.length
-      ? revertInvalidValues(draftRef.current, baseRef.current.json ? JSON.parse(baseRef.current.json) : null, invalidKeys)
-      : draftRef.current
-    const sent = canonicalValues(source, canonTpl.current)
-    const sentJson = stableJson(sent)
+    let sent
+    let sentJson
+    if (resend) {
+      // A5 yeniden deneme (inceleme 2026-11-20): taslak YENİDEN okunmaz — ilk denemede gönderilen gövde aynen gider (arada
+      // geri yüklenen eski bir yedek ya da yazılan metin bu denemeye girmez)
+      sent = resend.sent
+      sentJson = resend.sentJson
+    } else {
+      const invalidKeys = Object.keys(clientErrorsRef.current).filter((k) => clientErrorsRef.current[k])
+      for (const k of Object.keys(issueChecksRef.current)) if (!invalidKeys.includes(k)) invalidKeys.push(k)
+      // Elle kayıtta yarım yazılmış sayı / saat de kaydı durdurur (inceleme 2026-11-20): Ctrl/⌘+S alanı bırakmadan
+      // kaydedebilir, alan hatasını ise ancak bırakılınca söyler — eski değer sessizce kaydedilip "kaydedildi" denmesin
+      if (!auto && (invalidKeys.length || hasAny(pendingRef.current))) {
+        lastSaveFailure.current = 'invalid'
+        revealErrors()
+        toast.error(t('te.fixFieldErrors'))
+        return false
+      }
+      // Otomatik kayıtta yarım yazılmış sayı da geçersiz gibi kayıtlı değerinde gider
+      if (auto) for (const k of Object.keys(pendingRef.current)) if (!invalidKeys.includes(k)) invalidKeys.push(k)
+      // Otomatik kayıtta geçersiz alan sunucudaki (eski) değerinde kalır; diğer alanlar kaydedilir
+      const source = auto && invalidKeys.length
+        ? revertInvalidValues(draftRef.current, baseRef.current.json ? JSON.parse(baseRef.current.json) : null, invalidKeys)
+        : draftRef.current
+      sent = canonicalValues(source, canonTpl.current)
+      sentJson = stableJson(sent)
+    }
     if (isSavedJson(sentJson)) {
       lastSaveFailure.current = null
       // Süren otomatik kaydı bekleyen elle kayıt da geri bildirim alır (Kaydet'e basıldı, iş zaten yapılmıştı)
@@ -701,63 +831,42 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
       const res = await api.techErrors.saveReport(reportId, sent, baseRef.current.version,
         ...(auto ? [{ auto: true, timeoutMs: AUTOSAVE_TIMEOUT_MS }] : []))
       if (res?.success && res.data) {
-        const values = normalizeValues(res.data.values)
-        const baseJson = canonJson(values)
-        const prevBase = parseJsonOr(baseRef.current.json)
-        const prevTopics = imageTopicIds(prevBase, canonTpl.current)
-        applyBase({ json: baseJson, version: res.data.version })
-        // Görsel paneli konu görsellerini KAYITLI konulardan listeler (2026-10-18): kayıt görsel alan bir bölümün konu listesini
-        // değiştirdiyse (eklenen konu; silinen konu — sunucu görsellerini de bu kayıtta sildi) açık panel yeniden okusun
-        if (imageTopicIds(values, canonTpl.current) !== prevTopics) postImagesChanged(reportId, KIND_REPORT)
-        accepted.current = auto ? { sent: sentJson, base: baseJson } : null
-        // Kayıt sürerken yazılan değişiklik korunur: yanıt yalnız GÖNDERİLEN taslağın yerini alır. Otomatik kayıt taslağa
-        // HİÇ dokunmaz (kullanıcı yazıyor olabilir); yedek yine silinir — içerik sunucuda
-        const untouched = canonJson(draftRef.current) === sentJson
-        if (untouched && !auto) {
-          // Otomatik kayıt "bulunan taslak" uyarısını kaldırmaz (2. tur): kullanıcı ona henüz cevap vermemiş olabilir —
-          // eski taslağın son kopyası o uyarıdadır
-          setDraft(values)
-          dropBackup(reportId)
-          setBackup(null)
-        }
-        if (!auto) setAutoHold(false)
-        if (!auto) setShowRequired(false)
-        // Silinen konunun görselini sunucu bu kayıtta sildi (2026-10-18): yerel liste de aynı kuralla süzülür
-        setImages((list) => {
-          const next = list.filter((i) => issueImageAlive(i.slot_id, canonTpl.current, values))
-          return next.length === list.length ? list : next
-        })
-        setServerErrors({})
-        setState((s) => (s.loading ? { ...s, loading: false } : s))
-        // Durumu YALNIZ içeriği değiştiren kayıt "changed" yapar — ancak o zaman yoklamaya "yerel değişiklik var" denir
-        // (20.157.0 incelemesi: hiçbir şey değiştirmeyen kayıt da sayacı artırıyor, yoklama sonraki "sent"i yazmıyor, bayat
-        // "değişti" rozeti kalıyordu)
-        if (res.data.changed) statusGen.current++
-        setData((d) => (d ? { ...d, report: { ...d.report, version: res.data.version, updated_at: res.data.updated_at,
-          updated_by_name: res.data.updated_by_name ?? d.report.updated_by_name,
-          status: d.report.status === 'sent' && res.data.changed ? 'changed' : d.report.status } } : d))
-        // Olay kaydı bağları (2026-11-20): sunucu her kayıtta elle değiştirilen alanları "iğneler" ve silinen konunun bağını
-        // siler. Kayıt yanıtı bağları taşıyorsa doğrudan; taşımıyorsa ve bağlı bir konu değiştiyse yalnız bağlar yeniden okunur
-        // (taslağa / tabana dokunulmaz) — "elle değiştirildi" işareti bir sonraki yüklemeyi beklemesin
-        if (Array.isArray(res.data.incident_links)) {
-          linksSeq.current++
-          setData((d) => (d ? { ...d, incident_links: res.data.incident_links, incident_links_error: false } : d))
-        } else if (linkedTopicChanged(linkIndexRef.current, prevBase, values)) {
-          refreshLinksOnly()
-        }
-        autoBlocked.current = null
-        autoBackoff.current = { until: 0, n: 0 }
-        lastSaveFailure.current = null
-        setAutoInfo(auto ? { at: Date.now(), ok: true } : null)
-        if (!quiet && !auto) toast.success(t('te.saved'))
+        acceptSaved({ values: normalizeValues(res.data.values), version: res.data.version, updatedAt: res.data.updated_at,
+          updatedBy: res.data.updated_by_name, changed: !!res.data.changed, incidentLinks: res.data.incident_links,
+          sentJson, auto, quiet })
         return true
       }
       const failStatus = errorInfoOf(res)?.status
       lastSaveFailure.current = res?.code === 'CONCURRENT_MODIFICATION' ? 'conflict'
         : res?.code === 'VALIDATION_FAILED' && res?.field ? 'invalid'
           : failStatus === 0 || res?.code === 'NETWORK_ERROR' || res?.code === 'OFFLINE' ? 'network' : 'server'
+      // Yanıtı belirsiz hata (ağ, zaman aşımı, ağ geçidi / 5xx): istek sunucuda işlenmiş olabilir — sonraki 409 için hatırlanır
+      if (lastSaveFailure.current === 'network' || (failStatus != null && failStatus >= 500)) noteUnconfirmed(sentJson)
       if (res?.code === 'CONCURRENT_MODIFICATION') {
-        setConflict(true)                          // uyarı görünür; otomatik kayıt çakışma çözülene kadar durur
+        const r = await resolveConflict(sentJson)
+        if (r.kind === 'adopt') {
+          // Sunucudaki içerik tam olarak bu gönderim (yanıtı kaybolmuş): başarıyla AYNI defter işi — çakışma uyarısı çıkmaz
+          unconfirmedSends.current = unconfirmedSends.current.filter((j) => j !== r.json)
+          setConflict(false)
+          acceptSaved({ values: normalizeValues(r.data?.values), version: r.report.version, updatedAt: r.report.updated_at,
+            updatedBy: r.report.updated_by_name, status: r.report.status, changed: true,
+            incidentLinks: r.data?.incident_links, sentJson, auto, quiet })
+          return true
+        }
+        // Sunucuda bu sekmenin yanıtı alınamamış ÖNCEKİ bir gönderimi var: taban benimsenir, AYNI gövde BİR KEZ yeniden
+        // gönderilir — eski sürümlü yedek geri yüklendiyse (autoHold) ya da çakışma uyarısı açıksa ASLA (inceleme 2026-11-20)
+        if (r.kind === 'retry' && !retried && !autoHoldRef.current && !conflictRef.current) {
+          unconfirmedSends.current = unconfirmedSends.current.filter((j) => j !== r.json)
+          applyBase({ json: r.json, version: r.report.version })
+          accepted.current = null
+          statusGen.current++
+          setData((d) => (d ? { ...d, report: { ...d.report, version: r.report.version, updated_at: r.report.updated_at ?? d.report.updated_at,
+            updated_by_name: r.report.updated_by_name ?? d.report.updated_by_name, status: r.report.status ?? d.report.status } } : d))
+          return await doSave({ quiet, auto, retried: true, resend: { sent, sentJson } })
+        }
+        // Uyarı görünür; otomatik kayıt çakışma çözülene kadar durur. Yeniden okunan rapor varsa kim / ne zaman söylenir —
+        // yeniden denemenin kendisi 409 aldıysa da (inceleme 2026-11-20)
+        setConflict(r.info || (r.report ? conflictOf(r.report) : true))
       } else if (res?.code === 'VALIDATION_FAILED' && res?.field) {
         setServerErrors((e) => ({ ...e, [res.field]: res.error }))
         if (auto) { autoBlocked.current = sentJson; setAutoInfo({ at: Date.now(), ok: false, blocked: true }) }
@@ -779,6 +888,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
       return false
     } catch (e) {
       lastSaveFailure.current = 'network'
+      noteUnconfirmed(sentJson)
       if (auto) { backOff(); setAutoInfo({ at: Date.now(), ok: false }) }
       else toast.error(e?.message || t('te.saveError'))
       return false
@@ -1233,7 +1343,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
         return
       }
       const clean = isSavedJson(canonJson(draftRef.current))
-      if (fresh.data.report.version !== baseRef.current.version && !clean) { setConflict(true); return }
+      if (fresh.data.report.version !== baseRef.current.version && !clean) { setConflict(conflictOf(fresh.data.report)); return }
       // Temiz taslak: başkasının kaydı sorun değil — taze hâl alınır (sahte çakışma uyarısı yok)
       applyLoaded(fresh.data, true)
       const upd = fresh.data.template_update
@@ -1815,6 +1925,54 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
     }
   }, [readOnly])
 
+  // Klavye kısayolları (2026-11-20, A4) — yalnız bu düzenleyici kuruluyken; `?` listesinde de görünür (shortcutContexts):
+  //   Ctrl/⌘+S  Kaydet düğmesiyle AYNI yol ve engeller (salt okunur / değişiklik yok / işlem sürüyor → hiçbir şey); tarayıcının
+  //             "sayfayı kaydet" penceresi açılmaz. Düğmeye basmak gibi odaktaki alan önce BIRAKILIR (inceleme 2026-11-20):
+  //             yarım yazılmış sayı / saat ancak bırakılınca hata olur — karar, bırakmanın güncellemeleri işlendikten
+  //             sonra verilir, odak alana geri döner
+  //   Alt+↓/↑  bir sonraki / önceki bölümün başlık düğmesine odak (hiçbir bölümü açmaz) — yazı alanı DIŞINDA
+  // Açık pencere / menü varken, IME bileşimi sürerken etkisiz.
+  const kbdRef = useRef(null)
+  kbdRef.current = {
+    readOnly, dirty, busy, save,
+    blocked: () => hasAny(pendingRef.current) || hasAny(clientErrorsRef.current),
+    reveal: () => { revealErrors(); toast.error(t('te.fixFieldErrors')) },
+  }
+  const rootRef = useRef(null)
+  useEffect(() => registerShortcutContext(TE_EDITOR_CONTEXT), [])
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return
+      const k = kbdRef.current
+      if (!k) return
+      const key = typeof e.key === 'string' ? e.key : ''
+      if (isSaveShortcut(e)) {
+        if (hasOpenOverlay(document) || k.readOnly) return
+        e.preventDefault()
+        const ae = document.activeElement
+        const inEditor = !!ae && ae !== document.body && !!rootRef.current?.contains(ae)
+        if (inEditor && typeof ae.blur === 'function') ae.blur()
+        setTimeout(() => {
+          const k2 = kbdRef.current
+          if (!k2 || k2.readOnly || !rootRef.current) return
+          if (k2.dirty) { if (k2.busy == null) k2.save() }
+          else if (k2.blocked()) k2.reveal()        // yalnız yarım / geçersiz yazım: kaydedilecek bir şey yok ama söylenir
+          if (inEditor && ae.isConnected && typeof ae.focus === 'function') ae.focus({ preventScroll: true })
+        }, 0)
+        return
+      }
+      if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (key === 'ArrowDown' || key === 'ArrowUp')) {
+        if (hasOpenOverlay(document) || isTypingTarget(e.target) || isTypingTarget(document.activeElement)) return
+        const target = sectionToggleStep(rootRef.current, document.activeElement, key === 'ArrowDown' ? 1 : -1)
+        if (!target) return
+        e.preventDefault()
+        target.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   const back = (
     <Button type="button" variant="ghost" size="sm" data-slot="te-back"
       className="h-auto min-h-8 w-fit max-w-full justify-start whitespace-normal py-1.5 text-left pointer-coarse:min-h-10"
@@ -1854,7 +2012,7 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
   const reportTplVersion = posInt(report.template_version)
   const channelTplVersion = posInt(channel?.template_version)
   return (
-    <div className={cn('flex flex-col gap-4', actionsHeight > 0 ? '' : 'pb-24')}
+    <div ref={rootRef} className={cn('flex flex-col gap-4', actionsHeight > 0 ? '' : 'pb-24')}
       style={actionsHeight > 0 ? { paddingBottom: actionsHeight + 16 } : undefined} data-slot="te-report" data-report={reportId}>
       {back}
       <header className="flex flex-col gap-2">
@@ -1934,17 +2092,33 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
       )}
       {readOnly && <AlertBanner tone="info" title={t('te.readOnlyTitle')}>{t('te.readOnlyBody')}</AlertBanner>}
       {conflict && (
-        <AlertBanner tone="warning" title={t('te.conflictTitle')}
-          actions={<Button type="button" size="sm" variant="outline" onClick={() => {
-            // Değişiklik kaybolmasın: en son hâli yüklemeden önce taslak yedeğe yazılır; yükleme sonrası "geri yükle" önerilir.
-            // Bu yedek bilerek bırakılır: taslak temizlenince silinmesin
-            clearTimeout(backupTimer.current)
-            writeBackup(reportId, { version: base.version, values: draft, at: Date.now() })
-            wroteBackup.current = false
-            load()
-          }}>{t('te.loadLatest')}</Button>}>
-          {t('te.conflictBody')}
-        </AlertBanner>
+        <div data-slot="te-conflict" data-known={typeof conflict === 'object' ? 'true' : 'false'}>
+          <AlertBanner tone="warning" title={t('te.conflictTitle')}
+            actions={(
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" size="sm" variant="outline" className="pointer-coarse:min-h-10" data-slot="te-conflict-load" onClick={() => {
+                  // Değişiklik kaybolmasın: en son hâli yüklemeden önce taslak yedeğe yazılır; yükleme sonrası "geri yükle"
+                  // önerilir. Bu yedek bilerek bırakılır: taslak temizlenince silinmesin
+                  clearTimeout(backupTimer.current)
+                  writeBackup(reportId, { version: base.version, values: draft, at: Date.now() })
+                  wroteBackup.current = false
+                  load()
+                }}>{t('te.loadLatest')}</Button>
+                {/* Kim neyi değiştirdi (A5): değişiklik geçmişi — taslağa dokunmaz */}
+                <Button type="button" size="sm" variant="ghost" className="pointer-coarse:min-h-10" data-slot="te-conflict-history"
+                  onClick={() => setHistoryOpen(true)}>
+                  <History aria-hidden="true" /> {t('te.conflictHistory')}
+                </Button>
+              </div>
+            )}>
+            {typeof conflict === 'object' && (conflict.by || conflict.at) && (
+              <span className="block [overflow-wrap:anywhere]" data-slot="te-conflict-who">
+                {t('te.conflictWho', conflict.by || t('te.conflictSomeone'), conflict.at ? fmtDateTime(conflict.at, uiLang) : '—')}
+              </span>
+            )}
+            {t('te.conflictBody')}
+          </AlertBanner>
+        </div>
       )}
       {backup && !readOnly && (
         <AlertBanner tone="info" icon={History} title={t('te.backupTitle')}
@@ -2050,7 +2224,15 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenN
           onClose={() => setMailPreviewOpen(false)} uiLang={uiLang}
           onSend={!readOnly && canSend && busy == null && report.status !== 'sending'
             && (approvalRequired ? !!approvalDetail?.can_send_executive : data.team_email_set !== false) ? send : null}
-          sendLabel={approvalRequired ? t('te.appr.sendExec') : (report.last_sent_at ? t('te.resend') : t('te.send'))} />
+          sendLabel={approvalRequired ? t('te.appr.sendExec') : (report.last_sent_at ? t('te.resend') : t('te.send'))}
+          // Onay eylemleri (A2): eylem çubuğu / onay kartıyla AYNI kural ve işleyici; akışsız kanalda yok
+          // (meşgulken düğmeler devre dışı — pencere sökülmez: karar sürerken `busy` 'approval' olur)
+          onRequestApproval={!readOnly && approvalRequired && approvalDetail?.can_request ? requestApproval : null}
+          requestLabel={approvalDetail?.resend ? t('te.appr.resend') : t('te.appr.request')}
+          canDecide={approvalRequired && !!approvalDetail?.can_decide}
+          actionsDisabled={busy != null}
+          execCount={Number(approvalDetail?.executive_count) || 0}
+          onDecided={() => load({ keepDraft: true })} onBusy={setBusy} />
       )}
       {/* Olay kaydından konu al (2026-11-20): her açılışta yeni durum (pencere kapanınca sökülür) */}
       {importFor != null && (
