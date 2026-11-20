@@ -334,6 +334,26 @@ class TechErrorReportServiceTest {
         TechErrorChannel fresh = service.channel(ch.getId());
         Map<String, Object> preview = service.refreshPreview(reports.findById(r.getId()).orElseThrow(), fresh);
         assertThat(preview).containsEntry("differs", true).containsEntry("lost_values", 1).containsEntry("lost_images", 1);
+        // B4 (2026-11-20): sayının yanında ADLAR — aynı kaynaktan, yer tutucuları çözülmüş
+        Template prevT = TechErrorTemplate.fromStored(r.getTemplateJson());
+        var quotaSec = prevT.sections().stream()
+                .filter(x -> "metrics".equals(x.kind()) && x.fields().stream().anyMatch(fl -> "quota-note".equals(fl.id())))
+                .findFirst().orElseThrow();
+        var quotaField = quotaSec.fields().stream().filter(fl -> "quota-note".equals(fl.id())).findFirst().orElseThrow();
+        var chartSec = prevT.section("charts");
+        var chartSlot = prevT.slot("quota-unmapped-monthly");
+        @SuppressWarnings("unchecked") List<Map<String, Object>> lostFields = (List<Map<String, Object>>) preview.get("lost_fields");
+        @SuppressWarnings("unchecked") List<Map<String, Object>> lostSlots = (List<Map<String, Object>>) preview.get("lost_slots");
+        assertThat(lostFields).singleElement().satisfies(m -> assertThat(m)
+                .containsEntry("id", "quota-note").containsEntry("kind", "field").containsEntry("count", 1)
+                .containsEntry("label", TechErrorTemplate.resolve(quotaField.label(), "Mobil", 2026, 9, prevT.lang()))
+                .containsEntry("section", TechErrorTemplate.resolve(quotaSec.title(), "Mobil", 2026, 9, prevT.lang())));
+        assertThat(lostSlots).singleElement().satisfies(m -> assertThat(m)
+                .containsEntry("id", "quota-unmapped-monthly").containsEntry("kind", "slot")
+                .containsEntry("label", TechErrorTemplate.resolve(chartSlot.label(), "Mobil", 2026, 9, prevT.lang()))
+                .containsEntry("section", TechErrorTemplate.resolve(chartSec.title(), "Mobil", 2026, 9, prevT.lang())));
+        assertThat(String.valueOf(lostFields.get(0).get("section"))).doesNotContain("{");
+        assertThat(preview).containsEntry("lost_fields_more", 0).containsEntry("lost_slots_more", 0);
 
         var res = service.refreshTemplate(r.getId(), s.getVersion(), 7L);
         assertThat(res.removedValues()).isEqualTo(1);
@@ -343,6 +363,120 @@ class TechErrorReportServiceTest {
         TechErrorReport after = reports.findById(r.getId()).orElseThrow();
         assertThat(after.getValuesJson()).contains("sla-rate").doesNotContain("quota-note");
         assertThat(service.refreshPreview(after, fresh)).containsEntry("differs", false);
+    }
+
+    @Test
+    @DisplayName("B4 (2026-11-20): önizleme kaybolacakları ADLA listeler — elle yazılmış özet, alan değeri, o aya özel hedef,"
+            + " anomali konusu (cevaplarıyla, sayımı birden fazla) ve konu görseli; kalemlerin sayım toplamı lost_values'a,"
+            + " görsel listesi lost_images'a eşit; liste en çok 100 ad")
+    void refreshPreviewNamesWhatIsLost() throws Exception {
+        TechErrorChannel ch = channel(1, "Mobil");
+        TechErrorReport r = service.createReport(ch, 2026, 9, 7L);
+        Map<String, Object> f = new HashMap<>();
+        f.put("sla-rate", 99.9);
+        f.put("total-tx", 1000);
+        f.put("error-count", 5);
+        service.saveValues(r.getId(), r.getVersion(), Map.of("fields", f,
+                "targets", Map.of("sla-rate", 99.8),
+                "texts", Map.of("exec-summary", "Elle yazılmış özet"),
+                "issues", Map.of("issues", List.of(topicRaw("k1", "errors", 3, "date", "2026-09-12")))), 7L);
+        service.upload(r.getId(), "iss:issues:k1:1", TechErrorImageValidatorTest.png(400, 200), "c.png", 7L);
+
+        // Yeni şablon: yönetici özeti, anomali bölümü ve SLA alanı çıkar
+        Map<String, Object> raw = TechErrorTemplate.toMap(TechErrorTemplate.fromStored(ch.getTemplateJson()));
+        @SuppressWarnings("unchecked") List<Map<String, Object>> secs = new ArrayList<>((List<Map<String, Object>>) raw.get("sections"));
+        secs.removeIf(x -> "issues".equals(x.get("kind")) || "exec-summary".equals(x.get("id")));
+        secs.replaceAll(x -> {
+            if (!(x.get("fields") instanceof List<?> fl)) return x;
+            Map<String, Object> copy = new LinkedHashMap<>(x);
+            List<Object> fields = new ArrayList<>(fl);
+            fields.removeIf(fd -> "sla-rate".equals(((Map<?, ?>) fd).get("id")));
+            copy.put("fields", fields);
+            return copy;
+        });
+        raw.put("sections", secs);
+        service.saveTemplate(ch.getId(), 1, TechErrorTemplate.normalize(raw), 7L);
+
+        Map<String, Object> preview = service.refreshPreview(reports.findById(r.getId()).orElseThrow(), service.channel(ch.getId()));
+        @SuppressWarnings("unchecked") List<Map<String, Object>> lost = (List<Map<String, Object>>) preview.get("lost_fields");
+        assertThat(lost).extracting(m -> m.get("kind") + ":" + m.get("id"))
+                .containsExactly("text:exec-summary", "field:sla-rate", "target:sla-rate", "topic:k1");
+        assertThat(lost.get(3)).containsEntry("count", 2);                       // konu + tarih cevabı
+        assertThat(String.valueOf(lost.get(3).get("label"))).contains("Konu k1");
+        assertThat(lost.stream().mapToInt(m -> ((Number) m.get("count")).intValue()).sum())
+                .isEqualTo(((Number) preview.get("lost_values")).intValue());
+        assertThat(lost).allSatisfy(m -> assertThat(String.valueOf(m.get("section"))).doesNotContain("{"));
+        @SuppressWarnings("unchecked") List<Map<String, Object>> slots = (List<Map<String, Object>>) preview.get("lost_slots");
+        assertThat(slots).hasSize(((Number) preview.get("lost_images")).intValue()).singleElement().satisfies(m -> assertThat(m)
+                .containsEntry("id", "iss:issues:k1:1").containsEntry("kind", "topic_image").containsEntry("image_no", 1));
+        assertThat(String.valueOf(slots.get(0).get("label"))).contains("Konu k1");
+
+        // Sınır: en çok 100 ad (fazlası *_more ile sayılır — önizleme çağıranı hesaplar)
+        List<Map<String, Object>> many = new ArrayList<>();
+        for (int i = 0; i < 130; i++) many.add(Map.of("id", "x" + i));
+        assertThat(TechErrorReportService.capList(many)).hasSize(TechErrorReportService.LOST_LIST_MAX);
+        assertThat(TechErrorReportService.capList(many.subList(0, 7))).hasSize(7);
+    }
+
+    @Test
+    @DisplayName("B4 inceleme (2026-11-20): kalan konunun düşen cevapları (topic_answers), tablo hücreleri (table) ve özet kartına"
+            + " gömülü bölümün alanı adla listelenir; gömülü alanın bölümü ÖZETİN başlığıdır; her türün sayım toplamı"
+            + " lost_values'ın kaynağına (countValues farkı) eşit; tabloda ad bölüm adıdır")
+    @SuppressWarnings("unchecked")
+    void lostValueItemsCoversAnswersTablesAndHostedSections() {
+        Map<String, Object> raw = new LinkedHashMap<>(TechErrorTemplate.toMap(TechErrorTemplate.defaults("tr")));
+        List<Object> secs = new ArrayList<>((List<?>) raw.get("sections"));
+        // Özet kartına gömülü gösterge bölümü (yönetici özetinin hemen ardında) + iki sütunlu tablo (sonda)
+        Map<String, Object> emb = new LinkedHashMap<>();
+        emb.put("id", "emb");
+        emb.put("kind", "metrics");
+        emb.put("title", "Gömülü bölüm");
+        emb.put("host", "exec-summary");
+        emb.put("fields", List.of(Map.of("id", "emb-count", "label", "Gömülü adet", "type", "number")));
+        secs.add(1, emb);
+        secs.add(Map.of("id", "tb", "kind", "table", "title", "{kanal} tablosu",
+                "columns", List.of(Map.of("id", "c1", "label", "Bir", "type", "number"), Map.of("id", "c2", "label", "İki", "type", "number")),
+                "rows", List.of(Map.of("id", "r1", "label", "Satır 1"), Map.of("id", "r2", "label", "Satır 2"))));
+        raw.put("sections", secs);
+        Template prev = TechErrorTemplate.normalize(raw);
+        assertThat(TechErrorTemplate.hostOf(prev, prev.section("emb"))).isNotNull();
+
+        Map<String, Object> f = new LinkedHashMap<>();
+        f.put("total-tx", 1000);
+        f.put("error-count", 5);
+        f.put("emb-count", 7);
+        Map<String, Object> rawValues = new LinkedHashMap<>();
+        rawValues.put("fields", f);
+        rawValues.put("issues", Map.of("issues", List.of(topicRaw("k1", "errors", 3, "date", "2026-09-12"))));
+        rawValues.put("tables", Map.of("tb", Map.of("r1", Map.of("c1", 1, "c2", 2), "r2", Map.of("c1", 3, "c2", 4))));
+        var before = TechErrorValues.normalize(rawValues, prev, java.time.YearMonth.of(2026, 9));
+
+        // Yeni şablon: gömülü bölüm gider, anomali bölümünde tarih sorusu kapanır, tablodan ikinci sütun çıkar
+        Map<String, Object> nextRaw = new LinkedHashMap<>(TechErrorTemplate.toMap(prev));
+        List<Object> nsecs = new ArrayList<>((List<?>) nextRaw.get("sections"));
+        nsecs.removeIf(x -> "emb".equals(((Map<?, ?>) x).get("id")));
+        nsecs.replaceAll(x -> {
+            Map<String, Object> m = new LinkedHashMap<>((Map<String, Object>) x);
+            if ("issues".equals(m.get("kind"))) m.remove("ask_time");
+            if ("tb".equals(m.get("id"))) m.put("columns", List.of(Map.of("id", "c1", "label", "Bir", "type", "number")));
+            return m;
+        });
+        nextRaw.put("sections", nsecs);
+        Template next = TechErrorTemplate.normalize(nextRaw);
+
+        var carried = TechErrorReportService.carry(before, prev, next);
+        var items = TechErrorReportService.lostValueItems(prev, before, carried, "Mobil", 2026, 9);
+        assertThat(items).extracting(m -> m.get("kind") + ":" + m.get("id"))
+                .containsExactly("field:emb-count", "topic_answers:k1", "table:tb");
+        String host = TechErrorTemplate.resolve(prev.section("exec-summary").title(), "Mobil", 2026, 9, "tr");
+        assertThat(items.get(0)).containsEntry("label", "Gömülü adet").containsEntry("section", host).containsEntry("count", 1);
+        assertThat(String.valueOf(items.get(0).get("section"))).isNotEqualTo("Gömülü bölüm");
+        assertThat(items.get(1)).containsEntry("count", 1);                          // yalnız tarih cevabı düştü
+        assertThat(String.valueOf(items.get(1).get("label"))).contains("Konu k1");
+        assertThat(items.get(2)).containsEntry("label", "Mobil tablosu").containsEntry("section", "Mobil tablosu")
+                .containsEntry("count", 2);                                           // c2 sütunu: iki hücre
+        int sum = items.stream().mapToInt(m -> ((Number) m.get("count")).intValue()).sum();
+        assertThat(sum).isEqualTo(TechErrorReportService.countValues(before) - TechErrorReportService.countValues(carried));
     }
 
     @Test

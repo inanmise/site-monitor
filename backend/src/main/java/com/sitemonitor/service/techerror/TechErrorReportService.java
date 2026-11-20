@@ -727,9 +727,11 @@ public class TechErrorReportService {
         Values carried = carry(before, prev, next);
         Values after = TechErrorCalc.apply(next, carried, previousFields(r, next));
         Set<String> keep = keepSlots(next, carried);
-        // Yalnız kullanıcının gördüğü görseller (sahipsiz konu görseli rapor ekranında yok — inceleme 2026-10-18)
-        int lostImages = 0;
-        for (var m : liveImageMeta(r.getId(), prev, before)) if (!keep.contains(m.getSlotId())) lostImages++;
+        // Yalnız kullanıcının gördüğü görseller (sahipsiz konu görseli rapor ekranında yok — inceleme 2026-10-18). Liste BİR
+        // kez okunur: sayı ve adlar aynı listeden (rapor okumaları — 10 sn'lik gönderim yoklamaları dahil — ikinci sorgu yapmaz)
+        List<String> lostSlotIds = new ArrayList<>();
+        for (var m : liveImageMeta(r.getId(), prev, before)) if (!keep.contains(m.getSlotId())) lostSlotIds.add(m.getSlotId());
+        int lostImages = lostSlotIds.size();
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("differs", !TechErrorTemplate.toJson(next).equals(TechErrorTemplate.toJson(prev)));
         out.put("lost_values", Math.max(0, countValues(before) - countValues(carried)));
@@ -745,7 +747,136 @@ public class TechErrorReportService {
         // Yeni şablonla PDF / e-postadan DÜŞECEK konu sayısı (inceleme 2026-10-18): "konuyu rapora alma" + müşteri etkisi Hayır —
         // eski raporda müşteri sayısı 0 girilmiş konu "etki yok" çıkarılır ve sessizce rapordan düşerdi; onayda söylenir
         out.put("hidden_topics", newlyHiddenTopics(prev, before, next, after));
+        // Kaybolacakların ADLARI (2026-11-20, B4): onay penceresi sayının yanında neyin gideceğini listeler. Listeler
+        // lost_values / lost_images'ın saydığının AYNISI (bir kalem birden çok değeri temsil edebilir: count), en çok
+        // LOST_LIST_MAX ad + kalanların sayısı. Etiketler kanal / ay / yıl yer tutucuları çözülmüş olarak gelir.
+        String channelName = ch.getName();
+        List<Map<String, Object>> lostFields = lostValueItems(prev, before, carried, channelName, ymYear(r), ymMonth(r));
+        List<Map<String, Object>> lostSlots = new ArrayList<>();
+        for (String slotId : lostSlotIds) lostSlots.add(lostSlotItem(prev, before, slotId, channelName, ymYear(r), ymMonth(r)));
+        out.put("lost_fields", capList(lostFields));
+        out.put("lost_fields_more", Math.max(0, lostFields.size() - LOST_LIST_MAX));
+        out.put("lost_slots", capList(lostSlots));
+        out.put("lost_slots_more", Math.max(0, lostSlots.size() - LOST_LIST_MAX));
         return out;
+    }
+
+    /** Önizlemenin ad listelerinin üst sınırı (2026-11-20, B4); fazlası {@code lost_*_more} sayısıyla söylenir. */
+    static final int LOST_LIST_MAX = 100;
+
+    static List<Map<String, Object>> capList(List<Map<String, Object>> l) {
+        return l.size() <= LOST_LIST_MAX ? l : new ArrayList<>(l.subList(0, LOST_LIST_MAX));
+    }
+
+    private static int ymYear(TechErrorReport r) { return r.getReportYear() == null ? 0 : r.getReportYear(); }
+
+    private static int ymMonth(TechErrorReport r) { return r.getReportMonth() == null ? 0 : r.getReportMonth(); }
+
+    /**
+     * Şablon uygulanınca kaybolacak değerlerin adları (2026-11-20, B4), eski şablonun sırasıyla. Her kalem
+     * {@code {id, label, section, kind, count}}; {@code count} kalemin {@link #countValues} sayımındaki payıdır — toplamı
+     * önizlemenin {@code lost_values}'ına eşittir (aynı kaynak: {@code before} − {@code carried}). Türler: {@code field}
+     * (alan değeri), {@code target} (o aya özel hedef), {@code text} (metin bölümü / elle yazılmış özet), {@code topic}
+     * (anomali konusu ve cevapları), {@code topic_answers} (kalan konunun düşen cevapları), {@code table} (tablo hücreleri).
+     */
+    static List<Map<String, Object>> lostValueItems(Template prev, Values before, Values carried, String channel, int year, int month) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        String lang = prev.lang();
+        for (var s : prev.sections()) {
+            // Özet kartına gömülü gösterge bölümünün alanları düzenleyicide özet bölümünün altında görünür: oranın adı yazılır
+            var host = TechErrorTemplate.hostOf(prev, s);
+            String section = TechErrorTemplate.resolve((host != null ? host : s).title(), channel, year, month, lang);
+            switch (s.kind()) {
+                case "metrics" -> {
+                    for (var f : s.fields()) {
+                        String label = TechErrorTemplate.resolve(f.label(), channel, year, month, lang);
+                        if (before.fields().get(f.id()) != null && carried.fields().get(f.id()) == null) {
+                            out.add(lostItem(f.id(), label, section, "field", 1));
+                        }
+                        if (before.targets().get(f.id()) != null && carried.targets().get(f.id()) == null) {
+                            out.add(lostItem(f.id(), label, section, "target", 1));
+                        }
+                    }
+                }
+                case "summary", "text" -> {
+                    if (before.texts().containsKey(s.id()) && !carried.texts().containsKey(s.id())) {
+                        out.add(lostItem(s.id(), section, section, "text", 1));
+                    }
+                }
+                case "issues" -> {
+                    Map<String, TechErrorValues.Issue> kept = new HashMap<>();
+                    for (var i : carried.issues().getOrDefault(s.id(), List.of())) kept.put(i.id(), i);
+                    for (var i : before.issues().getOrDefault(s.id(), List.of())) {
+                        String label = TechErrorTemplate.resolve(i.displayTitle(s.itemTitle()), channel, year, month, lang);
+                        TechErrorValues.Issue c = kept.get(i.id());
+                        if (c == null) {
+                            out.add(lostItem(i.id(), label, section, "topic", issueUnits(i)));
+                        } else {
+                            int lost = issueUnits(i) - issueUnits(c);
+                            if (lost > 0) out.add(lostItem(i.id(), label, section, "topic_answers", lost));
+                        }
+                    }
+                }
+                case "table" -> {
+                    int lost = cells(before.tables().get(s.id())) - cells(carried.tables().get(s.id()));
+                    if (lost > 0) out.add(lostItem(s.id(), section, section, "table", lost));
+                }
+                default -> { }
+            }
+        }
+        return out;
+    }
+
+    /** Silinecek görselin adı (2026-11-20, B4): şablon yuvası → yuva adı + bölüm; konu görseli → konu başlığı + sıra. */
+    static Map<String, Object> lostSlotItem(Template prev, Values before, String slotId, String channel, int year, int month) {
+        String lang = prev.lang();
+        var is = TechErrorTemplate.parseIssueSlot(slotId);
+        if (is != null) {
+            var s = prev.section(is.sectionId());
+            String section = s == null ? "" : TechErrorTemplate.resolve(s.title(), channel, year, month, lang);
+            String label = "";
+            for (var i : before.issues().getOrDefault(is.sectionId(), List.of())) {
+                if (i.id().equals(is.issueId())) {
+                    label = TechErrorTemplate.resolve(i.displayTitle(s == null ? null : s.itemTitle()), channel, year, month, lang);
+                }
+            }
+            Map<String, Object> m = lostItem(slotId, label, section, "topic_image", 1);
+            m.put("image_no", is.n());
+            return m;
+        }
+        for (var s : prev.sections()) {
+            if (!"images".equals(s.kind())) continue;
+            for (var sl : s.slots()) {
+                if (sl.id().equals(slotId)) {
+                    return lostItem(slotId, TechErrorTemplate.resolve(sl.label(), channel, year, month, lang),
+                            TechErrorTemplate.resolve(s.title(), channel, year, month, lang), "slot", 1);
+                }
+            }
+        }
+        return lostItem(slotId, "", "", "slot", 1);
+    }
+
+    private static Map<String, Object> lostItem(String id, String label, String section, String kind, int count) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id);
+        m.put("label", label == null ? "" : label);
+        m.put("section", section == null ? "" : section);
+        m.put("kind", kind);
+        m.put("count", count);
+        return m;
+    }
+
+    /** Bir konunun {@link #countValues} sayımındaki payı (konu + tarih + saat + kesinti + Kesinti ID + açıklamalar). */
+    private static int issueUnits(TechErrorValues.Issue i) {
+        return 1 + (i.date() != null ? 1 : 0) + (i.start() != null ? 1 : 0) + (i.outage() != null ? 1 : 0)
+                + (i.outageId() != null ? 1 : 0) + i.captions().size();
+    }
+
+    private static int cells(Map<String, Map<String, Object>> table) {
+        if (table == null) return 0;
+        int n = 0;
+        for (var row : table.values()) n += row.size();
+        return n;
     }
 
     /**
@@ -1623,18 +1754,13 @@ public class TechErrorReportService {
         if (!expected.equals(r.getVersion())) throw new OptimisticLockingFailureException("tech_error_report version");
     }
 
-    private static int countValues(Values v) {
+    static int countValues(Values v) {
         // O aya özel hedefler de kaybolabilir (yeni şablon alanın hedefini kaldırdı — inceleme 2026-10-17)
         int n = v.fields().size() + v.texts().size() + v.targets().size();
         // Konu + (2026-10-18) cevapları: tarih, saat aralığı, kesinti, Kesinti ID, görsel açıklamaları — sorusu kaldırılan
         // şablon uygulanınca kaybolanlar da sayılsın (müşteri etkisi sayılmaz: eski raporda müşteri sayısından çıkarılır)
-        for (var l : v.issues().values()) {
-            for (var i : l) {
-                n += 1 + (i.date() != null ? 1 : 0) + (i.start() != null ? 1 : 0) + (i.outage() != null ? 1 : 0)
-                        + (i.outageId() != null ? 1 : 0) + i.captions().size();
-            }
-        }
-        for (var t : v.tables().values()) for (var r : t.values()) n += r.size();
+        for (var l : v.issues().values()) for (var i : l) n += issueUnits(i);
+        for (var t : v.tables().values()) n += cells(t);
         return n;
     }
 

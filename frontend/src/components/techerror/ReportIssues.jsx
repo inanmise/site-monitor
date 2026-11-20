@@ -1,7 +1,7 @@
 import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowDown, ArrowUp, CalendarClock, ChevronRight, EyeOff, FileText, Hash, ImageIcon, Import, Link2, Plus, ScrollText, Tag, Trash2, Users,
-  Wand2, Zap,
+  ArrowDown, ArrowUp, CalendarClock, ChevronRight, EyeOff, FileText, Hash, ImageIcon, Import, Link2, Plus, ScrollText, Tag, Trash2,
+  TriangleAlert, Users, Wand2, Zap,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -29,6 +29,7 @@ import {
   issueLeadText, issueLegacy, issueOptions, issueRangeLabel, issueShare, issueSlotId, issueUnitKey, move, newIssue, reportMonthBounds,
   resolveIssueTitle, topicOpenId,
 } from './techErrorModel.js'
+import { issueSumWarning } from './readinessModel.js'
 
 const EMPTY = Object.freeze([])
 
@@ -143,14 +144,15 @@ function IssuesBlockImpl({ section, template, list = EMPTY, units = null, shownF
   const undoCtx = useRef(null)
   undoCtx.current = { t, readOnly, itemTitle: section.item_title }
   const undoToasts = useRef(new Set())
-  useEffect(() => {
+  const dismissUndos = useCallback(() => {
+    const tt = toastRef.current
     const ids = undoToasts.current
-    return () => {
-      const tt = toastRef.current
-      for (const id of [...ids]) { if (typeof tt?.dismiss === 'function') tt.dismiss(id) }
-      ids.clear()
-    }
+    for (const id of [...ids]) { if (typeof tt?.dismiss === 'function') tt.dismiss(id) }
+    ids.clear()
   }, [])
+  useEffect(() => dismissUndos, [dismissUndos])
+  // Onay kilidi inince (B3) açık "Geri al" bildirimleri kapanır: kilitli raporu değiştirmesin (görsel yuvası da böyle)
+  useEffect(() => { if (readOnly) dismissUndos() }, [readOnly, dismissUndos])
   const remove = useCallback((iid, { undo = true } = {}) => {
     const cur = listRef.current
     const idx = cur.findIndex((x) => x.id === iid)
@@ -169,7 +171,9 @@ function IssuesBlockImpl({ section, template, list = EMPTY, units = null, shownF
     toastId = tt.action(t('te.undo.topicRemoved', title), {
       label: t('te.undo.action'),
       onAction: () => {
-        // Aynı kimlik o arada geri geldiyse (Vazgeç, yeniden yükleme) dokunulmaz
+        // Bu arada salt okunur / kilitli olduysa (B3) geri alınmaz; aynı kimlik o arada geri geldiyse (Vazgeç, yeniden
+        // yükleme) dokunulmaz
+        if (undoCtx.current.readOnly) return
         if (listRef.current.some((x) => x.id === removed.id)) return
         onIssuesUpdate(sid, (l) => restoreTopic(l, removed, idx))
         if (wasOpen) setTopicOpen?.(key, true)
@@ -182,6 +186,7 @@ function IssuesBlockImpl({ section, template, list = EMPTY, units = null, shownF
     })
     if (toastId != null) undoToasts.current.add(toastId)
   }, [onIssuesUpdate, sid, setTopicOpen])
+  const sumWarn = issueSumWarning(section, list, template, shownFields)
   return (
     <CollapsibleCard sectionId={sid} slot="te-issues" title={resolve(section.title)} contentClassName="flex flex-col gap-4"
       hint={<p className="text-sm text-muted-foreground">{t(legacy ? 'te.issues.hint' : 'te.iss.hint')}</p>}>
@@ -194,6 +199,16 @@ function IssuesBlockImpl({ section, template, list = EMPTY, units = null, shownF
         <p className="m-0 flex items-start gap-2 text-sm text-muted-foreground" data-slot="te-issues-hidden-note" role="status">
           <EyeOff aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
           <span className="[overflow-wrap:anywhere]">{t('te.iss.hiddenCount', hidden)}</span>
+        </p>
+      )}
+      {/* B2 (2026-11-20): konuların teknik hata adetleri toplamı ayın toplamını aşıyor — soru, kaydı engellemez */}
+      {sumWarn && (
+        <p className="m-0 flex items-start gap-2 rounded-md border border-warning/60 bg-warning/10 px-2 py-1.5 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus:ring-[3px] focus:ring-ring/50"
+          data-slot="te-issue-sum-warn" data-section={sid} tabIndex={-1}>
+          <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning" />
+          <span className="[overflow-wrap:anywhere]">
+            {t('te.ready.issueSum', formatCount(sumWarn.sum, uiLang), formatCount(sumWarn.total, uiLang, units?.[sumWarn.ref] ?? null))}
+          </span>
         </p>
       )}
       {/* Bağ listesi okunamadı: bağlı konular "bilinmiyor" — hiçbir kart bağ iddia etmez (eski podda hiç söylenmez) */}

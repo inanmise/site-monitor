@@ -467,6 +467,32 @@ class TechErrorReportControllerTest {
     }
 
     @Test
+    @DisplayName("B4 (2026-11-20): rapor okuma şablon önizlemesinin kaybolacak ADLARINI aynen taşır (lost_fields / lost_slots + _more)")
+    void readReportCarriesLostNames() throws Exception {
+        report(100, 10, A, null);
+        when(service.liveImageMeta(any())).thenReturn(List.of());
+        Map<String, Object> preview = new java.util.LinkedHashMap<>();
+        preview.put("differs", true);
+        preview.put("lost_values", 1);
+        preview.put("lost_images", 1);
+        preview.put("lost_fields", List.of(Map.of("id", "quota-note", "label", "Kota hataları hakkında açıklama",
+                "section", "Mobil Kanalı — Eylül 2026 Verileri", "kind", "field", "count", 1)));
+        preview.put("lost_fields_more", 0);
+        preview.put("lost_slots", List.of(Map.of("id", "quota-unmapped-monthly", "label", "Kota grafiği",
+                "section", "Grafikler", "kind", "slot", "count", 1)));
+        preview.put("lost_slots_more", 0);
+        when(service.refreshPreview(any(), any())).thenReturn(preview);
+        mvc.perform(get("/api/tech-error-reports/reports/100").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.template_update.lost_fields[0].id").value("quota-note"))
+                .andExpect(jsonPath("$.data.template_update.lost_fields[0].label").value("Kota hataları hakkında açıklama"))
+                .andExpect(jsonPath("$.data.template_update.lost_fields[0].section").value("Mobil Kanalı — Eylül 2026 Verileri"))
+                .andExpect(jsonPath("$.data.template_update.lost_slots[0].label").value("Kota grafiği"))
+                .andExpect(jsonPath("$.data.template_update.lost_fields_more").value(0))
+                .andExpect(jsonPath("$.data.template_update.lost_slots_more").value(0));
+    }
+
+    @Test
     @DisplayName("2026-10-18: rapor okuma kısaltma üslerini taşır (values.units); geçen ayın ipucu kendi üssüyle (previous.units — yalnız aynı tür alanlar); üssüz raporda anahtar yok")
     void readReportCarriesUnits() throws Exception {
         TechErrorTemplate.Template t = TechErrorTemplate.defaults("tr");

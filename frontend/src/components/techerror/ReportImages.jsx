@@ -206,6 +206,11 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
   }, [])
   // Yuva sökülünce (rapordan çıkış, konu kartının yeniden kurulması) bildirim kapanır, baytlar bırakılır
   useEffect(() => () => dropUndo(), [dropUndo])
+  // Yuva salt okunur olunca (onay kilidi yeniden uygulandı — 2026-11-20, B3) açık "Geri al" kapanır: kilitli rapora görsel
+  // geri yüklenmesin
+  const readOnlyRef = useRef(readOnly)
+  readOnlyRef.current = readOnly
+  useEffect(() => { if (readOnly) dropUndo() }, [readOnly, dropUndo])
 
   // Geri alma için görsel okumaları (inceleme 2026-11-20): yuva sökülünce kesilir; okuma hiç atmaz (kesilince null)
   const snapAborts = useRef(new Set())
@@ -249,7 +254,7 @@ function SlotTile({ slot, image, reportId, resolve, uiLang, readOnly, onImagesCh
   /** "Geri al": eski baytlar NORMAL yükleme yolundan geri yüklenir (hazırlama, doğrulama, kilit çakışması, duyuru). */
   async function undoImage(entry) {
     const file = entry?.file
-    if (!file || !alive.current) return
+    if (!file || !alive.current || readOnlyRef.current) return
     // Yuvada başka bir yükleme sürüyor (inceleme 2026-11-20): bildirim kapanır ama geri alma KAYBOLMAZ — aynı baytlarla
     // yeniden sunulur ("bitince geri alabilirsiniz" sözü doğru kalsın)
     if (busyRef.current) { offerUndo(entry.kind, file, entry.expectId, entry.restore, true); return }

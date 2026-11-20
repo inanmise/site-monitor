@@ -159,6 +159,10 @@ function DialogModal({ dialog, onConfirm, onCancel }) {
           )}
         </AlertDialogHeader>
 
+        {/* İsteğe bağlı gövde (2026-11-20): metnin altında liste gibi yapılandırılmış içerik — açıklama bir <p> olduğu için
+            liste oraya konamaz (ör. şablon uygulanınca silinecek alanların adları) */}
+        {dialog.body && <div className="min-w-0" data-slot="dlg-body">{dialog.body}</div>}
+
         {isPrompt && (
           <Input
             ref={inputRef}

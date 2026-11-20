@@ -21,6 +21,7 @@ import {
 import { RichText, RichTextarea } from './RichText.jsx'
 import { periodLabel, CopyTextButton } from './TechErrorParts.jsx'
 import { CollapsibleCard } from './SectionCollapse.jsx'
+import { scaleWarning } from './readinessModel.js'
 
 /**
  * Sayı alanının ekrandaki metni: kayıtlı sayı arayüz dilinin biçiminde (çözümleyici aynı biçimi geri okur). Yüzde
@@ -225,6 +226,23 @@ function PreviousHint({ field, prev, cur, previous, uiLang, t }) {
 }
 
 /**
+ * B2 (2026-11-20) — birim / büyüklük sorusu: bu ayın değeri geçen ayınkinin ≥ 10 katı ya da ≤ 1/10'u (ikisi de sıfırdan
+ * farklı). Soru biçiminde, kaydı engellemez; değerler kendi yazımlarıyla ("4,4M", "44M"). Hesaplanan alan sorulmaz.
+ */
+function ScaleHint({ id, field, cur, prev, curUnit, prevUnit, uiLang, t }) {
+  const w = scaleWarning(field, cur, prev)
+  if (!w) return null
+  const yesNo = (b) => (b ? t('te.yes') : t('te.no'))
+  return (
+    <p id={id} className="flex items-start gap-1.5 rounded-md border border-warning/60 bg-warning/10 px-2 py-1 text-xs [overflow-wrap:anywhere]"
+      data-slot="te-scale-warn" data-dir={w.dir}>
+      <TriangleAlert aria-hidden="true" className="mt-px size-3.5 shrink-0 text-warning" />
+      <span>{t('te.ready.scale', formatValue(field, prev, uiLang, yesNo, prevUnit), formatValue(field, cur, uiLang, yesNo, curUnit))}</span>
+    </p>
+  )
+}
+
+/**
  * Gösterge ALANI (2026-10-17: MetricsBlock'tan ayrıldı — özet kartına gömülü bölümler de aynı alanı çizer): etiket +
  * kopyalama, giriş (sayı / yüzde kısaltmalı, evet/hayır, kısa metin, biçimli uzun açıklama) ya da otomatik hesabın
  * çıktısı, hesap notu, bu adetten türeyen oranlar, ipucu, muafiyet notu, geçen ayın değeri ve alan hatası.
@@ -262,8 +280,10 @@ export function MetricField({ field: f, values, resolve, uiLang, previous, readO
   const res = calc?.[f.id] || null
   const computed = !!res && !CALC_MANUAL.has(res.status)
   const noteId = res ? `${id}-c` : undefined
-  const describedBy = [hintId, noteId, errId].filter(Boolean).join(' ') || undefined
   const v = computed ? (res.status === 'OK' ? res.value : null) : values.fields[f.id]
+  // Birim sorusu (B2) girişin açıklamasına bağlanır: ekran okuyucu alanda sorar (inceleme 2026-11-20)
+  const scaleId = !computed && scaleWarning(f, v, previous?.fields?.[f.id]) ? `${id}-s` : undefined
+  const describedBy = [hintId, noteId, scaleId, errId].filter(Boolean).join(' ') || undefined
   // Hedef karşılaştırması (2026-10-17, 4b): notta hedef ve yön; raporun o aya özel hedefi yalnız şablonda hedefi olan
   // yüzde alanında sorulur (boş = şablon hedefi; yazılan hedef geçmişte görünür)
   const cmpOf = f.calc?.kind === 'compare' ? all.find((x) => x.id === f.calc.of) || null : null
@@ -358,6 +378,10 @@ export function MetricField({ field: f, values, resolve, uiLang, previous, readO
         </p>
       )}
       <PreviousHint field={f} prev={previous?.fields?.[f.id]} cur={v} previous={previous} uiLang={uiLang} t={t} />
+      {!computed && (
+        <ScaleHint id={scaleId} field={f} cur={v} prev={previous?.fields?.[f.id]} curUnit={values.units?.[f.id] ?? null}
+          prevUnit={previous?.units?.[f.id] ?? null} uiLang={uiLang} t={t} />
+      )}
       {err && <p id={errId} className="text-sm text-destructive" role="alert">{err}</p>}
     </div>
   )

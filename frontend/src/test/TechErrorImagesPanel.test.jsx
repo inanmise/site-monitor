@@ -103,6 +103,36 @@ describe('Görsel paneli', () => {
     expect(view.container.querySelector('[data-slot-id="monthly-tx"]')).not.toHaveAttribute('tabindex')
   })
 
+  it('onay kilidi (B3 inceleme 2026-11-20): bekleyen / onaylı raporda panel salt okunur + kilit bandı (açma yok); durum değişince yeniden yazılabilir', async () => {
+    const locked = (approval) => {
+      const res = reportResponse({ images: [IMG] })
+      res.data.report = { ...res.data.report, approval }
+      res.data.approval_detail = { required: true, executive_count: 2, approvers: [] }
+      return res
+    }
+    te().report.mockResolvedValue(locked({ state: 'pending', requested_at: '2026-10-13T09:00:00Z' }))
+    const view = render(<ImagesPanelPage reportId="100" />)
+    await screen.findByRole('heading', { level: 1 })
+    const band = () => document.querySelector('[data-slot="te-panel-lock"]')
+    expect(band()).toHaveAttribute('data-state', 'pending')
+    expect(band()).toHaveTextContent('Rapor PO onayında — kilitli')
+    expect(band()).toHaveTextContent('Görseller burada değiştirilemez')
+    expect(screen.queryByRole('button', { name: /Görsel yükle|Değiştir|Kaldır|Ekrandan al|Panodan|Düzenlemeyi aç/ })).toBeNull()
+    expect(view.container.querySelector('[data-slot-id="monthly-tx"]')).not.toHaveAttribute('tabindex')
+
+    // Onaylandı (öteki pencereden ileti): kilit sürer, başlık değişir
+    te().report.mockResolvedValue(locked({ state: 'approved', requested_at: '2026-10-13T09:00:00Z', decided_at: '2026-10-14T09:00:00Z' }))
+    other.postMessage({ reportId: '100', kind: KIND_REPORT, from: 'w-main' })
+    await waitFor(() => expect(band()).toHaveAttribute('data-state', 'approved'))
+    expect(band()).toHaveTextContent('Rapor onaylandı — kilitli')
+
+    // İlk kayıt onayı eskitti: panel yeniden yazılabilir
+    te().report.mockResolvedValue(locked({ state: 'stale', raw_state: 'APPROVED', stale: true, requested_at: '2026-10-13T09:00:00Z' }))
+    other.postMessage({ reportId: '100', kind: KIND_REPORT, from: 'w-main' })
+    await waitFor(() => expect(band()).toBeNull())
+    expect(screen.getAllByRole('button', { name: /Değiştir|Görsel yükle/ }).length).toBeGreaterThan(0)
+  })
+
   it('başka takımın / silinmiş rapor: modülün "bulunamadı / yetki yok" durumu; ağ hatası yeniden dene', async () => {
     te().report.mockResolvedValue({ success: false, status: 404, error: 'Rapor bulunamadı.' })
     const a = render(<ImagesPanelPage reportId="100" />)

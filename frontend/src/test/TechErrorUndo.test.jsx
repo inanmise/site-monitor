@@ -104,11 +104,12 @@ const LINK = { incidentId: 77, state: 'ok', title: 'Kart limiti kesintisi', stat
 function Harness({ initial, initialLinks, expose }) {
   const [list, setList] = useState(initial)
   const [links, setLinks] = useState(initialLinks)
-  expose.current = { setLinks, setList, get list() { return list } }
+  const [readOnly, setReadOnly] = useState(false)
+  expose.current = { setLinks, setList, setReadOnly, get list() { return list } }
   const update = useCallback((_sid, fn) => setList((l) => fn(l)), [])
   return (
     <IssuesBlock section={ISSUES} template={TPL} list={list} shownFields={{ 'error-count': 5000 }} resolve={(s) => s} uiLang="tr"
-      readOnly={false} errors={{}} onIssuesUpdate={update} onFieldError={() => {}} reportId="100" images={[]}
+      readOnly={readOnly} errors={{}} onIssuesUpdate={update} onFieldError={() => {}} reportId="100" images={[]}
       onImagesChange={() => {}} period={{ year: 2026, month: 9 }} beforeIssueUpload={async () => ({ ok: true })}
       links={links} linksKnown="ok" />
   )
@@ -148,6 +149,22 @@ describe('anomali konusu — geri al (bölüm)', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Geri al' }))
     await waitFor(() => expect(cards()).toHaveLength(1))
     expect(screen.queryByText(/konusu geri alındı\./)).toBeNull()
+  })
+
+  it('onay kilidi inince (B3 inceleme 2026-11-20) açık "Geri al" bildirimi kapanır; geri alma kilitli bölümü değiştirmez', async () => {
+    const expose = { current: null }
+    render(<Harness initial={[topic('k1', 'Kart'), topic('k2', 'Fatura')]} initialLinks={null} expose={expose} />)
+    fireEvent.click(cardOf('k1').querySelector('[data-slot="te-issue-remove"]'))
+    await waitFor(() => expect(cards().map((c) => c.getAttribute('data-issue'))).toEqual(['k2']))
+    const undo = await screen.findByRole('button', { name: 'Geri al' })
+    act(() => { expose.current.setReadOnly(true) })
+    await waitFor(() => expect(undoButton()).toBeNull())
+    // Düğmeye yine de basılırsa (söküm animasyonu sürerken) konu geri gelmez
+    fireEvent.click(undo)
+    await act(async () => { await Promise.resolve() })
+    expect(cards().map((c) => c.getAttribute('data-issue'))).toEqual(['k2'])
+    expect(expose.current.list.map((x) => x.id)).toEqual(['k2'])
+    expect(screen.queryByText(/konusu geri alındı./)).toBeNull()
   })
 
   it('salt okunur bölümde silme düğmesi yok — geri alma sunulmaz', () => {
