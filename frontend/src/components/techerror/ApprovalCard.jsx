@@ -1,15 +1,12 @@
 import { useState } from 'react'
 import { CheckCircle2, Clock, RefreshCw, ShieldCheck, XCircle } from 'lucide-react'
-import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
-import { useToast } from '../ui/Toast.jsx'
-import Field from '../ui/Field.jsx'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
-import { Textarea } from '@/components/shadcn/textarea'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/shadcn/dialog'
 import { cn } from '@/lib/utils'
 import { fmtDateTime } from './TechErrorParts.jsx'
+import ApprovalDecideDialog from './ApprovalDecideDialog.jsx'
+import { approvalOutcome } from './approvalOutcome.js'
 
 /** Onay durumu → ton (rozet / kart kenarı). Bilinmeyen durum nötr; "stale" uyarı (yeniden onay gerekir). Alıcı özeti de kullanır (R13). */
 export const APPROVAL_TONE = Object.freeze({
@@ -77,29 +74,8 @@ export function approvalStateLabelKey(approval) {
  * geçmişi varsa çizilir. Durum rozeti + kim / ne zaman + not; ekip için "Onaya gönder" (eylem çubuğunda da), PO için
  * "Onayla" / "Reddet" (gerekçe zorunlu). Karar sunucuda doğrulanır (PO üyeliği, bekleyen istek, eskimiş istek 409).
  */
-/**
- * Onay sonrası yöneticilere gönderimin sonucu → cümle (UIA-E1, 2026-10-22). Eskiden ham kod basılıyordu ("…gönderilemedi
- * (APPROVAL_STALE). Yöneticilere gönder ile yeniden deneyin") — onaydan sonra değişen raporda o düğme yine 409 alır, gönderim
- * sürerken ikinci gönderime çağırıyordu. Anlamlar sunucunun push cümleleriyle aynı (TechErrorPushService.approvedParts).
- * SENT + boş `sent_to` (yöneticilerin hepsi pasif, posta yalnız takım CC'sine gitti) "yalnız takım kopyası" der.
- * @returns {{ tone: 'success'|'info'|'error', text: string }}
- */
-export function approvalOutcome(d, t) {
-  const code = d?.send_state || d?.send_error || 'FAILED'
-  if (code === 'SENT') {
-    const to = Array.isArray(d?.sent_to) ? d.sent_to.filter(Boolean) : []
-    return to.length ? { tone: 'success', text: t('te.appr.approved', to.join(', ')) } : { tone: 'success', text: t('te.appr.outcome.ccOnly') }
-  }
-  if (code === 'QUEUED') return { tone: 'info', text: t('te.appr.approvedQueued') }
-  if (code === 'SKIPPED') return { tone: 'info', text: t('te.appr.outcome.SKIPPED') }
-  if (code === 'APPROVAL_STALE') return { tone: 'error', text: t('te.appr.outcome.APPROVAL_STALE') }
-  if (code === 'SEND_IN_PROGRESS') return { tone: 'info', text: t('te.appr.outcome.SEND_IN_PROGRESS') }
-  // Çok pod R2a (MP-41): raporun önceki gönderimi 421 kuyruğunda — ikinci kopya gitmesin diye yöneticilere gönderilmedi
-  if (code === 'SEND_QUEUED') return { tone: 'info', text: t('te.appr.outcome.SEND_QUEUED') }
-  if (code === 'PDF_BUSY') return { tone: 'error', text: t('te.appr.outcome.PDF_BUSY') }
-  if (code === 'PDF_TOO_LARGE') return { tone: 'error', text: t('te.appr.outcome.PDF_TOO_LARGE') }
-  return { tone: 'error', text: t('te.appr.outcome.other') }
-}
+/** Onay sonrası gönderim sonucu cümlesi — tek kaynak `approvalOutcome.js` (karar penceresi de kullanır); eski içe aktarmalar için. */
+export { approvalOutcome }
 
 /**
  * Onaylayıcı satırı (UIA-E2, 2026-10-22): paylaşımla okuyan (grant) adları görmez, sunucu adsız satırlar + `approver_count`
@@ -117,11 +93,7 @@ export function approversLine(detail, t) {
 
 export default function ApprovalCard({ reportId, detail, approval, uiLang, busy, onBusy, onRequest, onChanged, sentAt, sentTo, reportStatus }) {
   const t = useT()
-  const toast = useToast()
   const [dialog, setDialog] = useState(null)       // 'approve' | 'reject'
-  const [note, setNote] = useState('')
-  const [noteError, setNoteError] = useState(null)
-  const [deciding, setDeciding] = useState(false)
 
   const state = approvalStateOf(approval)
   const required = !!detail?.required
@@ -132,38 +104,6 @@ export default function ApprovalCard({ reportId, detail, approval, uiLang, busy,
   const flowRemoved = !required && state !== 'none'
   const Icon = flowRemoved ? ShieldCheck : ICON[state] || ShieldCheck
   const execCount = Number(detail?.executive_count) || 0
-
-  async function decide(approve) {
-    const trimmed = note.trim()
-    if (!approve && !trimmed) { setNoteError(t('te.appr.noteRequired')); return }
-    setDeciding(true)
-    onBusy?.('approval')
-    try {
-      const res = await api.techErrors.decideApproval(reportId, { decision: approve ? 'approve' : 'reject', note: trimmed || null })
-      if (res?.success && res.data) {
-        const d = res.data
-        if (approve) {
-          const o = approvalOutcome(d, t)
-          if (o.tone === 'success') toast.success(o.text)
-          else if (o.tone === 'info') toast.info(o.text, 8000)
-          else toast.error(o.text, { duration: 8000 })
-        } else toast.success(t('te.appr.rejected'))
-        setDialog(null)
-        setNote('')
-      } else if (res?.field === 'note') {
-        setNoteError(res.error)
-      } else {
-        toast.error(res?.error || t('te.appr.decideError'), { details: res?.errorInfo })
-        setDialog(null)
-      }
-    } catch (e) {
-      toast.error(e?.message || t('te.appr.decideError'))
-    } finally {
-      setDeciding(false)
-      onBusy?.(null)
-      onChanged?.()
-    }
-  }
 
   // "Gönderildi" yalnız ŞU ANKİ içerik gönderildiyse (inceleme 2026-10-18, 2. tur) — eski bir gönderim bekleyen isteği gizlemez
   const contentSent = currentContentSent({ reportStatus, sentAt, approval, state })
@@ -225,11 +165,11 @@ export default function ApprovalCard({ reportId, detail, approval, uiLang, busy,
             <>
               <span className="text-xs text-muted-foreground">{t('te.appr.youCanDecide')}</span>
               <Button type="button" className="pointer-coarse:min-h-10" disabled={busy != null}
-                onClick={() => { setNote(''); setNoteError(null); setDialog('approve') }} data-slot="te-approval-approve">
+                onClick={() => setDialog('approve')} data-slot="te-approval-approve">
                 <CheckCircle2 aria-hidden="true" /> {t('te.appr.approve')}
               </Button>
               <Button type="button" variant="destructive" className="pointer-coarse:min-h-10" disabled={busy != null}
-                onClick={() => { setNote(''); setNoteError(null); setDialog('reject') }} data-slot="te-approval-reject">
+                onClick={() => setDialog('reject')} data-slot="te-approval-reject">
                 <XCircle aria-hidden="true" /> {t('te.appr.reject')}
               </Button>
             </>
@@ -237,29 +177,9 @@ export default function ApprovalCard({ reportId, detail, approval, uiLang, busy,
         </div>
       )}
 
-      <Dialog open={dialog != null} onOpenChange={(o) => { if (!o && !deciding) setDialog(null) }}>
-        <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-lg" data-slot="te-approval-dialog">
-          <DialogHeader>
-            <DialogTitle>{dialog === 'reject' ? t('te.appr.rejectTitle') : t('te.appr.approveTitle')}</DialogTitle>
-            <DialogDescription>{dialog === 'reject' ? t('te.appr.rejectBody') : t('te.appr.approveBody', execCount)}</DialogDescription>
-          </DialogHeader>
-          <Field label={dialog === 'reject' ? t('te.appr.rejectNote') : t('te.appr.approveNote')} required={dialog === 'reject'}
-            error={noteError} name="note">
-            {({ id, describedBy, invalid }) => (
-              <Textarea id={id} rows={3} maxLength={1000} value={note} aria-describedby={describedBy} aria-invalid={invalid}
-                onChange={(e) => { setNote(e.target.value); setNoteError(null) }} />
-            )}
-          </Field>
-          <DialogFooter className="flex-col-reverse gap-2 sm:flex-row">
-            <Button type="button" variant="outline" disabled={deciding} onClick={() => setDialog(null)}>{t('te.cancel')}</Button>
-            <Button type="button" variant={dialog === 'reject' ? 'destructive' : 'default'} disabled={deciding}
-              onClick={() => decide(dialog !== 'reject')} data-slot="te-approval-confirm">
-              {deciding ? <RefreshCw aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> : null}
-              {dialog === 'reject' ? t('te.appr.reject') : t('te.appr.approve')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Karar penceresi (A2, 2026-11-20): e-posta önizlemesiyle ORTAK bileşen */}
+      <ApprovalDecideDialog reportId={reportId} mode={dialog} execCount={execCount}
+        onClose={() => setDialog(null)} onBusy={onBusy} onDone={onChanged} />
     </section>
   )
 }

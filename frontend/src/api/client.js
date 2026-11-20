@@ -1324,7 +1324,8 @@ export const api = {
     reports: (channelId) => request(`/tech-error-reports/channels/${channelId}/reports`, { withStatus: true }),
     createReport: (channelId, year, month) => request('/tech-error-reports/reports',
       { method: 'POST', body: JSON.stringify({ channel_id: channelId, year, month }), withStatus: true }),
-    report: (id) => request(`/tech-error-reports/reports/${id}`, { withStatus: true }),
+    // `timeoutMs` (2026-11-20, A5): kayıt çakışmasından sonraki kısa yeniden okuma — kaydı uzun süre bekletmesin
+    report: (id, { timeoutMs } = {}) => request(`/tech-error-reports/reports/${id}`, { withStatus: true, ...(timeoutMs ? { timeoutMs } : {}) }),
     // `auto`: 30 sn'lik otomatik kayıt — geçmişte aynı kişinin 15 dk içindeki otomatik kayıtları tek satırda birleşir
     saveReport: (id, values, version, { auto = false, timeoutMs } = {}) => request(`/tech-error-reports/reports/${id}`,
       { method: 'PUT', body: JSON.stringify(auto ? { values, version, auto: true } : { values, version }), withStatus: true,

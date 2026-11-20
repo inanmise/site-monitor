@@ -1094,6 +1094,14 @@ public class TechErrorReportService {
         return images.findById(imageId).orElseThrow(TechErrorReportService::imageNotFound);
     }
 
+    /**
+     * Görselin baytsız künyesi (2026-11-20, A6): kapsam denetimi ve ETag için — BYTEA yüklenmez. Görsel kimlikleri
+     * değişmez (yerine yükleme = sil + ekle), bu yüzden kimlik doğrudan güçlü ETag'dir.
+     */
+    public TechErrorReportImageRepository.Meta imageMeta(Long imageId) {
+        return images.findMetaById(imageId).orElseThrow(TechErrorReportService::imageNotFound);
+    }
+
     static NoSuchElementException imageNotFound() {
         return new NoSuchElementException(Msg.t(
                 "Görsel bulunamadı; silinmiş ya da yerine yenisi yüklenmiş olabilir. Raporu yenileyin.",

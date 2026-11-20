@@ -41,7 +41,8 @@ export function extraGapLink(gap) {
     case 'TEAM_ONCALL_MEMBERS': return gap.teamName ? { tab: 'admin', params: { g_tab: 'teams', g_q: gap.teamName } } : { tab: 'admin', params: { g_tab: 'teams' } }
     case 'TEAM_CHANNEL_NO_APPROVER':
     case 'TASK_CHANNEL_REPORT': return gap.teamId == null ? null : { tab: 'channelreports', params: { te_team: str(gap.teamId) } }
-    case 'TASK_APPROVAL_PENDING': return { tab: 'channelreports', params: {} }
+    // Kanal listesi "Onayımı bekleyen" süzgeciyle açılır (2026-11-20, A1); eski istemci / sunucu değeri bilmezse "tümü" gösterir
+    case 'TASK_APPROVAL_PENDING': return { tab: 'channelreports', params: { te_st: 'my_approval' } }
     case 'TASK_ACTIONS_OVERDUE': return MY_OVERDUE_ACTIONS_LINK
     default: return null
   }

@@ -18,6 +18,8 @@
 // İnceleme (2026-10-18): İngilizce arayüz geçişi, Kaydet → zorunlu alan → düzelt, klavyeyle Evet / Hayır, kayıt 409 iken görsel yüklenmez.
 // 2026-11-20: kanal notları — "Notlar" sekmesi (yaz, yazma alanına görsel yapıştır, önizle, kaydet, yenile), dış adresli görsele
 // istek gitmez; rapor düzenleyicisinde ve Görsel paneli penceresinde (520 px) salt okunur, kapalı başlayan not kartı.
+// 2026-11-20 (A, hızlı kazanımlar): onay rozeti ve "Onayımı bekleyen" süzgeci, e-posta önizlemesinden PO kararı, konu
+// silmede "Geri al", Ctrl+S ile kayıt, Alt+↓/↑ bölüm gezintisi, çakışma uyarısında son kaydeden + değişiklik geçmişi.
 import { test, expect } from '@playwright/test'
 import zlib from 'node:zlib'
 import { readFileSync } from 'node:fs'
@@ -3961,6 +3963,164 @@ for (const vp of VIEWPORTS) {
         await expect(tab.locator('img[data-slot="te-note-img"]')).toHaveCount(1)
         await expect(tab.locator('[data-slot="te-note-edit"]')).toBeVisible()
       })
+    })
+
+    test('hızlı kazanımlar (A, 2026-11-20): onay rozeti + "Onayımı bekleyen", önizlemeden PO kararı, konu geri alma, Ctrl+S ve çakışma uyarısı; sığar, kesilmez', async ({ page }) => {
+      test.setTimeout(180_000)
+      await mock(page)
+      // Girişten sonraki "eksikler" penceresi bu testin uzun beklemelerinde açılıp önizlemeyi örtmesin (dönem raporu taslak
+      // olduğu için görev eksiği vardır) — yalnız bu oturum için gösterilmiş sayılır
+      await page.addInitScript(() => { try { sessionStorage.setItem('sm.gaps.prompted', 'demo') } catch { /* yoksay */ } })
+      // A1 — kanal listesi: onay akışlı kanalın dönem raporu PO onayı bekliyor; kullanıcı bu takımın onaylayıcısı
+      const flowCh = { ...channel(10, LONG_CHANNEL), approval_required: true, executive_count: 2,
+        period_report: { id: 100, status: 'draft', year: 2026, month: 9, last_send_status: null, approval: { state: 'pending' } } }
+      await page.route((u) => new URL(u).pathname === '/api/tech-error-reports/overview', async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: {
+          period: { year: 2026, month: 9 }, can_create: true,
+          teams: [{ id: 5, name: LONG_TEAM, active: true, has_email: true, can_edit: true, can_manage: false, library_read: true, can_approve: true }],
+          channels: [flowCh, channel(20, 'POS')] } }) })
+      })
+      await page.goto('/?tab=channelreports')
+      const items = page.locator('[data-slot="te-channel-card"], [data-slot="te-channel-row"]')
+      await expect(items).toHaveCount(2, { timeout: 20_000 })
+      const badge = page.locator('[data-slot="te-approval-badge"]')
+      await expect(badge).toHaveCount(1)
+      await expect(badge).toHaveAttribute('data-approval', 'pending')
+      await expect(page.locator('[data-slot="stat-item"][data-key="approval_pending"]')).toBeVisible()
+      const mine = page.locator('[data-slot="stat-item"][data-key="my_approval"]')
+      await expect(mine).toBeVisible()
+      await mine.click()
+      await expect(items).toHaveCount(1)
+      await expect.poll(() => new URL(page.url()).searchParams.get('te_st')).toBe('my_approval')
+      await expect(page.locator('[data-slot="te-order-status"]')).toHaveText(/1/)
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (onay süzgeci)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-channel-list"]'), 'kırpılan metin (onay rozeti)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="stats-panel"]'), 'küçük hedef (kutucuklar)').toEqual([])
+      await page.screenshot({ path: `test-results/te-quickwins-list-${vp.name}.png`, fullPage: true })
+
+      // A2 — PO e-posta önizlemesinden reddeder: karar penceresi önizlemenin üstünde, gerekçe zorunlu, kayıttan sonra önizleme kapanır
+      const detail = { required: true, executive_count: 2, executive_emails: ['ceo@example.com', 'cto@example.com'],
+        approvers: [{ name: LONG_PERSON, has_email: true }], requested_by_name: LONG_PERSON, decided_by_name: null,
+        // İsteyen PO (10 dk'dan eski bekleyen istek): beş düğme birden — Kapat, test, Reddet, Onayla, isteği yeniden gönder
+        can_request: true, resend: true, is_approver: true, can_decide: true, can_send_executive: false }
+      reportOverride = { ...REPORT, channel: { ...REPORT.channel, approval_required: true, executive_count: 2 },
+        report: { ...REPORT.report, approval: { state: 'pending', requested_at: '2026-10-13T09:00:00Z' } }, approval_detail: detail }
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const editor = page.locator('[data-slot="te-report"]')
+      await expect(editor).toBeVisible({ timeout: 20_000 })
+      await page.locator('[data-slot="te-mail-preview-btn"]').click()
+      const reject = page.locator('[data-slot="te-mail-reject"]')
+      const approve = page.locator('[data-slot="te-mail-approve"]')
+      await expect(approve).toBeVisible({ timeout: 20_000 })
+      const reRequest = page.locator('[data-slot="te-mail-request-approval"]')
+      await expect(reRequest).toBeVisible()
+      // Beş düğmeli alt çubuk (inceleme 2026-11-20): satıra sığmazsa sarar — hiçbiri pencerenin / ekranın dışına taşmaz
+      const pvDlg = page.getByRole('dialog', { name: /E-posta önizlemesi|E-mail preview/ })
+      const pvBox = await pvDlg.boundingBox()
+      const footerBtns = pvDlg.locator('[data-slot="dialog-footer"] button')
+      await expect(footerBtns).toHaveCount(5)
+      for (let i = 0; i < 5; i++) {
+        const box = await footerBtns.nth(i).boundingBox()
+        expect(box.x, `alt çubuk düğmesi ${i} solda taşmaz`).toBeGreaterThanOrEqual(pvBox.x - 1)
+        expect(box.x + box.width, `alt çubuk düğmesi ${i} pencerede`).toBeLessThanOrEqual(pvBox.x + pvBox.width + 1)
+        expect(box.x + box.width, `alt çubuk düğmesi ${i} ekranda`).toBeLessThanOrEqual(vp.width + 1)
+        expect(box.y + box.height, `alt çubuk düğmesi ${i} ekranda`).toBeLessThanOrEqual(vp.height + 1)
+        if (vp.touch) expect(box.height, `alt çubuk düğmesi ${i} ≥ 40 px`).toBeGreaterThanOrEqual(39.5)
+      }
+      expect(await page.evaluate(clipped, '[data-slot="dialog-footer"]'), 'kırpılan düğme metni (alt çubuk)').toEqual([])
+      await reject.click()
+      const dd = page.locator('[data-slot="te-approval-dialog"]')
+      await expect(dd).toBeVisible()
+      const ddBox = await dd.boundingBox()
+      expect(ddBox.x + ddBox.width, 'karar penceresi sağda taşmaz').toBeLessThanOrEqual(vp.width + 1)
+      await dd.locator('[data-slot="te-approval-confirm"]').click()
+      await expect(dd.locator('textarea')).toHaveAttribute('aria-invalid', 'true')
+      expect(decisions, 'gerekçesiz ret gitmez').toHaveLength(0)
+      await dd.locator('textarea').fill('Rakamlar eksik; SLA tablosunu tamamlayın.')
+      await dd.locator('[data-slot="te-approval-confirm"]').click()
+      await expect.poll(() => decisions.length).toBe(1)
+      expect(decisions[0]).toEqual({ decision: 'reject', note: 'Rakamlar eksik; SLA tablosunu tamamlayın.' })
+      await expect(dd).toBeHidden()
+      await expect(approve).toHaveCount(0)                                // önizleme kapandı
+
+      // A3 — görselsiz konu onaysız silinir, "Geri al" geri getirir; bildirim sığar, düğmesi dokunmatikte 40 px
+      reportOverride = ANOMALY_REPORT
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const topicCard = page.locator('[data-slot="te-issue"]')
+      await expect(topicCard).toHaveCount(1, { timeout: 20_000 })
+      await topicCard.locator('[data-slot="te-issue-remove"]').click()
+      await expect(topicCard).toHaveCount(0)
+      const undo = page.locator('[data-slot="toast-action"]')
+      await expect(undo).toBeVisible()
+      const ub = await undo.boundingBox()
+      if (vp.touch) expect(ub.height, '"Geri al" ≥ 40 px').toBeGreaterThanOrEqual(39.5)
+      const toastBox = await page.locator('[data-sonner-toast]').filter({ has: undo }).boundingBox()
+      expect(toastBox.x, 'bildirim solda taşmaz').toBeGreaterThanOrEqual(-1)
+      expect(toastBox.x + toastBox.width, 'bildirim sağda taşmaz').toBeLessThanOrEqual(vp.width + 1)
+      expect(await page.evaluate(clipped, '[data-sonner-toaster]'), 'kırpılan metin (geri al bildirimi)').toEqual([])
+      await undo.click()
+      await expect(topicCard).toHaveCount(1)
+      await expect(topicCard).toHaveAttribute('data-issue', 'k1')
+      await expect(topicCard.getByText(LONG_TOPIC).first()).toBeVisible()
+
+      // A4 + A5 — Ctrl+S kaydeder (tarayıcının "sayfayı kaydet"i açılmaz); başkası kaydetmişse uyarı kim / ne zaman + geçmiş düğmesi
+      reportOverride = null
+      let reportGets = 0
+      let puts = 0
+      await page.route((u) => new URL(u).pathname === '/api/tech-error-reports/reports/100', async (route) => {
+        const req = route.request()
+        if (req.method() === 'PUT') {
+          puts++
+          await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ success: false,
+            code: 'CONCURRENT_MODIFICATION', error: 'Rapor siz düzenlerken başka biri tarafından kaydedildi.' }) })
+          return
+        }
+        reportGets++
+        if (reportGets === 1) { await route.fallback(); return }
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { ...REPORT,
+          report: { ...REPORT.report, version: 6, updated_at: '2026-10-13T09:00:00Z', updated_by_name: LONG_PERSON },
+          values: { ...REPORT.values, fields: { 'error-rate': 0.9 } } } }) })
+      })
+      await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+      const total = editor.locator('[data-section="summary"]').getByLabel('Toplam işlem adedi', { exact: true })
+      await expect(total).toBeVisible({ timeout: 20_000 })
+      // Yarım yazılmış sayı (inceleme 2026-11-20): Ctrl+S alanı bırakır, hata alanın altında görünür, istek GİTMEZ, odak alanda
+      await total.fill('1.250.0')
+      await page.keyboard.press('Control+s')
+      await expect(total).toHaveAttribute('aria-invalid', 'true')
+      await expect(total).toBeFocused()
+      await page.waitForTimeout(400)
+      expect(puts, 'yarım sayı kaydedilmez').toBe(0)
+      await total.fill('1250000')
+      await page.keyboard.press('Control+s')
+      const conflict = page.locator('[data-slot="te-conflict"]')
+      await expect(conflict).toBeVisible({ timeout: 20_000 })
+      await expect(conflict).toHaveAttribute('data-known', 'true')
+      await expect(conflict.locator('[data-slot="te-conflict-who"]')).toContainText(LONG_PERSON)
+      await expect(total).toHaveValue(/1[.,]?250[.,]?000/)              // taslak korunur
+      await page.waitForTimeout(300)
+      expect(await page.evaluate(overflowX), 'yatay taşma (çakışma)').toBeLessThanOrEqual(1)
+      expect(await page.evaluate(clipped, '[data-slot="te-conflict"]'), 'kırpılan metin (çakışma)').toEqual([])
+      if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-conflict"]'), 'küçük hedef (çakışma)').toEqual([])
+      await conflict.locator('[data-slot="te-conflict-history"]').click()
+      await expect(page.locator('[data-slot="te-history"]')).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(page.locator('[data-slot="te-history"]')).toBeHidden()
+
+      // A4 — Alt+↓ / Alt+↑ bölüm başlıkları arasında odak taşır, bölüm açıp kapamaz (klavyeli cihaz)
+      if (!vp.touch) {
+        const toggles = editor.locator('[data-slot="te-section-toggle"]')
+        const before = await editor.locator('[data-section][data-open]').evaluateAll((els) => els.map((e) => e.getAttribute('data-open')))
+        await toggles.nth(0).focus()
+        await page.keyboard.press('Alt+ArrowDown')
+        await expect(toggles.nth(1)).toBeFocused()
+        await page.keyboard.press('Alt+ArrowUp')
+        await expect(toggles.nth(0)).toBeFocused()
+        const after = await editor.locator('[data-section][data-open]').evaluateAll((els) => els.map((e) => e.getAttribute('data-open')))
+        expect(after).toEqual(before)
+      }
+      await page.screenshot({ path: `test-results/te-quickwins-editor-${vp.name}.png` })
     })
 
     if (!vp.touch) {

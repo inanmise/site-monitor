@@ -287,6 +287,22 @@ class TechErrorReportServiceTest {
     }
 
     @Test
+    @DisplayName("A6 (2026-11-20): görselin baytsız künyesi (ETag + kapsam için) gerçek SQL'le okunur; silinmiş görsel 404")
+    void imageMetaWithoutBytes() throws Exception {
+        TechErrorReport r = service.createReport(channel(1, "Mobil"), 2026, 9, 7L);
+        TechErrorReportImage a = service.upload(r.getId(), "monthly-tx", TechErrorImageValidatorTest.png(400, 200), "grafik.png", 7L);
+        TechErrorReportImageRepository.Meta m = service.imageMeta(a.getId());
+        assertThat(m.getId()).isEqualTo(a.getId());
+        assertThat(m.getReportId()).isEqualTo(r.getId());
+        assertThat(m.getSlotId()).isEqualTo("monthly-tx");
+        assertThat(m.getContentType()).isEqualTo("image/png");
+        assertThat(m.getSizeBytes()).isEqualTo(a.getSizeBytes());
+        assertThat(m).isNotInstanceOf(TechErrorReportImage.class);           // izdüşüm: varlık (BYTEA) yüklenmez
+        service.deleteImage(r.getId(), a.getId(), 7L);
+        assertThatThrownBy(() -> service.imageMeta(a.getId())).isInstanceOf(java.util.NoSuchElementException.class);
+    }
+
+    @Test
     @DisplayName("şablonun son hâli: aynı kimlikli değer/görsel korunur, çıkarılanlar silinir; önizleme sayıları doğru")
     void refreshTemplate() throws Exception {
         TechErrorChannel ch = channel(1, "Mobil");

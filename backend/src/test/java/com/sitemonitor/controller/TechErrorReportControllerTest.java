@@ -227,6 +227,7 @@ class TechErrorReportControllerTest {
         img.setContentType("image/png");
         img.setData(new byte[]{ 1 });
         when(service.image(900L)).thenReturn(img);
+        when(service.imageMeta(900L)).thenReturn(imageMeta(900L, 200L));
         MockHttpSession s = user("USER", A, List.of());
         mvc.perform(get("/api/tech-error-reports/channels/20/template").session(s)).andExpect(status().isNotFound());
         mvc.perform(get("/api/tech-error-reports/channels/20/reports").session(s)).andExpect(status().isNotFound());
@@ -236,6 +237,107 @@ class TechErrorReportControllerTest {
         mvc.perform(put("/api/tech-error-reports/channels/20/template").session(s).contentType(MediaType.APPLICATION_JSON)
                 .content("{\"version\":3,\"template\":{}}")).andExpect(status().isNotFound());
         verify(service, never()).saveTemplate(anyLong(), org.mockito.ArgumentMatchers.anyInt(), any(), any());
+        // Kapsam dışı görsel BAYT okunmadan reddedilir (künye izdüşümü yeter)
+        verify(service, never()).image(900L);
+    }
+
+    /** Görselin baytsız künyesi (izdüşüm) — yalnız kimlik ve rapor kimliği kullanılır. */
+    private static com.sitemonitor.repository.TechErrorReportImageRepository.Meta imageMeta(long id, long reportId) {
+        return new com.sitemonitor.repository.TechErrorReportImageRepository.Meta() {
+            public Long getId() { return id; }
+            public Long getReportId() { return reportId; }
+            public String getSlotId() { return "charts"; }
+            public String getContentType() { return "image/png"; }
+            public String getFileName() { return "g.png"; }
+            public int getWidth() { return 1; }
+            public int getHeight() { return 1; }
+            public long getSizeBytes() { return 3; }
+            public Instant getUploadedAt() { return Instant.parse("2026-10-13T09:00:00Z"); }
+            public Long getUploadedById() { return 50L; }
+        };
+    }
+
+    @Test
+    @DisplayName("A6 (2026-11-20): görsel güçlü ETag taşır; If-None-Match eşleşince kapsam denetiminden SONRA 304 — bayt okunmaz; Cache-Control aynı")
+    void imageEtagNotModified() throws Exception {
+        report(100, 10, A, null);
+        TechErrorReportImage img = new TechErrorReportImage();
+        img.setId(901L);
+        img.setReportId(100L);
+        img.setContentType("image/png");
+        img.setData(new byte[]{ 7, 8, 9 });
+        when(service.imageMeta(901L)).thenReturn(imageMeta(901L, 100L));
+        when(service.image(901L)).thenReturn(img);
+        MockHttpSession s = user("USER", A, List.of());
+
+        mvc.perform(get("/api/tech-error-reports/images/901").session(s))
+                .andExpect(status().isOk())
+                .andExpect(header().string("ETag", "\"te-img-901-3-1791882000000\""))
+                .andExpect(header().string("Cache-Control", "private, max-age=3600"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().bytes(new byte[]{ 7, 8, 9 }));
+        verify(service, org.mockito.Mockito.times(1)).image(901L);
+
+        // Aynı etiket (düz, zayıf, listede, *) → 304, gövde yok, bayt YENİDEN okunmaz
+        for (String inm : List.of("\"te-img-901-3-1791882000000\"", "W/\"te-img-901-3-1791882000000\"", "\"te-img-1\", \"te-img-901-3-1791882000000\"", "*")) {
+            mvc.perform(get("/api/tech-error-reports/images/901").session(s).header("If-None-Match", inm))
+                    .andExpect(status().isNotModified())
+                    .andExpect(header().string("ETag", "\"te-img-901-3-1791882000000\""))
+                    .andExpect(header().string("Cache-Control", "private, max-age=3600"))
+                    .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().bytes(new byte[0]));
+        }
+        verify(service, org.mockito.Mockito.times(1)).image(901L);
+
+        // Başka (yerine yüklenmiş eski) görselin etiketi → tam yanıt
+        mvc.perform(get("/api/tech-error-reports/images/901").session(s).header("If-None-Match", "\"te-img-900-3-1791882000000\""))
+                .andExpect(status().isOk())
+                .andExpect(header().string("ETag", "\"te-img-901-3-1791882000000\""));
+        verify(service, org.mockito.Mockito.times(2)).image(901L);
+        // Aynı kimlik, başka bayt / yükleme anı (geri yüklenen veritabanı kimliği yeniden kullandı) → tam yanıt, bayat bayt yok
+        // (inceleme 2026-11-20); eski biçimli yalın kimlik etiketi de eşleşmez
+        for (String stale : List.of("\"te-img-901-4-1791882000000\"", "\"te-img-901-3-1\"", "\"te-img-901\"")) {
+            mvc.perform(get("/api/tech-error-reports/images/901").session(s).header("If-None-Match", stale))
+                    .andExpect(status().isOk());
+        }
+        verify(service, org.mockito.Mockito.times(5)).image(901L);
+    }
+
+    @Test
+    @DisplayName("A6: eşleşen If-None-Match kapsam dışı görsel için 304 DEĞİL 404 (varlık sızmaz); olmayan görsel 404")
+    void imageEtagRespectsScope() throws Exception {
+        report(201, 20, B, null);
+        when(service.imageMeta(902L)).thenReturn(imageMeta(902L, 201L));
+        mvc.perform(get("/api/tech-error-reports/images/902").session(user("USER", A, List.of()))
+                        .header("If-None-Match", "\"te-img-902-3-1791882000000\""))
+                .andExpect(status().isNotFound());
+        when(service.imageMeta(903L)).thenThrow(new NoSuchElementException("yok"));
+        mvc.perform(get("/api/tech-error-reports/images/903").session(user("USER", A, List.of()))
+                        .header("If-None-Match", "*"))
+                .andExpect(status().isNotFound());
+        verify(service, never()).image(902L);
+        verify(service, never()).image(903L);
+        // B takımının üyesi aynı etiketle 304 alır
+        mvc.perform(get("/api/tech-error-reports/images/902").session(user("USER", B, List.of()))
+                        .header("If-None-Match", "\"te-img-902-3-1791882000000\""))
+                .andExpect(status().isNotModified());
+    }
+
+    @Test
+    @DisplayName("A6: If-None-Match ayrıştırması — zayıf / liste / * eşleşir; çok uzun başlık ve başka etiket eşleşmez")
+    void etagMatchRules() {
+        String tag = TechErrorReportController.imageEtag(5L, 3L, null);
+        assertThat(tag).isEqualTo("\"te-img-5-3-0\"");
+        assertThat(TechErrorReportController.imageEtag(5L, 3L, Instant.ofEpochMilli(1234L))).isEqualTo("\"te-img-5-3-1234\"");
+        assertThat(TechErrorReportController.imageEtag(5L, 3L, Instant.ofEpochMilli(1234L)))
+                .isNotEqualTo(TechErrorReportController.imageEtag(5L, 4L, Instant.ofEpochMilli(1234L)));
+        assertThat(TechErrorReportController.etagMatches(null, tag)).isFalse();
+        assertThat(TechErrorReportController.etagMatches(" ", tag)).isFalse();
+        assertThat(TechErrorReportController.etagMatches("\"te-img-5-3-0\"", tag)).isTrue();
+        assertThat(TechErrorReportController.etagMatches("W/\"te-img-5-3-0\"", tag)).isTrue();
+        assertThat(TechErrorReportController.etagMatches("\"a\" , \"te-img-5-3-0\"", tag)).isTrue();
+        assertThat(TechErrorReportController.etagMatches("*", tag)).isTrue();
+        assertThat(TechErrorReportController.etagMatches("\"te-img-50-3-0\"", tag)).isFalse();
+        assertThat(TechErrorReportController.etagMatches("te-img-5-3-0", tag)).isFalse();
+        assertThat(TechErrorReportController.etagMatches("\"x\",".repeat(400) + "\"te-img-5-3-0\"", tag)).isFalse();
     }
 
     @Test

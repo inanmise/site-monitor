@@ -5,6 +5,8 @@ import {
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
+import { useToast } from '../ui/Toast.jsx'
+import { restoreTopic } from './imageUndo.js'
 import DateTimeField from '../ui/DateTimeField.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
@@ -125,10 +127,60 @@ function IssuesBlockImpl({ section, template, list = EMPTY, units = null, shownF
     const idx = l.findIndex((i) => i.id === iid)
     return idx < 0 ? l : move(l, idx, delta)
   }), [onIssuesUpdate, sid])
-  const remove = useCallback((iid) => {
+  // Geri al (2026-11-20, A3): görseli olmayan konu ONAYSIZ silinir, ~10 sn "Geri al" bildirimi AYNI nesneyi silindiği yere
+  // koyar (işlevsel güncelleme; aynı kimlik zaten varsa dokunulmaz). Görselli konu onayla silinir (görseller kayıtta kalıcı
+  // gider) — geri alma yok. Bildirimler bölüm sökülünce (yeniden yükleme / Vazgeç / rapordan çıkış) kapanır.
+  const toast = useToast()
+  const toastRef = useRef(toast)
+  toastRef.current = toast
+  const listRef = useRef(list)
+  listRef.current = list
+  const linksRef = useRef(links)
+  linksRef.current = links
+  const topicsRef = useRef(topics)
+  topicsRef.current = topics
+  // Kart memo'su `onRemove`'u kimlikle karşılaştırır: geri çağrı dil / şablon / salt-okunur değişiminde yeniden kurulmasın
+  const undoCtx = useRef(null)
+  undoCtx.current = { t, readOnly, itemTitle: section.item_title }
+  const undoToasts = useRef(new Set())
+  useEffect(() => {
+    const ids = undoToasts.current
+    return () => {
+      const tt = toastRef.current
+      for (const id of [...ids]) { if (typeof tt?.dismiss === 'function') tt.dismiss(id) }
+      ids.clear()
+    }
+  }, [])
+  const remove = useCallback((iid, { undo = true } = {}) => {
+    const cur = listRef.current
+    const idx = cur.findIndex((x) => x.id === iid)
+    const removed = idx >= 0 ? cur[idx] : null
+    const key = topicOpenId(sid, iid)
+    const wasOpen = !!topicsRef.current?.isOpen?.(key)
+    const wasLinked = !!linksRef.current?.get?.(iid)
     onIssuesUpdate(sid, (l) => l.filter((x) => x.id !== iid))
     // Silinen konunun açık kaydı da düşer (başka yoldan kalkan konular bir sonraki yazımda — TOPIC_OPEN_OPTS.prune)
-    setTopicOpen?.(topicOpenId(sid, iid), false)
+    setTopicOpen?.(key, false)
+    const tt = toastRef.current
+    const { t, readOnly: ro, itemTitle } = undoCtx.current
+    if (!undo || !removed || ro || typeof tt?.action !== 'function') return
+    const title = issueDisplayTitle(removed, itemTitle) || t('te.iss.topicN', idx + 1)
+    let toastId = null
+    toastId = tt.action(t('te.undo.topicRemoved', title), {
+      label: t('te.undo.action'),
+      onAction: () => {
+        // Aynı kimlik o arada geri geldiyse (Vazgeç, yeniden yükleme) dokunulmaz
+        if (listRef.current.some((x) => x.id === removed.id)) return
+        onIssuesUpdate(sid, (l) => restoreTopic(l, removed, idx))
+        if (wasOpen) setTopicOpen?.(key, true)
+        // Olay kaydı bağı yalnız GERÇEKTEN silindiyse söylenir: arada kayıt olduysa sunucu silinen konunun bağını sildi
+        const lost = wasLinked && !linksRef.current?.get?.(removed.id)
+        toastRef.current?.[lost ? 'info' : 'success']?.(lost ? t('te.undo.topicRestoredLinkLost', title) : t('te.undo.topicRestored', title),
+          lost ? 10000 : undefined)
+      },
+      onClose: () => { if (toastId != null) undoToasts.current.delete(toastId) },
+    })
+    if (toastId != null) undoToasts.current.add(toastId)
   }, [onIssuesUpdate, sid, setTopicOpen])
   return (
     <CollapsibleCard sectionId={sid} slot="te-issues" title={resolve(section.title)} contentClassName="flex flex-col gap-4"
@@ -428,7 +480,8 @@ const IssueCard = memo(function IssueCard({ section, template, opts, legacy, iss
   }, [focusNext])
 
   async function remove() {
-    // Görseli olan konu: kayıtta görselleri de kalıcı olarak silinir — sorulur
+    // Görseli olan konu: kayıtta görselleri de kalıcı olarak silinir — sorulur, geri alma yok. Görselsiz konu onaysız silinir
+    // ve ~10 sn "Geri al" bildirimi çıkar (2026-11-20, A3 — IssuesBlock)
     if (imageCount > 0) {
       const ok = await showConfirm({ title: t('te.iss.removeTitle'), message: t('te.iss.removeBody', shownTitle || idx + 1, imageCount),
         variant: 'danger', confirmText: t('te.iss.removeConfirm'), cancelText: t('te.cancel') })
@@ -436,7 +489,7 @@ const IssueCard = memo(function IssueCard({ section, template, opts, legacy, iss
     }
     for (const f of ['topic', 'title', 'description', 'customers', 'errors', 'date', 'start', 'end', 'outage_id', 'outage', 'impact',
       'caption1', 'caption2']) onFieldError(fieldKey(f), null)
-    onRemove(iid)
+    onRemove(iid, { undo: imageCount === 0 })
   }
 
   const chips = []
@@ -776,14 +829,22 @@ const IssueCard = memo(function IssueCard({ section, template, opts, legacy, iss
                     <ImageSlotTile slot={{ id: slotId, label, width: 'full' }} image={img} reportId={reportId} resolve={(x) => x} pairedRow
                       uiLang={uiLang} readOnly={readOnly} onImagesChange={onImagesChange} hideWidth contextLabel={topicLabel}
                       otherBytes={() => otherBytes(slotId)}
-                      // Görsel silinince açıklaması da taslaktan düşer (inceleme 2026-10-18: boş yuvanın açıklaması kayıtta kalıyordu)
+                      // Görsel silinince açıklaması da taslaktan düşer (inceleme 2026-10-18: boş yuvanın açıklaması kayıtta kalıyordu).
+                      // Dönen işlev "Geri al" başarılı olunca açıklamayı geri koyar (inceleme 2026-11-20) — o arada yeni bir
+                      // açıklama yazıldıysa ona dokunmaz
                       onRemoved={() => {
+                        const prevCaption = iss.captions?.[capKey] || ''
                         onFieldError(fieldKey(`caption${n}`), null)
                         patch((cur) => {
                           if (!cur.captions || !(capKey in cur.captions)) return {}
                           const captions = { ...cur.captions }
                           delete captions[capKey]
                           return { captions: Object.keys(captions).length ? captions : null }
+                        })
+                        if (!prevCaption) return null
+                        return () => patch((cur) => {
+                          if (cur.captions?.[capKey]) return {}
+                          return { captions: { ...(cur.captions || {}), [capKey]: prevCaption } }
                         })
                       }}
                       beforeUpload={beforeIssueUpload ? () => beforeIssueUpload(sid, iid) : null} />

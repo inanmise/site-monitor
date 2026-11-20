@@ -6,7 +6,7 @@ import { useElementWidth } from '../../hooks/useElementWidth.js'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
 import { Input } from '@/components/shadcn/input'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
+import { Table, TableBody, TableCaption, TableCell, TableHead, TableHeader, TableRow } from '@/components/shadcn/table'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/shadcn/collapsible'
 import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
 import { cn } from '@/lib/utils'
@@ -154,9 +154,9 @@ export function NumberInput({ id, value, lang, percent = false, negative = false
 }
 
 /** Bölüm kartı — katlanır (2026-10-16): düzenleyici `SectionOpenContext` verir; ipucu yalnız açıkken. */
-function SectionShell({ title, children, slot, sectionId, hint }) {
+function SectionShell({ title, children, slot, sectionId, hint, titleId }) {
   return (
-    <CollapsibleCard sectionId={sectionId} slot={slot} title={title} contentClassName="flex flex-col gap-4"
+    <CollapsibleCard sectionId={sectionId} slot={slot} title={title} titleId={titleId} contentClassName="flex flex-col gap-4"
       hint={hint ? <p className="text-sm text-muted-foreground">{hint}</p> : null}>
       {children}
     </CollapsibleCard>
@@ -800,11 +800,13 @@ function TableBlockImpl({ section, values, resolve, uiLang, tplLang, readOnly, e
     )
     return { id, key, err, control }
   }
+  // Erişilebilir ad (2026-11-20, A7): tablo / kart listesi adını bölüm başlığından alır; görünmez açıklama yapıyı söyler
+  const titleId = `te-tbl-title-${section.id}`
   return (
-    <SectionShell title={resolve(section.title)} slot="te-table" sectionId={section.id} hint={t('te.tbl.hint')}>
+    <SectionShell title={resolve(section.title)} slot="te-table" sectionId={section.id} hint={t('te.tbl.hint')} titleId={titleId}>
       <div ref={ref} className="min-w-0" data-layout={layout} onFocus={onFocusIn} onBlur={onFocusOut}>
         {cards ? (
-          <ol className="m-0 flex list-none flex-col gap-3 p-0">
+          <ol className="m-0 flex list-none flex-col gap-3 p-0" aria-labelledby={titleId} data-slot="te-table-cards">
             {rows.map((r) => (
               <li key={r.id} className={cn('rounded-xl border p-3', r.group && 'bg-muted/50')} data-slot="te-table-card" data-row={r.id}>
                 <p className={cn('m-0 mb-2 text-sm leading-snug [overflow-wrap:anywhere]', r.group ? 'font-bold' : 'font-semibold')}>
@@ -828,7 +830,8 @@ function TableBlockImpl({ section, values, resolve, uiLang, tplLang, readOnly, e
           </ol>
         ) : (
           <div className="rounded-lg border" data-slot="te-table-scroll">
-            <Table style={{ minWidth: `${minWidth}px` }}>
+            <Table style={{ minWidth: `${minWidth}px` }} aria-labelledby={titleId} data-te-table="values">
+              <TableCaption className="sr-only" data-slot="te-table-caption">{t('te.tbl.caption', rows.length, cols.length)}</TableCaption>
               <TableHeader>
                 <TableRow className="bg-muted/60 hover:bg-muted/60">
                   {/* Satır adı sütunu tableMinWidth bütçesindeki 176 px (yüzde genişlik çok sütunda sayılara yer bırakmıyordu) */}

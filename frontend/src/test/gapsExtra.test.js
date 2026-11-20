@@ -148,6 +148,8 @@ describe('eksikler — bağlantılar', () => {
     expect(extraItemLink({ code: 'TEAM_FORWARD_BROKEN', teamId: 4 }, {})).toEqual({ tab: 'admin', params: { g_tab: 'forwards', g_fteam: '4', g_fstate: 'attention' } })
     expect(extraGapLink({ code: 'TEAM_ONCALL_MEMBERS', teamName: 'Dijital' })).toEqual({ tab: 'admin', params: { g_tab: 'teams', g_q: 'Dijital' } })
     expect(extraGapLink({ code: 'TASK_ACTIONS_OVERDUE' }).params).toEqual({ ih_view: 'actions', ih_amine: '1', ih_aover: '1' })
+    // Onayımı bekleyen raporlar (2026-11-20, A1): kanal listesi o süzgeçle açılır
+    expect(extraGapLink({ code: 'TASK_APPROVAL_PENDING' })).toEqual({ tab: 'channelreports', params: { te_st: 'my_approval' } })
     expect(extraGapLink({ code: 'BILINMEYEN' })).toBeNull()
     expect([fixKindOf('TEAM_NO_ESCALATION'), fixKindOf('TEAM_NO_NOTIFY_ADDRESS'), fixKindOf('TEAM_GROUP_ALL_PASSIVE'), fixKindOf('TEAM_ONCALL_MEMBERS'), fixKindOf('MON_NO_GROUP')])
       .toEqual(['contact', 'group', 'group', 'oncall', null])

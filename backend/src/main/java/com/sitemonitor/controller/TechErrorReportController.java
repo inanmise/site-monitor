@@ -1332,17 +1332,61 @@ public class TechErrorReportController {
         return ok(Map.of("deleted", true));
     }
 
+    /**
+     * Rapor görseli. Görsel önbellek doğrulaması (2026-11-20, A6): yanıt güçlü bir {@code ETag} taşır — görsel satırı
+     * değişmez (yerine yükleme = sil + ekle, yeni kimlik); etiket kimlik + boyut + yükleme anıdır, böylece bir veritabanı geri
+     * yüklemesi kimliği yeniden kullansa bile eski bayt sunulmaz (inceleme 2026-11-20). {@code If-None-Match} eşleşirse 304
+     * döner: kapsam / izin denetimi AYNEN yapılır (başka takımın görseli yine 404), BYTEA hiç okunmaz (künye izdüşümüyle).
+     * {@code Cache-Control} değişmedi ({@code private, max-age=3600}); süre dolunca tarayıcı yeniden indirmek yerine sorar.
+     */
     @GetMapping("/images/{imageId}")
-    public ResponseEntity<byte[]> image(@PathVariable Long imageId, HttpSession session) {
+    public ResponseEntity<byte[]> image(@PathVariable Long imageId, HttpSession session,
+                                        @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
         requireRead(session);
+        TechErrorReportImageRepository.Meta meta = service.imageMeta(imageId);
+        if (meta == null || meta.getReportId() == null) throw new NoSuchElementException();
+        TechErrorReport r = readableReport(meta.getReportId(), session);
+        if (!r.getId().equals(meta.getReportId())) throw new NoSuchElementException();
+        String etag = imageEtag(imageId, meta.getSizeBytes(), meta.getUploadedAt());
+        if (etagMatches(ifNoneMatch, etag)) {
+            return ResponseEntity.status(org.springframework.http.HttpStatus.NOT_MODIFIED)
+                    .eTag(etag)
+                    .header(HttpHeaders.CACHE_CONTROL, "private, max-age=3600")
+                    .build();
+        }
         TechErrorReportImage img = service.image(imageId);
-        TechErrorReport r = readableReport(img.getReportId(), session);
-        if (!r.getId().equals(img.getReportId())) throw new NoSuchElementException();
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(img.getContentType()))
+                .eTag(etag)
                 .header(HttpHeaders.CACHE_CONTROL, "private, max-age=3600")
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
                 .body(img.getData());
+    }
+
+    /**
+     * Görselin güçlü ETag'i (tırnaklı): {@code "te-img-<kimlik>-<bayt>-<yükleme anı ms>"} (yükleme anı yoksa 0). Kimlik tek
+     * başına yetmez: geri yüklenen bir veritabanında aynı kimlik başka bir görsele düşebilir.
+     */
+    static String imageEtag(Long imageId, long sizeBytes, java.time.Instant uploadedAt) {
+        long at = uploadedAt == null ? 0L : uploadedAt.toEpochMilli();
+        return "\"te-img-" + imageId + "-" + Math.max(0L, sizeBytes) + "-" + at + "\"";
+    }
+
+    /**
+     * {@code If-None-Match} eşleşmesi (RFC 9110 §13.1.2 — zayıf karşılaştırma): {@code *} (kaynak var) ya da virgüllü listede
+     * aynı varlık etiketi ({@code W/} öneki yok sayılır). Başlık 1024 karakterden uzunsa okunmaz (eşleşme yok — tam yanıt).
+     */
+    static boolean etagMatches(String header, String etag) {
+        if (header == null || header.isBlank() || header.length() > 1024) return false;
+        int n = 0;
+        for (String part : header.split(",")) {
+            if (++n > 32) return false;
+            String tag = part.trim();
+            if (tag.equals("*")) return true;
+            if (tag.startsWith("W/")) tag = tag.substring(2).trim();
+            if (tag.equals(etag)) return true;
+        }
+        return false;
     }
 
     // ── PDF + gönderim ───────────────────────────────────────────────────────────────────────────────

@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-20T09:24:16Z",
+  "generatedAt": "2026-11-20T10:41:33Z",
   "repo": "inanmise/site-monitor",
-  "count": 869,
+  "count": 870,
   "releases": [
+    {
+      "version": "20.222.0",
+      "tag": "v20.222.0",
+      "releasedAt": "2026-11-20T10:41:22Z",
+      "commit": "b14a6715c8b3618ddeee2397c5afe0f1f21b35ae",
+      "prevVersion": "20.221.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "b14a6715",
+          "subject": "kanal teknik hata raporu — hızlı kazanımlar (onay durumu, geri al, kısayollar, çakışma)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.221.0",
       "tag": "v20.221.0",
