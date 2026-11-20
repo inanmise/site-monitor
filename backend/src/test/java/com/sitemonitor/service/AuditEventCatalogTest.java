@@ -109,6 +109,16 @@ class AuditEventCatalogTest {
     }
 
     @Test
+    @DisplayName("kanal notları (2026-11-20): üç TECH_ERROR_CHANNEL_NOTE_* türü katalogda ve rapor kategorisinde")
+    void techErrorChannelNotesAreReport() {
+        for (String type : new String[] { "TECH_ERROR_CHANNEL_NOTE_SAVE", "TECH_ERROR_CHANNEL_NOTE_IMAGE_ADD",
+                "TECH_ERROR_CHANNEL_NOTE_IMAGE_DELETE" }) {
+            assertThat(AuditEventCatalog.contains(type)).as(type).isTrue();
+            assertThat(AuditEventCatalog.categoryOf(type)).as(type).isEqualTo(AuditEventCatalog.REPORT);
+        }
+    }
+
+    @Test
     @DisplayName("kaynak analizi bütçesi (2026-11, F1): PAGE_RESOURCE_BUDGET_SAVE katalogda ve İZLEME kategorisinde (tarama türleriyle aynı)")
     void pageResourceBudgetIsMonitor() {
         assertThat(AuditEventCatalog.contains("PAGE_RESOURCE_BUDGET_SAVE")).isTrue();

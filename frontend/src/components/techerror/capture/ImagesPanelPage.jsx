@@ -15,6 +15,8 @@ import { KIND_IMAGES, KIND_REPORT, onImagesChanged } from './imageSync.js'
 import { openInMainWindow } from './panelWindow.js'
 import { useFileDropGuard } from './useFileDropGuard.js'
 import PanelIssueImages, { panelIssueSection } from './PanelIssueImages.jsx'
+// Kanal notları kartı (2026-11-20): hafif kabuk — görüntüleyici kart İLK açıldığında tembel yüklenir
+import ChannelNotesCard from '../notes/ChannelNotesCard.jsx'
 
 /** Pencereye dönülünce (odak / görünür) rapor en çok bu sıklıkla yeniden okunur — şablon uygulandı mı, silindi mi. */
 export const PANEL_FOCUS_RELOAD_MS = 5000
@@ -170,6 +172,9 @@ export default function ImagesPanelPage({ reportId }) {
           </AlertBanner>
         )}
         {readOnly && <AlertBanner tone="info" title={t('te.readOnlyTitle')}>{t('te.cap.panelReadOnly')}</AlertBanner>}
+        {/* Kanal notları (2026-11-20): görsel toplarken "veriyi nereden alırım" notu elinin altında — salt okunur, kapalı başlar;
+            yalnız rapor yanıtında `channel_notes.readable` doğruysa çizilir (panelde düzenleme bağlantısı yok) */}
+        <ChannelNotesCard reportId={reportId} channelId={channel?.id} meta={data.channel_notes} />
         {sections.length === 0 ? (
           <StatusBlock tone="neutral" icon={ImageOff} title={t('te.cap.panelNoImages')} description={t('te.cap.panelNoImagesBody')} />
         ) : sections.map((s) => (s.kind === 'images' ? (

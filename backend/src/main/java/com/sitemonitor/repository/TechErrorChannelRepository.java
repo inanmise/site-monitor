@@ -58,6 +58,22 @@ public interface TechErrorChannelRepository extends JpaRepository<TechErrorChann
     @Query(value = "SELECT id FROM tech_error_channels WHERE team_id = :teamId ORDER BY id FOR UPDATE", nativeQuery = true)
     List<Long> lockForTeam(@Param("teamId") Long teamId);
 
+    /**
+     * TEK kanal satırını işlem boyunca KİLİTLER (2026-11-20, kanal notları): notun her yazımı (kayıt, görsel yükleme, görsel
+     * silme) bununla sıraya girer — okunan sürüm, görsel sınırları ve bağ bayrakları kilit altında kesin. Kanal silme
+     * rapor satırlarından SONRA aynı kilidi alır (sıra: raporlar → kanal → notlar; hiçbir yol kanal → rapor almaz). Kanal
+     * yoksa boş liste. Çağıranın işleminde çalışır; H2 de destekler.
+     */
+    @Query(value = "SELECT id FROM tech_error_channels WHERE id = :id FOR UPDATE", nativeQuery = true)
+    List<Long> lockRow(@Param("id") Long id);
+
+    /**
+     * Kanalın yalnız takım kimliği — kanal notu görselinin sunumunda kapsam denetimi için (şablon JSON'u dahil tam satır
+     * okunmaz). Kanal yoksa boş liste.
+     */
+    @Query("SELECT c.teamId FROM TechErrorChannel c WHERE c.id = :id")
+    List<Long> teamIdOf(@Param("id") Long id);
+
     /** Takımın kanallarının sıra numaraları (kimlik, sıra) — toplu sıranın yazıldıktan sonraki doğrulaması. */
     @Query("SELECT c.id, c.sortOrder FROM TechErrorChannel c WHERE c.teamId = :teamId")
     List<Object[]> orderRows(@Param("teamId") Long teamId);

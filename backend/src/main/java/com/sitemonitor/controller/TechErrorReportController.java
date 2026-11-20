@@ -86,6 +86,13 @@ public class TechErrorReportController {
     com.sitemonitor.service.techerror.TechErrorTeamTemplateService library;
 
     /**
+     * Kanal notları (2026-11-20): rapor ekranı ve rapor listesi yanıtındaki {@code channel_notes} özeti (tek hafif sorgu,
+     * metin / bayt okunmaz). Yoksa (dilim testleri) özet "okunamadı" ({@code unavailable}) döner — asla "not yok".
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.sitemonitor.service.techerror.TechErrorChannelNoteService channelNotes;
+
+    /**
      * Dönem özeti önbelleği (R14 inceleme 2026-10-17): Kişisel Panom paneli her açık sekmede / TV'de 60 sn'de bir sorar;
      * anahtar = dönem + kapsam (kurum geneli "*" ya da sıralı görünür takım kimlikleri). 0 = önbellek yok.
      */
@@ -824,6 +831,8 @@ public class TechErrorReportController {
         data.put("reports", out);
         YearMonth def = service.defaultPeriod();
         data.put("default_period", Map.of("year", def.getYear(), "month", def.getMonthValue()));
+        // Kanal notu özeti (2026-11-20, eklemeli — en sonda): okunamayan için sorgu yok
+        data.put("channel_notes", TechErrorChannelNoteController.summaryBlock(channelNotes, session, ch));
         return ok(data);
     }
 
@@ -913,6 +922,8 @@ public class TechErrorReportController {
         data.put("template_update", canEdit ? service.refreshPreview(r, ch) : null);
         data.put("limits", Map.of("image_max_bytes", com.sitemonitor.service.techerror.TechErrorImageValidator.MAX_BYTES,
                 "report_image_max_bytes", TechErrorReportService.MAX_REPORT_IMAGE_BYTES));
+        // Kanal notu özeti (2026-11-20, eklemeli — en sonda): rapor ekranındaki salt okunur not kartı bununla karar verir
+        data.put("channel_notes", TechErrorChannelNoteController.summaryBlock(channelNotes, session, ch));
         return ok(data);
     }
 
@@ -1989,6 +2000,11 @@ public class TechErrorReportController {
         m.put("executive_emails", SessionScope.viewableOnlyByGrant(session, ch.getTeamId()) ? null : ch.getExecutiveEmails());
         m.put("executive_count", execs.size());
         m.put("approval_required", !execs.isEmpty());
+        // Kanal notları (2026-11-20, eklemeli — en sonda; yalnız oturumdan, kanal başına sorgu YOK): arayüz not uçlarını
+        // bu bayraklara bakarak çağırır (yalnız görüntüleme paylaşımıyla gören çağırmaz)
+        m.put("can_read_notes", permissions.allows(session, READ, "view")
+                && TechErrorChannelNoteController.canReadNotes(session, ch.getTeamId()));
+        m.put("can_edit_notes", writer && TechErrorChannelNoteController.canEditNotes(session, ch.getTeamId()));
         return m;
     }
 

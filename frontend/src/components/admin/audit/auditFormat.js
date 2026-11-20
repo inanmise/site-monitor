@@ -299,6 +299,10 @@ const SPECIAL = {
   TECH_ERROR_TEAM_TEMPLATE_CREATE: 'audit.ev.TECH_ERROR_TEAM_TEMPLATE_CREATE',
   TECH_ERROR_TEAM_TEMPLATE_UPDATE: 'audit.ev.TECH_ERROR_TEAM_TEMPLATE_UPDATE',
   TECH_ERROR_TEAM_TEMPLATE_DELETE: 'audit.ev.TECH_ERROR_TEAM_TEMPLATE_DELETE',
+  // Kanal notları (2026-11-20): not kaydı ve not görselleri (ayrıntıda yalnız sayılar — metin denetime yazılmaz)
+  TECH_ERROR_CHANNEL_NOTE_SAVE: 'audit.ev.TECH_ERROR_CHANNEL_NOTE_SAVE',
+  TECH_ERROR_CHANNEL_NOTE_IMAGE_ADD: 'audit.ev.TECH_ERROR_CHANNEL_NOTE_IMAGE_ADD',
+  TECH_ERROR_CHANNEL_NOTE_IMAGE_DELETE: 'audit.ev.TECH_ERROR_CHANNEL_NOTE_IMAGE_DELETE',
   // 20.165.1 bugfix (UIA-5): katalogdaki 60 tür kurala uymuyor, iki dilde de İngilizce Title-Case yedeğine düşüyordu
   // ("Session Terminate", "Platform Create" …); 5'inin anahtarı vardı ama okunmuyordu. Kapı: auditEventLabels.test.js
   // AuditEventCatalog.TYPES'ı okur — hiçbir tür yedeğe düşmez.

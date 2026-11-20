@@ -15,6 +15,8 @@ export const VIEW_CHANNEL = 'channel'
 export const VIEW_REPORT = 'report'
 export const TAB_REPORTS = 'reports'
 export const TAB_TEMPLATE = 'template'
+// Kanal notları sekmesi (2026-11-20): `te_tab=notes`
+export const TAB_NOTES = 'notes'
 
 /** Sunucu ile aynı sınırlar (TechErrorTemplate / TechErrorValues / TechErrorImageValidator). */
 export const LIMITS = Object.freeze({

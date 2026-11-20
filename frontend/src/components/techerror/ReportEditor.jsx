@@ -35,6 +35,8 @@ import {
 } from './sendModel.js'
 import { bumpMailPreviewContent, mailPreviewContentRev } from './mailPreviewFetch.js'
 import RecipientsSummary from './RecipientsSummary.jsx'
+// Kanal notları kartı (2026-11-20): hafif kabuk — görüntüleyici (react-markdown) kart İLK açıldığında tembel yüklenir
+import ChannelNotesCard from './notes/ChannelNotesCard.jsx'
 import {
   allFields, allSectionsOpen, applyCalc, calcResults, canonicalValues, dropIssueCaptions, embeddedSections, errorCountsBySection, hostOf,
   normalizeValues, parseIssueSlot, reportErrorSection, reportErrorTopic, fieldExempt, issueDisplayTitle, issueImageAlive, issueOptions,
@@ -164,7 +166,7 @@ export function requestNoMailText(problem, t) {
   return t('te.appr.noMail.other')
 }
 
-export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenReport, focusTitleRef, backLabel = null }) {
+export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenNotes = null, onOpenReport, focusTitleRef, backLabel = null }) {
   const t = useT()
   const { lang: uiLang } = useLanguage()
   const toast = useToast()
@@ -1327,6 +1329,9 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
   const textOnChange = useLatestCallback(setText)
   const textOnClear = useLatestCallback(clearText)
   const cellOnChange = useLatestCallback(setCell)
+  // Kanal notları kartının "Not yaz / Notu düzenle" bağlantısı: ayrılma kapısından geçer (kaydedilmemiş iş sorulur); kimliği
+  // sabit — kart yazarken yeniden çizilmez
+  const openChannelNotes = useLatestCallback(() => leave(() => onOpenNotes?.(data?.channel?.id)))
 
   // Katlanır bölümler (2026-10-16): açılanlar bu rapor için hatırlanır; hatalı alan sayısı yalnız hata KÜMESİ değişince
   // yeni Map olur (her tuşta değil — görsel bölümleri yazarken yeniden çizilmesin)
@@ -1629,6 +1634,11 @@ export default function ReportEditor({ reportId, onBack, onOpenTemplate, onOpenR
           {t('te.templateChangedBody')}
         </AlertBanner>
       )}
+
+      {/* Kanal notları (2026-11-20): "bu kanalın verisini nereden / nasıl alırım" — salt okunur, kapalı başlar; yalnız rapor
+          yanıtında `channel_notes.readable` doğruysa çizilir. Prop'lar kararlı (memo): yazarken kart yeniden çizilmez */}
+      <ChannelNotesCard reportId={reportId} channelId={channel?.id} meta={data.channel_notes}
+        canEdit={!!channel?.can_edit_notes && typeof onOpenNotes === 'function'} onEdit={openChannelNotes} />
 
       <SectionOpenContext.Provider value={sectionCtx}>
       <TopicOpenContext.Provider value={topicCtx}>

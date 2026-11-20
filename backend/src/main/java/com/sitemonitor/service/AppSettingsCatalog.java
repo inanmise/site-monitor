@@ -658,6 +658,7 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.weekly-report.mail-retention-days", "retention", Type.INT),
         new Setting("site.monitor.weekly-availability.retention-days", "retention", Type.INT),
         new Setting("site.monitor.oncall.weekly-notice.retention-days", "retention", Type.INT),   // haftalık nöbet bildirimi kaydı (2026-11-15)
+        new Setting("site.monitor.tech-error-report.note-image-unlinked-retention-days", "retention", Type.INT),   // kanal notunda kullanılmayan görseller (2026-11-20)
         new Setting("site.monitor.cert-note-revision.retention-days", "retention", Type.INT),
         new Setting("site.monitor.scripted.draft-retention-days", "retention", Type.INT),
         new Setting("site.monitor.scripted.compat-scan.retention-days", "retention", Type.INT),

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, CircleAlert, FileText, LayoutTemplate, MailCheck, Plus, Search, Trash2, Users, X } from 'lucide-react'
+import { ArrowLeft, CircleAlert, FileText, LayoutTemplate, MailCheck, NotebookText, Plus, Search, Trash2, Users, X } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT, useLanguage } from '../../i18n/index.jsx'
 import { useToast } from '../ui/Toast.jsx'
@@ -22,12 +22,14 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/shadc
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/shadcn/dialog'
 import TemplateEditor from './TemplateEditor.jsx'
 import SendLogView from './SendLogView.jsx'
+// Notlar sekmesi hafiftir; görüntüleyici (react-markdown) ve düzenleyici kendi içinde tembel yüklenir (lazyChunks kapısı)
+import ChannelNotesTab from './notes/ChannelNotesTab.jsx'
 import { TAB_SENDLOG } from './sendModel.js'
 import ChannelXlsxButton from './ChannelXlsxButton.jsx'
 import { StatusBadge, fmtDateTime, periodLabel } from './TechErrorParts.jsx'
 import { canReport } from './ChannelsView.jsx'
 import { YearArchiveMenu, YearArchiveStatus, useYearArchive } from './YearArchiveMenu.jsx'
-import { TAB_REPORTS, TAB_TEMPLATE, groupByYear, periodOptions } from './techErrorModel.js'
+import { TAB_NOTES, TAB_REPORTS, TAB_TEMPLATE, groupByYear, periodOptions } from './techErrorModel.js'
 import {
   REPORT_STATUSES, TE_RPAGE, TE_RPS, TE_RQ, TE_RSTATUS, TE_RYEAR, filterReports, normalizeReportStatus, normalizeReportYear,
   reportCounts, reportYears,
@@ -36,7 +38,8 @@ import {
 const TABLE_MIN_PX = 760
 
 /**
- * Tek kanal: raporları ve ŞABLONU. "Şablonu aç" bu görünümü Şablon sekmesinde açar (`te_tab=template`); şablon
+ * Tek kanal: raporları, ŞABLONU ve NOTLARI (`te_tab=notes`, 2026-11-20 — kanalın verisinin nereden / nasıl alındığını anlatan
+ * zengin metinli belge; yalnız `can_read_notes !== false` olan kanalda sekme görünür). "Şablonu aç" bu görünümü Şablon sekmesinde açar (`te_tab=template`); şablon
  * yalnız BU kanalındır. Rapor listesi (8. sürüm, 2026-10-17): arama (başlık / dönem, Türkçe katlama), durum ve yıl
  * süzgeçleri (URL `te_rq` / `te_rst` / `te_ry`), sayfalama (`te_rpage` / `te_rps`; `panel` ön ayarı), sayfadaki satırlar
  * yıllara göre başlıklı; kap genişliğine göre tablo ya da kart. Başlıkta rapor sayımı (toplam · gönderildi).
@@ -49,6 +52,8 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
   const [state, setState] = useState({ loading: true, error: null, status: null, data: null })
   const [newOpen, setNewOpen] = useState(false)
   const [templateDirty, setTemplateDirty] = useState(false)
+  // Not düzenleyicisinde kaydedilmemiş değişiklik (sekme değişimi / geri / rapor açma aynı ayrılma kapısından geçer)
+  const [notesDirty, setNotesDirty] = useState(false)
   const [rq, setRq] = useState(() => readUrlParam(TE_RQ, ''))
   const [rstatus, setRstatus] = useState(() => normalizeReportStatus(readUrlParam(TE_RSTATUS, 'all')))
   const [ryearRaw, setRyear] = useState(() => readUrlParam(TE_RYEAR, 'all'))
@@ -101,11 +106,20 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
     setRyear('all')
   }
 
+  // Ayrılma sorusu açıkken ikinci bir soru açılmaz (fare basışı + odak aynı sekmeyi iki kez seçebilir)
+  const askingLeave = useRef(false)
   async function guardLeave(next) {
-    if (!templateDirty) { next(); return }
-    const ok = await showConfirm({ title: t('te.leaveTitle'), message: t('te.leaveBody'), variant: 'warning',
-      confirmText: t('te.leaveConfirm'), cancelText: t('te.stay') })
-    if (ok) { setTemplateDirty(false); next() }
+    if (!templateDirty && !notesDirty) { next(); return }
+    if (askingLeave.current) return
+    askingLeave.current = true
+    let ok = false
+    try {
+      ok = await showConfirm({ title: t('te.leaveTitle'), message: notesDirty && !templateDirty ? t('te.note.leaveBody') : t('te.leaveBody'),
+        variant: 'warning', confirmText: t('te.leaveConfirm'), cancelText: t('te.stay') })
+    } finally {
+      askingLeave.current = false
+    }
+    if (ok) { setTemplateDirty(false); setNotesDirty(false); next() }
   }
 
   /**
@@ -216,7 +230,10 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
         </AlertBanner>
       )}
 
-      <Tabs value={tab} onValueChange={(v) => guardLeave(() => onTabChange(v))} className="gap-4">
+      {/* Kaydedilmemiş iş varken sekme yalnız TIKLAMA / Enter ile seçilir (elle etkinleştirme): "Sayfada kal" deyince
+          soru penceresi odağı sekmeye geri verir — otomatik kipte o odak sekmeyi yeniden seçip soruyu döngüye sokuyordu */}
+      <Tabs value={tab} onValueChange={(v) => guardLeave(() => onTabChange(v))} className="gap-4"
+        activationMode={templateDirty || notesDirty ? 'manual' : 'automatic'}>
         <TabsList className="w-full flex-wrap group-data-[orientation=horizontal]/tabs:h-auto sm:w-fit">
           <TabsTrigger value={TAB_REPORTS} className="pointer-coarse:min-h-10" data-slot="te-tab-reports">
             <FileText aria-hidden="true" /> {t('te.tab.reports')}
@@ -228,6 +245,13 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
           <TabsTrigger value={TAB_SENDLOG} className="pointer-coarse:min-h-10" data-slot="te-tab-sendlog">
             <MailCheck aria-hidden="true" /> {t('te.tab.sendlog')}
           </TabsTrigger>
+          {/* Notlar (2026-11-20): yalnız görüntüleme paylaşımıyla görülen kanalda sekme yok (can_read_notes === false);
+              bayrak hiç yoksa (eski sunucu) sekme görünür — içerik "geçici olarak kullanılamıyor" der */}
+          {ch?.can_read_notes !== false && (
+            <TabsTrigger value={TAB_NOTES} className="pointer-coarse:min-h-10" data-slot="te-tab-notes">
+              <NotebookText aria-hidden="true" /> {t('te.tab.notes')}
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value={TAB_REPORTS} className="flex flex-col gap-3">
@@ -386,6 +410,10 @@ export default function ChannelView({ channelId, tab, onTabChange, onBack, onOpe
 
         <TabsContent value={TAB_SENDLOG}>
           {tab === TAB_SENDLOG && <SendLogView channelId={channelId} />}
+        </TabsContent>
+
+        <TabsContent value={TAB_NOTES}>
+          {tab === TAB_NOTES && <ChannelNotesTab channelId={channelId} channel={ch} onDirtyChange={setNotesDirty} />}
         </TabsContent>
       </Tabs>
 

@@ -2117,4 +2117,116 @@ class TechErrorReportControllerTest {
                 .andExpect(jsonPath("$.code").value("VALUE_TOO_LONG"))
                 .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("veritabanı şeması güncel değil")));
     }
+
+    // ── Kanal notları (2026-11-20): var olan yanıtlardaki EKLEMELİ anahtarlar ───────────────────────
+
+    @MockitoBean com.sitemonitor.service.techerror.TechErrorChannelNoteService channelNotes;
+
+    @Test
+    @DisplayName("kanal notları: kanal satırında can_read_notes / can_edit_notes yalnız oturumdan (kanal başına sorgu yok) — üye okur +"
+            + " düzenler, AUDIT ve kapsamlı müdür okur, görüntüleme paylaşımı okuyamaz, düzenleme paylaşımı okur ama düzenleyemez")
+    void channelNotes_flagsOnChannelRows() throws Exception {
+        mvc.perform(get("/api/tech-error-reports/overview").session(user("USER", A, List.of())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.channels[0].can_read_notes").value(true))
+                .andExpect(jsonPath("$.data.channels[0].can_edit_notes").value(true))
+                // var olan anahtarlar yerinde
+                .andExpect(jsonPath("$.data.channels[0].can_edit").value(true))
+                .andExpect(jsonPath("$.data.channels[0].approval_required").value(false));
+        mvc.perform(get("/api/tech-error-reports/overview").session(audit()))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 10)].can_read_notes").value(true))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 10)].can_edit_notes").value(false));
+        MockHttpSession viewer = new MockHttpSession();
+        viewer.setAttribute("authenticated", Boolean.TRUE);
+        viewer.setAttribute("username", "mudur");
+        viewer.setAttribute("userId", 70L);
+        viewer.setAttribute("systemRole", "ADMIN");
+        viewer.setAttribute("viewTeamIds", List.of(A));
+        viewer.setAttribute("memberTeamIds", List.of());
+        viewer.setAttribute("manageTeamIds", List.of());
+        mvc.perform(get("/api/tech-error-reports/overview").session(viewer))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 10)].can_read_notes").value(true))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 10)].can_edit_notes").value(false));
+        mvc.perform(get("/api/tech-error-reports/overview").session(grantee(B, A, false)))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 10)].shared_access").value(true))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 10)].can_read_notes").value(false))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 10)].can_edit_notes").value(false))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 20)].can_read_notes").value(true))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 20)].can_edit_notes").value(true));
+        mvc.perform(get("/api/tech-error-reports/overview").session(grantee(B, A, true)))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 10)].can_read_notes").value(true))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 10)].can_edit_notes").value(false));
+        mvc.perform(get("/api/tech-error-reports/overview").session(globalAdmin()))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 10)].can_read_notes").value(true))
+                .andExpect(jsonPath("$.data.channels[?(@.id == 10)].can_edit_notes").value(true));
+        // Bayraklar yalnız oturumdan: not servisi hiç çağrılmadı
+        org.mockito.Mockito.verifyNoInteractions(channelNotes);
+    }
+
+    @Test
+    @DisplayName("kanal notları: rapor ekranı ve rapor listesi yanıtının sonunda channel_notes — okuyan için TEK hafif özet (metin yok),"
+            + " okuma düşerse unavailable (asla 'not yok'), okuyamayan için {readable:false} ve SORGU YOK")
+    void channelNotes_blockOnReportAndList() throws Exception {
+        TechErrorReport r = report(100, 10, A, null);
+        when(service.liveImageMeta(any())).thenReturn(List.of());
+        when(service.reportRows(10L)).thenReturn(List.of(TechErrorReportController.rowOf(r)));
+        when(channelNotes.summary(10L)).thenReturn(new com.sitemonitor.service.techerror.TechErrorChannelNoteService.Summary(
+                true, false, 4L, Instant.parse("2026-11-19T07:30:00Z"), "Ayşe Yılmaz (Dijital Kanallar / Kıdemli Uzman)", 3L));
+        MockHttpSession member = user("USER", A, List.of());
+        for (String url : List.of("/api/tech-error-reports/reports/100", "/api/tech-error-reports/channels/10/reports")) {
+            mvc.perform(get(url).session(member))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.channel_notes.readable").value(true))
+                    .andExpect(jsonPath("$.data.channel_notes.exists").value(true))
+                    .andExpect(jsonPath("$.data.channel_notes.empty").value(false))
+                    .andExpect(jsonPath("$.data.channel_notes.updated_at").value("2026-11-19T07:30:00Z"))
+                    .andExpect(jsonPath("$.data.channel_notes.updated_by_name").value("Ayşe Yılmaz (Dijital Kanallar / Kıdemli Uzman)"))
+                    .andExpect(jsonPath("$.data.channel_notes.image_count").value(3))
+                    .andExpect(jsonPath("$.data.channel_notes.unavailable").doesNotExist())
+                    .andExpect(jsonPath("$.data.channel_notes.body").doesNotExist())
+                    .andExpect(jsonPath("$.data.channel_notes.version").doesNotExist())
+                    .andExpect(jsonPath("$.data.channel.can_read_notes").value(true))
+                    .andExpect(jsonPath("$.data.channel.can_edit_notes").value(true));
+        }
+        verify(channelNotes, org.mockito.Mockito.times(2)).summary(10L);
+        // var olan anahtarlar aynı
+        mvc.perform(get("/api/tech-error-reports/reports/100").session(member))
+                .andExpect(jsonPath("$.data.report.version").value(4))
+                .andExpect(jsonPath("$.data.limits.image_max_bytes").exists());
+        mvc.perform(get("/api/tech-error-reports/channels/10/reports").session(member))
+                .andExpect(jsonPath("$.data.default_period.month").value(9))
+                .andExpect(jsonPath("$.data.reports.length()").value(1));
+
+        // not yok
+        when(channelNotes.summary(10L)).thenReturn(new com.sitemonitor.service.techerror.TechErrorChannelNoteService.Summary(
+                false, true, 0L, null, null, 0L));
+        mvc.perform(get("/api/tech-error-reports/reports/100").session(member))
+                .andExpect(jsonPath("$.data.channel_notes.readable").value(true))
+                .andExpect(jsonPath("$.data.channel_notes.exists").value(false))
+                .andExpect(jsonPath("$.data.channel_notes.empty").value(true))
+                .andExpect(jsonPath("$.data.channel_notes.image_count").value(0));
+
+        // okuma düşerse rapor yine açılır; "not yok" denmez
+        when(channelNotes.summary(10L)).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+        for (String url : List.of("/api/tech-error-reports/reports/100", "/api/tech-error-reports/channels/10/reports")) {
+            mvc.perform(get(url).session(member))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.channel_notes.readable").value(true))
+                    .andExpect(jsonPath("$.data.channel_notes.unavailable").value(true))
+                    .andExpect(jsonPath("$.data.channel_notes.exists").doesNotExist());
+        }
+
+        // yalnız görüntüleme paylaşımı: okunamaz — sorgu yok
+        org.mockito.Mockito.clearInvocations(channelNotes);
+        MockHttpSession viewGrant = grantee(B, A, false);
+        for (String url : List.of("/api/tech-error-reports/reports/100", "/api/tech-error-reports/channels/10/reports")) {
+            mvc.perform(get(url).session(viewGrant))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.channel_notes.readable").value(false))
+                    .andExpect(jsonPath("$.data.channel_notes.unavailable").doesNotExist())
+                    .andExpect(jsonPath("$.data.channel_notes.exists").doesNotExist())
+                    .andExpect(jsonPath("$.data.channel.can_read_notes").value(false));
+        }
+        org.mockito.Mockito.verifyNoInteractions(channelNotes);
+    }
 }

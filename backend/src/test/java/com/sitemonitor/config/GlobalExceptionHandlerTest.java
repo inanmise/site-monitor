@@ -254,6 +254,21 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    @DisplayName("2026-11-20: CodedForbiddenException → 403 + ucun KENDİ kodu; ileti aynen (SecurityException alt sınıfı — eski yollar aynı)")
+    void codedForbidden() {
+        GlobalExceptionHandler.CodedForbiddenException e = new GlobalExceptionHandler.CodedForbiddenException(
+                "CHANNEL_NOTES_NOT_SHARED", "Kanal notları bu paylaşım düzeyiyle açılmaz.");
+        ResponseEntity<Map<String, Object>> r = handler.handleForbidden(e, null);
+        assertEquals(403, r.getStatusCode().value());
+        assertEquals("CHANNEL_NOTES_NOT_SHARED", r.getBody().get("code"));
+        assertEquals("Kanal notları bu paylaşım düzeyiyle açılmaz.", error(r));
+        assertEquals(Boolean.FALSE, r.getBody().get("success"));
+        // kodu boş verilen istisna genel kurala düşer
+        assertEquals("FORBIDDEN", handler.handleForbidden(
+                new GlobalExceptionHandler.CodedForbiddenException(null, "yetkisiz"), null).getBody().get("code"));
+    }
+
+    @Test
     @DisplayName("MethodArgumentNotValidException → 400 VALIDATION_FAILED + fields map + alan iletileri metinde")
     @SuppressWarnings("unchecked")
     void validation() {

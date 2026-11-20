@@ -94,6 +94,10 @@ public class TechErrorReportService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     com.sitemonitor.repository.TechErrorApprovalTokenRepository approvalTokens;
 
+    /** Kanal notları (2026-11-20): kanal silinince not + görseller + sürümler aynı işlemde silinir (yoksa — dilim testleri — saklama kuralı temizler). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    TechErrorChannelNoteService channelNotes;
+
     public TechErrorReportService(TechErrorChannelRepository channels, TechErrorReportRepository reports,
                                   TechErrorReportImageRepository images, AppUserRepository users,
                                   TechErrorHistoryService history) {
@@ -454,6 +458,10 @@ public class TechErrorReportService {
         // silinir — görsellere yazan her yol gibi (yükleme rapor satırını tutup görseli beklerken burada görseli tutup rapor
         // satırını beklemek PostgreSQL'de kilitlenmeydi, 40P01)
         List<Long> ids = reports.lockForChannel(ch.getId());
+        // Kanal notları (2026-11-20): rapor kilitlerinden SONRA kanal satırı kilitlenir — notun her yazımı (kayıt, görsel
+        // yükleme / silme) aynı kilidi ilk iş olarak alır; sıra raporlar → kanal → notlar, hiçbir yol kanal → rapor almaz.
+        // Kilitten sonra başlayan not yazımı kanalı bulamaz (404), öncekiler bitmiştir: sahipsiz not / görsel kalmaz
+        channels.lockRow(ch.getId());
         if (reports.countSendingForChannel(ch.getId(), now().minus(TechErrorReportSender.STALE_CLAIM)) > 0) {
             throw new CodedConflictException("REPORT_SENT_OR_SENDING", Msg.t(
                     "Bu kanalın bir raporu şu anda gönderiliyor; kanal silinmedi. Gönderim bitince tekrar deneyin.",
@@ -466,6 +474,8 @@ public class TechErrorReportService {
         }
         history.deleteForChannel(ch.getId());
         if (reminders != null) reminders.deleteByChannel(ch.getId());
+        // Kanal notu + görselleri + sürümleri aynı işlemde (toplu, bayt okumaz); servis yoksa saklama kuralı temizler
+        if (channelNotes != null) channelNotes.deleteForChannel(ch.getId());
         // Karar silme anında: arada bir gönderim talebi alındıysa (ya da yeni rapor açıldıysa) sayılar tutmaz → geri al
         int n = reports.deleteAllForChannelUnlessSending(ch.getId(), now().minus(TechErrorReportSender.STALE_CLAIM));
         if (n != ids.size()) {

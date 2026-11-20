@@ -1414,6 +1414,33 @@ export const api = {
     },
     /** PDF'i indirmeden Blob olarak okur (kanalın yıl arşivi — ZIP, 2026-10-17): `{ success, blob, name }`; iptal `{ aborted }`. */
     pdfBlob: (id, { signal } = {}) => fetchTechErrorPdf(id, signal),
+    /**
+     * Kanal notları (2026-11-20): kanal başına TEK zengin metin belgesi ("bu kanalın verisini nereden / nasıl alırım") +
+     * görselleri. Okuma = takımın kendi kapsamı ya da EDIT / DELETE paylaşımı; yazma = takımın kendi kapsamı (sunucuda).
+     * Her istek süre sınırlıdır (okuma 90 sn, yazma 120 sn, yükleme 5 dk — `request()` varsayılanları). Eski pod bu
+     * yollara KODSUZ 404 / 405 döner; kanal görülemiyorsa 404 `CHANNEL_NOT_FOUND` (kodlu) — çağıran ikisini ayırır.
+     */
+    channelNote: (channelId, { signal } = {}) => request(`/tech-error-reports/channel-notes/${encodeURIComponent(channelId)}`,
+      { withStatus: true, ...(signal ? { signal } : {}) }),
+    // Kaydet: okunan `version` (not yokken 0) + gövde; eskiyse 409 CONCURRENT_MODIFICATION (+ current_version, updated_by_name, updated_at)
+    saveChannelNote: (channelId, { version, body }, { signal } = {}) => request(`/tech-error-reports/channel-notes/${encodeURIComponent(channelId)}`,
+      { method: 'PUT', body: JSON.stringify({ version, body }), withStatus: true, ...(signal ? { signal } : {}) }),
+    // Görsel yükle (çok parçalı `file`): { image, ref: "te-note-img:<id>" }; 409 NOTE_IMAGE_LIMIT / NOTE_IMAGE_TOTAL_LIMIT, 429 RATE_LIMITED
+    uploadChannelNoteImage: (channelId, file, { signal } = {}) => {
+      const form = new FormData()
+      form.append('file', file)
+      return request(`/tech-error-reports/channel-notes/${encodeURIComponent(channelId)}/images`,
+        { method: 'POST', body: form, withStatus: true, ...(signal ? { signal } : {}) })
+    },
+    // Yalnız KAYITLI metinde kullanılmayan görsel silinir (kullanılıyorsa 409 NOTE_IMAGE_IN_USE)
+    deleteChannelNoteImage: (channelId, imageId) => request(
+      `/tech-error-reports/channel-notes/${encodeURIComponent(channelId)}/images/${encodeURIComponent(imageId)}`,
+      { method: 'DELETE', withStatus: true }),
+    channelNoteVersions: (channelId) => request(`/tech-error-reports/channel-notes/${encodeURIComponent(channelId)}/versions`, { withStatus: true }),
+    channelNoteVersion: (channelId, version) => request(
+      `/tech-error-reports/channel-notes/${encodeURIComponent(channelId)}/versions/${encodeURIComponent(version)}`, { withStatus: true }),
+    // <img src> için aynı kökenli adres (CSP'de `blob:` yok); oturum çerezi tarayıcıdan gider
+    channelNoteImageUrl: (imageId) => `${BASE}/tech-error-reports/channel-notes/images/${encodeURIComponent(imageId)}`,
   },
   /** Sürüm & yayın yüzeyi — kimlikli HERKES (K9). Nav çipi popover'ı + Yardım → Yenilikler. */
   system: {
