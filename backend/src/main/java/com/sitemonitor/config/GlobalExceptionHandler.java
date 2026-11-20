@@ -560,8 +560,24 @@ public class GlobalExceptionHandler {
                     : msg;
         }
         boolean auth = "AUTH_REQUIRED".equals(eventType) || lower.contains("authenticated");
-        String code = ErrorTexts.isCodeLike(msg) ? msg.trim() : (auth ? "AUTH_REQUIRED" : "FORBIDDEN");
+        String code = e instanceof CodedForbiddenException ce && ce.getCode() != null ? ce.getCode()
+                : ErrorTexts.isCodeLike(msg) ? msg.trim() : (auth ? "AUTH_REQUIRED" : "FORBIDDEN");
         return respond(403, code, shown);
+    }
+
+    /**
+     * 403 + ucun KENDİ kararlı kodu (2026-11-20, kanal notları — {@code CHANNEL_NOTES_NOT_SHARED}): genel
+     * {@code FORBIDDEN} "bu işlem için yetkiniz yok" der; ön yüz "kayıt görünüyor ama bu parçası paylaşılmıyor" durumunu
+     * bu kodla ayırır. İleti kullanıcıya gösterilen metindir ({@link Msg#t}); güvenlik olayı diğer 403'ler gibi
+     * denetlenir. {@link SecurityException} alt sınıfı — onu yakalayan eski yollar aynı kalır.
+     */
+    public static class CodedForbiddenException extends SecurityException {
+        private final String code;
+        public CodedForbiddenException(String code, String message) {
+            super(message);
+            this.code = code;
+        }
+        public String getCode() { return code; }
     }
 
     // ── 405 / passthrough ────────────────────────────────────────────────────

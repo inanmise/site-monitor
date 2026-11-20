@@ -527,6 +527,28 @@ public final class RetentionCatalog {
                 "Kanal şablonu sürüm geçmişi (2026-10-14): her şablon kaydının tam kopyası (≤ 64 KB) ve kaydedenin adı / "
                 + "kullanıcı kimliği. Kanal başına en çok 100 sürüm (eskiler budanır); kanal silinince aynı işlemde silinir, "
                 + "öksüz satır burada temizlenir."),
+        orphan("tech-error-channel-notes-orphan", "tech_error_channel_notes",
+                "channel_id NOT IN (SELECT id FROM tech_error_channels)", DataClass.PERSONAL,
+                "Kanal notu (2026-11-20): kanal başına TEK Markdown belgesi (≤ 60 000 karakter; \"bu kanalın verisini nereden / "
+                + "nasıl alıyorum\") ve oluşturan / son kaydedenin adı ile kullanıcı kimliği. Ekip kararıyla yaşar (ASLA "
+                + "otomatik silinmez); kanal silinince aynı işlemde silinir, öksüz satır burada temizlenir."),
+        orphan("tech-error-channel-note-images-orphan", "tech_error_channel_note_images",
+                "channel_id NOT IN (SELECT id FROM tech_error_channels)", DataClass.CONTENT,
+                "Kanal notu görselleri (2026-11-20): kanalı silinmiş görseller. Kanal silinince aynı işlemde silinir; silme "
+                + "başarısız olursa satır başına megabaytlarca öksüz kalan görsel burada temizlenir."),
+        new RetentionPolicy("tech-error-channel-note-images-unlinked", "tech_error_channel_note_images",
+                "link_changed_at", TimeKind.TIMESTAMP,
+                "site.monitor.tech-error-report.note-image-unlinked-retention-days", 30, 7, false,
+                "linked = FALSE AND {t}", Mode.AGE, false, DataClass.CONTENT,
+                "Kanal notunda KULLANILMAYAN görseller: yüklenip nota hiç eklenmeyen ya da nottan çıkarılan görsel bağsız "
+                + "kalır; süre, bağın düştüğü (ya da görselin yüklendiği) andan sayılır. Not kaydı bağı yeniden kurarsa "
+                + "(ör. eski bir sürüm geri yüklenince) görsel silinmez. Kayıtlı notta kullanılan görsele ASLA dokunulmaz "
+                + "(incident-images-draft ile aynı mantık). link_changed_at gerçek TIMESTAMP'tir → parametre CAST edilir."),
+        orphan("tech-error-channel-note-versions-orphan", "tech_error_channel_note_versions",
+                "channel_id NOT IN (SELECT id FROM tech_error_channels)", DataClass.PERSONAL,
+                "Kanal notu sürüm geçmişi (2026-11-20): her not kaydının tam kopyası (≤ 60 000 karakter) ve kaydedenin adı. "
+                + "Kanal başına en çok 20 sürüm (eskiler her kayıtta budanır); kanal silinince aynı işlemde silinir, öksüz "
+                + "satır burada temizlenir."),
         orphan("dbquery-alert-rows-orphan", "dbquery_alert_rows",
                 "NOT EXISTS (SELECT 1 FROM alert_events e WHERE e.id = dbquery_alert_rows.alert_event_id) "
                 + "OR NOT EXISTS (SELECT 1 FROM dbquery_monitors m WHERE m.id = dbquery_alert_rows.monitor_id)", DataClass.PERSONAL,

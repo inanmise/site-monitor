@@ -145,6 +145,9 @@ public class RequestLoggingFilter extends OncePerRequestFilter {
             "/api/monitoring/dbquery",
             // İzleme CSV dışa / içe aktarımı (2026-11-19): k6 betikleri, SQL ve dosyanın tamamı gövdede gider
             "/api/monitoring/csv",
+            // Kanal notları (2026-11-20): istek / yanıt gövdesi takımın serbest metnidir ("veriyi nereden / nasıl alıyorum" —
+            // adres, hesap adı, adım içerebilir); görsel ucunun yanıtı ham bayttır. Hiçbiri günlüğe yazılmaz
+            "/api/tech-error-reports/channel-notes",
             // SQL Playground (2026-11-13): sorgu sonucu satırları (hassas tablolar dahil), parametre DEĞERLERİ ve dışa
             // aktarım dosyası taşır — parametre değeri hiçbir günlüğe yazılmaz
             "/api/admin/sql",

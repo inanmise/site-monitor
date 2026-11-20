@@ -6,7 +6,7 @@ import ChannelsView from './ChannelsView.jsx'
 import ChannelView from './ChannelView.jsx'
 import ReportEditor from './ReportEditor.jsx'
 import {
-  TAB_REPORTS, TAB_TEMPLATE, TE_CHANNEL, TE_REPORT, TE_TAB, TE_TEAM, TE_VIEW, VIEW_CHANNEL, VIEW_CHANNELS, VIEW_REPORT,
+  TAB_NOTES, TAB_REPORTS, TAB_TEMPLATE, TE_CHANNEL, TE_REPORT, TE_TAB, TE_TEAM, TE_VIEW, VIEW_CHANNEL, VIEW_CHANNELS, VIEW_REPORT,
 } from './techErrorModel.js'
 import { REPORT_LIST_KEYS } from './channelListModel.js'
 import { SENDLOG_KEYS, TAB_SENDLOG } from './sendModel.js'
@@ -28,9 +28,9 @@ function AnalyticsLoading() {
 
 const ID_RE = /^[1-9][0-9]{0,17}$/
 
-/** Kanal sekmesi: şablon, gönderim günlüğü (R18 / E22) ya da raporlar (bilinmeyen değer = raporlar). */
+/** Kanal sekmesi: şablon, gönderim günlüğü (R18 / E22), notlar (2026-11-20) ya da raporlar (bilinmeyen değer = raporlar). */
 function tabOf(v) {
-  return v === TAB_TEMPLATE || v === TAB_SENDLOG ? v : TAB_REPORTS
+  return v === TAB_TEMPLATE || v === TAB_SENDLOG || v === TAB_NOTES ? v : TAB_REPORTS
 }
 
 function readId(key) {
@@ -144,6 +144,7 @@ export default function TechErrorReportsPage() {
         onBack={(channelId) => (fromAnalytics ? returnToAnalytics()
           : channelId || nav.channel ? openChannel(channelId || nav.channel) : toChannels())}
         onOpenChannels={toChannels} onOpenTemplate={(channelId) => openChannel(channelId, TAB_TEMPLATE)}
+        onOpenNotes={(channelId) => openChannel(channelId, TAB_NOTES)}
         onOpenReport={(id, channelId) => { focusTitle.current = true; openReport(id, channelId) }} focusTitleRef={focusTitle} />
     )
   }

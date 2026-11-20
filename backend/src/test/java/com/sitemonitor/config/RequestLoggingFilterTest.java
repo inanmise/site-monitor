@@ -261,6 +261,40 @@ class RequestLoggingFilterTest {
     }
 
     @Test
+    @DisplayName("2026-11-20: kanal notu uçları — not metni (istek + yanıt) ve görsel baytı hiçbir biçimde loglanmaz")
+    void trace_channelNotes_bodiesNeverLogged() throws Exception {
+        logbackLogger.setLevel(Level.TRACE);
+        String requestBody = "{\"version\":3,\"body\":\"GIZLI-NOT-METNI: veri ic-rapor.example.test adresinden alinir\"}";
+        String responseBody = "{\"success\":true,\"data\":{\"body\":\"GIZLI-YANIT-METNI\",\"version\":4}}";
+        for (String uri : new String[] { "/api/tech-error-reports/channel-notes/61",
+                "/api/tech-error-reports/channel-notes/61/versions/3", "/api/tech-error-reports/channel-notes/61/images",
+                "/api/tech-error-reports/channel-notes/images/900",
+                "/api/tech-error-reports;x=1/channel-notes/61", "/api//tech-error-reports/Channel-Notes/61",
+                "/api/tech-error-reports/%63hannel-notes/61" }) {
+            assertThat(RequestLoggingFilter.bodyNeverLogged(new MockHttpServletRequest("PUT", uri))).as(uri).isTrue();
+            appender.list.clear();
+            MockHttpServletRequest req = new MockHttpServletRequest("PUT", uri);
+            req.setContentType("application/json");
+            req.setContent(requestBody.getBytes(StandardCharsets.UTF_8));
+            MockHttpServletResponse resp = new MockHttpServletResponse();
+            filter.doFilter(req, resp, (request, response) -> {
+                request.getInputStream().readAllBytes();
+                response.setContentType("application/json");
+                response.getOutputStream().write(responseBody.getBytes(StandardCharsets.UTF_8));
+            });
+            assertThat(resp.getContentAsString()).as("yanıt bozulmaz").isEqualTo(responseBody);
+            String all = appender.list.stream().map(ILoggingEvent::getFormattedMessage).reduce("", (a, b) -> a + "\n" + b);
+            assertThat(all).as(uri).contains(RequestLoggingFilter.BODY_OMITTED)
+                    .doesNotContain("GIZLI-NOT-METNI").doesNotContain("ic-rapor.example.test").doesNotContain("GIZLI-YANIT-METNI");
+        }
+        // Modülün diğer uçları kapsam dışı (bugünkü davranış)
+        assertThat(RequestLoggingFilter.bodyNeverLogged(
+                new MockHttpServletRequest("GET", "/api/tech-error-reports/channels/61/reports"))).isFalse();
+        assertThat(RequestLoggingFilter.bodyNeverLogged(
+                new MockHttpServletRequest("GET", "/api/tech-error-reports/reports/900"))).isFalse();
+    }
+
+    @Test
     @DisplayName("TRACE kapalı (INFO): filtre baypas — yanıt sarmalanmaz")
     void nonTrace_bypassesWrapping() throws Exception {
         logbackLogger.setLevel(Level.INFO);

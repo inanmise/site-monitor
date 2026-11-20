@@ -341,6 +341,9 @@ public final class AuditEventCatalog {
             "TEAM_WEEKLY_NOTIFICATIONS",
             "TECH_ERROR_CHANNEL_CREATE",  // kanal teknik hata raporu: kanal açıldı (2026-10-13)
             "TECH_ERROR_CHANNEL_DELETE",  // kanal + raporları kalıcı silindi
+            "TECH_ERROR_CHANNEL_NOTE_IMAGE_ADD",    // kanal notuna görsel yüklendi (kimlik + boyut; bayt / ad yok — 2026-11-20)
+            "TECH_ERROR_CHANNEL_NOTE_IMAGE_DELETE", // kanal notunun kullanılmayan görseli silindi
+            "TECH_ERROR_CHANNEL_NOTE_SAVE",         // kanal notu kaydedildi (sürüm + karakter / görsel sayısı; metin ASLA)
             "TECH_ERROR_CHANNEL_REORDER", // takımın kanal sırası tek istekte (önceki / yeni dizilim; R14, 2026-10-17)
             "TECH_ERROR_CHANNEL_UPDATE",  // kanal adı / açıklaması / aktifliği
             "TECH_ERROR_REPORT_CREATE",   // ay raporu açıldı

@@ -332,6 +332,47 @@ describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme gra
     expect(coreUsers).toEqual([])
   })
 
+  it('Kanal notları (2026-11-20): görüntüleyici (react-markdown) ve düzenleyici yalnız lazyParts üzerinden, süre sınırlı import() ile', () => {
+    const viewRe = /(^|\/)ChannelNoteView(\.jsx)?$/
+    const editorRe = /(^|\/)ChannelNoteEditor(\.jsx)?$/
+    const mdRe = /^react-markdown$|^remark-gfm$/
+    // Notu gösteren / düzenleten her kabuk hafif kalır: görüntüleyiciyi, düzenleyiciyi ve markdown çiziciyi statik ALMAZ
+    for (const f of [
+      'components/techerror/ChannelView.jsx', 'components/techerror/ReportEditor.jsx', 'components/techerror/capture/ImagesPanelPage.jsx',
+      'components/techerror/TechErrorReportsPage.jsx', 'components/techerror/notes/ChannelNotesTab.jsx',
+      'components/techerror/notes/ChannelNotesCard.jsx', 'components/techerror/notes/NoteVersionsDialog.jsx',
+      'components/techerror/notes/NoteImageList.jsx', 'components/techerror/notes/lazyParts.jsx', 'components/techerror/notes/noteModel.js',
+    ]) {
+      expect(read(f), f).not.toBe('')
+      expect(hasStatic(f, viewRe), f).toBe(false)
+      expect(hasStatic(f, editorRe), f).toBe(false)
+      expect(hasStatic(f, mdRe), f).toBe(false)
+      expect(hasStatic(f, /^@uiw\/react-md-editor/), f).toBe(false)
+    }
+    // Hiçbir üretim dosyası iki ağır parçayı statik içe aktarmaz; tek yükleyici lazyParts
+    const staticUsers = FILES.filter(({ src }) => staticImports(src).some((s) => viewRe.test(s) || editorRe.test(s))).map((x) => x.rel)
+    expect(staticUsers).toEqual([])
+    const loaders = FILES.filter(({ src }) => dynamicImports(src).some((s) => viewRe.test(s) || editorRe.test(s))).map((x) => x.rel)
+    expect(loaders).toEqual(['components/techerror/notes/lazyParts.jsx'])
+    // Süre sınırlı yükleme (asılı kalan parça isteği "yükleniyor"da bırakmasın); çıplak `await import(` yok
+    const parts = read('components/techerror/notes/lazyParts.jsx')
+    expect(parts).toMatch(/importWithDeadline\(\(\) => import\('\.\/ChannelNoteView\.jsx'\)\)/)
+    expect(parts).toMatch(/importWithDeadline\(\(\) => import\('\.\/ChannelNoteEditor\.jsx'\)\)/)
+    expect(parts).not.toMatch(/await\s+import\(/)
+    // Notlar klasöründe markdown çizici YALNIZ görüntüleyicide; düzenleyici önizlemeyi de tembel görüntüleyiciyle çizer
+    const mdUsers = FILES.filter(({ rel: r }) => r.startsWith('components/techerror/'))
+      .filter(({ src }) => [...staticImports(src), ...dynamicImports(src)].some((s) => mdRe.test(s))).map((x) => x.rel).sort()
+    expect(mdUsers).toEqual(['components/techerror/notes/ChannelNoteView.jsx'])
+    const editor = 'components/techerror/notes/ChannelNoteEditor.jsx'
+    expect(hasStatic(editor, viewRe)).toBe(false)
+    expect(hasStatic(editor, /(^|\/)lazyParts(\.jsx)?$/)).toBe(true)
+    expect(hasStatic(editor, /mdEditor\/LazyMdEditor(\.jsx)?$/)).toBe(true)
+    // Kabuklar notu tembel sarmalayıcılarla çizer
+    expect(hasStatic('components/techerror/notes/ChannelNotesTab.jsx', /(^|\/)lazyParts(\.jsx)?$/)).toBe(true)
+    expect(hasStatic('components/techerror/notes/ChannelNotesCard.jsx', /(^|\/)lazyParts(\.jsx)?$/)).toBe(true)
+    expect(hasStatic('components/techerror/notes/NoteVersionsDialog.jsx', /(^|\/)lazyParts(\.jsx)?$/)).toBe(true)
+  })
+
   it('SQL Playground (2026-11-13): sonuç grafiği (recharts) ve Excel yazıcısı yalnız import() ile', () => {
     const pg = 'components/admin/SqlPlayground.jsx'
     expect(hasStatic(pg, staticPathRe('sql/ResultChart'))).toBe(false)

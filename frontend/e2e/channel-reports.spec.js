@@ -16,6 +16,8 @@
 // 2026-10-18: anomali konuları — kart çipleri, canlı pay, rapordaki giriş metni; takvim + saat (ertesi gün), Kesinti ID,
 // müşteri etkisi, konu görseli (kaydedilmemiş konu önce kaydedilir); "konuyu rapora alma"; şablonda "Anomali alanları" paneli.
 // İnceleme (2026-10-18): İngilizce arayüz geçişi, Kaydet → zorunlu alan → düzelt, klavyeyle Evet / Hayır, kayıt 409 iken görsel yüklenmez.
+// 2026-11-20: kanal notları — "Notlar" sekmesi (yaz, yazma alanına görsel yapıştır, önizle, kaydet, yenile), dış adresli görsele
+// istek gitmez; rapor düzenleyicisinde ve Görsel paneli penceresinde (520 px) salt okunur, kapalı başlayan not kartı.
 import { test, expect } from '@playwright/test'
 import zlib from 'node:zlib'
 import { readFileSync } from 'node:fs'
@@ -403,6 +405,87 @@ let channelPuts = []            // kanal sırası (R14): PUT /channels/<id> göv
 let orderPuts = []              // toplu kanal sırası (R14 inceleme): PUT /teams/<id>/channel-order — {team, ids}
 let reportsOverride = null      // kanalın rapor listesi (8. sürüm: 30 rapor)
 
+// Kanal notları (2026-11-20): kanal 10'un notu sahte sunucuda TUTULUR — kayıt / görsel yüklemeden sonraki okuma gerçektir
+// (sayfa yenilenince kaydedilen not ve görseli gelir). Yalnız açan test `notesOn` yapar: kanal satırları not bayraklarını,
+// rapor yanıtı `channel_notes` özetini o zaman taşır (öteki testlerde anahtar yok → rapor kartı hiç çizilmez).
+let notesOn = false
+let noteCanEdit = true
+let noteDoc = null              // { version, body, updated_at, updated_by_name, created_at } | null (henüz not yok)
+let noteImages = []             // { id, file_name, content_type, width, height, size_bytes, uploaded_at }
+let noteImageBytes = new Map()  // kimlik → PNG baytları (GET /channel-notes/images/<kimlik>)
+let noteVersions = []           // { version, body, saved_at, saved_by_name, char_count, image_count } — en yenisi başta
+let noteSaves = []              // PUT gövdeleri
+let noteUploads = []            // POST /channel-notes/10/images gövdeleri (Buffer)
+let noteGets = 0                // GET /channel-notes/10 sayısı (kapalı kart istek atmaz)
+const NOTE_LIMITS = { max_chars: 60000, max_images: 40, max_image_bytes: 5242880, max_total_bytes: 41943040, unlinked_keep_days: 30,
+  max_versions: 20 }
+// Sunucunun başvuru kuralı (te-note-img:<1–18 rakam>, ardından rakam gelmez) — test verisi kısa, burada regex yeter
+const noteRefIds = (body) => [...new Set([...String(body || '').matchAll(/te-note-img:(\d{1,18})(?!\d)/g)].map((m) => String(Number(m[1]))))]
+function noteGetBody() {
+  const body = noteDoc?.body ?? ''
+  const refs = new Set(noteRefIds(body))
+  const images = noteImages.map((i) => ({ ...i, linked: refs.has(String(i.id)) }))
+  return { channel_id: 10, exists: !!noteDoc, version: noteDoc?.version ?? 0, body, char_count: body.length,
+    updated_at: noteDoc?.updated_at ?? null, updated_by_name: noteDoc?.updated_by_name ?? null, created_at: noteDoc?.created_at ?? null,
+    images, image_bytes: images.reduce((n, i) => n + i.size_bytes, 0), limits: NOTE_LIMITS, can_edit: noteCanEdit, shared_access: false }
+}
+// Rapor / rapor listesi yanıtındaki özet (`channel_notes`)
+function noteSummary() {
+  const body = noteDoc?.body ?? ''
+  return { readable: true, exists: !!noteDoc, empty: body.trim() === '', updated_at: noteDoc?.updated_at ?? null,
+    updated_by_name: noteDoc?.updated_by_name ?? null, image_count: noteRefIds(body).length }
+}
+const noteChannel = (c) => (notesOn ? { ...c, can_read_notes: true, can_edit_notes: noteCanEdit } : c)
+/** Çok parçalı gövdedeki PNG'nin kendi baytları (imza … IEND + CRC) — yüklenen görsel aynen geri sunulur. */
+function pngBytes(body) {
+  const i = body.indexOf(Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+  if (i < 0) return null
+  const end = body.indexOf(Buffer.from('IEND', 'latin1'), i)
+  return end < 0 ? null : body.subarray(i, end + 8)
+}
+// Notun gerçekçi içeriği: başlık, uzun adres, tablo, görev listesi, kod — ve çizilmemesi gereken UZAK görsel
+const NOTE_REMOTE_HOST = 'example.com'
+const NOTE_TEXT = [
+  '# Veriyi nereden alıyoruz',
+  '',
+  `Rakamlar Qlik "Kanal Teknik Hataları" panosundan alınır: https://qlik.ornek-kurum-bilgi-teknolojileri.example.org/sense/app/3f2a9c1e-7b1d-4c55-9a10-kanal-teknik-hatalari/sheet/aylik-ozet-ve-gunluk-dagilim`,
+  '',
+  '1. Panoda **dönem** süzgecini raporun ayına getirin.',
+  '2. "Teknik hata adedi" kutucuğunu okuyun.',
+  '',
+  '- [x] Map yapılmamış hatalar ayrı sayfada',
+  '- [ ] Kota hataları için ikinci pano',
+  '',
+  '| Alan | Kaynak | Not |',
+  '| --- | --- | --- |',
+  '| Toplam işlem adedi | Qlik — Aylık Özet | Ayın son günü 23:59 itibarıyla |',
+  '| Teknik hata adedi | Qlik — Teknik Hatalar | Kesinti kaynaklılar dahil |',
+  '',
+  `![dış kaynak](https://${NOTE_REMOTE_HOST}/a.png)`,
+  '',
+  '`SELECT COUNT(*) FROM teknik_hatalar WHERE donem = :ay`',
+  '',
+].join('\n')
+/**
+ * Dış sunuculara (örnek alan adları) giden istekleri toplar ve KESER: not içindeki dış adresli görsel için <img> çizilmemeli,
+ * yani tek bir istek bile düşmemeli. Kesildiği için uygulama yanlışlıkla istese de makineden bir şey çıkmaz; istek olayı
+ * yine de kaydedilir. `target`: sayfa ya da bağlam (açılır pencere de izlenir).
+ */
+const NOTE_REMOTE_RE = /(^|\.)example\.(com|org)$/
+async function trackRemote(target) {
+  const seen = []
+  target.on('request', (r) => {
+    try { if (NOTE_REMOTE_RE.test(new URL(r.url()).hostname)) seen.push(r.url()) } catch { /* ayrıştırılamayan adres */ }
+  })
+  await target.route((u) => NOTE_REMOTE_RE.test(new URL(u).hostname), (route) => route.abort())
+  return seen
+}
+/** Görsel gerçekten yüklendi mi (tembel yüklenen görsel önce görünür alana getirilir): doğal genişliği. */
+async function loadedWidth(img) {
+  await img.scrollIntoViewIfNeeded()
+  return img.evaluate((el) => (el.complete ? el.naturalWidth : 0))
+}
+
 // Özet kartına gömülü bölüm (2026-10-17): map yapılmamış hata adedi + açıklama yönetici özeti kartında girilir; açıklama
 // ilgili cümlenin altında, hiçbir cümlenin başvurmadığı evet/hayır kendi satırında
 const EMBED_TEMPLATE = {
@@ -613,6 +696,8 @@ async function mock(page, { openSections = true, openTopics = true, target = pag
   overviewOverride = null
   reportsOverride = null
   libraryEntries = []; libraryWrites = []; channelCreates = []
+  notesOn = false; noteCanEdit = true; noteDoc = null; noteImages = []; noteImageBytes = new Map(); noteVersions = []
+  noteSaves = []; noteUploads = []; noteGets = 0
   // target: sayfa (varsayılan) ya da bağlam — Görsel paneli testi açılır pencereyi de aynı sahte sunucuya bağlar
   await target.addInitScript(() => {
     try { localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 })) } catch { /* yoksay */ }
@@ -625,6 +710,18 @@ async function mock(page, { openSections = true, openTopics = true, target = pag
       await route.fulfill({ status: 200, contentType: 'image/png', body: PNG })
       return
     }
+    // Kanal notu görseli (2026-11-20): yüklenen baytlar aynen sunulur; bilinmeyen kimlik kodlu 404
+    if (/^\/api\/tech-error-reports\/channel-notes\/images\/\d+$/.test(p)) {
+      const bytes = noteImageBytes.get(Number(p.split('/').pop()))
+      if (bytes) {
+        await route.fulfill({ status: 200, contentType: 'image/png',
+          headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }, body: bytes })
+      } else {
+        await route.fulfill({ status: 404, contentType: 'application/json',
+          body: JSON.stringify({ success: false, code: 'NOTE_IMAGE_NOT_FOUND', error: 'Görsel bulunamadı ya da artık yok.' }) })
+      }
+      return
+    }
     if (/^\/api\/tech-error-reports\/channels\/(10|20)\/template\/preview-pdf$/.test(p) && req.method() === 'POST') {
       previewBodies.push({ id: Number(p.split('/')[4]), ...JSON.parse(req.postData() || '{}') })
       await route.fulfill({ status: 200, contentType: 'application/pdf',
@@ -635,7 +732,61 @@ async function mock(page, { openSections = true, openTopics = true, target = pag
     let body = { success: true, data: [] }
     if (p === '/api/me') body = { success: true, username: ME_USER, system_role: 'USER', global_admin: false, team_id: 5, team_ids: [5], tour: { status: 'dismissed', version: 99 } }
     else if (p === '/api/me/permissions') body = { success: true, data: { 'tech_error_reports.read': { view: true }, 'tech_error_reports.crud': { edit: true } } }
-    else if (p === '/api/tech-error-reports/overview') {
+    else if (p === '/api/tech-error-reports/channel-notes/10' && req.method() === 'GET') {
+      noteGets++
+      body = { success: true, data: noteGetBody() }
+    } else if (p === '/api/tech-error-reports/channel-notes/10' && req.method() === 'PUT') {
+      // Sunucu gibi: okunan sürümle kaydedilir (uyuşmazsa 409 + kim / ne zaman), her kayıt bir sürüm satırı bırakır
+      const put = JSON.parse(req.postData() || '{}')
+      noteSaves.push(put)
+      if (put.version !== (noteDoc?.version ?? 0)) {
+        await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ success: false, code: 'CONCURRENT_MODIFICATION',
+          error: 'Bu not siz düzenlerken başka biri tarafından kaydedildi. En son hâli yükleyip değişikliğinizi yeniden uygulayın.',
+          current_version: noteDoc?.version ?? 0, updated_by_name: noteDoc?.updated_by_name ?? null, updated_at: noteDoc?.updated_at ?? null }) })
+        return
+      }
+      const text = String(put.body ?? '')
+      noteDoc = { version: (noteDoc?.version ?? 0) + 1, body: text, updated_at: '2026-11-20T08:30:00Z', updated_by_name: LONG_PERSON,
+        created_at: noteDoc?.created_at ?? '2026-11-20T08:30:00Z' }
+      noteVersions = [{ version: noteDoc.version, body: text, saved_at: noteDoc.updated_at, saved_by_name: LONG_PERSON, char_count: text.length,
+        image_count: noteRefIds(text).length }, ...noteVersions]
+      body = { success: true, data: { ...noteGetBody(), changed: true } }
+    } else if (p === '/api/tech-error-reports/channel-notes/10/images' && req.method() === 'POST') {
+      const buf = req.postDataBuffer() || Buffer.alloc(0)
+      noteUploads.push(buf)
+      const size = pngSize(buf)
+      const id = 700 + noteUploads.length
+      const bytes = pngBytes(buf) || PNG
+      noteImageBytes.set(id, bytes)
+      const stored = { id, file_name: /filename="([^"]+)"/.exec(buf.toString('latin1'))?.[1] || `gorsel-${id}.png`, content_type: 'image/png',
+        width: size?.w ?? 1, height: size?.h ?? 1, size_bytes: bytes.length, uploaded_at: '2026-11-20T08:20:00Z' }
+      noteImages = [stored, ...noteImages]
+      body = { success: true, data: { image: { ...stored, linked: false }, ref: `te-note-img:${id}` } }
+    } else if (/^\/api\/tech-error-reports\/channel-notes\/10\/images\/\d+$/.test(p) && req.method() === 'DELETE') {
+      // Yalnız KAYITLI metinde kullanılmayan görsel silinir
+      const id = Number(p.split('/').pop())
+      if (noteRefIds(noteDoc?.body).includes(String(id))) {
+        await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ success: false, code: 'NOTE_IMAGE_IN_USE',
+          error: 'Bu görsel kayıtlı notta kullanılıyor. Önce metinden çıkarıp notu kaydedin, sonra silin.' }) })
+        return
+      }
+      noteImages = noteImages.filter((i) => i.id !== id)
+      noteImageBytes.delete(id)
+      body = { success: true, data: { deleted: true } }
+    } else if (p === '/api/tech-error-reports/channel-notes/10/versions') {
+      body = { success: true, data: { max_versions: NOTE_LIMITS.max_versions,
+        // Liste gövdesizdir (sözleşme): metin yalnız tek sürüm okumasında gelir
+        versions: noteVersions.map((v) => ({ version: v.version, saved_at: v.saved_at, saved_by_name: v.saved_by_name,
+          char_count: v.char_count, image_count: v.image_count })) } }
+    } else if (/^\/api\/tech-error-reports\/channel-notes\/10\/versions\/\d+$/.test(p)) {
+      const v = noteVersions.find((x) => x.version === Number(p.split('/').pop()))
+      if (!v) {
+        await route.fulfill({ status: 404, contentType: 'application/json',
+          body: JSON.stringify({ success: false, code: 'NOTE_VERSION_NOT_FOUND', error: 'Bu sürüm artık tutulmuyor.' }) })
+        return
+      }
+      body = { success: true, data: { version: v.version, body: v.body, saved_at: v.saved_at, saved_by_name: v.saved_by_name } }
+    } else if (p === '/api/tech-error-reports/overview') {
       body = { success: true, data: { period: { year: 2026, month: 9 }, can_create: true,
         teams: [{ id: 5, name: LONG_TEAM, active: true, has_email: true, can_edit: true, can_manage: false, library_read: true }],
         channels: overviewOverride || [channel(10, LONG_CHANNEL), channel(20, 'POS')] } }
@@ -712,7 +863,7 @@ async function mock(page, { openSections = true, openTopics = true, target = pag
       } else body = { success: true, data: { channel: channel(id, id === 10 ? LONG_CHANNEL : 'POS'), template: templateOverride || TEMPLATE, version: 3 } }
     } else if (/^\/api\/tech-error-reports\/channels\/(10|20)\/reports$/.test(p)) {
       const id = Number(p.split('/')[4])
-      body = { success: true, data: { channel: channel(id, id === 10 ? LONG_CHANNEL : 'POS'), default_period: { year: 2026, month: 9 },
+      body = { success: true, data: { channel: noteChannel(channel(id, id === 10 ? LONG_CHANNEL : 'POS')), default_period: { year: 2026, month: 9 },
         reports: reportsOverride || [{ id: 100, year: 2026, month: 9, status: 'draft', title: `${id === 10 ? LONG_CHANNEL : 'POS'} Kanalı Teknik Hata Mesajları - Eylül 2026`,
           updated_at: '2026-10-02T07:00:00Z', updated_by_name: 'Ayşegül Nur Karaosmanoğlu', can_delete: true, image_count: 0 },
         { id: 80, year: 2025, month: 12, status: 'sent', title: `${id === 10 ? LONG_CHANNEL : 'POS'} Kanalı Teknik Hata Mesajları - Aralık 2025`,
@@ -728,7 +879,9 @@ async function mock(page, { openSections = true, openTopics = true, target = pag
         body = { success: true, data: { version: (put.version ?? 4) + 1, changed: true, updated_at: '2026-10-13T09:00:00Z', values: put.values } }
       } else {
         const base = reportOverride || REPORT
-        body = { success: true, data: persistUploads ? { ...base, images: storedImages } : base }
+        const data = persistUploads ? { ...base, images: storedImages } : base
+        // Kanal notları açıksa (yalnız o testler) rapor yanıtı kanalın not bayraklarını ve not özetini de taşır
+        body = { success: true, data: notesOn ? { ...data, channel: noteChannel(data.channel), channel_notes: noteSummary() } : data }
       }
     } else if (/^\/api\/tech-error-reports\/reports\/100\/images\/[^/]+$/.test(p) && req.method() === 'POST') {
       const slotId = decodeURIComponent(p.split('/').pop())
@@ -3354,6 +3507,260 @@ for (const vp of VIEWPORTS) {
       await expect.poll(() => analyticsCalls.length).toBeGreaterThan(callsBeforeBack)
       expect(analyticsCalls[callsBeforeBack].get('fresh')).toBe('1')
       await expect(cards).toHaveCount(3)
+    })
+
+    test.describe('kanal notları (2026-11-20)', () => {
+      // Kanal notları (2026-11-20): "Notlar" sekmesi — boş durum → "Not yaz" → yazma alanına görsel yapıştır (tarayıcıda gerçek
+      // hazırlık + yükleme) → önizle → kaydet → sayfayı yenile: kaydedilen not görseliyle gelir. Dış adresli görsel için <img>
+      // çizilmez ve o sunucuya TEK istek gitmez. Her adımda taşma / kırpılma yok, dokunmatikte hedefler ≥ 40 px.
+      test('kanal notları: Notlar sekmesi — yaz, görsel yapıştır, kaydet, yenile; dış görsel istenmez; sığar', async ({ page }) => {
+        test.setTimeout(150_000)
+        await mock(page)
+        notesOn = true
+        const remote = await trackRemote(page)
+        await page.goto('/?tab=channelreports&te_view=channel&te_ch=10&te_tab=notes')
+        const tab = page.locator('[data-slot="te-notes-tab"]')
+        await expect(tab).toHaveAttribute('data-state', 'empty', { timeout: 20_000 })
+        await expect(page.locator('[data-slot="te-tab-notes"]')).toHaveAttribute('data-state', 'active')
+        await expect(tab.locator('[data-slot="te-note-guide"]')).toBeVisible()
+        await page.waitForTimeout(200)
+        expect(await page.evaluate(overflowX), 'yatay taşma (boş not)').toBeLessThanOrEqual(1)
+        expect(await page.evaluate(clipped, '[data-slot="te-notes-tab"]'), 'kırpılan metin (boş not)').toEqual([])
+        if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-notes-tab"]'), 'küçük hedef (boş not)').toEqual([])
+
+        // 1) Düzenleyici: gizli bilgi uyarısı kalıcı; temizken Kaydet kapalı
+        await tab.locator('[data-slot="te-note-write"]').click()
+        const editor = page.locator('[data-slot="te-note-editor"]')
+        await expect(editor).toBeVisible({ timeout: 20_000 })
+        const ta = editor.locator('[data-slot="te-note-write-pane"] textarea')
+        await expect(ta).toBeVisible({ timeout: 20_000 })
+        await expect(editor.locator('[data-slot="te-note-secrets-hint"]')).toContainText(/Parola, belirteç|passwords, tokens/)
+        const save = editor.locator('[data-slot="te-note-save"]')
+        await expect(save).toBeDisabled()
+        await ta.fill(NOTE_TEXT)
+        await expect(editor).toHaveAttribute('data-dirty', 'true')
+        await expect(save).toBeEnabled()
+
+        // 2) Yazma alanına yapıştırma (Ctrl/⌘+V'nin olayı): görsel pano adıyla, ölçüsü aynen yüklenir; başvurusu imlece
+        // (metnin sonuna) KENDİ satırında eklenir; görsel listesinde "kullanılmıyor" görünmez (taslakta kullanılıyor)
+        await ta.evaluate((el, b64) => {
+          el.focus()
+          el.setSelectionRange(el.value.length, el.value.length)
+          const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+          const dt = new DataTransfer()
+          dt.items.add(new File([bytes], 'image.png', { type: 'image/png' }))
+          el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
+        }, stripedPng(300, 200).toString('base64'))
+        await expect.poll(() => noteUploads.length, { timeout: 15_000 }).toBe(1)
+        expect(pngSize(noteUploads[0])).toMatchObject({ w: 300, h: 200 })
+        expect(noteUploads[0].toString('latin1')).toMatch(/filename="kanal-notu-pano-\d{8}-\d{6}\.png"/)
+        await expect(ta).toHaveValue(/\n!\[kanal-notu-pano-\d{8}-\d{6}\]\(te-note-img:701\)\n$/)
+        const rows = editor.locator('[data-slot="te-note-image-row"]')
+        await expect(rows).toHaveCount(1)
+        await expect(rows.first()).toHaveAttribute('data-unused', 'false')
+        await expect(rows.first().locator('[data-slot="te-note-image-delete"]')).toHaveCount(0)
+        // Yuva eylemleri rapor görsel yuvalarıyla aynı düğmeler, aynı sırada (telefonda "Ekrandan al" yok)
+        const mainActions = await editor.locator('[data-slot="te-image-main-actions"] > button').evaluateAll((els) => els.map((b) => b.getAttribute('data-slot')))
+        expect(mainActions.slice(0, 1)).toEqual(['te-image-upload'])
+        expect(mainActions.filter((s) => !['te-image-upload', 'te-image-snip', 'te-image-paste'].includes(s)), 'yabancı eylem').toEqual([])
+        if (vp.width < 768) expect(mainActions).not.toContain('te-image-snip')
+        await page.waitForTimeout(200)
+        expect(await page.evaluate(overflowX), 'yatay taşma (düzenleyici)').toBeLessThanOrEqual(1)
+        expect(await page.evaluate(clipped, '[data-slot="te-notes-tab"]'), 'kırpılan metin (düzenleyici)').toEqual([])
+        if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-notes-tab"]'), 'küçük hedef (düzenleyici)').toEqual([])
+        await page.screenshot({ path: `test-results/te-notes-editor-${vp.name}.png` })
+
+        // 3) Önizleme = notun kilitli görüntüleyicisi: kendi görseli çizilir, dış adres için <img> YOK (bilgi kutusu)
+        await editor.getByRole('button', { name: /^(Önizleme|Preview)$/ }).click()
+        const preview = editor.locator('[data-slot="te-note-preview"]')
+        await expect(preview.locator('[data-slot="te-note-view"]')).toBeVisible({ timeout: 20_000 })
+        const pvImg = preview.locator('img[data-slot="te-note-img"]')
+        await expect(pvImg).toHaveCount(1)
+        await expect.poll(() => loadedWidth(pvImg), { timeout: 15_000 }).toBe(300)
+        await expect(preview.locator('img')).toHaveCount(1)
+        await expect(preview.locator('[data-slot="te-note-img-blocked"]')).toHaveCount(1)
+        await expect(preview.locator('[data-slot="te-note-table"]')).toBeVisible()
+        await page.waitForTimeout(200)
+        expect(await page.evaluate(overflowX), 'yatay taşma (önizleme)').toBeLessThanOrEqual(1)
+        expect(await page.evaluate(clipped, '[data-slot="te-notes-tab"]'), 'kırpılan metin (önizleme)').toEqual([])
+        if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-notes-tab"]'), 'küçük hedef (önizleme)').toEqual([])
+
+        // 4) Kaydet: okunan sürümle (not yokken 0) gider; düzenleyici temiz kalır
+        await editor.getByRole('button', { name: /^(Yaz|Write)$/ }).click()
+        await save.click()
+        await expect.poll(() => noteSaves.length, { timeout: 10_000 }).toBe(1)
+        expect(noteSaves[0].version).toBe(0)
+        expect(noteSaves[0].body).toMatch(/\]\(te-note-img:701\)/)
+        expect(noteSaves[0].body).toContain(`https://${NOTE_REMOTE_HOST}/a.png`)
+        await expect(editor).toHaveAttribute('data-dirty', 'false')
+        await expect(editor.locator('[data-slot="te-note-status"]')).toHaveText(/Tüm değişiklikler kaydedildi|All changes saved/)
+        await expect(save).toBeDisabled()
+        await editor.locator('[data-slot="te-note-close"]').click()
+        await expect(tab).toHaveAttribute('data-state', 'read')
+        await expect(tab.locator('[data-slot="te-note-meta"]')).toContainText(LONG_PERSON)
+
+        // 5) Sayfa yenilenir: kaydedilen not sunucudan gelir — başlık, tablo, kendi görseli (yüklenen baytlarla), dış görsel yok
+        await page.reload()
+        await expect(tab).toHaveAttribute('data-state', 'read', { timeout: 20_000 })
+        const read = tab.locator('[data-slot="te-note-read"]')
+        await expect(read.getByRole('heading', { level: 3, name: 'Veriyi nereden alıyoruz' })).toBeVisible({ timeout: 20_000 })
+        const img = read.locator('img[data-slot="te-note-img"]')
+        await expect(img).toHaveCount(1)
+        await expect.poll(() => loadedWidth(img), { timeout: 15_000 }).toBe(300)
+        expect(new URL(await img.getAttribute('src'), page.url()).pathname).toBe('/api/tech-error-reports/channel-notes/images/701')
+        await expect(read.locator('img')).toHaveCount(1)
+        await expect(read.locator('[data-slot="te-note-img-blocked"]')).toContainText(/Dış kaynaklı görsel gösterilmez|External images aren.t shown/)
+        await expect(read.locator('[data-slot="te-note-table"]')).toBeVisible()
+        await expect(read.getByRole('link', { name: /qlik\.ornek-kurum/ })).toHaveAttribute('rel', 'noopener noreferrer')
+        await expect(tab.locator('[data-slot="te-note-edit"]')).toBeVisible()
+        await page.waitForTimeout(300)
+        expect(await page.evaluate(overflowX), 'yatay taşma (okuma)').toBeLessThanOrEqual(1)
+        expect(await page.evaluate(clipped, '[data-slot="te-notes-tab"]'), 'kırpılan metin (okuma)').toEqual([])
+        if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-notes-tab"]'), 'küçük hedef (okuma)').toEqual([])
+        // Kanal başlığı ve sekme şeridi de (dört sekme) sığar
+        expect(await page.evaluate(clipped, '[data-slot="te-channel"]'), 'kırpılan metin (kanal sayfası)').toEqual([])
+        if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-channel"]'), 'küçük hedef (kanal sayfası)').toEqual([])
+        await page.screenshot({ path: `test-results/te-notes-read-${vp.name}.png` })
+
+        // Görsel büyütülür ve kapanır (odak görsele döner)
+        await read.locator('[data-slot="te-note-img-open"]').click()
+        const zoomBox = page.locator('[data-slot="te-image-lightbox"]')
+        await expect(zoomBox).toBeVisible()
+        await page.keyboard.press('Escape')
+        await expect(zoomBox).toHaveCount(0)
+
+        expect(remote, 'dış sunucuya giden istek').toEqual([])
+      })
+
+      // Kaydedilmemiş notla başka sekmeye tıklamak BİR KEZ sorar: "Sayfada kal" deyince soru penceresi odağı sekmeye geri
+      // verir — eskiden (otomatik etkinleştirmede) bu odak sekmeyi yeniden seçip soruyu döngüye sokuyordu (inceleme 2026-11-20)
+      test('kanal notları: kaydedilmemiş notta sekme değişimi bir kez sorar; "Sayfada kal" döngüye girmez', async ({ page }) => {
+        test.setTimeout(90_000)
+        await mock(page)
+        notesOn = true
+        noteDoc = { version: 2, body: '# Veriyi nereden alıyoruz\n\nQlik panosu.', updated_at: '2026-11-18T08:30:00Z',
+          updated_by_name: LONG_PERSON, created_at: '2026-11-01T08:00:00Z' }
+        await page.goto('/?tab=channelreports&te_view=channel&te_ch=10&te_tab=notes')
+        const tab = page.locator('[data-slot="te-notes-tab"]')
+        await expect(tab).toHaveAttribute('data-state', 'read', { timeout: 20_000 })
+        await tab.locator('[data-slot="te-note-edit"]').click()
+        const editor = page.locator('[data-slot="te-note-editor"]')
+        const ta = editor.locator('[data-slot="te-note-write-pane"] textarea')
+        await expect(ta).toBeVisible({ timeout: 20_000 })
+        await ta.fill('# Veriyi nereden alıyoruz\n\nQlik panosu — kaydedilmedi.')
+        await expect(editor).toHaveAttribute('data-dirty', 'true')
+
+        const reportsTab = page.locator('[data-slot="te-tab-reports"]')
+        const dialog = page.getByRole('dialog').filter({ hasText: /Kaydedilmemiş değişiklikler var|You have unsaved changes/ })
+        await reportsTab.click()
+        await expect(dialog).toHaveCount(1)
+        await dialog.getByRole('button', { name: /^(Sayfada kal|Stay on the page)$/ }).click()
+        await expect(dialog).toHaveCount(0)
+        // Odak sekmeye döndükten sonra soru yeniden AÇILMAZ; not sekmesi ve taslak yerinde
+        await page.waitForTimeout(600)
+        await expect(dialog).toHaveCount(0)
+        await expect(page.locator('[data-slot="te-tab-notes"]')).toHaveAttribute('data-state', 'active')
+        await expect(ta).toHaveValue('# Veriyi nereden alıyoruz\n\nQlik panosu — kaydedilmedi.')
+
+        await reportsTab.click()
+        await expect(dialog).toHaveCount(1)
+        await dialog.getByRole('button', { name: /^(Kaydetmeden ayrıl|Leave without saving)$/ }).click()
+        await expect.poll(() => new URL(page.url()).searchParams.get('te_tab')).not.toBe('notes')
+        await expect(dialog).toHaveCount(0)
+      })
+
+      // Kanal notları kartı: rapor düzenleyicisinin başında ve Görsel paneli penceresinin (520 px) tepesinde SALT OKUNUR.
+      // Kapalı başlar ve kapalıyken notu okumaz; açılınca not görseliyle çizilir; dış görsel istenmez; "Notu düzenle" yalnız
+      // rapor düzenleyicisinde vardır ve kanalın Notlar sekmesine götürür.
+      test('kanal notları: rapor düzenleyicisinde ve Görsel panelinde (520 px) salt okunur kart; sığar', async ({ page, context }) => {
+        test.setTimeout(150_000)
+        await mock(page, { target: context })
+        notesOn = true
+        const shot = stripedPng(300, 200)
+        noteImageBytes.set(701, shot)
+        noteImages = [{ id: 701, file_name: 'qlik-aylik-ozet-panosu-ekran-goruntusu.png', content_type: 'image/png', width: 300, height: 200,
+          size_bytes: shot.length, uploaded_at: '2026-11-18T08:20:00Z' }]
+        noteDoc = { version: 3, body: `${NOTE_TEXT}\n![Qlik aylık özet panosu](te-note-img:701)\n`, updated_at: '2026-11-18T08:30:00Z',
+          updated_by_name: LONG_PERSON, created_at: '2026-11-01T08:00:00Z' }
+        const remote = await trackRemote(context)
+
+        await page.goto('/?tab=channelreports&te_view=report&te_ch=10&te_rep=100')
+        const editor = page.locator('[data-slot="te-report"]')
+        const card = editor.locator('[data-slot="te-notes-card"]')
+        await expect(card).toBeVisible({ timeout: 20_000 })
+        const toggle = card.locator('[data-slot="te-section-toggle"]')
+        // Rapor bölümleri açık tohumlanmış olsa da kart kendi kaydını tutar: kapalı başlar ve notu OKUMAZ
+        await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+        await expect(card).toHaveAttribute('data-kind', 'note')
+        expect(noteGets, 'kapalı kart not okumaz').toBe(0)
+        // Kart ilk rapor bölümünün üstünde
+        const cardTop = await card.boundingBox()
+        const firstSection = await editor.locator('[data-section]:not([data-slot="te-notes-card"])').first().boundingBox()
+        expect(cardTop.y + cardTop.height).toBeLessThanOrEqual(firstSection.y + 1)
+
+        await toggle.click()
+        await expect(card).toHaveAttribute('data-note-state', 'note', { timeout: 20_000 })
+        expect(noteGets).toBe(1)
+        const view = card.locator('[data-slot="te-note-view"]')
+        // Kart başlığı h3 olduğundan notun başlıkları h4'ten başlar
+        await expect(view.getByRole('heading', { level: 4, name: 'Veriyi nereden alıyoruz' })).toBeVisible()
+        const img = view.locator('img[data-slot="te-note-img"]')
+        await expect(img).toHaveCount(1)
+        await expect.poll(() => loadedWidth(img), { timeout: 15_000 }).toBe(300)
+        await expect(view.locator('img')).toHaveCount(1)
+        await expect(view.locator('[data-slot="te-note-img-blocked"]')).toHaveCount(1)
+        await expect(card.locator('[data-slot="te-notes-card-meta"]')).toContainText(LONG_PERSON)
+        // Salt okunur: yazma alanı / yükleme yok; düzenleme yalnız Notlar sekmesine götüren bağlantıdır
+        await expect(card.locator('textarea, input[type="file"], [data-slot="te-image-upload"]')).toHaveCount(0)
+        await expect(card.locator('[data-slot="te-notes-card-edit"]')).toBeVisible()
+        await page.waitForTimeout(300)
+        expect(await page.evaluate(overflowX), 'yatay taşma (rapor kartı)').toBeLessThanOrEqual(1)
+        expect(await page.evaluate(clipped, '[data-slot="te-notes-card"]'), 'kırpılan metin (rapor kartı)').toEqual([])
+        if (vp.touch) expect(await page.evaluate(smallTargets, '[data-slot="te-notes-card"]'), 'küçük hedef (rapor kartı)').toEqual([])
+        await card.screenshot({ path: `test-results/te-notes-card-${vp.name}.png` })
+
+        // Görsel paneli penceresi (520 px): kart görsel yuvalarının ÜSTÜNDE, düzenleme bağlantısı YOK. Açık / kapalı durumu
+        // rapor başına hatırlandığından (az önce açıldı) kart açık gelir ve notu okur
+        const panel = await context.newPage()
+        await panel.setViewportSize({ width: 520, height: 900 })
+        await panel.goto('/?tab=channelreports&te_view=images&te_rep=100')
+        await expect(panel.locator('[data-slot="te-panel"][data-state="ready"]')).toBeVisible({ timeout: 20_000 })
+        const pCard = panel.locator('[data-slot="te-notes-card"]')
+        await expect(pCard).toBeVisible()
+        await expect(pCard.locator('[data-slot="te-section-toggle"]')).toHaveAttribute('aria-expanded', 'true')
+        await expect(pCard).toHaveAttribute('data-note-state', 'note', { timeout: 20_000 })
+        const pImg = pCard.locator('img[data-slot="te-note-img"]')
+        await expect(pImg).toHaveCount(1)
+        await expect.poll(() => loadedWidth(pImg), { timeout: 15_000 }).toBe(300)
+        await expect(pCard.locator('img')).toHaveCount(1)
+        await expect(pCard.locator('[data-slot="te-note-img-blocked"]')).toHaveCount(1)
+        await expect(pCard.locator('[data-slot="te-notes-card-edit"], [data-slot="te-notes-card-write"], textarea')).toHaveCount(0)
+        const pBox = await pCard.boundingBox()
+        const slotBox = await panel.locator('[data-slot="te-image-slot"]').first().boundingBox()
+        expect(pBox.y + pBox.height).toBeLessThanOrEqual(slotBox.y + 1)
+        await panel.waitForTimeout(300)
+        expect(await panel.evaluate(overflowX), 'yatay taşma (panel 520)').toBeLessThanOrEqual(1)
+        expect(await panel.evaluate(clipped, '[data-slot="te-panel"]'), 'kırpılan metin (panel)').toEqual([])
+        if (vp.touch) expect(await panel.evaluate(smallTargets, '[data-slot="te-panel"]'), 'küçük hedef (panel)').toEqual([])
+        await panel.screenshot({ path: `test-results/te-notes-panel-${vp.name}.png` })
+        // Kart kapatılabilir (panelde yer açmak için) ve görsel yuvaları yerinde kalır
+        await pCard.locator('[data-slot="te-section-toggle"]').click()
+        await expect(pCard.locator('[data-slot="te-section-toggle"]')).toHaveAttribute('aria-expanded', 'false')
+        await expect(panel.locator('[data-slot="te-image-slot"]').first()).toBeVisible()
+        await panel.close()
+
+        expect(remote, 'dış sunucuya giden istek').toEqual([])
+
+        // "Notu düzenle": rapor temizken sorulmadan kanalın Notlar sekmesine götürür (not okuma kipinde açılır)
+        await card.locator('[data-slot="te-notes-card-edit"]').click()
+        await expect.poll(() => new URL(page.url()).searchParams.get('te_tab')).toBe('notes')
+        expect(new URL(page.url()).searchParams.get('te_view')).toBe('channel')
+        expect(new URL(page.url()).searchParams.get('te_ch')).toBe('10')
+        const tab = page.locator('[data-slot="te-notes-tab"]')
+        await expect(tab).toHaveAttribute('data-state', 'read', { timeout: 20_000 })
+        await expect(tab.locator('img[data-slot="te-note-img"]')).toHaveCount(1)
+        await expect(tab.locator('[data-slot="te-note-edit"]')).toBeVisible()
+      })
     })
 
     if (!vp.touch) {
