@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-20T14:07:22Z",
+  "generatedAt": "2026-11-20T15:21:41Z",
   "repo": "inanmise/site-monitor",
-  "count": 872,
+  "count": 873,
   "releases": [
+    {
+      "version": "20.225.0",
+      "tag": "v20.225.0",
+      "releasedAt": "2026-11-20T15:21:31Z",
+      "commit": "6d4fcfaa2ad90461da9aec6c4c70cf8ed1831e2a",
+      "prevVersion": "20.224.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "6d4fcfaa",
+          "subject": "olay sürüm testi işlemsiz yazdığı satırları her testten sonra da siler"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "a0ab9af7",
+          "subject": "olay ve hata geçmişi — sağlam kayıt (güncel okuma, yalnız değişen alanlar, çakışma, yerel taslak, tutarlılık önerileri)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.224.0",
       "tag": "v20.224.0",
