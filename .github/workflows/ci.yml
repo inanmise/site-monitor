@@ -73,7 +73,7 @@ jobs:
 
       - name: Upload test report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backend-test-report
           path: backend/target/surefire-reports/
@@ -81,7 +81,7 @@ jobs:
 
       - name: Upload coverage report (Jacoco)
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backend-coverage-report
           path: backend/target/site/jacoco/
@@ -163,7 +163,7 @@ jobs:
 
       - name: Upload test report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backend-postgres-it-report
           path: backend/target/surefire-reports/
@@ -225,7 +225,7 @@ jobs:
 
       - name: Upload test report (active binary)
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backend-k6-contract-report
           path: backend/target/surefire-reports/
@@ -253,7 +253,7 @@ jobs:
 
       - name: Upload test report (candidate binary)
         if: ${{ !cancelled() && steps.fetch.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: backend-k6-contract-candidate-report
           path: backend/target/surefire-reports/
@@ -339,7 +339,7 @@ jobs:
 
       # `.vitest-reports` noktayla başlar: upload-artifact gizli dosyaları varsayılan olarak ATLAR.
       - name: Upload blob report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: vitest-blob-${{ matrix.shard }}
           path: frontend/.vitest-reports/
@@ -447,7 +447,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: playwright-report-${{ matrix.shard }}
           path: frontend/playwright-report/
@@ -471,7 +471,7 @@ jobs:
 
       - name: Upload failure traces
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: playwright-failures-${{ matrix.shard }}
           path: frontend/e2e-failures/
