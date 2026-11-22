@@ -34,7 +34,7 @@ ARG PREVIOUS_IMAGE=
 # raporu R11). Çıktı: /k6 = etkin (K6_VERSION). İndirme / doğrulama adımları tek bir kabuk işlevinde (fetch_k6) — bir aday
 # ikili geldiğinde aynı işlev ikinci kez çağrılır (/k6-candidate çıktısı). Aşama adı ve /k6 çıktısı
 # scripts/fetch-k6-binaries.sh ve CI (backend-k6-contract) için SABİT.
-FROM eclipse-temurin:25.0.4_7-jre-alpine-3.24@sha256:2ca9adf44f5c29d28ecd26cf92d75cc0c66b7f32bfd839a4439e363a8b428af8 AS k6-bin
+FROM eclipse-temurin:27.0.1.0-jre-alpine-3.24@sha256:a0f3b523fd89e242ce302715ce367f68e9073c59274e65746d0791c750f38de3 AS k6-bin
 # BuildKit'in otomatik değeri yalnız DEĞERSİZ ARG'a geçer (varsayılan verilirse varsayılan kazanır, arm64 derlemesi
 # amd64 ikiliyi alırdı — inceleme 2026-10-30, L4). Eski derleyicide boş kalır → amd64.
 ARG TARGETARCH
@@ -123,7 +123,7 @@ COPY VERSION /app/VERSION
 RUN mvn package -DskipTests -q -Drevision="$(tr -d '[:space:]' < /app/VERSION)"
 
 # ── Stage 3: Runtime ─────────────────────────────────
-FROM eclipse-temurin:25.0.4_7-jre-alpine-3.24@sha256:2ca9adf44f5c29d28ecd26cf92d75cc0c66b7f32bfd839a4439e363a8b428af8
+FROM eclipse-temurin:27.0.1.0-jre-alpine-3.24@sha256:a0f3b523fd89e242ce302715ce367f68e9073c59274e65746d0791c750f38de3
 WORKDIR /app
 
 # Debug/troubleshoot tools — pod içinden: curl (HTTP), bash (shell),
