@@ -1,4 +1,4 @@
-import { History, RefreshCw, Plus, CircleDot, Sigma, Timer, OctagonAlert } from 'lucide-react'
+import { History, RefreshCw, Plus, CircleDot, Sigma, Timer, OctagonAlert, Zap } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import PageHeader from '../ui/PageHeader.jsx'
 import SavedViewsMenu from '../ui/SavedViewsMenu.jsx'
@@ -53,7 +53,7 @@ function Kpi({ k, icon: Icon, label, value, sub, onClick, pressed, hint }) {
  * MTTR (ortalama çözülme süresi, bilgi) ve kritik (süzer). Sayılar seçili tarih aralığına göre (`trends.summary`).
  */
 export default function HistoryHeader({
-  summary, summaryFailed = false, byStatus, filters, total, loading, onRefresh, onNew, allowManage, isActive, onCard,
+  summary, summaryFailed = false, byStatus, filters, total, loading, onRefresh, onNew, onQuick, allowManage, isActive, onCard,
 }) {
   const t = useT()
   const s = summary
@@ -78,6 +78,12 @@ export default function HistoryHeader({
             <Button variant="outline" size="sm" onClick={onRefresh} aria-busy={loading || undefined}>
               <RefreshCw aria-hidden="true" className={cn(loading && 'motion-safe:animate-spin')} />{t('inc.refresh')}
             </Button>
+            {/* Hızlı kayıt (2026-11-20, "Hızlı Giriş"): beş alanlık sade form — gerisi sonra ya da "Tüm alanlar" ile */}
+            {allowManage && onQuick && (
+              <Button variant="outline" size="sm" onClick={onQuick} data-action="quick" title={t('inc.quick.buttonHint')}>
+                <Zap aria-hidden="true" />{t('inc.quick.button')}
+              </Button>
+            )}
             {allowManage && (
               <Button size="sm" onClick={onNew} data-action="new">
                 <Plus aria-hidden="true" />{t('inc.new')}

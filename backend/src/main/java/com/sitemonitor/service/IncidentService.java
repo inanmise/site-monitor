@@ -60,8 +60,6 @@ public class IncidentService {
             "Bireysel İnternet Şubesi", "Kurumsal İnternet Şubesi", "Mobil Şube",
             "Çağrı Merkezi - Inbound", "Çağrı Merkezi - Outbound", "IVR",
             "ATM", "POS / Ödeme", "Public Web", "API / Açık Bankacılık");
-    private static final Set<String> ALLOWED_IMAGE_TYPES =
-            Set.of("image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp");
     private static final Pattern IMG_REF = Pattern.compile("/api/incidents/images/(\\d+)");
 
     @Value("${site.monitor.incident.image-max-bytes:5242880}")
@@ -371,28 +369,113 @@ public class IncidentService {
 
     @Transactional
     public IncidentImage storeImage(Long incidentId, String caption, MultipartFile file, String actorName) {
-        if (incidentId != null) get(incidentId); // verilmişse olay var mı doğrula (yoksa 404)
+        // Kayda yükleme SIRAYA girer (2026-11-20): olay satırı işlem boyunca kilitlenir — toplam denetimi ile ekleme arasına
+        // aynı kaydın başka bir yüklemesi giremez (iki eşzamanlı yükleme birlikte sınırı aşamaz). Yoksa 404.
+        IncidentRecord target = null;
+        if (incidentId != null) {
+            repo.lockRow(incidentId);
+            target = get(incidentId);
+        }
         // incidentId null = taslak yükleme (yeni olay henüz kaydedilmedi); kaydedince
         // create/update markdown'daki görsel id'lerini linkImages ile olaya bağlar.
-        if (file == null || file.isEmpty()) throw new IllegalArgumentException("Dosya boş");
-        if (file.getSize() > imageMaxBytes)
-            throw new IllegalArgumentException("Görsel çok büyük (limit " + (imageMaxBytes / 1024 / 1024) + "MB)");
-        String ct = file.getContentType() != null ? file.getContentType().toLowerCase() : "";
-        if (!ALLOWED_IMAGE_TYPES.contains(ct))
-            throw new IllegalArgumentException("Desteklenmeyen görsel tipi: " + ct);
+        // Tam çözünürlük görsel (2026-11-20, "Hızlı Giriş"): istemci artık 1000 px / 70 KB'a küçültmüyor — tür BAYTLARDAN,
+        // ölçü başlıktan (çözmeden) denetlenir; saklanan tür istemcinin başlığı değil baytların türüdür.
+        if (file == null || file.isEmpty()) {
+            throw new FieldValidationException("file", Msg.t(
+                    "Dosya boş. Görseli PNG ya da JPEG olarak kaydedip yeniden yükleyin.",
+                    "The file is empty. Save the image as PNG or JPEG and upload it again."));
+        }
+        if (file.getSize() > imageMaxBytes) {
+            // Gövde okunmadan (büyük dosya belleğe alınmaz) — doğrulayıcının iletisiyle aynı
+            throw com.sitemonitor.service.incident.IncidentImageValidator.tooLarge(imageMaxBytes);
+        }
+        byte[] data;
         try {
-            IncidentImage img = new IncidentImage();
-            img.setIncidentId(incidentId);
-            img.setCaption(caption != null ? caption.trim() : null);
-            img.setContentType(ct);
-            img.setSizeBytes(file.getSize());
-            img.setData(file.getBytes());
-            img.setCreatedBy(actorName);
-            img.setCreatedAt(now());
-            return imageRepo.save(img);
+            data = file.getBytes();
         } catch (java.io.IOException e) {
             throw new IllegalStateException("Görsel okunamadı", e);
         }
+        com.sitemonitor.service.incident.IncidentImageValidator.Checked checked =
+                com.sitemonitor.service.incident.IncidentImageValidator.check(data, imageMaxBytes);
+        requireImageTotal(incidentId, target, actorName, data.length);
+        IncidentImage img = new IncidentImage();
+        img.setIncidentId(incidentId);
+        String cap = caption == null ? null : caption.trim();
+        img.setCaption(cap == null || cap.isEmpty() ? null : (cap.length() > 300 ? cap.substring(0, 300) : cap));
+        img.setContentType(checked.contentType());
+        img.setSizeBytes((long) data.length);
+        img.setData(data);
+        img.setCreatedBy(actorName);
+        img.setCreatedAt(now());
+        return imageRepo.save(img);
+    }
+
+    /** Kayıt başına görsellerin toplam üst sınırı (bayt) — {@code site.monitor.incident.image-total-max-bytes}. */
+    @Value("${site.monitor.incident.image-total-max-bytes:41943040}")
+    private long imageTotalMaxBytes = 40L * 1024 * 1024;
+
+    /** Taslak görsellerin toplamında sayılan pencere: kullanıcının son 24 saatte yüklediği, olaya bağlanmamış görseller. */
+    static final java.time.Duration DRAFT_WINDOW = java.time.Duration.ofHours(24);
+
+    /** Toplamda sayılan, kayıtlı metinde geçen görsel kimliklerinin üst sınırı (daha fazlası sayılmaz — kullanıcı lehine). */
+    static final int MAX_COUNTED_REFS = 1000;
+
+    /**
+     * Kayıt başına görsel toplamı (2026-11-20; inceleme düzeltmesi): bu dosya +
+     * <ul>
+     *   <li>düzenleme — olaya bağlı görsellerden kaydın SAKLANAN dört markdown metninde geçenler (yaşı ne olursa olsun) ve
+     *       son 24 saatte bu kayda yüklenip henüz metne girmemiş olanlar (süren bir düzenleme oturumu); metinden çıkarılıp
+     *       kaydedilen görsel ve kullanılmadan kalan eski yükleme SAYILMAZ (aksi hâlde birkaç tam çözünürlük denemesi kaydı
+     *       kalıcı olarak kilitlerdi — görsel silme yolu yok);</li>
+     *   <li>yeni kayıt — kullanıcının son 24 saatteki bağlanmamış taslakları.</li>
+     * </ul>
+     * sınırı aşamaz. Aşan yükleme alan adlı 400 (kod {@code INCIDENT_IMAGE_TOTAL_LIMIT}). Kaydedilirken bağlanan taslaklar
+     * yeniden denetlenmez (kabul edilen sınır). Düzenlemede çağıran olay satırını kilitlemiştir.
+     */
+    private void requireImageTotal(Long incidentId, IncidentRecord target, String actorName, long adding) {
+        long cap = imageTotalMaxBytes > 0 ? imageTotalMaxBytes : 40L * 1024 * 1024;
+        String since = ISO.format(Instant.now().minus(DRAFT_WINDOW));
+        Long current;
+        if (incidentId != null) {
+            List<Long> refs = new ArrayList<>(imageRefs(target));
+            if (refs.size() > MAX_COUNTED_REFS) refs = refs.subList(0, MAX_COUNTED_REFS);
+            if (refs.isEmpty()) refs = List.of(-1L);
+            current = imageRepo.sumCountedForIncident(incidentId, refs, since);
+        } else {
+            current = actorName == null ? Long.valueOf(0) : imageRepo.sumDraftSizeByCreator(actorName, since);
+        }
+        long used = current == null ? 0 : current;
+        if (used + adding > cap) {
+            long mb = Math.max(1, cap / (1024 * 1024));
+            throw new FieldValidationException("INCIDENT_IMAGE_TOTAL_LIMIT", "file", Msg.t(
+                    "Bu kayda eklenen görsellerin toplamı en çok " + mb + " MB olabilir (şu an " + mbText(used)
+                            + " MB sayılıyor). Artık gerekmeyen görselleri metinden çıkarıp kaydedin; yüklenip hiç "
+                            + "kullanılmayan görseller 24 saat sonra sayılmaz. Ya da daha küçük bir görsel yükleyin.",
+                    "The images added to this record can total at most " + mb + " MB (" + mbText(used)
+                            + " MB counted now). Remove images you no longer need from the text and save; images that "
+                            + "were uploaded but never used stop counting after 24 hours. Or upload a smaller image."));
+        }
+    }
+
+    /** Kaydın dört markdown metninde geçen olay görseli kimlikleri (sıralı, tekil). */
+    private static Set<Long> imageRefs(IncidentRecord e) {
+        Set<Long> ids = new java.util.LinkedHashSet<>();
+        if (e == null) return ids;
+        for (String body : List.of(
+                Optional.ofNullable(e.getRcaSummary()).orElse(""),
+                Optional.ofNullable(e.getDescription()).orElse(""),
+                Optional.ofNullable(e.getResolutionSteps()).orElse(""),
+                Optional.ofNullable(e.getBusinessImpact()).orElse(""))) {
+            Matcher m = IMG_REF.matcher(body);
+            while (m.find()) {
+                try { ids.add(Long.valueOf(m.group(1))); } catch (NumberFormatException ignored) { /* aşırı uzun sayı */ }
+            }
+        }
+        return ids;
+    }
+
+    private static String mbText(long bytes) {
+        return String.format(Locale.ROOT, "%.1f", bytes / (1024d * 1024d));
     }
 
     public IncidentImage getImage(Long imageId) {
@@ -486,15 +569,7 @@ public class IncidentService {
      *  görseli kendi olayına çekebiliyor, sahibi takım da 403 alıyordu. Artık yalnız henüz olaya bağlanmamış
      *  (taslak) ve AYNI kullanıcının yüklediği görseller bağlanır; başka olayın görseline dokunulmaz. */
     private void linkImages(IncidentRecord e, String actorName) {
-        Set<Long> ids = new HashSet<>();
-        for (String body : List.of(
-                Optional.ofNullable(e.getRcaSummary()).orElse(""),
-                Optional.ofNullable(e.getDescription()).orElse(""),
-                Optional.ofNullable(e.getResolutionSteps()).orElse(""),
-                Optional.ofNullable(e.getBusinessImpact()).orElse(""))) {
-            Matcher m = IMG_REF.matcher(body);
-            while (m.find()) ids.add(Long.valueOf(m.group(1)));
-        }
+        Set<Long> ids = imageRefs(e);
         if (ids.isEmpty()) return;
         for (IncidentImage img : imageRepo.findAllById(ids)) {
             boolean ownDraft = img.getIncidentId() == null && actorName != null
@@ -553,6 +628,7 @@ public class IncidentService {
         text(body, "affected_app", e.getAffectedApp(), create, false, MAX_SHORT, w, e::setAffectedApp);
         text(body, "affected_systems", e.getAffectedSystems(), create, false, MAX_LIST, w, e::setAffectedSystems);
         text(body, "runbook_url", e.getRunbookUrl(), create, false, MAX_LIST, w, e::setRunbookUrl);
+        runbookUrl(body, e.getRunbookUrl(), create);
         text(body, "tags", e.getTags(), create, false, MAX_SHORT, w, e::setTags);
         text(body, "rca_summary", e.getRcaSummary(), create, false, MAX_MARKDOWN_CHARS, w, e::setRcaSummary);
         text(body, "description", e.getDescription(), create, false, MAX_MARKDOWN_CHARS, w, e::setDescription);
@@ -683,6 +759,46 @@ public class IncidentService {
                     en(field) + " can be at most " + max + " characters (entered: " + v.length() + "). Shorten the text and save again."));
         }
         w.add(() -> set.accept(v));
+    }
+
+    /**
+     * Runbook bağlantısı (2026-11-20, "Hızlı Giriş"): yalnız gövdede olan ve DEĞİŞEN değer denetlenir (eski, kurala uymayan
+     * kayıtlı değer düzenlemeyi kilitlemez). Uzunluk {@link #text} ile; burada yalnız biçim: http(s) şeması + bir sunucu adı,
+     * boşluk / denetim karakteri yok. Ayrıntı alanında hedefi yeni sekmede açılan bir bağlantı olarak gösterilir — başka bir
+     * şema (javascript:, data:, file:) asla kabul edilmez.
+     */
+    private static void runbookUrl(Map<String, Object> body, String stored, boolean create) {
+        if (!body.containsKey("runbook_url")) return;
+        Object raw = body.get("runbook_url");
+        String v = str(body, "runbook_url");
+        if (!create && sameText(raw, v, stored)) return;
+        if (v == null || v.length() > MAX_LIST) return;   // boş → temizlenir; uzunluk hatası text() içinde
+        if (runbookUrlProblem(v)) {
+            throw new FieldValidationException("runbook_url", Msg.t(
+                    "Runbook adresi http:// ya da https:// ile başlayan geçerli bir web adresi olmalı (ör. "
+                            + "https://wiki.example.com/runbook/odeme). Adresi düzeltip yeniden kaydedin.",
+                    "The runbook URL must be a valid web address starting with http:// or https:// (e.g. "
+                            + "https://wiki.example.com/runbook/payments). Correct the address and save again."));
+        }
+    }
+
+    /** Runbook adresi kurala UYMUYOR mu: http(s) + sunucu adı + boşluk / denetim karakteri yok. Saf, test için açık. */
+    static boolean runbookUrlProblem(String v) {
+        if (v == null || v.isEmpty()) return false;
+        for (int i = 0; i < v.length(); i++) {
+            char c = v.charAt(i);
+            if (c <= 0x20 || c == 0x7f || Character.isWhitespace(c) || Character.isISOControl(c)) return true;
+        }
+        String lower = v.toLowerCase(Locale.ROOT);
+        if (!lower.startsWith("http://") && !lower.startsWith("https://")) return true;
+        try {
+            java.net.URI uri = new java.net.URI(v);
+            // getHost() alt çizgili kurumsal adlarda (wiki_host) null döner → yetki kısmı (host[:port]) yeterli
+            String authority = uri.getRawAuthority();
+            return authority == null || authority.isBlank() || authority.startsWith("@") || authority.startsWith(":");
+        } catch (java.net.URISyntaxException ex) {
+            return true;
+        }
     }
 
     /** Sabit seçenekli alan (önem / durum / kategori): büyük harfe çevrilir; değişmişse listede olmalı. */

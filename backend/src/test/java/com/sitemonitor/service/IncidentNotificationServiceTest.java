@@ -50,7 +50,8 @@ class IncidentNotificationServiceTest {
         ReflectionTestUtils.setField(service, "appBaseUrl", "https://cm.example.com/");
         // Canlı DB değeri yok → getString fallback (@Value = reflection ile set edilen appBaseUrl) döner.
         when(appSettings.getString(eq("site.monitor.app.base-url"), any())).thenAnswer(inv -> inv.getArgument(1));
-        when(emailService.buildIncidentNotificationHtml(anyMap(), any(), anyString(), anyString()))
+        // 2026-11-20 ("Hızlı Giriş"): gönderim görsel planıyla 6 argümanlı kurucuyu çağırır
+        when(emailService.buildIncidentNotificationHtml(anyMap(), any(), anyString(), anyString(), anyBoolean(), any()))
                 .thenReturn("<html/>");
         when(emailService.sendHtml(any(), any(), anyString(), anyString(), any())).thenReturn("SENT");
     }
@@ -92,7 +93,7 @@ class IncidentNotificationServiceTest {
 
         ArgumentCaptor<String> mgrName = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> cta = ArgumentCaptor.forClass(String.class);
-        verify(emailService).buildIncidentNotificationHtml(anyMap(), mgrName.capture(), eq("NEW"), cta.capture());
+        verify(emailService).buildIncidentNotificationHtml(anyMap(), mgrName.capture(), eq("NEW"), cta.capture(), eq(true), any());
         assertThat(mgrName.getValue()).isEqualTo("Müdür Bey");
         assertThat(cta.getValue()).isEqualTo("https://cm.example.com/?tab=incident-history"); // trailing / kırpıldı
     }
@@ -152,7 +153,7 @@ class IncidentNotificationServiceTest {
     void notify_inlineImagesAttached() {
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team("takim@bank.com", null)));
         IncidentImage img = new IncidentImage();
-        img.setId(5L); img.setContentType("image/png"); img.setData(new byte[]{1, 2, 3});
+        img.setId(5L); img.setContentType("image/png"); img.setData(IncidentMailImagePlanTest.png(40, 30));
         img.setIncidentId(1L);   // gerçek akış: kaydedilen olayın görseli o olaya bağlıdır (Y-1 süzgeci)
         when(imageRepo.findById(5L)).thenReturn(Optional.of(img));
 
@@ -176,11 +177,11 @@ class IncidentNotificationServiceTest {
     void notify_foreignImagesNotAttached() {
         when(teamRepo.findById(7L)).thenReturn(Optional.of(team("takim@example.com", null)));
         IncidentImage own = new IncidentImage();
-        own.setId(5L); own.setIncidentId(1L); own.setContentType("image/png"); own.setData(new byte[]{1});
+        own.setId(5L); own.setIncidentId(1L); own.setContentType("image/png"); own.setData(IncidentMailImagePlanTest.png(20, 20));
         IncidentImage foreign = new IncidentImage();
-        foreign.setId(6L); foreign.setIncidentId(2L); foreign.setContentType("image/png"); foreign.setData(new byte[]{2});
+        foreign.setId(6L); foreign.setIncidentId(2L); foreign.setContentType("image/png"); foreign.setData(IncidentMailImagePlanTest.png(20, 20));
         IncidentImage draft = new IncidentImage();
-        draft.setId(7L); draft.setIncidentId(null); draft.setContentType("image/png"); draft.setData(new byte[]{3});
+        draft.setId(7L); draft.setIncidentId(null); draft.setContentType("image/png"); draft.setData(IncidentMailImagePlanTest.png(20, 20));
         when(imageRepo.findById(5L)).thenReturn(Optional.of(own));
         when(imageRepo.findById(6L)).thenReturn(Optional.of(foreign));
         when(imageRepo.findById(7L)).thenReturn(Optional.of(draft));
@@ -233,7 +234,7 @@ class IncidentNotificationServiceTest {
         ArgumentCaptor<String[]> to = ArgumentCaptor.forClass(String[].class);
         verify(emailService).sendHtml(to.capture(), isNull(), anyString(), anyString(), isNull());
         assertThat(to.getValue()).containsExactly("takim@bank.com");
-        verify(emailService).buildIncidentNotificationHtml(anyMap(), isNull(), eq("NEW"), anyString());
+        verify(emailService).buildIncidentNotificationHtml(anyMap(), isNull(), eq("NEW"), anyString(), eq(true), any());
     }
 
     @Test

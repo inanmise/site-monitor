@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   X, Pencil, Trash2, Siren, Eye, CheckCircle2, Clock, Hourglass, Users, Receipt, Gauge, Hash, CircleDot, Search, ShieldHalf,
   FileText, Stethoscope, Wrench, Briefcase, Tags, BellRing, ClipboardList, ChevronRight, FilePlus2, History, Info, AlertOctagon,
+  Copy, ExternalLink, RefreshCw, BookOpen,
 } from 'lucide-react'
 import { formatDate } from '../../api/client'
 import { navigateTo } from '../../utils/navigate.js'
@@ -16,6 +17,8 @@ import UserBadge from '../ui/UserBadge.jsx'
 import CopyLinkButton from '../ui/CopyLinkButton.jsx'
 import CopyableRef from '../ui/CopyableRef.jsx'
 import MarkdownEditor from '../ui/MarkdownEditor.jsx'
+import { Skeleton } from '@/components/shadcn/skeleton'
+import { trapTab } from '../../utils/focusTrap.js'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetClose } from '@/components/shadcn/sheet'
 import { Button } from '@/components/shadcn/button'
 import { Badge } from '@/components/shadcn/badge'
@@ -24,8 +27,10 @@ import { cn } from '@/lib/utils'
 import { SeverityBadge, StatusBadge, SlaBadge, CsvChips } from './HistoryBadges.jsx'
 import {
   buildTimeline, csvList, detailLink, durationOf, formatMinutes, relativeFrom, techErrorCountOf, outageAnswerOf, outageIdOf,
+  runbookUrlProblem,
 } from './incidentHistoryModel.js'
 import PostmortemBadges from './postmortem/PostmortemBadges.jsx'
+import StatusQuickUpdate from './StatusQuickUpdate.jsx'
 
 // Arka plan kaydırma kilidi sayaçlı (ModalShell / IncidentDetailSheet sözleşmesi): iç içe pencerede erken açılmaz.
 let scrollLocks = 0
@@ -62,18 +67,39 @@ function Stat({ icon: Icon, label, value, sub }) {
   )
 }
 
-/** Markdown bölümü — boşsa "girilmedi" (bilgi eksikliği görünür kalır, bölüm kaybolmaz). */
-function MdSection({ icon: Icon, title, value, emptyText }) {
+/**
+ * Markdown bölümü — boşsa "girilmedi" (bilgi eksikliği görünür kalır, bölüm kaybolmaz). `state` (2026-11-20, "Hızlı
+ * Giriş"): liste özet satırları markdown taşımaz; ayrıntı tam kaydı okurken `loading` (iskelet), okunamadıysa `failed`
+ * (yeniden dene) — bilinmeyen metin "girilmedi" diye GÖSTERİLMEZ. Görseller tıklanınca büyür, silinmiş görsel yer tutucu olur.
+ */
+function MdSection({ icon: Icon, title, value, emptyText, state = 'ready', onRetry }) {
+  const t = useT()
   const has = String(value ?? '').trim() !== ''
   return (
-    <section data-slot="ih-detail-md" className="min-w-0">
+    <section data-slot="ih-detail-md" data-state={state} className="min-w-0">
       <h3 className="mb-1.5 flex items-center gap-1.5 text-xs font-bold tracking-wide text-muted-foreground uppercase">
         <Icon aria-hidden="true" className="size-3.5" />{title}
       </h3>
-      {has
+      {state === 'loading' && (
+        <div data-slot="ih-detail-md-loading" role="status" className="flex flex-col gap-1.5">
+          <span className="sr-only">{t('inc.md.loading')}</span>
+          <Skeleton aria-hidden="true" className="h-4 w-11/12" /><Skeleton aria-hidden="true" className="h-4 w-3/4" />
+        </div>
+      )}
+      {state === 'failed' && (
+        <div data-slot="ih-detail-md-failed" className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
+          <span className="min-w-0 flex-1">{t('inc.md.failed')}</span>
+          {onRetry && (
+            <Button type="button" variant="outline" size="sm" className="pointer-coarse:h-10" data-action="md-retry" onClick={onRetry}>
+              <RefreshCw aria-hidden="true" />{t('inc.md.retry')}
+            </Button>
+          )}
+        </div>
+      )}
+      {state === 'ready' && (has
         // Çerçeve/zemin `show-markdown` tipografisinden gelir — ikinci bir kutu (çift çerçeve) çizilmez.
-        ? <div className="min-w-0 text-sm"><MarkdownEditor value={value} editable={false} /></div>
-        : <p className="m-0 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">{emptyText}</p>}
+        ? <div className="min-w-0 text-sm"><MarkdownEditor value={value} editable={false} imagePreview /></div>
+        : <p className="m-0 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">{emptyText}</p>)}
     </section>
   )
 }
@@ -94,6 +120,7 @@ function MdSection({ icon: Icon, title, value, emptyText }) {
  */
 export default function HistoryDetailSheet({
   record, onClose, onEdit, onDelete, onPostmortem, allowManage = false, allowDelete = false, fresh = null,
+  onDuplicate, onStatusSaved, onStatusReload, mdState = 'ready', onRetryMarkdown,
 }) {
   const t = useT()
   const dateLocale = useDateLocale()
@@ -105,6 +132,7 @@ export default function HistoryDetailSheet({
   const canSeeUsage = moduleVisible && seesIncidents && perms.canView('tech_error_reports.read')
   const canAddToReport = canSeeUsage && perms.canEdit('tech_error_reports.crud')
   const [addOpen, setAddOpen] = useState(false)
+  const contentRef = useRef(null)
 
   // Odak iadesi: kapanışta tetikleyiciye (satır / kart).
   useEffect(() => {
@@ -133,6 +161,10 @@ export default function HistoryDetailSheet({
   const techFaults = techErrorCountOf(r)
   const outage = outageAnswerOf(r)
   const outageId = outageIdOf(r)
+  // Runbook bağlantısı (2026-11-20): yalnız geçerli http(s) adresi tıklanır; bozuk eski değer düz metin kalır
+  const runbook = String(r.runbook_url ?? '').trim()
+  const runbookLink = runbook !== '' && !runbookUrlProblem(runbook)
+  const mdProps = { state: mdState, onRetry: onRetryMarkdown }
 
   return (
     <Sheet open modal={false} onOpenChange={(next) => { if (!next) onClose?.() }}>
@@ -143,7 +175,10 @@ export default function HistoryDetailSheet({
         document.body,
       )}
       <SheetContent side="right" showCloseButton={false} data-slot="ih-detail" data-incident-id={r.id}
-        aria-modal="true"
+        aria-modal="true" ref={contentRef}
+        // Odak tuzağı (2026-11-20): modal={false} Sheet kendi tuzağını kurmaz; Tab ayrıntının içinde döner. İçinden açılan
+        // ayrı pencerelerin (portal) Tab'ı hedef dışarıda olduğu için onlarda kalır.
+        onKeyDown={(e) => { trapTab(e, contentRef.current) }}
         onInteractOutside={(e) => e.preventDefault()}
         onCloseAutoFocus={(e) => e.preventDefault()}
         className="z-[1001] flex h-[100dvh] w-full flex-col gap-0 p-0 sm:w-[min(46rem,calc(100vw-2rem))] sm:max-w-none">
@@ -190,14 +225,25 @@ export default function HistoryDetailSheet({
           {/* Eylemler — okuma öncelikli; yazma yalnız yetkiliye */}
           <div data-slot="ih-detail-actions" className="flex flex-wrap items-center gap-2 max-sm:*:h-10">
             {allowManage && (
-              <Button type="button" size="sm" className="h-9" onClick={() => onEdit?.(r)}>
+              <Button type="button" size="sm" className="h-9 pointer-coarse:h-10" data-action="detail-edit" onClick={() => onEdit?.(r)}>
                 <Pencil aria-hidden="true" />{t('inc.edit')}
               </Button>
             )}
-            <CopyLinkButton variant="outline" className="h-9" url={detailLink(r.id)} />
+            {/* Tek tıkla durum güncelleme (2026-11-20, "Hızlı Giriş") — kaydı düzenleyebilen kullanıcıya */}
+            {allowManage && r.can_edit !== false && (
+              <StatusQuickUpdate record={r} variant="button" onSaved={onStatusSaved} onReload={onStatusReload} />
+            )}
+            {/* Çoğalt — tam form yeni kayıt olarak açılır (kopyalanan alanlar formda notla anlatılır) */}
+            {onDuplicate && (
+              <Button type="button" variant="outline" size="sm" className="h-9 pointer-coarse:h-10" data-action="duplicate"
+                aria-label={t('a11y.rowAction', r.title || String(r.id), t('inc.duplicate'))} onClick={() => onDuplicate(r)}>
+                <Copy aria-hidden="true" />{t('inc.duplicate')}
+              </Button>
+            )}
+            <CopyLinkButton variant="outline" className="h-9 pointer-coarse:h-10" url={detailLink(r.id)} />
             {/* Kaynak alarm (2026-10-01): kayıt Alarm Geçmişi'ndeki bir alarmdan açıldıysa o alarma geri bağlantı */}
             {r.alert_event_id != null && r.alert_event_id !== '' && (
-              <Button type="button" variant="outline" size="sm" className="h-9" data-slot="ih-source-alert"
+              <Button type="button" variant="outline" size="sm" className="h-9 pointer-coarse:h-10" data-slot="ih-source-alert"
                 data-alert-id={r.alert_event_id} title={t('inc.sourceAlertHint')}
                 onClick={() => navigateTo('alerthistory', alertNavParams({ id: r.alert_event_id }))}>
                 <BellRing aria-hidden="true" />{t('inc.sourceAlert', r.alert_event_id)}
@@ -211,7 +257,7 @@ export default function HistoryDetailSheet({
             )}
             {allowDelete && (
               <Button type="button" variant="ghost" size="sm"
-                className="ml-auto h-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                className="ml-auto h-9 pointer-coarse:h-10 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                 aria-label={t('a11y.rowAction', r.title || String(r.id), t('inc.delete'))} onClick={() => onDelete?.(r)}>
                 <Trash2 aria-hidden="true" />{t('inc.delete')}
               </Button>
@@ -310,6 +356,21 @@ export default function HistoryDetailSheet({
                   {outage ? (outageId ? t('inc.dOutageYesId', outageId) : t('inc.outageYes')) : t('inc.outageNo')}
                 </Fact>
               )}
+              {runbook !== '' && (
+                <Fact label={t('inc.dRunbook')} slot="runbook" className="sm:col-span-2">
+                  {runbookLink
+                    ? (
+                      <a href={runbook} target="_blank" rel="noopener noreferrer" data-slot="ih-runbook-link"
+                        className="inline-flex max-w-full items-start gap-1.5 py-1 text-primary underline-offset-2 hover:underline pointer-coarse:min-h-10 pointer-coarse:items-center">
+                        <BookOpen aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 pointer-coarse:mt-0" />
+                        <span className="min-w-0 [overflow-wrap:anywhere]">{runbook}</span>
+                        <ExternalLink aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 pointer-coarse:mt-0" />
+                        <span className="sr-only">{t('inc.opensNewTab')}</span>
+                      </a>
+                    )
+                    : <span className="[overflow-wrap:anywhere]">{runbook}</span>}
+                </Fact>
+              )}
               <Fact label={t('inc.dRecordedBy')}>
                 <span className="flex min-w-0 flex-col gap-0.5">
                   <UserBadge username={r.created_by} inline size="sm" nameOnly />
@@ -354,10 +415,10 @@ export default function HistoryDetailSheet({
             </Card>
           )}
 
-          <MdSection icon={Briefcase} title={t('inc.fBusinessImpact')} value={r.business_impact} emptyText={t('inc.notEntered')} />
-          <MdSection icon={Stethoscope} title={t('inc.fRca')} value={r.rca_summary} emptyText={t('inc.notEntered')} />
-          <MdSection icon={FileText} title={t('inc.fDescription')} value={r.description} emptyText={t('inc.notEntered')} />
-          <MdSection icon={Wrench} title={t('inc.fResolution')} value={r.resolution_steps} emptyText={t('inc.notEntered')} />
+          <MdSection icon={Briefcase} title={t('inc.fBusinessImpact')} value={r.business_impact} emptyText={t('inc.notEntered')} {...mdProps} />
+          <MdSection icon={Stethoscope} title={t('inc.fRca')} value={r.rca_summary} emptyText={t('inc.notEntered')} {...mdProps} />
+          <MdSection icon={FileText} title={t('inc.fDescription')} value={r.description} emptyText={t('inc.notEntered')} {...mdProps} />
+          <MdSection icon={Wrench} title={t('inc.fResolution')} value={r.resolution_steps} emptyText={t('inc.notEntered')} {...mdProps} />
         </div>
         {addOpen && <AddToReportDialog incident={r} onClose={() => setAddOpen(false)} />}
       </SheetContent>

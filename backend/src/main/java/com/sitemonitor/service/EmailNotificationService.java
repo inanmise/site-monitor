@@ -34,6 +34,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -3516,6 +3517,17 @@ public class EmailNotificationService {
      */
     public String buildIncidentNotificationHtml(Map<String, Object> inc, String managerName,
                                                 String kind, String ctaUrl, boolean forEmail) {
+        return buildIncidentNotificationHtml(inc, managerName, kind, ctaUrl, forEmail, null);
+    }
+
+    /**
+     * {@code embedded} (2026-11-20, "Hızlı Giriş" — tam çözünürlük görsel): e-postaya GÖMÜLEN görsel kimlikleri
+     * ({@code IncidentNotificationService.mailImagePlan}, gönderim ve önizleme aynı plan). Kümede olmayan
+     * {@code /api/incidents/images/{id}} görseli (bütçeye sığmayan, okunamayan, başka olayın) kısa bir metin notuna döner
+     * ("Görsel e-postaya eklenmedi …"). {@code null} = eski davranış (her görsel referansı CID / URL olarak kalır).
+     */
+    public String buildIncidentNotificationHtml(Map<String, Object> inc, String managerName,
+                                                String kind, String ctaUrl, boolean forEmail, Set<Long> embedded) {
         boolean resolved = "RESOLVED".equals(kind);
         boolean isNew = "NEW".equals(kind);
         String sev = str(inc.get("severity"));
@@ -3577,12 +3589,15 @@ public class EmailNotificationService {
         } else if (Boolean.FALSE.equals(outage)) {
             facts.add(Row.of("Kesinti kaynaklı", "Hayır"));
         }
+        // Runbook bağlantısı (2026-11-20, "Hızlı Giriş"): satır YALNIZ değer varsa — boş kayıtta e-posta eskisiyle aynı.
+        String runbook = str(inc.get("runbook_url")).strip();
+        if (!runbook.isEmpty()) facts.add(Row.of("Runbook", runbook));
         d.card("Olay Künyesi", null, MailKit.keyValue(facts), kvText(facts));
 
-        incidentSection(d, "Kök Neden (RCA)", str(inc.get("rca_summary")), forEmail, true);
-        incidentSection(d, "Teknik Açıklama", str(inc.get("description")), forEmail, false);
-        incidentSection(d, "İş Etkisi", str(inc.get("business_impact")), forEmail, true);
-        incidentSection(d, "Çözüm / Müdahale Adımları", str(inc.get("resolution_steps")), forEmail, true);
+        incidentSection(d, "Kök Neden (RCA)", str(inc.get("rca_summary")), forEmail, true, embedded);
+        incidentSection(d, "Teknik Açıklama", str(inc.get("description")), forEmail, false, embedded);
+        incidentSection(d, "İş Etkisi", str(inc.get("business_impact")), forEmail, true, embedded);
+        incidentSection(d, "Çözüm / Müdahale Adımları", str(inc.get("resolution_steps")), forEmail, true, embedded);
         d.button(ctaUrl, "Olay kaydını açmak için tıklayınız →");
         d.footerMeta("Site Monitor — Olay & Hata Bildirimi", "Oluşturuldu: " + nowStamp());
         return d.html();
@@ -3622,10 +3637,77 @@ public class EmailNotificationService {
     }
 
     /** Olay bölüm kartı (markdown gövde); {@code always=false} ise boş gövdede kart çizilmez. */
-    private void incidentSection(MailDoc d, String title, String md, boolean forEmail, boolean always) {
-        String body = textBlock(md, forEmail);
+    private void incidentSection(MailDoc d, String title, String md, boolean forEmail, boolean always, Set<Long> embedded) {
+        String body = textBlock(md, forEmail, embedded);
         if (body.isBlank() && !always) return;
         d.card(title, null, body.isBlank() ? MailKit.note("—") : body, md == null || md.isBlank() ? "—" : md);
+    }
+
+    /** E-postaya GÖMÜLMEYEN görselin yerine giden not (gönderim ve önizleme aynı metin). */
+    static final String INC_IMG_NOT_EMBEDDED = "Görsel e-postaya eklenmedi — olay kaydında görüntüleyin";
+    /** Notta gösterilen görsel adının (alt metin) en çok uzunluğu. */
+    private static final int INC_IMG_NOTE_ALT_MAX = 120;
+
+    /**
+     * İşlenmiş HTML'deki olay görsellerinden ({@code src="cid:incimgN"} ya da {@code src="/api/incidents/images/N"})
+     * {@code embedded} kümesinde OLMAYANLARI kısa bir italik nota çevirir (2026-11-20): bütçeye sığmayan, okunamayan ya da
+     * başka olayın görseli e-postada kırık bir görsel bırakmaz. Not görselin adını (alt metni — markdown işleyicisi zaten
+     * kaçışlı yazar) taşır. Etiketler doğrusal taranır (iç içe köşeli parantezli ad da doğru işlenir); kümedeki görsel ve olay
+     * görseli olmayan {@code <img>} olduğu gibi kalır.
+     */
+    static String withImageNotes(String html, Set<Long> embedded) {
+        if (html == null || embedded == null || html.indexOf("<img ") < 0) return html;
+        StringBuilder out = new StringBuilder(html.length() + 64);
+        int i = 0;
+        while (true) {
+            int j = html.indexOf("<img ", i);
+            if (j < 0) break;
+            int end = html.indexOf('>', j);
+            if (end < 0) break;
+            String tag = html.substring(j, end + 1);
+            out.append(html, i, j);
+            Long id = incidentImageId(attr(tag, "src"));
+            if (id != null && !embedded.contains(id)) {
+                String alt = attr(tag, "alt");
+                alt = alt == null ? "" : clipEscaped(alt.strip(), INC_IMG_NOTE_ALT_MAX);
+                out.append("<em>(").append(alt.isEmpty() ? INC_IMG_NOT_EMBEDDED : alt + " — " + INC_IMG_NOT_EMBEDDED)
+                        .append(")</em>");
+            } else {
+                out.append(tag);
+            }
+            i = end + 1;
+        }
+        out.append(html, i, html.length());
+        return out.toString();
+    }
+
+    /** {@code name="değer"} özniteliğinin değeri (çift tırnaklı; markdown işleyicisinin çıktısı); yoksa null. */
+    private static String attr(String tag, String name) {
+        String key = " " + name + "=\"";
+        int s = tag.indexOf(key);
+        if (s < 0) return null;
+        int from = s + key.length();
+        int e = tag.indexOf('"', from);
+        return e < 0 ? null : tag.substring(from, e);
+    }
+
+    /** Olay görseli kaynağından kimlik ({@code cid:incimgN} / {@code /api/incidents/images/N}); başka kaynak → null. */
+    private static Long incidentImageId(String src) {
+        if (src == null) return null;
+        String digits = src.startsWith("cid:incimg") ? src.substring("cid:incimg".length())
+                : src.startsWith("/api/incidents/images/") ? src.substring("/api/incidents/images/".length()) : null;
+        if (digits == null || digits.isEmpty() || digits.length() > 18) return null;
+        for (int k = 0; k < digits.length(); k++) if (digits.charAt(k) < '0' || digits.charAt(k) > '9') return null;
+        return Long.parseLong(digits);
+    }
+
+    /** Kaçışlı metni en çok {@code max} karaktere kısaltır — bir HTML varlığının ({@code &amp;}) ortasından kesmez. */
+    private static String clipEscaped(String s, int max) {
+        if (s.length() <= max) return s;
+        String cut = s.substring(0, max);
+        int amp = cut.lastIndexOf('&');
+        if (amp >= 0 && cut.indexOf(';', amp) < 0) cut = cut.substring(0, amp);
+        return cut.strip() + "…";
     }
 
     /** Markdown metin → e-posta-güvenli paragraf: görsel sözdizimini at, escape + satır sonu→&lt;br&gt;. */
@@ -3637,13 +3719,15 @@ public class EmailNotificationService {
     /** Olay markdown alanı → HTML: TAM markdown (GFM tablo/liste/kalın/görev kutusu) + gömülü görseller.
      *  forEmail=true → /api/incidents/images/{id} CID inline (mail; InlineImage'ları IncidentNotificationService
      *  yükler). forEmail=false → /api URL korunur (iframe önizleme, oturum çerezi ile yüklenir).
+     *  {@code embedded} null değilse kümede olmayan olay görseli nota döner ({@link #withImageNotes}).
      *  Outlook head&lt;style&gt;'ı yok saydığından blok stilleri inline edilir. escapeHtml=true → ham HTML güvenli. */
-    private String textBlock(String md, boolean forEmail) {
+    private String textBlock(String md, boolean forEmail, Set<Long> embedded) {
         if (md == null || md.isBlank()) return "";
         String src = forEmail
                 ? md.replaceAll("\\]\\(/api/incidents/images/(\\d+)\\)", "](cid:incimg$1)")
                 : md;
         String html = taskCheckboxesToSymbols(MD_RENDERER.render(MD_PARSER.parse(src)));
+        if (embedded != null) html = withImageNotes(html, embedded);
         html = forEmail
                 ? INC_CID_IMG.matcher(html).replaceAll(
                     "<img width=\"" + INC_IMG_MAX_WIDTH + "\" border=\"0\" alt=\"Olay görseli\" style=\"display:block;width:100%;max-width:"

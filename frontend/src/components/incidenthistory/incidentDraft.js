@@ -21,9 +21,13 @@ function store() {
   try { return globalThis.localStorage || null } catch { return null }
 }
 
-/** Taslak kapsamı: düzenleme → kayıt kimliği; yeni kayıt → `new` (alarmdan açıldıysa `new.alert.<alarm>`). */
-export function draftScope(mode, initial) {
+/**
+ * Taslak kapsamı: düzenleme → kayıt kimliği; yeni kayıt → `new` (alarmdan açıldıysa `new.alert.<alarm>`, bir kayıttan
+ * çoğaltıldıysa — "Hızlı Giriş", 2026-11-20 — `new.copy.<kaynak kayıt>`; hızlı kayıt düz `new` kapsamını kullanır).
+ */
+export function draftScope(mode, initial, copyOf = null) {
   if (mode !== 'create' && initial?.id != null) return String(initial.id)
+  if (copyOf != null && copyOf !== '' && /^\d{1,18}$/.test(String(copyOf))) return `new.copy.${copyOf}`
   const alert = initial?.alert_event_id
   return alert != null && alert !== '' ? `new.alert.${alert}` : 'new'
 }

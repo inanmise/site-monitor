@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest'
 import { useState } from 'react'
 import { render, screen, waitFor, fireEvent, within } from './test-utils.jsx'
 import { pressMenuTrigger } from './helpers/dropdownMenu.js'
@@ -338,6 +338,10 @@ describe('Şablonlar — yerleşik + yönetici eylemleri (2.C)', () => {
 })
 
 describe('Tatil takvimi kapsamı (2.A)', () => {
+  // Kapsam durumu (soon / ended) BUGÜNE göre hesaplanır; sabit tarihli fikstürler zamanla 'ended' olur — yalnız Date dondurulur.
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-10T09:00:00Z') }) })
+  afterEach(() => { vi.useRealTimers() })
+
   it('ayar sayfası: bitiyor uyarısı + global yönetici "2027 sabit … ekle"; eski sunucuda (alan yok) uyarı yok', async () => {
     api.admin.getHolidays.mockResolvedValueOnce({ success: true, data: { days: [{ day: '2026-12-31', name: 'X' }], can_edit: true,
       coverage_until: '2026-12-31', ends_soon: true } })

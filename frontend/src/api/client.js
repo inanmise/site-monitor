@@ -1900,7 +1900,8 @@ export const api = {
   incidents: {
     list: (params = {}) => {
       const q = new URLSearchParams()
-      for (const k of ['q', 'severity', 'category', 'status', 'service', 'channel', 'since', 'until', 'team_id', 'page', 'size']) {
+      // fields=summary (2026-11-20, "Hızlı Giriş"): liste satırları dört uzun markdown metni olmadan gelir (markdown_omitted)
+      for (const k of ['q', 'severity', 'category', 'status', 'service', 'channel', 'since', 'until', 'team_id', 'page', 'size', 'fields']) {
         if (params[k] != null && params[k] !== '') q.set(k, params[k])
       }
       if (params.slaBreached != null) q.set('sla_breached', params.slaBreached)
