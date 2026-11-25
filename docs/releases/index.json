@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-20T15:21:41Z",
+  "generatedAt": "2026-11-25T22:09:59Z",
   "repo": "inanmise/site-monitor",
-  "count": 873,
+  "count": 874,
   "releases": [
+    {
+      "version": "20.226.0",
+      "tag": "v20.226.0",
+      "releasedAt": "2026-11-25T22:09:51Z",
+      "commit": "d3e8c900fe97654081086d71a540c3f2bbed12c4",
+      "prevVersion": "20.225.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "d3e8c900",
+          "subject": "tatil kapsamı testleri bugünün tarihine bağlıydı — Date donduruldu"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "d4fe8a79",
+          "subject": "olay ve hata geçmişi — hızlı giriş (hızlı kayıt, tek tıkla durum, çoğalt, görsel yapıştır, tam çözünürlük, runbook)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.225.0",
       "tag": "v20.225.0",
