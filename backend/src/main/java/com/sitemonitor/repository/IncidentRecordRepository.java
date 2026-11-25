@@ -13,6 +13,13 @@ import java.util.List;
 public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, Long> {
 
     /**
+     * Olay satırını çağıranın işlemi boyunca KİLİTLER (2026-11-20): aynı kayda görsel yüklemeleri sıraya girer — toplam
+     * denetimi ile ekleme arasına başka yükleme giremez. Kayıt yoksa boş liste. H2 de destekler.
+     */
+    @Query(value = "SELECT id FROM incident_records WHERE id = :id FOR UPDATE", nativeQuery = true)
+    List<Long> lockRow(@Param("id") Long id);
+
+    /**
      * Filtreli + sayfalı arama. Tüm filtreler opsiyonel (:p IS NULL OR ...).
      * q: serviste önceden lower-case (Locale.ROOT) + %..% sarılmış anahtar kelime (title/service/rca/description'da arar).
      * q / service / channel'daki {@code %}, {@code _} ve {@code !} serviste {@code !} ile KAÇIRILIR ({@code ESCAPE '!'};

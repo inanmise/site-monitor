@@ -35,14 +35,24 @@ import ActionItemsView from './postmortem/ActionItemsView.jsx'
 import {
   EMPTY_FORM, DETAIL_KEY, LEGACY_DETAIL_KEY, FILTER_DEFAULTS, filtersFromUrl, filtersToUrl, initialDetailId, serverParams,
   localDayToUtcIso, activeFilters, patchFilters, isCardActive, applyCardFilter, toggleDayFilter, dailySeries, trendWindow,
-  changedKeys, olderRecord,
+  changedKeys, olderRecord, MARKDOWN_KEYS,
 } from './incidentHistoryModel.js'
+import {
+  quickInitial, nowMinuteIso, duplicateForm, mergeFull, keepMarkdown, markdownOmitted, pageKeyEligible,
+} from './quickEntryModel.js'
+import { letterOf, SEQUENCE_MS } from '../../utils/keyboardShortcuts.js'
+import { registerShortcutContext, INCIDENT_HISTORY_CONTEXT } from '../../utils/shortcutContexts.js'
 
 /** Arama kutusu bu kadar duraklamadan sonra uygulanır (her tuşta istek yok); Enter hemen uygular. */
 export const SEARCH_DEBOUNCE_MS = 300
 /** Bu genişliğin altında (telefon + tablet) liste kart, süzgeçler alttan Sheet — 768 px'te kenar çubuğu açıkken tabloya
  *  ~460 px kalıyor, sütunlar sıkışıp yatay kayıyordu (2026-09-28 ölçümü). */
 const COMPACT_BREAKPOINT = 1024
+
+/** Seçenek tipleri (yönetilen açılır listeler). Kanal süzgeç çubuğunda da kullanıldığı için açılışta okunur; diğer dördü
+ *  yalnız formda — ilk form açılışında okunur ("Hızlı Giriş", 2026-11-20: sayfa açılışında 5 yerine 1 istek). */
+const OPTION_TYPES = Object.freeze(['CHANNEL', 'DOMAIN', 'ERROR_CODE', 'FUNCTION_CODE', 'CHANNEL_CODE'])
+const FORM_OPTION_TYPES = Object.freeze(['DOMAIN', 'ERROR_CODE', 'FUNCTION_CODE', 'CHANNEL_CODE'])
 
 /** Görünüm alanı `COMPACT_BREAKPOINT`'in altında mı (yapı farkı — useIsMobile deseni: innerWidth + matchMedia değişimi). */
 function useCompactLayout() {
@@ -135,6 +145,8 @@ export default function IncidentHistoryPage() {
   const [functionCodeOpts, setFunctionCodeOpts] = useState([])
   const [channelCodeOpts, setChannelCodeOpts] = useState([])
   const [teams, setTeams] = useState([])
+  // Takım listesi okundu mu (okunmadıysa / okunamadıysa çoğaltma kaynak takımı korur — bilinmeyen ret değildir)
+  const [teamsKnown, setTeamsKnown] = useState(false)
 
   // ── Seçim, ayrıntı, form ──
   const [selected, setSelected] = useState(() => new Set())
@@ -155,10 +167,13 @@ export default function IncidentHistoryPage() {
     const key = requestKey
     setLoading(true)
     try {
-      const res = await api.incidents.list({ ...params, page: apiPage, size })
+      // fields=summary (2026-11-20, "Hızlı Giriş"): liste satırları dört uzun markdown metni OLMADAN gelir
+      // (`markdown_omitted`); ayrıntı / düzenleme tam kaydı kendisi okur. Eski sunucu parametreyi yok sayar → tam satır.
+      const res = await api.incidents.list({ ...params, page: apiPage, size, fields: 'summary' })
       if (seq !== loadSeq.current) return   // bayat yanıt — daha yeni bir istek yolda
       if (res?.success) {
-        setRows(res.data ?? []); sp.bind(res); setError(null); setEverLoaded(true)
+        // Aynı sürümdeki tam satırın markdown'ı korunur (kaydettikten sonraki yenileme ayrıntıyı "yükleniyor"a düşürmez)
+        setRows((prev) => keepMarkdown(prev, Array.isArray(res.data) ? res.data : [])); sp.bind(res); setError(null); setEverLoaded(true)
       } else {
         setError(res?.error || tRef.current('inc.loadError'))
       }
@@ -202,37 +217,49 @@ export default function IncidentHistoryPage() {
     } catch { /* sessiz — grafik boş kalır */ }
   }, [trendDays, allowView])
 
-  const loadOptions = useCallback(async () => {
-    if (!allowView) return
+  /** Seçenek listelerini okur (verilen tipler; varsayılan hepsi). En az biri okunduysa true. */
+  const loadOptions = useCallback(async (types = OPTION_TYPES) => {
+    if (!allowView) return false
+    const setters = {
+      CHANNEL: setChannelOpts, DOMAIN: setDomainOpts, ERROR_CODE: setErrorCodeOpts,
+      FUNCTION_CODE: setFunctionCodeOpts, CHANNEL_CODE: setChannelCodeOpts,
+    }
+    let any = false
     try {
-      const [ch, dm, ec, fc, cc] = await Promise.all([
-        api.incidents.options('CHANNEL'), api.incidents.options('DOMAIN'), api.incidents.options('ERROR_CODE'),
-        api.incidents.options('FUNCTION_CODE'), api.incidents.options('CHANNEL_CODE')])
-      if (ch?.success) setChannelOpts(ch.data ?? [])
-      if (dm?.success) setDomainOpts(dm.data ?? [])
-      if (ec?.success) setErrorCodeOpts(ec.data ?? [])
-      if (fc?.success) setFunctionCodeOpts(fc.data ?? [])
-      if (cc?.success) setChannelCodeOpts(cc.data ?? [])
+      const all = await Promise.all(types.map((ty) => Promise.resolve().then(() => api.incidents.options(ty)).catch(() => null)))
+      all.forEach((res, i) => { if (res?.success) { setters[types[i]](Array.isArray(res.data) ? res.data : []); any = true } })
     } catch { /* sessiz — seçim listeleri boş kalır, yeni değer yine eklenebilir */ }
+    return any
   }, [allowView])
+  // Formun dört listesi ilk form açılışında bir kez okunur; hiçbiri okunamadıysa sonraki açılış yeniden dener.
+  const formOptsState = useRef('idle')   // idle | loading | done
 
   const loadTeams = useCallback(async () => {
     if (!allowView) return
     try {
       const res = await api.admin.getTeams()
-      if (res?.success) setTeams(res.data ?? [])
+      if (res?.success) { setTeams(res.data ?? []); setTeamsKnown(true) }
     } catch { /* sessiz — yetkisizse liste boş kalır ("tüm takımlar" gibi davranır) */ }
   }, [allowView])
 
   useEffect(() => { load() }, [load])
   useEffect(() => { loadTrends() }, [loadTrends])
-  useEffect(() => { loadTrendDaily() }, [loadTrendDaily])
-  useEffect(() => { loadOptions() }, [loadOptions])
+  // Günlük trend yalnız "Ayrıntılı döküm" açıkken okunur (sayfa açılışında tek trends isteği — "Hızlı Giriş", 2026-11-20)
+  useEffect(() => { if (showSummary) loadTrendDaily() }, [loadTrendDaily, showSummary])
+  useEffect(() => { loadOptions(['CHANNEL']) }, [loadOptions])
   useEffect(() => { loadTeams() }, [loadTeams])
+  useEffect(() => {
+    if (!form || formOptsState.current !== 'idle') return
+    formOptsState.current = 'loading'
+    loadOptions(FORM_OPTION_TYPES).then((ok) => { formOptsState.current = ok ? 'done' : 'idle' })
+  }, [form, loadOptions])
   // Sayfa/süzgeç değişince toplu seçim sıfırlanır (görünmeyen satır seçili kalmasın).
   useEffect(() => { setSelected(new Set()) }, [requestKey])
 
-  const refreshAll = useCallback(() => { load(); loadTrends(); loadTrendDaily() }, [load, loadTrends, loadTrendDaily])
+  const refreshAll = useCallback(() => {
+    load(); loadTrends()
+    if (showSummary) loadTrendDaily()
+  }, [load, loadTrends, loadTrendDaily, showSummary])
   const loadRef = useRef(load)
   loadRef.current = load
 
@@ -251,13 +278,16 @@ export default function IncidentHistoryPage() {
    */
   const mergeRecord = useCallback((rec) => {
     if (!rec || typeof rec !== 'object' || Array.isArray(rec) || rec.id == null) return
-    const merge = (held) => (olderRecord(held, rec) ? held : { ...held, ...rec })
+    const merge = (held) => (olderRecord(held, rec) ? held : mergeFull(held, rec))
     setRows((rs) => rs.map((r) => (String(r.id) === String(rec.id) ? merge(r) : r)))
     setFallback((f) => (f && String(f.id) === String(rec.id) ? merge(f) : f))
   }, [])
 
+  // Özet satırın markdown'ı için taze okuma (kimlik:sürüm) başına bir kez — bkz. aşağıdaki etki
+  const mdFetchedFor = useRef(null)
   const refreshDetail = useCallback((r) => {
     if (!r || r.id == null) return
+    mdFetchedFor.current = `${r.id}:${r.version ?? ''}`
     const my = ++detailSeq.current
     detailAbort.current?.abort()
     const ctl = typeof AbortController === 'function' ? new AbortController() : null
@@ -270,7 +300,8 @@ export default function IncidentHistoryPage() {
         if (my !== detailSeq.current) return
         const d = res?.success ? res.data : null
         if (d && typeof d === 'object' && !Array.isArray(d) && String(d.id) === String(id)) {
-          const changed = olderRecord(r, d) ? [] : changedKeys(r, d)
+          // Özet satırda markdown hiç gelmemişti — tam kayıtta "var" olması değişiklik değildir
+          const changed = olderRecord(r, d) ? [] : changedKeys(r, d).filter((k) => !(markdownOmitted(r) && MARKDOWN_KEYS.includes(k)))
           mergeRecord(d)
           setDetailFresh({ id, state: changed.length ? 'updated' : 'same', changed })
         } else if (errorInfoOf(res)?.status === 404) {
@@ -307,6 +338,33 @@ export default function IncidentHistoryPage() {
     return () => { alive = false }
   }, [allowView])
 
+  // Sayfa kısayolları (2026-11-20, "Hızlı Giriş"): N → yeni olay (tam form), E → açık ayrıntıyı düzenle. Yazı alanında,
+  // açık pencerede / menüde (ayrıntı Sheet'i hariç), değiştiriciyle ve genel "g + harf" dizisinin ikinci tuşunda çalışmaz.
+  // Eylemler render'da ref'e yazılır (erken dönüşün altındaki işlevler).
+  const keyActionsRef = useRef(null)
+  const keyState = useRef({ gAt: 0 })
+  const dupBusy = useRef(false)   // çoğaltma için tam kayıt okunuyor (çift tıklama tek istek)
+  useEffect(() => (allowView ? registerShortcutContext(INCIDENT_HISTORY_CONTEXT) : undefined), [allowView])
+  useEffect(() => {
+    if (!allowView) return undefined
+    const onKey = (e) => {
+      const now = Date.now()
+      const st = keyState.current
+      const afterG = st.gAt > 0 && now - st.gAt <= SEQUENCE_MS
+      if (!pageKeyEligible(e)) return
+      const letter = letterOf(e)
+      if (letter === 'g') { st.gAt = now; return }
+      st.gAt = 0
+      if (afterG || e.shiftKey) return
+      const a = keyActionsRef.current
+      if (!a) return
+      if (letter === 'n' && a.canCreate) { e.preventDefault(); a.create(); return }
+      if (letter === 'e' && a.canEditDetail) { e.preventDefault(); a.editDetail() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [allowView])
+
   const dailyChart = useMemo(() => dailySeries(trendDaily, trendDays), [trendDaily, trendDays])
   const settled = loadedKey === requestKey
   // Gösterge yalnız GÖRÜNÜMÜ bayat bir yükleme ~180 ms'yi aşarsa (hızlı yanıtta ekran yanıp sönmez).
@@ -316,6 +374,13 @@ export default function IncidentHistoryPage() {
     return rows.find((r) => String(r.id) === String(detailId))
       || (fallback && String(fallback.id) === String(detailId) ? fallback : null)
   }, [rows, fallback, detailId])
+  // Açık ayrıntı özet satıra döndüyse (liste yenilendi, kayıt başkasınca değişti → markdown korunamadı) tam kayıt yeniden
+  // okunur; aynı (kimlik, sürüm) için bir kez (başarısızsa ayrıntı "okunamadı + yeniden dene" gösterir).
+  useEffect(() => {
+    if (!detail || !markdownOmitted(detail)) return
+    if (mdFetchedFor.current === `${detail.id}:${detail.version ?? ''}`) return
+    refreshDetail(detail)
+  }, [detail, refreshDetail])
 
   if (!allowView) return <StatusBlock tone="neutral" icon={ListChecks} title={t('inc.noAccess')} />
 
@@ -352,6 +417,59 @@ export default function IncidentHistoryPage() {
   }
   const openCreate = () => setForm({ mode: 'create', initial: { ...EMPTY_FORM } })
   const openEdit = (r) => setForm({ mode: 'edit', initial: { ...EMPTY_FORM, ...r } })
+  /** Hızlı kayıt (2026-11-20): AYNI form sade görünümde — oluş zamanı şimdi, tek takım varsa o takım. */
+  const openQuick = () => setForm({ mode: 'create', quick: true, initial: quickInitial(teams, nowMinuteIso()) })
+  /**
+   * Çoğalt (2026-11-20): kaydın sınıflandırma / kod / açıklama alanları yeni kayıt formuna kopyalanır (zamanlar, durum,
+   * kök neden, çözüm, sayılar, görseller kopyalanmaz). Özet satırın açıklaması yoksa önce tam kayıt okunur; okunamazsa form
+   * açılmaz (eksik açıklamayla kopya yaratılmaz). Bu arada başka bir form açıldıysa üzerine yazılmaz.
+   */
+  const openDuplicate = async (r) => {
+    if (!r || r.id == null || dupBusy.current) return
+    let rec = r
+    if (markdownOmitted(r)) {
+      dupBusy.current = true
+      let res = null
+      try { res = await api.incidents.get(r.id, { timeoutMs: FRESH_TIMEOUT_MS }) } catch { res = null }
+      dupBusy.current = false
+      const d = res?.success ? res.data : null
+      if (!d || typeof d !== 'object' || String(d.id) !== String(r.id)) { toast.error(res?.error || t('inc.copy.loadFailed')); return }
+      rec = d
+      mergeRecord(d)
+    }
+    const { form: init, imagesRemoved, teamDropped } = duplicateForm(rec, teams, { known: teamsKnown })
+    setForm((f) => f ?? { mode: 'create', initial: init, copyOf: { id: rec.id, imagesRemoved, teamDropped } })
+  }
+  /** Ayrıntı ile listenin ortak "kaydedildi" adımı: açık ayrıntının yoldaki taze okuması iptal edilir, kayıt işlenir. */
+  const applySaved = (rec) => {
+    if (!rec || typeof rec !== 'object' || Array.isArray(rec) || rec.id == null) return
+    // Ayrıntı aynı kayıt için açıksa kayıttan ÖNCE başlamış taze okuma iptal edilir: geç dönerse kaydedilen hâli eski
+    // hâliyle ezmesin.
+    if (detailId != null && String(rec.id) === String(detailId)) {
+      detailSeq.current++
+      detailAbort.current?.abort()
+      setFallback((f) => (f && String(f.id) === String(rec.id) ? f : rec))   // birleştirme: mergeRecord
+      setDetailFresh((f) => (f && String(f.id) === String(rec.id) ? { ...f, state: 'same', changed: [] } : f))
+    }
+    mergeRecord(rec)
+  }
+  /** Tek tıkla durum güncellemesi kaydedildi (liste satırı / ayrıntı). */
+  const onStatusSaved = (rec) => {
+    applySaved(rec)
+    refreshAll()
+  }
+  /** Durum güncellemesi çakıştı / kayıt bulunamadı → "son hâli yükle": liste + açık ayrıntı yeniden okunur. */
+  const onStatusReload = (r) => {
+    load()
+    if (detail && r && String(detail.id) === String(r.id)) refreshDetail(detail)
+  }
+  keyActionsRef.current = {
+    canCreate: allowManage,
+    create: openCreate,
+    canEditDetail: !!detail && allowManage && detail.can_edit !== false
+      && !(detailFresh && String(detailFresh.id) === String(detail.id) && detailFresh.state === 'gone'),
+    editDetail: () => { if (detail) openEdit(detail) },
+  }
 
   async function submitIncident(payload) {
     const mode = form?.mode
@@ -375,15 +493,7 @@ export default function IncidentHistoryPage() {
       toast.success(t('inc.saved'))
       // Kaydedilen kayıt listeye HEMEN işlenir (liste yeniden yüklenene kadar beklemez). Ayrıntı aynı kayıt için açıksa
       // kayıttan ÖNCE başlamış taze okuma iptal edilir: geç dönerse kaydedilen hâli eski hâliyle ezmesin.
-      if (res.data && typeof res.data === 'object' && res.data.id != null) {
-        if (detailId != null && String(res.data.id) === String(detailId)) {
-          detailSeq.current++
-          detailAbort.current?.abort()
-          setFallback((f) => (f && String(f.id) === String(res.data.id) ? f : res.data))   // birleştirme: mergeRecord
-          setDetailFresh((f) => (f && String(f.id) === String(res.data.id) ? { ...f, state: 'same', changed: [] } : f))
-        }
-        mergeRecord(res.data)
-      }
+      if (res.data && typeof res.data === 'object' && res.data.id != null) applySaved(res.data)
       setForm(null)
       refreshAll()
       return { ok: true, data: res.data }
@@ -505,7 +615,7 @@ export default function IncidentHistoryPage() {
             )
         ) : (
           <HistoryList rows={rows} phone={phone} allowManage={allowManage} selected={selected} onToggle={toggleSel} onToggleAll={toggleAll}
-            onOpen={openDetail} onEdit={openEdit} activeId={detailId} />
+            onOpen={openDetail} onEdit={openEdit} activeId={detailId} onStatusSaved={onStatusSaved} onStatusReload={onStatusReload} />
         )}
         {/* Standart sayfalama çubuğu — yüklenirken de yerinde kalır (sayfa değişiminde zıplamasın) */}
         <PaginationBar {...sp.bar} />
@@ -516,7 +626,7 @@ export default function IncidentHistoryPage() {
   return (
     <section data-slot="incident-history" className="mb-8 flex min-w-0 flex-col gap-4">
       <HistoryHeader summary={sum} summaryFailed={trendsFailed && !sum} byStatus={byStatus} filters={effFilters} total={sp.total} loading={loading}
-        onRefresh={refreshAll} onNew={openCreate} allowManage={allowManage} isActive={isActive} onCard={onCard} />
+        onRefresh={refreshAll} onNew={openCreate} onQuick={openQuick} allowManage={allowManage} isActive={isActive} onCard={onCard} />
 
       <div className="flex flex-wrap items-center gap-2" data-slot="ih-view-switch">
         <SegmentedControl value={view} onChange={setView} ariaLabel={t('pm.viewLabel')}
@@ -567,10 +677,15 @@ export default function IncidentHistoryPage() {
       {detail && (() => {
         const freshState = detailFresh && String(detailFresh.id) === String(detail.id) ? detailFresh : null
         const gone = freshState?.state === 'gone'
+        // Özet satırdan açılan ayrıntının markdown'ı tam kayıt gelene dek "yükleniyor"; okunamadıysa "okunamadı + yeniden dene"
+        const mdState = !markdownOmitted(detail) ? 'ready'
+          : (freshState?.state === 'failed' || gone ? 'failed' : 'loading')
         return (
           <HistoryDetailSheet key={`detail:${detail.id}`} record={detail} onClose={closeDetail} onEdit={openEdit} onDelete={removeIncident}
             onPostmortem={(r) => setPmFor(r)} allowManage={allowManage && detail.can_edit !== false && !gone}
-            allowDelete={allowDelete && detail.can_edit !== false && !gone} fresh={freshState} />
+            allowDelete={allowDelete && detail.can_edit !== false && !gone} fresh={freshState}
+            onDuplicate={allowManage ? openDuplicate : undefined} onStatusSaved={onStatusSaved} onStatusReload={onStatusReload}
+            mdState={mdState} onRetryMarkdown={() => refreshDetail(detail)} />
         )
       })()}
 
@@ -579,7 +694,8 @@ export default function IncidentHistoryPage() {
       )}
 
       {form && (
-        <IncidentFormModal key={`${form.mode}:${form.initial.id ?? 'new'}`} mode={form.mode} initial={form.initial} teams={teams}
+        <IncidentFormModal key={`${form.mode}:${form.copyOf ? `copy:${form.copyOf.id}` : (form.initial.id ?? 'new')}${form.quick ? ':quick' : ''}`}
+          mode={form.mode} initial={form.initial} teams={teams} quick={!!form.quick} copyOf={form.copyOf ?? null}
           options={{ channel: channelOpts, domain: domainOpts, errorCode: errorCodeOpts, functionCode: functionCodeOpts, channelCode: channelCodeOpts }}
           onAddOption={addOption} onDeleteOption={deleteOption} onSubmit={submitIncident} onClose={() => setForm(null)}
           onFresh={mergeRecord} />

@@ -51,6 +51,9 @@ public class IncidentController {
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
 
+    /** Özet listede ({@code fields=summary}) satıra konmayan dört markdown alanı (2026-11-20). */
+    static final List<String> MARKDOWN_FIELDS = List.of("rca_summary", "description", "resolution_steps", "business_impact");
+
     @GetMapping
     public ResponseEntity<Map<String, Object>> list(
             @RequestParam(required = false) String q,
@@ -66,13 +69,24 @@ public class IncidentController {
             @RequestParam(required = false) Boolean open,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String fields,
             HttpSession session) {
         requireView(session);
         int sz = Math.max(1, Math.min(size, 200));
         Page<IncidentRecord> result = this.service.list(q, severity, category, status, service, channel,
                 since, until, teamId, slaBreached, open, incidentViewScope(session),
                 PageRequest.of(Math.max(0, page), sz, Sort.by(Sort.Direction.DESC, "occurredAt").and(Sort.by(Sort.Direction.DESC, "id"))));
-        List<Map<String, Object>> rows = result.getContent().stream().map(e -> markWritable(session, e, dto(e))).toList();
+        // Özet satırlar (2026-11-20, "Hızlı Giriş"): fields=summary → dört markdown metni (≤ 20 000 karakter her biri) satırda
+        // yok + markdown_omitted=true; ayrıntı / düzenleme kaydı GET /{id} ile taze okur. Parametre yok = bugünkü tam satır.
+        boolean summary = "summary".equalsIgnoreCase(fields == null ? "" : fields.trim());
+        List<Map<String, Object>> rows = result.getContent().stream().map(e -> {
+            Map<String, Object> d = markWritable(session, e, dto(e));
+            if (summary) {
+                for (String k : MARKDOWN_FIELDS) d.remove(k);
+                d.put("markdown_omitted", true);
+            }
+            return d;
+        }).toList();
         addPostmortemSummaries(rows);
         return ok(Map.of(
                 "data",  rows,
@@ -204,7 +218,24 @@ public class IncidentController {
             @RequestBody Map<String, Object> body, HttpSession session) {
         requireManage(session);
         String kind = body.get("kind") instanceof String k ? k : "UPDATED";
-        return ok(Map.of("html", notificationService.previewHtml(body, kind)));
+        // Görsel planı (2026-11-20) bu olayın görsellerini okur: gövdedeki kimlik ancak okunabilen bir kayıtsa kullanılır
+        // (başkasının kaydının görselleri önizlemeyle sınanamaz). Silinmiş / görülemeyen kayıt → kimliksiz (yeni kayıt) önizleme.
+        Map<String, Object> dto = body;
+        Long id = longVal(body.get("id"));
+        if (id != null) {
+            boolean readable;
+            try {
+                IncidentRecord cur = service.get(id);
+                readable = SessionScope.isGlobalViewer(session) || canReadIncident(session, cur.getTeamId(), cur.getCreatedByTeamId());
+            } catch (java.util.NoSuchElementException e) {
+                readable = false;
+            }
+            if (!readable) {
+                dto = new LinkedHashMap<>(body);
+                dto.remove("id");
+            }
+        }
+        return ok(Map.of("html", notificationService.previewHtml(dto, kind, (String) session.getAttribute("username"))));
     }
 
     @PostMapping("/transfer")

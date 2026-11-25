@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils'
 import { SeverityBadge, StatusBadge, SlaBadge, CsvChips } from './HistoryBadges.jsx'
 import { durationOf, formatMinutes, relativeFrom } from './incidentHistoryModel.js'
 import PostmortemBadges from './postmortem/PostmortemBadges.jsx'
+import StatusQuickUpdate from './StatusQuickUpdate.jsx'
 
 const TH = 'h-10 px-3 text-[0.74em] font-semibold tracking-wide text-muted-foreground uppercase'
 /** Örtünün (kart düğmesinin ::after'ı) ÜSTÜNDE kalması gereken etkileşimli bölge (MonitorCard deseni). */
@@ -63,6 +64,7 @@ function MetaLine({ r, className }) {
  */
 export default function HistoryList({
   rows, phone = false, allowManage = false, selected, onToggle, onToggleAll, onOpen, onEdit, activeId, nowMs = Date.now(),
+  onStatusSaved, onStatusReload,
 }) {
   const t = useT()
   const dateLocale = useDateLocale()
@@ -84,6 +86,10 @@ export default function HistoryList({
       <Pencil aria-hidden="true" />
     </Button>
   ))
+  // Tek tıkla durum güncelleme ("Hızlı Giriş", 2026-11-20): yazılabilen satırda durum rozeti açılır pencere tetiğidir.
+  const status = (r, className) => (allowManage && r?.can_edit !== false
+    ? <StatusQuickUpdate record={r} onSaved={onStatusSaved} onReload={onStatusReload} className={className} />
+    : <StatusBadge status={r.status} />)
   const when = (r) => (
     <span className="flex flex-col leading-tight">
       <span className="whitespace-nowrap tabular-nums">{formatDate(r.occurred_at)}</span>
@@ -106,7 +112,7 @@ export default function HistoryList({
                   isSel && 'border-primary bg-primary/5', active && 'ring-2 ring-primary/40')}>
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5 px-3 pt-3">
                   <SeverityBadge severity={r.severity} />
-                  <StatusBadge status={r.status} />
+                  <span className={cn(LAYER, 'inline-flex')}>{status(r)}</span>
                   {r.sla_breached && <SlaBadge />}
                   <span className="ml-auto text-xs whitespace-nowrap text-muted-foreground" title={formatDate(r.occurred_at)}>
                     {relativeFrom(r.occurred_at, dateLocale, nowMs)}
@@ -195,7 +201,7 @@ export default function HistoryList({
                 </TableCell>
                 <TableCell className="align-top">
                   <div className="flex flex-col items-start gap-1">
-                    <StatusBadge status={r.status} />
+                    {status(r, '-mx-1 -my-0.5')}
                     {r.sla_breached && <SlaBadge />}
                   </div>
                 </TableCell>

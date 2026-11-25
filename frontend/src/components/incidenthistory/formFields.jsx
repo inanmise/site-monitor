@@ -1,11 +1,15 @@
-import { useEffect, useId, useState } from 'react'
-import { X } from 'lucide-react'
+import { useCallback, useEffect, useId, useMemo, useState } from 'react'
+import { X, RefreshCw } from 'lucide-react'
 import { api } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import Field, { FieldError } from '../ui/Field.jsx'
 import SmartDateTimeField from '../ui/SmartDateTimeField.jsx'
 import SearchableSelect from '../ui/SearchableSelect.jsx'
 import MarkdownEditor from '../ui/MarkdownEditor.jsx'
+import { Spinner } from '../ui/Progress.jsx'
+import { formatFileSize } from '../../utils/formatBytes.js'
+import { prepareImage, ImagePrepError } from '../techerror/imagePrep.js'
+import { Skeleton } from '@/components/shadcn/skeleton'
 import { Input } from '@/components/shadcn/input'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
@@ -233,25 +237,97 @@ export function TagField({ label, value, onChange, disabled, hint, error, name }
 }
 
 /**
+ * Hazırlama hataları (`te.img.err*`, kanal raporunun görsel yuvası dili) olay kaydında KENDİ metinleriyle gösterilir:
+ * `te.img.<ad>` → `inc.img.<ad>` (hiçbir kanal raporu ifadesi — "yuva", "raporlama aracı" — olay kullanıcısına ulaşmaz).
+ * Bilinmeyen anahtar → genel tarayıcı hatası.
+ */
+export const INCIDENT_PREP_KEYS = Object.freeze([
+  'errBrowser', 'errDecode', 'errEmpty', 'errHeic', 'errHuge', 'errPdf', 'errRead', 'errStillLarge', 'errSvg', 'errThin',
+  'errTiff', 'errTooBig', 'errTooSmall', 'errUnknownType',
+])
+export function incidentPrepKey(key) {
+  const k = String(key ?? '')
+  const name = k.startsWith('te.img.') ? k.slice(7) : ''
+  return INCIDENT_PREP_KEYS.includes(name) ? 'inc.img.' + name : 'inc.img.errBrowser'
+}
+/** Bayt değeri taşıyan hata yer tutucuları (okunur boyuta çevrilir). */
+const PREP_BYTE_KEYS = new Set(['te.img.errTooBig', 'te.img.errStillLarge'])
+
+/**
+ * Görseli TAM ÇÖZÜNÜRLÜKTE yüklemeye hazırlar ("Hızlı Giriş", 2026-11-20): kanal raporundaki `prepareImage` — türü
+ * baytlardan tanır (PDF / SVG / HEIC reddedilir, nedeni yazılır), sunucu sınırlarına (5 MB, kenar ≤ 6000 px, ≤ 12 MP)
+ * uymayanı küçültür, EXIF yönünü düzeltir; uyanı olduğu gibi gönderir. Hata okunur iletiyle `Error` olarak döner.
+ */
+export async function prepareIncidentImage(file, t) {
+  try {
+    const out = await prepareImage(file)
+    return { file: out.file, info: out.info }
+  } catch (e) {
+    if (e instanceof ImagePrepError) {
+      const key = incidentPrepKey(e.key)
+      const params = PREP_BYTE_KEYS.has(e.key) ? (e.params || []).map((n) => formatFileSize(n)) : (e.params || [])
+      throw new Error(t(key, ...params))
+    }
+    throw new Error(t('inc.img.errBrowser'))
+  }
+}
+
+/**
  * Zengin metin alanı — Haftalık Raporlar ile AYNI markdown editör. Görsel yükleme açık; kimlik yoksa (yeni kayıt)
  * taslak yüklenir, kaydedince sunucu görseli olaya bağlar. `makeUniqueCaption` aynı olay içinde adları tekilleştirir.
+ *
+ * <p>"Hızlı Giriş" (2026-11-20): görseller yapıştırılabilir / bırakılabilir (editör yer tutucusuyla), tam çözünürlükte
+ * hazırlanır; etiket ve ipucu yazma alanına da bağlıdır (`aria-labelledby` / `aria-describedby`). `state`:
+ *   - `loading` — kaydın metni henüz okunmadı (özet listeden açılan düzenleme): editör yerine iskelet; alan BOŞ sanılmaz;
+ *   - `failed`  — metin okunamadı: alan kilitli (yanlışlıkla boş metin yazılmasın), "yeniden dene" (`onRetry`).
  */
-export function MdArea({ label, hint, value, onChange, incidentId, makeUniqueCaption, height = 220, error, name }) {
+export function MdArea({
+  label, hint, value, onChange, onUpdate, incidentId, makeUniqueCaption, height = 220, error, name, state = 'ready', onRetry,
+}) {
+  const t = useT()
   const labelId = useId()
+  const hintId = useId()
   const errorId = useId()
-  const uploadImage = async (file, caption) => {
-    const res = await api.incidents.uploadImage(incidentId, file, caption)
-    return res?.success ? `/api/incidents/images/${res.data.id}` : null
-  }
+  const uploadImage = useCallback(async (file, caption) => {
+    let res = null
+    try { res = await api.incidents.uploadImage(incidentId, file, caption) } catch { res = null }
+    if (res?.success && res.data?.id != null) return `/api/incidents/images/${res.data.id}`
+    throw new Error(res?.error || t('inc.img.uploadFailed'))
+  }, [incidentId, t])
+  const prepareFile = useCallback((file) => prepareIncidentImage(file, t), [t])
+  const describedBy = [hint ? hintId : null, error ? errorId : null].filter(Boolean).join(' ') || undefined
+  const textareaProps = useMemo(() => ({ 'aria-labelledby': labelId, 'aria-describedby': describedBy }), [labelId, describedBy])
   // Sunucu alan hatası (2026-11-20, ör. 20 000 karakter sınırı): grubun altında, grup `aria-describedby` ile bağlı;
   // `data-invalid` odak kancası (form ilk hatalı alanın metin kutusuna odaklanır).
   return (
-    <div role="group" aria-labelledby={labelId} aria-describedby={error ? errorId : undefined} data-slot="ih-md-field"
-      data-field={name || undefined} data-invalid={error ? true : undefined} className={cn(FULL, 'mb-3.5 flex min-w-0 flex-col gap-1.5')}>
+    <div role="group" aria-labelledby={labelId} aria-describedby={describedBy} data-slot="ih-md-field"
+      data-field={name || undefined} data-invalid={error ? true : undefined} data-state={state}
+      className={cn(FULL, 'mb-3.5 flex min-w-0 flex-col gap-1.5')}>
       <span id={labelId} className="text-sm font-semibold">{label}</span>
-      {hint && <span className="-mt-1 text-xs text-muted-foreground">{hint}</span>}
-      <MarkdownEditor value={value} onChange={onChange} editable height={height}
-        uploadImage={uploadImage} makeUniqueCaption={makeUniqueCaption} />
+      {hint && <span id={hintId} className="-mt-1 text-xs text-muted-foreground">{hint}</span>}
+      {state === 'loading' && (
+        <div data-slot="ih-md-loading" role="status" className="flex min-w-0 flex-col gap-2 rounded-md border border-dashed px-3 py-3"
+          style={{ minHeight: `${Math.min(height, 160)}px` }}>
+          <span className="inline-flex items-center gap-2 text-sm text-muted-foreground"><Spinner size={14} decorative />{t('inc.md.loading')}</span>
+          <Skeleton aria-hidden="true" className="h-3 w-3/4 max-w-full" />
+          <Skeleton aria-hidden="true" className="h-3 w-1/2 max-w-full" />
+        </div>
+      )}
+      {state === 'failed' && (
+        <div data-slot="ih-md-failed" role="alert"
+          className="flex min-w-0 flex-col items-start gap-2 rounded-md border border-dashed border-destructive/40 bg-destructive/5 px-3 py-3 text-sm">
+          <span className="[overflow-wrap:anywhere]">{t('inc.md.failed')}</span>
+          {onRetry && (
+            <Button type="button" size="sm" variant="outline" className="pointer-coarse:h-10" onClick={onRetry} data-action="md-retry">
+              <RefreshCw aria-hidden="true" />{t('inc.md.retry')}
+            </Button>
+          )}
+        </div>
+      )}
+      {state === 'ready' && (
+        <MarkdownEditor value={value} onChange={onChange} onUpdate={onUpdate} editable height={height} textareaProps={textareaProps}
+          uploadImage={uploadImage} prepareFile={prepareFile} makeUniqueCaption={makeUniqueCaption} />
+      )}
       {error && <FieldError id={errorId}>{error}</FieldError>}
     </div>
   )

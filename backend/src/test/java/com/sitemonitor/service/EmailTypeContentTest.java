@@ -345,6 +345,51 @@ class EmailTypeContentTest {
         }
     }
 
+    @Test
+    @DisplayName("olay (2026-11-20, Hızlı Giriş): runbook satırı YALNIZ değer varsa; boşken e-posta eskisiyle aynı (HTML + düz metin)")
+    void incidentRunbookRow() {
+        String cta = BASE + "/?tab=incident-history";
+        Map<String, Object> base = incidentBase();
+        String absent = svc.buildIncidentNotificationHtml(base, "Müdür", "NEW", cta);
+        for (Object empty : new Object[]{null, "", "   "}) {
+            Map<String, Object> m = incidentBase();
+            m.put("runbook_url", empty);
+            assertThat(withoutStamp(svc.buildIncidentNotificationHtml(m, "Müdür", "NEW", cta))).isEqualTo(withoutStamp(absent));
+        }
+        Map<String, Object> set = incidentBase();
+        set.put("runbook_url", "https://wiki.example.com/rb?a=1&b=<x>");
+        String html = svc.buildIncidentNotificationHtml(set, "Müdür", "NEW", cta);
+        assertThat(html).contains("Runbook</td>").contains("https://wiki.example.com/rb?a=1&amp;b=&lt;x&gt;")
+                .doesNotContain("b=<x>");
+        assertThat(MailKit.plainTextFor(html)).contains("Runbook: https://wiki.example.com/rb?a=1&b=<x>\n");
+    }
+
+    @Test
+    @DisplayName("olay görsel planı (2026-11-20): gömülen görsel CID olur; gömülmeyen (bütçe / başka olay) kısa nota döner; önizleme aynı notu gösterir")
+    void incidentImageNotes() {
+        Map<String, Object> inc = incidentBase();
+        inc.put("description", "Önce\n\n![ekran 1](/api/incidents/images/9)\n\n![**dev** [görsel]](/api/incidents/images/10)\n\nSonra");
+        String mail = svc.buildIncidentNotificationHtml(inc, "Müdür", "NEW", BASE, true, java.util.Set.of(9L));
+        assertThat(mail).contains("cid:incimg9").doesNotContain("cid:incimg10")
+                .contains("<em>(dev [görsel] — Görsel e-postaya eklenmedi — olay kaydında görüntüleyin)</em>");
+        String preview = svc.buildIncidentNotificationHtml(inc, "Müdür", "NEW", null, false, java.util.Set.of(9L));
+        assertThat(preview).contains("/api/incidents/images/9").doesNotContain("/api/incidents/images/10")
+                .contains("Görsel e-postaya eklenmedi");
+        // Küme null = eski davranış (her referans CID)
+        assertThat(svc.buildIncidentNotificationHtml(inc, "Müdür", "NEW", BASE)).contains("cid:incimg9").contains("cid:incimg10");
+        // Saf kural (işlenmiş HTML üstünde): adsız görsel yalnız notu taşır; kümedeki ve olay görseli olmayan dokunulmaz;
+        // uzun ad bir HTML varlığının ortasından kesilmeden kısaltılır
+        assertThat(EmailNotificationService.withImageNotes("<p><img src=\"cid:incimg3\" alt=\"\" /></p>", java.util.Set.of()))
+                .isEqualTo("<p><em>(Görsel e-postaya eklenmedi — olay kaydında görüntüleyin)</em></p>");
+        assertThat(EmailNotificationService.withImageNotes("<img src=\"cid:incimg3\" alt=\"a\" />", java.util.Set.of(3L)))
+                .isEqualTo("<img src=\"cid:incimg3\" alt=\"a\" />");
+        assertThat(EmailNotificationService.withImageNotes("<img src=\"https://x/y.png\" alt=\"dış\" />", java.util.Set.of()))
+                .isEqualTo("<img src=\"https://x/y.png\" alt=\"dış\" />");
+        String longAlt = "<img src=\"/api/incidents/images/4\" alt=\"" + "a".repeat(118) + "&amp;b" + "\" />";
+        assertThat(EmailNotificationService.withImageNotes(longAlt, java.util.Set.of()))
+                .startsWith("<em>(" + "a".repeat(118) + "… — ").doesNotContain("&am…");
+    }
+
     // ── Sorun bildirimleri: uygulama hatası / kullanıcı bildirimi / günlük özet ──
 
     @Test

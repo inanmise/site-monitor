@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ListChecks, Pencil, FileText, Users, Tags, Stethoscope, Mail, ChevronDown, RefreshCw, Save, AlertOctagon, Info,
-  History, Lightbulb, Trash2, Undo2,
+  History, Lightbulb, Trash2, Undo2, Zap, Maximize2, Copy,
 } from 'lucide-react'
+import { useFileDropGuard } from '../techerror/capture/useFileDropGuard.js'
+import { stripUploadPlaceholders, uploadInFlight, hasPendingUpload } from '../../utils/mdUpload.js'
+import { QUICK_FIELDS, hasHiddenErrors } from './quickEntryModel.js'
 import { api, formatDate } from '../../api/client'
 import { useT } from '../../i18n/index.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
@@ -23,9 +26,9 @@ import { FieldSet, FieldLegend } from '@/components/shadcn/field'
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/shadcn/collapsible'
 import { cn } from '@/lib/utils'
 import {
-  SEVERITIES, STATUSES, CATEGORIES, PROBLEM_TYPES, SECTIONS, EMPTY_FORM, EDIT_KEYS, validateIncident, errorCountBySection,
-  firstErrorSection, formSnapshot, previewKind, payloadFromForm, uniqueCaption, formFromRow, editPayload, changedKeys,
-  formChanges, consistencyNudges, applyNudge, resolvedNowIso,
+  SEVERITIES, STATUSES, CATEGORIES, PROBLEM_TYPES, SECTIONS, EMPTY_FORM, EDIT_KEYS, MARKDOWN_KEYS, validateIncident,
+  errorCountBySection, firstErrorSection, formSnapshot, previewKind, payloadFromForm, uniqueCaption, formFromRow, editPayload,
+  changedKeys, formChanges, consistencyNudges, applyNudge, resolvedNowIso,
 } from './incidentHistoryModel.js'
 import {
   TextInput, DateInput, SelectInput, CreatableSelect, CreatableMultiSelect, TagField, MdArea, CheckInput, YesNoInput,
@@ -50,10 +53,45 @@ export const SERVER_ERROR_FIELDS = new Set([
   'channel', 'service', 'affected_services', 'affected_app', 'affected_systems', 'affected_customers',
   'affected_transactions', 'tech_error_count', 'error_budget_burn_pct', 'sla_breached', 'outage_related', 'outage_id',
   'business_impact', 'error_code', 'function_code', 'channel_code', 'tags', 'rca_summary', 'description', 'resolution_steps',
+  'runbook_url',
 ])
 
 /** Taslağın uygulanabileceği form anahtarları (takım adı takım kimliğiyle birlikte gelir). */
 const DRAFT_KEYS = [...EDIT_KEYS, 'team_name']
+
+/** Hızlı kayıtta görünen anahtarlar + birlikte gelen takım adı ve "Mail gönder" — taslak bunların dışını taşıyorsa tam görünüm. */
+const QUICK_VISIBLE = new Set([...QUICK_FIELDS, 'team_name', 'send_notification'])
+
+/** Taslak yazılırken süren / yarım yükleme yer tutucuları atılır (geri yüklenince sahipsiz kalırdı). */
+function draftChanges(changes) {
+  const out = { ...changes }
+  for (const k of MARKDOWN_KEYS) if (typeof out[k] === 'string') out[k] = stripUploadPlaceholders(out[k])
+  return out
+}
+
+/** Geri yüklenen taslağın metinlerinden yüklemesi bu sekmede SÜRMEYEN (sahipsiz) yer tutucular atılır. */
+function restoredChanges(changes) {
+  const out = { ...(changes || {}) }
+  for (const k of MARKDOWN_KEYS) if (typeof out[k] === 'string') out[k] = stripUploadPlaceholders(out[k], uploadInFlight)
+  return out
+}
+
+/** Etkin bölümdeki ilk hatalı alan (bölümler hep DOM'da — gizli bölümdeki alana odak gitmez). */
+function firstInvalidField(root) {
+  if (!root) return null
+  const panel = root.querySelector('[data-slot="tabs-content"]:not([hidden])') || root
+  return panel.querySelector(INVALID_FIELD)
+}
+
+/** Kaydın markdown metinlerini forma işler: kullanıcının (ya da geri yüklenen taslağın) değiştirdiği alan korunur. */
+function mergeMarkdown(form, base, rec) {
+  const out = { ...form }
+  for (const k of MARKDOWN_KEYS) {
+    if (String(form[k] ?? '') === String(base?.[k] ?? '')) out[k] = rec?.[k] ?? ''
+  }
+  return out
+}
+const pickMarkdown = (rec) => Object.fromEntries(MARKDOWN_KEYS.map((k) => [k, rec?.[k] ?? '']))
 
 /** Form alanlarından biri (metin kutusu / metin alanı / düzenlenebilir içerik) şu an odakta mı — kullanıcı yazıyor sayılır. */
 function focusedEditableIn(root) {
@@ -99,7 +137,7 @@ function FocusServerError({ active, tick, handledRef, bodyRef }) {
   useEffect(() => {
     if (!active || tick === handledRef.current) return
     handledRef.current = tick
-    const el = bodyRef.current?.querySelector(INVALID_FIELD)
+    const el = firstInvalidField(bodyRef.current)
     if (el && typeof el.focus === 'function') { el.focus(); el.scrollIntoView?.({ block: 'center' }) }
   }, [active, tick, handledRef, bodyRef])
   return null
@@ -116,6 +154,8 @@ const FIXED = cn(
 )
 const PHONE_TOUCH = 'max-sm:[&_[data-slot=input]]:h-10 max-sm:[&_[data-slot=native-select]]:h-10 max-sm:[&_[data-slot=date-picker-trigger]]:h-10 max-sm:[&_[role=combobox]]:min-h-10'
 const GRID = 'grid grid-cols-1 gap-x-4 sm:grid-cols-2 lg:grid-cols-3'
+/** Hızlı kayıt penceresi: daha dar, yüksekliği içeriğe göre (tam görünüme geçince FIXED olur). */
+const QUICK_SIZE = 'grid-cols-[minmax(0,1fr)] sm:max-w-[min(760px,calc(100%-2rem))] sm:w-full max-sm:[&_[data-slot=dialog-close]]:size-10'
 
 /**
  * Olay oluştur / düzenle penceresi — beş bölüm (shadcn Tabs): Özet · Etki · Kodlar ve etiketler · Kök neden ve çözüm ·
@@ -141,15 +181,33 @@ const GRID = 'grid grid-cols-1 gap-x-4 sm:grid-cols-2 lg:grid-cols-3'
  *   - Form değişiklikleri ~1 sn duraklamayla yerel taslağa yazılır (`incidentDraft.js`), pencere kapanırken / sayfa
  *     giderken de; taslak ASLA kendiliğinden uygulanmaz: açılışta bant "Taslağı geri yükle" / "Sil" sorar.
  *   - Durum ↔ zaman tutarsızlığında ENGELLEMEYEN öneri bantları (`consistencyNudges`).
+ *
+ * <p><b>Hızlı Giriş (2026-11-20).</b>
+ *   - `quick` (yalnız yeni kayıt): AYNI pencerenin sade görünümü — başlık, oluş zamanı, takım, önem, durum + "Mail gönder";
+ *     "Tüm alanları göster" tam görünüme geçer (yazılanlar kalır). Gövde, doğrulama ve taslak (`new`) tam formla aynıdır;
+ *     görünmeyen bir alanda hata varsa tam görünüme geçilir.
+ *   - `copyOf` (`{ id, imagesRemoved, teamDropped }`): bir kayıttan çoğaltılmış yeni kayıt — bilgi bandı + kendi taslak
+ *     kapsamı (`new.copy.<id>`).
+ *   - Özet listeden açılan düzenlemede (`initial.markdown_omitted`) dört markdown alanı taze okumaya dek "yükleniyor",
+ *     okunamazsa kilitli (yeniden dene); o sürede gövdeye markdown GİRMEZ (kayıtlı metin boş sanılıp silinmesin).
  */
 export default function IncidentFormModal({
-  mode, initial, teams = [], options = {}, onAddOption, onDeleteOption, onSubmit, onClose, onFresh,
+  mode, initial, teams = [], options = {}, onAddOption, onDeleteOption, onSubmit, onClose, onFresh, quick = false, copyOf = null,
 }) {
   const t = useT()
   const toast = useToast()
   const { showConfirm } = useDialog()
   const creating = mode === 'create'
   const editId = !creating && initial?.id != null && initial.id !== '' ? initial.id : null
+  // Hızlı kayıt: yalnız yeni kayıtta; tam görünüme geçince geri dönülmez (yazılanlar kalır)
+  const [compact, setCompact] = useState(() => !!quick && creating)
+  // Özet satırdan açılan düzenleme: markdown metinleri taze okumaya dek bilinmiyor (boş DEĞİL)
+  const mdOmitted = editId != null && initial?.markdown_omitted === true
+  const [mdState, setMdState] = useState(() => (mdOmitted ? 'loading' : 'ready'))
+  const mdStateRef = useRef(mdState)
+  mdStateRef.current = mdState
+  // Pencerenin bir yerine bırakılan dosya tarayıcıyı o dosyaya götürüp formu kaybettirmesin (editör kendi bırakmasını işler)
+  useFileDropGuard(true)
   // Karşılaştırma tabanı: formun açıldığı kayıt; taze hâl (ya da "son hâli yükle") geldiğinde onunla değişir.
   const [baseline, setBaseline] = useState(() => (initial && typeof initial === 'object' ? initial : {}))
   const [form, setForm] = useState(() => formFromRow(initial))
@@ -169,8 +227,11 @@ export default function IncidentFormModal({
   const [conflict, setConflict] = useState(null)          // { by, at } — 409 çakışma
   const [latestBusy, setLatestBusy] = useState(false)
   const [latestFailed, setLatestFailed] = useState(false)
-  const draftKeyScope = useMemo(() => draftScope(mode, initial), []) // eslint-disable-line react-hooks/exhaustive-deps
+  const draftKeyScope = useMemo(() => draftScope(mode, initial, copyOf?.id), []) // eslint-disable-line react-hooks/exhaustive-deps
   const [draftOffer, setDraftOffer] = useState(() => readDraft(draftKeyScope))
+  // Markdown okunmadan (özet satır) geri yüklenen taslağın METİN değişiklikleri: uygulanmaz, saklı kalır; metinler okununca
+  // yeniden önerilir (gizli alana yazılıp gövdeden düşmesin, taslaktan silinmesin)
+  const [heldMd, setHeldMd] = useState(null)
   const [dismissedNudges, setDismissedNudges] = useState(() => new Set())
   const bodyRef = useRef(null)
   const focusErrorRef = useRef(false)
@@ -204,6 +265,15 @@ export default function IncidentFormModal({
     setForm((f) => (f[k] === v ? f : { ...f, [k]: v }))
     clearServerError(k)
   }, [clearServerError])
+  // İşlevsel güncelleme (EN GÜNCEL değer üzerinde): markdown editörü sökülürken kendi yarım yükleme yer tutucularını siler —
+  // kullanıcı eylemi değildir (formu "yazıldı" saymaz).
+  const update = useCallback((k, fn) => {
+    setForm((f) => {
+      const cur = f[k] ?? ''
+      const next = fn(cur)
+      return next === cur ? f : { ...f, [k]: next }
+    })
+  }, [])
 
   // "Kesinti kaynaklı mı?" cevabı: Evet seçilince Kesinti ID alanı açılır ve BOŞSA odak oraya gider (kullanıcı seçimiyle —
   // Evet kayıtlı bir olayı açmak odak taşımaz). Cevap değişince kimliğin sunucu hatası da geçersizdir.
@@ -233,11 +303,38 @@ export default function IncidentFormModal({
     if (doneRef.current || goneRef.current || savingRef.current) return
     if (!force && draftOfferRef.current) return
     const base = baselineRef.current || {}
+    const real = formChanges(formRef.current, base)
+    // Yeni kayıt (yeni / hızlı / kopya / alarmdan): kullanıcı bir şey değiştirdiyse taslak BOŞ forma göre yazılır — ön dolu
+    // oluş zamanı ve takım da saklanır (saatler sonra geri yüklenince o anın "şimdi"si kaydedilmesin)
+    const changes = draftChanges(creating && Object.keys(real).length ? formChanges(formRef.current, {}) : real)
+    // Markdown okunamadı / okunmadı: o alanların "değişikliği" kayıtlı metne göre değildir — formdan taslağa yazılmaz;
+    // eldeki taslağın (önceki oturumun) markdown değişiklikleri korunur
+    if (mdStateRef.current !== 'ready') {
+      for (const k of MARKDOWN_KEYS) delete changes[k]
+      const old = readDraft(draftKeyScope)?.changes
+      if (old) for (const k of MARKDOWN_KEYS) if (k in old) changes[k] = old[k]
+    }
     writeDraft(draftKeyScope, {
-      changes: formChanges(formRef.current, base),
+      changes,
       baseVersion: base.version ?? null,
       baseUpdatedAt: base.updated_at ?? null,
     })
+  }, [draftKeyScope, creating])
+
+  /**
+   * Kayıt / bilerek kapatma: taslak silinir — ama kaydın metinleri okunmadıysa taslağın (uygulanmamış) METİN değişiklikleri
+   * saklı kalır (yalnız uygulanmış anahtarlar silinir).
+   */
+  const settleDraft = useCallback(() => {
+    if (mdStateRef.current === 'ready') { removeDraft(draftKeyScope); return }
+    const old = readDraft(draftKeyScope)
+    const keep = {}
+    if (old?.changes) for (const k of MARKDOWN_KEYS) if (k in old.changes) keep[k] = old.changes[k]
+    if (Object.keys(keep).length) {
+      writeDraft(draftKeyScope, { changes: keep, baseVersion: old.base_version ?? null, baseUpdatedAt: old.base_updated_at ?? null })
+    } else {
+      removeDraft(draftKeyScope)
+    }
   }, [draftKeyScope])
 
   // ~1 sn duraklamayla taslak; pencere kapanırken (gezinme, oturum) ve sayfa giderken de.
@@ -255,40 +352,68 @@ export default function IncidentFormModal({
     }
   }, [flushDraft])
 
-  // Taze kayıt (yalnız düzenleme): liste satırıyla açılan form arkada kaydın son hâlini okur.
-  useEffect(() => {
-    if (editId == null) return undefined
+  /**
+   * Kaydın taze hâlini okur (açılışta; markdown okunamadıysa "yeniden dene"de). Kullanıcı henüz yazmadıysa taze kayıt formun
+   * yerine geçer; yazdıysa yalnız (okunmamış) markdown metinleri işlenir, öteki farklar "arkada değişti" notu olur.
+   */
+  const readFresh = useCallback(async () => {
+    if (editId == null) return
+    firstReadAbort.current?.abort()
     const ctl = typeof AbortController === 'function' ? new AbortController() : null
     firstReadAbort.current = ctl
     const my = ++firstReadSeq.current
-    let alive = true
-    ;(async () => {
-      let res = null
-      try { res = await api.incidents.get(editId, { timeoutMs: FRESH_TIMEOUT_MS, signal: ctl?.signal }) } catch { res = null }
-      if (!alive || my !== firstReadSeq.current) return
-      const rec = validRecord(res, editId)
-      if (!rec) {
-        if (statusOf(res) === 404) { setGone(true); setFresh({ state: 'gone', changed: [] }) } else setFresh({ state: 'failed', changed: [] })
-        return
+    let res = null
+    try { res = await api.incidents.get(editId, { timeoutMs: FRESH_TIMEOUT_MS, signal: ctl?.signal }) } catch { res = null }
+    if (!aliveRef.current || my !== firstReadSeq.current) return
+    const rec = validRecord(res, editId)
+    const mdPending = mdStateRef.current !== 'ready'
+    if (!rec) {
+      if (statusOf(res) === 404) { setGone(true); setFresh({ state: 'gone', changed: [] }) } else setFresh({ state: 'failed', changed: [] })
+      if (mdPending) setMdState('failed')
+      return
+    }
+    onFreshRef.current?.(rec)
+    const next = { ...EMPTY_FORM, ...rec }
+    const base = baselineRef.current || {}
+    // Markdown okunmamışken karşılaştırma tabanına kaydın kendi metni konur: "boş ↔ metin" farkı başkasının değişikliği sayılmaz
+    const changed = changedKeys(mdPending ? { ...base, ...pickMarkdown(rec) } : base, rec)
+    const started = touchedRef.current || focusedEditableIn(bodyRef.current)
+    if (!started) {
+      setBaseline(next)
+      setForm(formFromRow(next))
+      setFresh({ state: changed.length ? 'updated' : 'same', changed })
+    } else {
+      if (mdPending) {
+        setBaseline((b) => ({ ...b, ...pickMarkdown(rec) }))
+        setForm((f) => mergeMarkdown(f, base, rec))
       }
-      onFreshRef.current?.(rec)
-      const next = { ...EMPTY_FORM, ...rec }
-      const changed = changedKeys(initial, rec)
-      const started = touchedRef.current || focusedEditableIn(bodyRef.current)
-      if (!started) {
-        setBaseline(next)
-        setForm(formFromRow(next))
-        setFresh({ state: changed.length ? 'updated' : 'same', changed })
-      } else if (changed.length) {
+      if (changed.length) {
         setFresh({ state: 'pending', changed })
       } else {
         // Alanlar aynı (yalnız sürüm / damga ilerlemiş olabilir): yazılanlara dokunmadan taban güncellenir.
         setBaseline((b) => ({ ...b, version: rec.version, updated_at: rec.updated_at, updated_by: rec.updated_by }))
         setFresh({ state: 'same', changed: [] })
       }
-    })()
-    return () => { alive = false; ctl?.abort() }
+    }
+    if (mdPending) setMdState('ready')
+  }, [editId])
+
+  // Taze kayıt (yalnız düzenleme): liste satırıyla açılan form arkada kaydın son hâlini okur.
+  useEffect(() => {
+    if (editId == null) return undefined
+    const seqRef = firstReadSeq
+    const abortRef = firstReadAbort
+    readFresh()
+    // Sökülmede (ve StrictMode'un çift takılışında) yoldaki okuma uygulanmaz
+    return () => { seqRef.current++; abortRef.current?.abort() }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Markdown okunamadı → yeniden dene (alanlar yeniden "yükleniyor"). */
+  const retryMarkdown = useCallback(() => {
+    if (mdStateRef.current !== 'failed') return
+    setMdState('loading')
+    readFresh()
+  }, [readFresh])
 
   useEffect(() => () => { latestAbortRef.current?.abort() }, [])
 
@@ -306,7 +431,14 @@ export default function IncidentFormModal({
    */
   async function loadLatest() {
     if (latestBusy || savingRef.current || editId == null) return
-    const changes = formChanges(formRef.current, baselineRef.current)
+    const changes = draftChanges(formChanges(formRef.current, baselineRef.current))
+    if (mdStateRef.current !== 'ready') {
+      // Metinler okunmadı: formun metin "değişiklikleri" gerçek değil; eldeki taslağın (geri yüklenip uygulanmamış olanlar
+      // dahil) metin değişiklikleri korunur
+      for (const k of MARKDOWN_KEYS) delete changes[k]
+      const old = readDraft(draftKeyScope)?.changes
+      if (old) for (const k of MARKDOWN_KEYS) if (k in old) changes[k] = old[k]
+    }
     if (Object.keys(changes).length) {
       const base = baselineRef.current || {}
       writeDraft(draftKeyScope, { changes, baseVersion: base.version ?? null, baseUpdatedAt: base.updated_at ?? null })
@@ -331,12 +463,14 @@ export default function IncidentFormModal({
       const next = { ...EMPTY_FORM, ...rec }
       setBaseline(next)
       setForm(formFromRow(next))
+      setMdState('ready')
       touchedRef.current = false
       setConflict(null)
       setFresh({ state: 'latest', changed: [] })
       setServerErrors(null)
       setFormError(null)
       setShowErrors(false)
+      setHeldMd(null)                        // saklı metin değişiklikleri yeniden önerilen taslağın içinde
       setDraftOffer(Object.keys(changes).length ? readDraft(draftKeyScope) : null)
     } finally {
       if (aliveRef.current) setLatestBusy(false)
@@ -348,11 +482,31 @@ export default function IncidentFormModal({
     if (!d) return
     touchedRef.current = true
     doneRef.current = false
-    setForm((f) => applyDraft(f, d.changes, DRAFT_KEYS))
+    // Sahipsiz yükleme yer tutucuları (eski sürümün / yarım kalmış oturumun taslağı) uygulanmaz
+    const all = restoredChanges(d.changes)
+    // Metinler okunmadıysa taslağın metin değişiklikleri UYGULANMAZ (gizli alana yazılıp gövdeden düşerdi): saklanır,
+    // metinler okununca yeniden önerilir
+    const mdReady = mdStateRef.current === 'ready'
+    const apply = {}
+    const held = {}
+    for (const [k, v] of Object.entries(all)) {
+      if (!mdReady && MARKDOWN_KEYS.includes(k)) held[k] = v
+      else apply[k] = v
+    }
+    setForm((f) => applyDraft(f, apply, DRAFT_KEYS))
     setServerErrors(null)
     setDraftOffer(null)
+    setHeldMd(Object.keys(held).length ? { ...d, changes: held } : null)
+    // Hızlı görünümün göstermediği bir alan geri yüklendiyse tam görünüm (kullanıcı neyin geldiğini görsün)
+    if (Object.keys(apply).some((k) => !QUICK_VISIBLE.has(k))) setCompact(false)
     toast.info(t('inc.draft.restored'))
   }
+  // Metinler okununca saklı metin değişiklikleri yeniden önerilir (kullanıcı ister geri yükler ister siler)
+  useEffect(() => {
+    if (mdState !== 'ready' || !heldMd) return
+    setDraftOffer(heldMd)
+    setHeldMd(null)
+  }, [mdState, heldMd])
   function deleteDraft() {
     removeDraft(draftKeyScope)
     setDraftOffer(null)
@@ -407,9 +561,9 @@ export default function IncidentFormModal({
   useEffect(() => {
     if (!focusErrorRef.current) return
     focusErrorRef.current = false
-    const el = bodyRef.current?.querySelector(INVALID_FIELD)
+    const el = firstInvalidField(bodyRef.current)
     if (el && typeof el.focus === 'function') { el.focus(); el.scrollIntoView?.({ block: 'center' }) }
-  }, [section, showErrors])
+  }, [section, showErrors, compact])
 
   // SUNUCU alan hatasında odak: her gösterimde sayaç artar; odaklamayı ETKİN bölümün içine çizilen `FocusServerError`
   // yapar (bölüm değiştiyse yeni bölümün içeriği DOM'a girdikten sonra çalışır — bkz. bileşenin açıklaması).
@@ -445,9 +599,18 @@ export default function IncidentFormModal({
     const form = formRef.current
     const base = baselineRef.current
     // Düzenleme: yalnız DEĞİŞEN alanlar + sürüm gider; değişiklik yoksa (ve "Mail gönder" seçilmediyse) istek GİTMEZ.
-    const edit = creating ? null : editPayload(form, base)
-    if (edit && edit.changed.length === 0 && form.send_notification !== true) {
-      if (!draftOfferRef.current) removeDraft(draftKeyScope)
+    let edit = creating ? null : editPayload(form, base)
+    // Markdown metni okunmadıysa / okunamadıysa o alanlar gövdeye GİRMEZ (kayıtlı metin boş sanılıp silinmesin).
+    if (edit && mdStateRef.current !== 'ready') {
+      for (const k of MARKDOWN_KEYS) delete edit.body[k]
+      edit = { body: edit.body, changed: edit.changed.filter((k) => !MARKDOWN_KEYS.includes(k)) }
+    }
+    // Süren görsel yüklemesi tek "değişiklik" olsa da (yer tutucu gövdeye girmez) "kaydedilecek değişiklik yok" diye
+    // kapatılmaz: pencere kapanırsa yükleme sonucu metne yazılamaz ve yapıştırılan görsel sessizce kaybolurdu —
+    // doğrulama "görsel yükleniyor" der.
+    const uploading = MARKDOWN_KEYS.some((k) => hasPendingUpload(form[k]))
+    if (edit && edit.changed.length === 0 && form.send_notification !== true && !uploading) {
+      if (!draftOfferRef.current) settleDraft()
       doneRef.current = true
       toast.info(t('inc.nothingToSave'))
       onClose()
@@ -458,7 +621,9 @@ export default function IncidentFormModal({
       setShowErrors(true)
       const first = firstErrorSection(errs)
       focusErrorRef.current = true
-      if (first && first !== section) setSection(first)
+      // Hızlı görünümün göstermediği alanda hata → tam görünüm, o bölüm
+      if (compact && hasHiddenErrors(errs)) setCompact(false)
+      if (first && first !== section && (!compact || hasHiddenErrors(errs))) setSection(first)
       else bodyRef.current?.scrollTo?.({ top: 0 })
       return
     }
@@ -469,9 +634,9 @@ export default function IncidentFormModal({
     try {
       const res = await onSubmit(creating ? payloadFromForm(form, null) : edit.body)
       if (res?.ok) {
-        // Kaydedildi: taslak silinir; pencere çağıranca kapatılır (kapanmazsa sonraki düzenleme yine taslağa yazılır).
+        // Kaydedildi: taslak silinir (okunmamış metinlerin saklı değişiklikleri kalır); pencere çağıranca kapatılır.
         doneRef.current = true
-        removeDraft(draftKeyScope)
+        settleDraft()
         return
       }
       if (!creating && res?.code === 'CONCURRENT_MODIFICATION') {
@@ -495,6 +660,7 @@ export default function IncidentFormModal({
         setServerErrors(shown)
         const first = firstErrorSection(shown)
         setServerFocusTick((n) => n + 1)
+        if (compact && hasHiddenErrors(shown)) setCompact(false)
         if (first && first !== section) setSection(first)
       }
       if (!shown || rest) setFormError(res?.error || t('inc.saveError'))
@@ -520,12 +686,13 @@ export default function IncidentFormModal({
     }
     // Bilerek kapatıldı (değişiklik yoksa ya da atıldıysa): bu oturumun taslağı silinir — yanıtlanmamış ESKİ taslak
     // öneriliyorsa o kalır (kullanıcı ona dokunmadı, sonraki açılışta yine sorulur).
-    if (!draftOfferRef.current) removeDraft(draftKeyScope)
+    if (!draftOfferRef.current) settleDraft()
     doneRef.current = true
     onClose()
   }
 
   async function loadPreview() {
+    if (mdStateRef.current !== 'ready') return          // metinleri bilinmeyen önizleme gönderilecek postayı göstermez
     const my = ++previewSeq.current
     const payload = { ...payloadFromForm(form), kind: previewKind(mode, form.status) }
     const at = snap
@@ -544,6 +711,7 @@ export default function IncidentFormModal({
     }
   }
   const togglePreview = (next) => {
+    if (next && mdStateRef.current !== 'ready') return
     setPreviewOpen(next)
     if (next && preview.html == null && !previewing) loadPreview()
   }
@@ -660,26 +828,156 @@ export default function IncidentFormModal({
       <AlertBanner tone="danger" role="alert" className="mb-0" title={t('inc.fresh.gone')} />
     </div>
   ) : null
+  // Çoğaltılmış kayıt (2026-11-20): neyin kopyalandığı / kopyalanmadığı
+  const copyNote = copyOf ? (
+    <div data-slot="ih-copy-note">
+      <AlertBanner tone="info" icon={Copy} className="mb-0" title={t('inc.copy.title', copyOf.id)}>
+        <span className="block">{t('inc.copy.body')}</span>
+        {copyOf.imagesRemoved > 0 && (
+          <span data-slot="ih-copy-images" className="mt-1 block">{plural(copyOf.imagesRemoved, 'inc.copy.images')}</span>
+        )}
+        {copyOf.teamDropped && <span data-slot="ih-copy-team" className="mt-1 block">{t('inc.copy.teamDropped')}</span>}
+      </AlertBanner>
+    </div>
+  ) : null
+  // Markdown okunamadı (özet satırdan açılan düzenleme): kaydın o alanlara dokunmayacağı söylenir
+  const mdNote = mdState === 'failed' && !gone ? (
+    <p data-slot="ih-md-note" className="m-0 flex items-start gap-1.5 text-xs text-muted-foreground">
+      <Info aria-hidden="true" className="mt-px size-3.5 shrink-0" />{t('inc.md.failedNote')}
+    </p>
+  ) : null
+  const heldNote = heldMd && !gone ? (
+    <p data-slot="ih-draft-md-held" className="m-0 flex items-start gap-1.5 text-xs text-muted-foreground">
+      <Info aria-hidden="true" className="mt-px size-3.5 shrink-0" />{t('inc.draft.mdHeld')}
+    </p>
+  ) : null
+  const notes = [freshNote, mdNote, copyNote, draftNote, heldNote].filter(Boolean)
+
+  const setTeam = (v) => {
+    touchedRef.current = true
+    doneRef.current = false
+    setForm((f) => ({ ...f, team_id: v, team_name: teams.find((tm) => String(tm.id) === String(v))?.name || '' }))
+    clearServerError('team_id')
+  }
+  const titleField = (
+    <TextInput label={t('inc.fTitle')} req full name="title" value={form.title} autoFocus={creating} error={err('title')}
+      placeholder={t('inc.titlePlaceholder')} onChange={(v) => set('title', v)} />
+  )
+  const occurredField = (
+    <div data-date-field="occurred_at" className="min-w-0">
+      <DateInput label={t('inc.fOccurredAt')} req name="occurred_at" value={form.occurred_at} error={err('occurred_at')} hint={t('sdt.hint')}
+        onProblem={dateProblem('occurred_at')} onChange={(v) => set('occurred_at', v)} />
+    </div>
+  )
+  const teamField = (
+    <SelectInput label={t('inc.fTeam')} req name="team_id" value={form.team_id != null ? String(form.team_id) : ''} options={teamOptions}
+      error={err('team_id')} onChange={setTeam} />
+  )
+  const severityField = (
+    <SelectInput label={t('inc.fSeverity')} name="severity" value={form.severity} error={err('severity')}
+      onChange={(v) => set('severity', v)} options={opts(SEVERITIES, 'inc.sev')} />
+  )
+  const statusField = (
+    <SelectInput label={t('inc.fStatus')} name="status" value={form.status} error={err('status')}
+      onChange={(v) => set('status', v)} options={opts(STATUSES, 'inc.st')} />
+  )
+  const mailBox = (
+    <div className="rounded-lg border bg-card p-3 sm:p-4">
+      <CheckInput label={t('inc.sendMail')} hint={t('inc.sendMailHint')} checked={!!form.send_notification}
+        onChange={(v) => set('send_notification', v)} />
+      <p className="m-0 flex items-start gap-2 text-xs text-muted-foreground">
+        <Info aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+        {t('inc.mailKind.' + previewKind(mode, form.status))}
+      </p>
+    </div>
+  )
+  // Durum ↔ zaman tutarlılığı (2026-11-20): ENGELLEMEYEN öneriler — kayıt yine yapılabilir.
+  const nudgesBlock = nudges.length > 0 ? (
+    <div data-slot="ih-nudges" className="mb-3 flex min-w-0 flex-col gap-2">
+      {nudges.map((k) => (
+        <div key={k} data-slot="ih-nudge" data-kind={k}>
+          <AlertBanner tone="info" icon={Lightbulb} className="mb-0" title={t('inc.nudge.' + k)}
+            onDismiss={() => dismissNudge(k)} dismissLabel={t('inc.nudge.dismiss')}>
+            <span className="block text-xs">{t('inc.nudge.hint')}</span>
+            <span className="mt-2 flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant="outline" data-action={'nudge-' + k} onClick={() => takeNudge(k)}
+                className="h-auto min-h-8 whitespace-normal text-left max-sm:min-h-10 pointer-coarse:min-h-10">
+                {t('inc.nudge.' + k + 'Action')}
+              </Button>
+            </span>
+          </AlertBanner>
+        </div>
+      ))}
+    </div>
+  ) : null
+  const banners = (
+    <>
+      {nErrors > 0 && (
+        <AlertBanner tone="danger" icon={AlertOctagon} className="mb-0" title={t('inc.fixErrors', nErrors)} />
+      )}
+      {goneNote}
+      {conflictNote}
+      {formError && (
+        <AlertBanner tone="danger" role="alert" className="mb-0" title={t('inc.saveError')}
+          onDismiss={() => setFormError(null)} dismissLabel={t('app.close')}>{formError}</AlertBanner>
+      )}
+    </>
+  )
+  const hasBanners = nErrors > 0 || !!goneNote || !!conflictNote || !!formError
+  const mdProps = (k) => ({
+    name: k, error: err(k), value: form[k], incidentId: form.id, makeUniqueCaption, onChange: (v) => set(k, v),
+    onUpdate: (fn) => update(k, fn), state: mdState, onRetry: retryMarkdown,
+  })
+
+  let modalTitle = t('inc.editTitle')
+  let modalIcon = Pencil
+  if (compact) { modalTitle = t('inc.quick.title'); modalIcon = Zap }
+  else if (copyOf) { modalTitle = t('inc.copy.formTitle'); modalIcon = Copy }
+  else if (creating) { modalTitle = t('inc.newTitle'); modalIcon = ListChecks }
 
   return (
-    <ModalShell open onClose={requestClose} title={t(creating ? 'inc.newTitle' : 'inc.editTitle')} icon={creating ? ListChecks : Pencil}
+    <ModalShell open onClose={requestClose} title={modalTitle} icon={modalIcon}
       size="xl" scrollBody dismissOnBackdrop={false} busy={saving} bodyRef={bodyRef}
-      className={cn(FIXED, PHONE_FULLSCREEN)} footer={footer}>
-      <div data-slot="incident-form" data-mode={mode} className={cn('min-w-0', PHONE_TOUCH)}
+      className={cn(compact ? QUICK_SIZE : FIXED, PHONE_FULLSCREEN)} footer={footer}>
+      <div data-slot="incident-form" data-mode={mode} data-view={compact ? 'quick' : 'full'} className={cn('min-w-0', PHONE_TOUCH)}
         onKeyDown={(e) => {
           if (!((e.ctrlKey || e.metaKey) && e.key === 'Enter')) return
           e.preventDefault()
           // Tarih alanı bu tuşta yazılanı çözer (onChange → yeni çizim); kayıt ondan sonra, güncel formla
           setTimeout(() => { if (aliveRef.current) submitRef.current() }, 0)
         }}>
-        {(freshNote || draftNote) && (
-          <div data-slot="ih-form-notes" className="mb-3 flex min-w-0 flex-col gap-2">{freshNote}{draftNote}</div>
+        {notes.length > 0 && (
+          <div data-slot="ih-form-notes" className="mb-3 flex min-w-0 flex-col gap-2">{notes}</div>
         )}
+        {compact ? (
+          <div data-slot="ih-quick" className="flex min-w-0 flex-col gap-3">
+            <FocusServerError active tick={serverFocusTick} handledRef={serverFocusHandledRef} bodyRef={bodyRef} />
+            {hasBanners && <div className="flex min-w-0 flex-col gap-2">{banners}</div>}
+            <p className="m-0 text-sm text-muted-foreground">{t('inc.quick.hint')}</p>
+            <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
+              {titleField}
+              {occurredField}
+              {teamField}
+              {severityField}
+              {statusField}
+            </div>
+            {nudgesBlock}
+            {mailBox}
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" variant="outline" data-action="quick-expand" className="max-sm:h-10 pointer-coarse:h-10"
+                onClick={() => setCompact(false)}>
+                <Maximize2 aria-hidden="true" />{t('inc.quick.expand')}
+              </Button>
+              <span className="text-xs text-muted-foreground">{t('inc.quick.expandHint')}</span>
+            </div>
+          </div>
+        ) : (
         <Tabs value={section} onValueChange={setSection} className="gap-0">
-          {/* Bölüm çubuğu + hata özetleri gövdenin üstünde yapışık kalır (uzun bölümde kaydırınca da görünür). */}
+          {/* Bölüm çubuğu + hata özetleri gövdenin üstünde yapışık kalır (uzun bölümde kaydırınca da görünür). Telefonda
+              sekmeler SARAR (yatay kaydırma yok — "Hızlı Giriş", 2026-11-20). */}
           <div className="sticky top-0 z-10 -mx-1 flex flex-col gap-2 bg-background px-1 pb-3">
             <TabsList aria-label={t('inc.sectionsLabel')}
-              className="h-auto w-full justify-start overflow-x-auto overflow-y-hidden [scrollbar-width:none] max-sm:rounded-none max-sm:bg-transparent max-sm:p-0 pointer-coarse:group-data-[orientation=horizontal]/tabs:h-auto">
+              className="h-auto w-full flex-wrap justify-start max-sm:rounded-none max-sm:bg-transparent max-sm:p-0 pointer-coarse:group-data-[orientation=horizontal]/tabs:h-auto group-data-[orientation=horizontal]/tabs:h-auto">
               {SECTIONS.map((s) => {
                 const Icon = SECTION_ICON[s]
                 const n = errCounts[s] || 0
@@ -697,62 +995,24 @@ export default function IncidentFormModal({
                 )
               })}
             </TabsList>
-            {nErrors > 0 && (
-              <AlertBanner tone="danger" icon={AlertOctagon} className="mb-0" title={t('inc.fixErrors', nErrors)} />
-            )}
-            {goneNote}
-            {conflictNote}
-            {formError && (
-              <AlertBanner tone="danger" role="alert" className="mb-0" title={t('inc.saveError')}
-                onDismiss={() => setFormError(null)} dismissLabel={t('app.close')}>{formError}</AlertBanner>
-            )}
+            {banners}
           </div>
 
-          <TabsContent value="summary" className="min-w-0">
+          <TabsContent value="summary" forceMount hidden={section !== 'summary'} className="min-w-0">
             {focusServerError('summary')}
             {sectionHead('summary')}
             <div className={GRID}>
-              <TextInput label={t('inc.fTitle')} req full name="title" value={form.title} autoFocus={creating} error={err('title')}
-                placeholder={t('inc.titlePlaceholder')} onChange={(v) => set('title', v)} />
-              <div data-date-field="occurred_at" className="min-w-0">
-                <DateInput label={t('inc.fOccurredAt')} req name="occurred_at" value={form.occurred_at} error={err('occurred_at')} hint={t('sdt.hint')}
-                  onProblem={dateProblem('occurred_at')} onChange={(v) => set('occurred_at', v)} />
-              </div>
-              <SelectInput label={t('inc.fTeam')} req name="team_id" value={form.team_id != null ? String(form.team_id) : ''} options={teamOptions} error={err('team_id')}
-                onChange={(v) => {
-                  touchedRef.current = true
-                  doneRef.current = false
-                  setForm((f) => ({ ...f, team_id: v, team_name: teams.find((tm) => String(tm.id) === String(v))?.name || '' }))
-                  clearServerError('team_id')
-                }} />
-              <SelectInput label={t('inc.fSeverity')} name="severity" value={form.severity} error={err('severity')}
-                onChange={(v) => set('severity', v)} options={opts(SEVERITIES, 'inc.sev')} />
-              <SelectInput label={t('inc.fStatus')} name="status" value={form.status} error={err('status')}
-                onChange={(v) => set('status', v)} options={opts(STATUSES, 'inc.st')} />
+              {titleField}
+              {occurredField}
+              {teamField}
+              {severityField}
+              {statusField}
               <SelectInput label={t('inc.fCategory')} name="category" value={form.category} error={err('category')}
                 onChange={(v) => set('category', v)} options={opts(CATEGORIES, 'inc.cat')} />
               <CreatableMultiSelect label={t('inc.fProblemType')} name="problem_types" value={form.problem_types} options={PROBLEM_TYPES}
                 error={err('problem_types')} onChange={(v) => set('problem_types', v)} placeholder={t('inc.selectProblemType')} />
             </div>
-            {/* Durum ↔ zaman tutarlılığı (2026-11-20): ENGELLEMEYEN öneriler — kayıt yine yapılabilir. */}
-            {nudges.length > 0 && (
-              <div data-slot="ih-nudges" className="mb-3 flex min-w-0 flex-col gap-2">
-                {nudges.map((k) => (
-                  <div key={k} data-slot="ih-nudge" data-kind={k}>
-                    <AlertBanner tone="info" icon={Lightbulb} className="mb-0" title={t('inc.nudge.' + k)}
-                      onDismiss={() => dismissNudge(k)} dismissLabel={t('inc.nudge.dismiss')}>
-                      <span className="block text-xs">{t('inc.nudge.hint')}</span>
-                      <span className="mt-2 flex flex-wrap gap-2">
-                        <Button type="button" size="sm" variant="outline" data-action={'nudge-' + k} onClick={() => takeNudge(k)}
-                          className="h-auto min-h-8 whitespace-normal text-left max-sm:min-h-10 pointer-coarse:min-h-10">
-                          {t('inc.nudge.' + k + 'Action')}
-                        </Button>
-                      </span>
-                    </AlertBanner>
-                  </div>
-                ))}
-              </div>
-            )}
+            {nudgesBlock}
             <FieldSet className="mt-2 min-w-0 gap-0">
               <FieldLegend className="mb-2 text-sm font-semibold">{t('inc.timelineLegend')}</FieldLegend>
               <div className={GRID}>
@@ -774,7 +1034,7 @@ export default function IncidentFormModal({
             </FieldSet>
           </TabsContent>
 
-          <TabsContent value="impact" className="min-w-0">
+          <TabsContent value="impact" forceMount hidden={section !== 'impact'} className="min-w-0">
             {focusServerError('impact')}
             {sectionHead('impact')}
             <div className={GRID}>
@@ -814,13 +1074,11 @@ export default function IncidentFormModal({
                   error={err('outage_id')} hint={t('inc.outageIdHint')} placeholder={t('inc.outageIdPlaceholder')}
                   onChange={(v) => set('outage_id', v)} />
               )}
-              <MdArea label={t('inc.fBusinessImpact')} hint={t('inc.businessImpactHint')} name="business_impact" error={err('business_impact')}
-                value={form.business_impact} incidentId={form.id}
-                makeUniqueCaption={makeUniqueCaption} onChange={(v) => set('business_impact', v)} />
+              <MdArea label={t('inc.fBusinessImpact')} hint={t('inc.businessImpactHint')} {...mdProps('business_impact')} />
             </div>
           </TabsContent>
 
-          <TabsContent value="codes" className="min-w-0">
+          <TabsContent value="codes" forceMount hidden={section !== 'codes'} className="min-w-0">
             {focusServerError('codes')}
             {sectionHead('codes')}
             <div className={GRID}>
@@ -831,38 +1089,33 @@ export default function IncidentFormModal({
               <CreatableSelect label={t('inc.fChannelCode')} name="channel_code" error={err('channel_code')} value={form.channel_code} options={options.channelCode || []}
                 onChange={(v) => set('channel_code', v)} onCreate={(v) => onAddOption('CHANNEL_CODE', v)} onDelete={(v) => onDeleteOption('CHANNEL_CODE', v)} />
               <TagField label={t('inc.fTags')} name="tags" error={err('tags')} value={form.tags} onChange={(v) => set('tags', v)} />
+              {/* Runbook bağlantısı ("Hızlı Giriş", 2026-11-20): yalnız http(s); ayrıntıda yeni sekmede açılan bağlantı olur */}
+              <TextInput label={t('inc.fRunbookUrl')} full type="url" inputMode="url" autoComplete="off" name="runbook_url"
+                value={form.runbook_url} error={err('runbook_url')} hint={t('inc.runbookUrlHint')} placeholder={t('inc.runbookUrlPlaceholder')}
+                onChange={(v) => set('runbook_url', v)} />
             </div>
           </TabsContent>
 
-          <TabsContent value="rca" className="min-w-0">
+          <TabsContent value="rca" forceMount hidden={section !== 'rca'} className="min-w-0">
             {focusServerError('rca')}
             {sectionHead('rca')}
             <div className="grid grid-cols-1">
-              <MdArea label={t('inc.fRca')} hint={t('inc.rcaHint')} name="rca_summary" error={err('rca_summary')} value={form.rca_summary} incidentId={form.id}
-                makeUniqueCaption={makeUniqueCaption} onChange={(v) => set('rca_summary', v)} />
-              <MdArea label={t('inc.fDescription')} name="description" error={err('description')} value={form.description} incidentId={form.id}
-                makeUniqueCaption={makeUniqueCaption} onChange={(v) => set('description', v)} />
-              <MdArea label={t('inc.fResolution')} name="resolution_steps" error={err('resolution_steps')} value={form.resolution_steps} incidentId={form.id}
-                makeUniqueCaption={makeUniqueCaption} onChange={(v) => set('resolution_steps', v)} />
+              <MdArea label={t('inc.fRca')} hint={t('inc.rcaHint')} {...mdProps('rca_summary')} />
+              <MdArea label={t('inc.fDescription')} {...mdProps('description')} />
+              <MdArea label={t('inc.fResolution')} {...mdProps('resolution_steps')} />
             </div>
           </TabsContent>
 
-          <TabsContent value="notify" className="min-w-0">
+          <TabsContent value="notify" forceMount hidden={section !== 'notify'} className="min-w-0">
             {focusServerError('notify')}
             {sectionHead('notify')}
             <div className="flex min-w-0 flex-col gap-3">
-              <div className="rounded-lg border bg-card p-3 sm:p-4">
-                <CheckInput label={t('inc.sendMail')} hint={t('inc.sendMailHint')} checked={!!form.send_notification}
-                  onChange={(v) => set('send_notification', v)} />
-                <p className="m-0 flex items-start gap-2 text-xs text-muted-foreground">
-                  <Info aria-hidden="true" className="mt-px size-3.5 shrink-0" />
-                  {t('inc.mailKind.' + previewKind(mode, form.status))}
-                </p>
-              </div>
+              {mailBox}
               <Collapsible open={previewOpen} onOpenChange={togglePreview} className="min-w-0 rounded-lg border">
                 <div className="flex flex-wrap items-center gap-2 p-2 sm:p-3">
                   <CollapsibleTrigger asChild>
-                    <Button type="button" variant="ghost" className="h-auto min-h-10 flex-1 justify-start gap-2 px-2 text-left font-semibold whitespace-normal sm:min-h-9">
+                    <Button type="button" variant="ghost" disabled={mdState !== 'ready'} data-action="preview-toggle"
+                      className="h-auto min-h-10 flex-1 justify-start gap-2 px-2 text-left font-semibold whitespace-normal sm:min-h-9">
                       <Mail aria-hidden="true" className="text-primary" />
                       {t('inc.previewMail')}
                       <ChevronDown aria-hidden="true" className={cn('ml-auto transition-transform motion-reduce:transition-none', previewOpen && 'rotate-180')} />
@@ -873,6 +1126,21 @@ export default function IncidentFormModal({
                       {previewing ? <Spinner size={14} decorative /> : <RefreshCw aria-hidden="true" />}
                       {previewing ? t('inc.previewing') : t('inc.previewRefresh')}
                     </Button>
+                  )}
+                  {mdState !== 'ready' && (
+                    <div data-slot="ih-preview-blocked" data-state={mdState} role={mdState === 'failed' ? 'alert' : 'status'}
+                      className="flex w-full min-w-0 flex-wrap items-center gap-2 px-2 text-xs text-muted-foreground">
+                      <Info aria-hidden="true" className="size-3.5 shrink-0" />
+                      <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+                        {mdState === 'failed' ? t('inc.previewMdFailed') : t('inc.previewWaitMd')}
+                      </span>
+                      {mdState === 'failed' && (
+                        <Button type="button" size="sm" variant="outline" className="pointer-coarse:h-10" onClick={retryMarkdown}
+                          data-action="preview-md-retry">
+                          <RefreshCw aria-hidden="true" />{t('inc.md.retry')}
+                        </Button>
+                      )}
+                    </div>
                   )}
                 </div>
                 <CollapsibleContent className="min-w-0 border-t p-2 sm:p-3">
@@ -889,6 +1157,7 @@ export default function IncidentFormModal({
             </div>
           </TabsContent>
         </Tabs>
+        )}
       </div>
     </ModalShell>
   )

@@ -28,3 +28,6 @@ export function activeShortcutContexts() {
 
 /** Kanal raporu düzenleyicisinin bağlamı. */
 export const TE_EDITOR_CONTEXT = 'te-editor'
+
+/** Olay ve Hata Geçmişi sayfasının bağlamı (2026-11-20, "Hızlı Giriş"): `N` yeni olay, `E` açık ayrıntıyı düzenle. */
+export const INCIDENT_HISTORY_CONTEXT = 'incident-history'

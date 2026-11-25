@@ -12,6 +12,7 @@
  */
 import { formatDuration, parseUtc, autoDurationMinutes } from '../../utils/incidentMeta.js'
 import { toIso } from '../../utils/smartDateTime.js'
+import { hasPendingUpload, stripUploadPlaceholders } from '../../utils/mdUpload.js'
 
 export const SEVERITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']
 export const STATUSES = ['OPEN', 'INVESTIGATING', 'MITIGATED', 'RESOLVED']
@@ -50,7 +51,11 @@ export const EMPTY_FORM = Object.freeze({
   affected_customers: '', affected_transactions: '',
   sla_breached: false, error_budget_burn_pct: '', duration_minutes: '', tags: '',
   tech_error_count: '', outage_related: null, outage_id: '',
+  runbook_url: '',
 })
+
+/** Dört markdown alanı (görsel yüklenebilir; özet listede — `fields=summary` — satırda gelmez). */
+export const MARKDOWN_KEYS = Object.freeze(['rca_summary', 'description', 'resolution_steps', 'business_impact'])
 
 // ── URL ────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -348,7 +353,7 @@ export const FIELD_SECTION = Object.freeze({
   affected_customers: 'impact', affected_transactions: 'impact', sla_breached: 'impact', error_budget_burn_pct: 'impact',
   tech_error_count: 'impact', outage_related: 'impact', outage_id: 'impact',
   business_impact: 'impact',
-  error_code: 'codes', function_code: 'codes', channel_code: 'codes', tags: 'codes',
+  error_code: 'codes', function_code: 'codes', channel_code: 'codes', tags: 'codes', runbook_url: 'codes',
   rca_summary: 'rca', description: 'rca', resolution_steps: 'rca',
   send_notification: 'notify',
 })
@@ -478,6 +483,66 @@ function decimalProblem(v) {
   return Number(s) > MAX_ERROR_BUDGET ? 'inc.errNumber' : null
 }
 
+// ── Runbook bağlantısı (2026-11-20, "Hızlı Giriş") ─────────────────────────────────────────────────────────
+
+/**
+ * Sunucunun reddettiği 0x20 üstü boşluk karakterleri: Java `Character.isWhitespace` (karakter döngüsü) ile `java.net.URI`'nin
+ * boşluk saydığı `Character.isSpaceChar` (Zs / Zl / Zp — bölünmez boşluklar U+00A0, U+2007, U+202F DAHİL) birleşimi.
+ */
+const JAVA_SPACE = new Set([0x00A0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009,
+  0x200A, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000])
+/** `java.net.URI`'nin hiçbir yerde kabul etmediği karakterler. */
+const URI_ILLEGAL = '"<>\\^`{|}'
+const HEX = '0123456789abcdefABCDEF'
+
+/** Java `String.trim` gibi: yalnız ≤ U+0020 karakterleri kırpar (sunucu aynı biçimde kırpar). */
+function javaTrim(v) {
+  const s = String(v ?? '')
+  let a = 0
+  let b = s.length
+  while (a < b && s.charCodeAt(a) <= 0x20) a++
+  while (b > a && s.charCodeAt(b - 1) <= 0x20) b--
+  return s.slice(a, b)
+}
+
+/**
+ * Runbook adresi kurala UYMUYOR mu — sunucudaki `IncidentService.runbookUrlProblem`'in aynısı: boş değer geçerli; http(s)
+ * şeması + boş olmayan, `@` / `:` ile başlamayan bir sunucu kısmı; boşluk / denetim karakteri, URI'de geçersiz karakter,
+ * eksik `%XX` kaçışı ya da sunucu kısmı dışında köşeli ayraç yok. Doğrusal; düzenli ifade yok.
+ */
+export function runbookUrlProblem(v) {
+  const s = javaTrim(v)
+  if (s === '') return false
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i)
+    if (c <= 0x20 || c === 0x7f || (c >= 0x80 && c <= 0x9f) || JAVA_SPACE.has(c)) return true
+    if (URI_ILLEGAL.includes(s[i])) return true
+    if (c === 37 && !(HEX.includes(s[i + 1] ?? 'x') && HEX.includes(s[i + 2] ?? 'x'))) return true
+  }
+  // `java.net.URI`: parça işareti (#) yalnız bir kez — ikincisi geçersiz
+  const hash = s.indexOf('#')
+  if (hash >= 0 && s.indexOf('#', hash + 1) >= 0) return true
+  const lower = s.toLowerCase()
+  const rest = lower.startsWith('https://') ? s.slice(8) : lower.startsWith('http://') ? s.slice(7) : null
+  if (rest == null) return true
+  let end = rest.length
+  for (const ch of '/?#') {
+    const i = rest.indexOf(ch)
+    if (i >= 0 && i < end) end = i
+  }
+  const authority = rest.slice(0, end)
+  if (authority === '' || authority[0] === '@' || authority[0] === ':') return true
+  // Köşeli ayraç yalnız sunucu kısmının başında IPv6 adresi olarak ([::1]:8080)
+  const tail = rest.slice(end)
+  if (tail.includes('[') || tail.includes(']')) return true
+  const open = authority.indexOf('[')
+  const close = authority.indexOf(']')
+  if (open >= 0 || close >= 0) {
+    if (open !== 0 || close < 0 || authority.indexOf('[', 1) >= 0 || authority.indexOf(']', close + 1) >= 0) return true
+  }
+  return false
+}
+
 /** Formdaki değer `baseline`'dakiyle (formun açıldığı kayıt) aynı mı — aynıysa yeniden doğrulanmaz (sunucuyla aynı kural). */
 function unchangedFrom(baseline, k, v) {
   if (baseline == null || typeof baseline !== 'object') return false
@@ -516,11 +581,17 @@ export function validateIncident(f, baseline) {
     const p = decimalProblem(f.error_budget_burn_pct)
     if (p) e.error_budget_burn_pct = p
   }
+  // Süren görsel yüklemesi ("Hızlı Giriş", 2026-11-20): yalnız yüklemesi GERÇEKTEN süren yer tutucu kaydı durdurur
+  // (`hasPendingUpload` — bu sekmenin kaydı). Sahipsiz kalmış yer tutucu (yarım yazılmış taslak, kapanmış pencere, elle
+  // yazılmış metin) kaydı hiçbir zaman kilitlemez; gövdeye girerken silinir (`payloadFromForm`).
+  for (const k of MARKDOWN_KEYS) if (hasPendingUpload(f[k])) e[k] = 'inc.errUploadPending'
   for (const [k, max] of Object.entries(MAX_LENGTHS)) {
     if (e[k] || isBlank(f[k]) || unchangedFrom(baseline, k, f[k])) continue
     const len = String(f[k]).trim().length
     if (len > max) e[k] = { key: 'inc.errTooLong', params: [max, len] }
   }
+  // Runbook bağlantısı: uzunluktan SONRA biçim (sunucuyla aynı sıra); yalnız değişen değer denetlenir.
+  if (!e.runbook_url && !same('runbook_url') && runbookUrlProblem(f.runbook_url)) e.runbook_url = 'inc.errRunbookUrl'
   // Üç isteğe bağlı alan (2026-11-20) — sunucunun katı kurallarının aynısı. Kesinti ID yalnız cevap Evet iken denetlenir
   // (aksi halde alan gizlidir ve gövdeye null yazılır).
   const count = techErrorCountProblem(f.tech_error_count)
@@ -587,6 +658,9 @@ export const OUTAGE_PAYLOAD_KEYS = Object.freeze(['tech_error_count', 'outage_re
  */
 export function payloadFromForm(f, baseline) {
   const p = { ...f }
+  // Yükleme yer tutucuları (`sm-upload:`) sunucuya hiçbir zaman gitmez — süren yükleme kaydı zaten durdurur, sahipsiz
+  // kalmışı burada düşer
+  for (const k of MARKDOWN_KEYS) if (typeof p[k] === 'string') p[k] = stripUploadPlaceholders(p[k])
   for (const k of ['error_budget_burn_pct', 'duration_minutes']) if (p[k] === '' || p[k] == null) delete p[k]
   if (isBlank(f.tech_error_count)) p.tech_error_count = null
   else {

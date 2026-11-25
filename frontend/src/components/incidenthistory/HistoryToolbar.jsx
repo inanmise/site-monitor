@@ -69,7 +69,7 @@ export default function HistoryToolbar({
   const search = (
     <InputGroup className={cn('w-full sm:w-72', phone && 'h-10')}>
       <InputGroupInput type="search" placeholder={t('inc.search')} aria-label={t('inc.search')} value={filters.q}
-        className={phone ? 'h-full' : undefined}
+        data-page-search="" className={phone ? 'h-full' : undefined}
         onChange={(e) => onQuery(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onQueryCommit() } }} />
       <InputGroupAddon><Search aria-hidden="true" /></InputGroupAddon>

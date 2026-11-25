@@ -4,7 +4,7 @@ import { useT } from '../i18n/index.jsx'
 import ModalShell from './ui/ModalShell.jsx'
 import { Kbd, KbdGroup } from '@/components/shadcn/kbd'
 import { GO_SHORTCUTS, isMacPlatform } from '../utils/keyboardShortcuts.js'
-import { TE_EDITOR_CONTEXT, activeShortcutContexts } from '../utils/shortcutContexts.js'
+import { TE_EDITOR_CONTEXT, INCIDENT_HISTORY_CONTEXT, activeShortcutContexts } from '../utils/shortcutContexts.js'
 
 /**
  * "Klavye kısayolları" listesi (2026-10-02, öneri 24) — KeyboardShortcuts'ın İLK AÇILIŞTA yüklenen penceresi
@@ -102,6 +102,13 @@ export default function ShortcutsDialog({ open, onClose, tabs = [] }) {
           { id: 'te-save', label: t('shortcuts.teSave'), chords: [[MOD, 'S']] },
           { id: 'te-section-next', label: t('shortcuts.teSectionNext'), chords: [[ALT, '↓']] },
           { id: 'te-section-prev', label: t('shortcuts.teSectionPrev'), chords: [[ALT, '↑']] },
+        ],
+      },
+      // Olay ve Hata Geçmişi (2026-11-20, "Hızlı Giriş"): yalnız sayfa açıkken
+      contexts.has(INCIDENT_HISTORY_CONTEXT) && {
+        id: 'incident-history', title: t('shortcuts.grp.incidentHistory'), hint: t('shortcuts.ihHint'), rows: [
+          { id: 'ih-new', label: t('shortcuts.ihNew'), chords: [['N']] },
+          { id: 'ih-edit', label: t('shortcuts.ihEdit'), chords: [['E']] },
         ],
       },
     ].filter(Boolean)

@@ -1,7 +1,7 @@
-import { useCallback, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ImagePlus } from 'lucide-react'
+import { ImagePlus, ImageOff } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useTheme } from '../../i18n/theme.jsx'
 import { useToast } from './Toast.jsx'
@@ -10,11 +10,18 @@ import Field from './Field.jsx'
 import { clipboardToMarkdownTable } from '../../utils/pasteTable'
 import { downscaleImage } from '../../utils/imageDownscale'
 import { formatFileSize } from '../../utils/formatBytes.js'
+import {
+  uploadToken, uploadPlaceholder, replaceUploadPlaceholder, safeAlt, beginUpload, endUpload, removeUploadPlaceholders,
+} from '../../utils/mdUpload.js'
 import { Button } from '@/components/shadcn/button'
 import { Input } from '@/components/shadcn/input'
 import { Textarea } from '@/components/shadcn/textarea'
+import { cn } from '@/lib/utils'
 // Editör (~1 MB) ilk düzenlenebilir çizimde yüklenir — bu sarmalayıcıyı içe aktaran ekranlar onu taşımaz (2026-10-09).
 import LazyMdEditor from './mdEditor/LazyMdEditor.jsx'
+
+// Büyük görünüm penceresi yalnız bir görsele tıklanınca yüklenir (okuma görünümü — "Hızlı Giriş", 2026-11-20)
+const ImageLightbox = lazy(() => import('../techerror/ImageLightbox.jsx').then((m) => ({ default: m.ImageLightbox })))
 
 const INDENT_ICON = (
   <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
@@ -30,6 +37,11 @@ const OUTDENT_ICON = (
 // Dosya boyutu metni: ortak utils/formatBytes.formatFileSize (öneri 29 — WeeklyMdField ile birebir aynı kopya kaldırıldı).
 const fmtFileSize = formatFileSize
 
+/** Bir yapıştırma / bırakmada en çok bu kadar görsel alınır; fazlası söylenir (sınırsız yükleme yok). */
+export const MAX_FILES_PER_DROP = 10
+/** Aynı editörde aynı anda en çok bu kadar yükleme sürer; ötekiler sırada bekler. */
+export const MAX_PARALLEL_UPLOADS = 3
+
 /** Seçimi tam satırlara genişletip her satıra fn uygular (girinti komutları). */
 function transformSelectedLines(state, api, fn) {
   const text = state.text ?? ''
@@ -42,17 +54,92 @@ function transformSelectedLines(state, api, fn) {
   api.setSelectionRange({ start, end: start + next.length })
 }
 
+/** Dosya sürükleniyor mu (metin / bağlantı sürüklemesi değil). */
+function isFileDrag(e) {
+  const types = e?.dataTransfer?.types
+  return !!types && Array.from(types).includes('Files')
+}
+
+/** Panodaki dosyalar (görseller önce) — yalnız dosya öğeleri; metin öğesi dosya sayılmaz. */
+function clipboardFiles(dt) {
+  if (!dt) return []
+  const out = []
+  for (const item of Array.from(dt.items || [])) {
+    if (item?.kind !== 'file' || typeof item.getAsFile !== 'function') continue
+    const f = item.getAsFile()
+    if (f) out.push(f)
+  }
+  if (out.length === 0) for (const f of Array.from(dt.files || [])) if (f) out.push(f)
+  return out
+}
+
+/** Panodan gelen görselin adı yoksa (ekran görüntüsü "image.png") okunur bir ad: `gorsel-<yyyyMMdd-HHmmss>.<uzantı>`. */
+function pastedName(file, now = new Date()) {
+  const n = String(file?.name || '')
+  if (n && n !== 'image.png' && n !== 'image.jpg' && n !== 'image.jpeg') return n
+  const p = (x) => String(x).padStart(2, '0')
+  const ext = String(file?.type || '').split('/')[1]?.replace(/[^a-z0-9]/g, '') || 'png'
+  return `gorsel-${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}.${ext}`
+}
+
+/**
+ * Okuma görünümündeki görsel (`imagePreview`): tıklanınca büyük görünüm (lightbox) açılır; görsel artık yoksa (silinmiş,
+ * erişim kalkmış) kırık resim yerine "görsel artık yok" yer tutucusu çizilir.
+ */
+function MdImage({ src, alt }) {
+  const t = useT()
+  const [failed, setFailed] = useState(false)
+  const [open, setOpen] = useState(false)
+  const btnRef = useRef(null)
+  const label = String(alt || '').trim() || t('md.imageUnnamed')
+  if (failed || !src) {
+    return (
+      <span data-slot="md-image-gone" className="my-1 inline-flex max-w-full items-start gap-1.5 rounded-md border border-dashed px-2 py-1 align-middle text-xs text-muted-foreground [overflow-wrap:anywhere]">
+        <ImageOff aria-hidden="true" className="mt-px size-3.5 shrink-0" />{t('md.imageGone', label)}
+      </span>
+    )
+  }
+  return (
+    <>
+      <Button ref={btnRef} type="button" variant="ghost" data-slot="md-image" aria-label={t('md.imageZoom', label)}
+        className="h-auto max-w-full cursor-zoom-in rounded-md p-0 hover:bg-transparent" onClick={() => setOpen(true)}>
+        <img src={src} alt={alt || ''} loading="lazy" decoding="async" onError={() => setFailed(true)} className="block h-auto max-w-full rounded-md" />
+      </Button>
+      {open && (
+        <Suspense fallback={null}>
+          <ImageLightbox open onOpenChange={setOpen} src={src} label={label} returnFocusRef={btnRef} />
+        </Suspense>
+      )}
+    </>
+  )
+}
+const PREVIEW_COMPONENTS = { img: ({ src, alt }) => <MdImage src={src} alt={alt} /> }
+
 /**
  * Weekly Reports MdField ile AYNI zengin markdown editör çekirdeği — paylaşılan,
  * yeniden kullanılabilir. Toolbar (başlık/kalın/italik/liste/girinti/tablo),
  * Excel→markdown tablo yapıştırma ve kaynak/önizleme geçişi içerir.
  *
- * Görsel yükleme OPSİYONELDİR: `uploadImage(file, caption) => Promise<url|null>`
- * prop'u verilirse araç çubuğuna görsel butonu eklenir; seçilen görsel istemcide
- * küçültülür, açıklama penceresi (ui/ModalShell) açılır ve imleç konumuna ![caption](url) eklenir.
- * editable=false iken render edilmiş markdown gösterir.
+ * Görsel yükleme OPSİYONELDİR: `uploadImage(file, caption) => Promise<url|null>` prop'u verilirse:
+ *   - araç çubuğuna görsel butonu eklenir; seçilen görsel hazırlanır (`prepareFile` verilmişse onunla — tam çözünürlük,
+ *     verilmemişse istemcide küçültülür), açıklama penceresi (ui/ModalShell) açılır ve imleç konumuna ![caption](url) eklenir;
+ *   - ("Hızlı Giriş", 2026-11-20) yazma alanına YAPIŞTIRILAN ya da BIRAKILAN görseller açıklama sorulmadan yüklenir: imleçte
+ *     önce bir yükleme yer tutucusu (`utils/mdUpload`) yazılır, yükleme bitince EN GÜNCEL metindeki yer tutucu gerçek
+ *     bağlantıyla değişir (bu arada yazılan metin kaybolmaz), başarısızsa yer tutucu silinir ve nedeni söylenir. Sıra:
+ *     Excel / Office tablosu → görsel → metin (metin yapıştırma metin kalır). Bir seferde en çok {@link MAX_FILES_PER_DROP}
+ *     görsel, aynı anda en çok {@link MAX_PARALLEL_UPLOADS} yükleme. Editör sökülürse sıradaki yüklemeler başlamaz, süren
+ *     yüklemenin sonucu uygulanmaz ve bu editörün yarım yer tutucuları `onUpdate(güncelleyici)` ile (verilmişse — üst
+ *     bileşenin EN GÜNCEL değeri üzerinde çalışan işlevsel güncelleme; ölü `value` kopyası değil) metinden silinir.
+ * `uploadImage` hata verirse (`Error`) iletisi gösterilir. `prepareFile(file) => Promise<{ file, note? }>` hazırlama hatasında
+ * okunur iletiyle `Error` fırlatmalıdır.
+ *
+ * editable=false iken render edilmiş markdown gösterir; `imagePreview` verilirse görseller tıklanınca büyür, olmayan görsel
+ * "artık yok" yazar. `textareaProps` yazma alanına geçer (erişilebilir ad / açıklama).
  */
-export default function MarkdownEditor({ value, onChange, editable = true, height = 200, uploadImage, makeUniqueCaption }) {
+export default function MarkdownEditor({
+  value, onChange, editable = true, height = 200, uploadImage, makeUniqueCaption, prepareFile, imagePreview = false,
+  textareaProps, onUpdate,
+}) {
   const t = useT()
   const { isDark } = useTheme()
   const toast = useToast()
@@ -61,6 +148,41 @@ export default function MarkdownEditor({ value, onChange, editable = true, heigh
   const [pendingFile, setPendingFile] = useState(null)
   const [caption, setCaption] = useState('')
   const [uploading, setUploading] = useState(false)
+  const [drag, setDrag] = useState(false)
+  const [inFlight, setInFlight] = useState(0)
+  // En güncel metin: zaman uyumsuz yükleme bitince değiştirme bunun üzerinde yapılır (yazılan metin ezilmesin). Kendi
+  // çağrımız da hemen yazar — aynı tikte biten iki yükleme birbirinin sonucunu silmesin.
+  const valueRef = useRef(value ?? '')
+  valueRef.current = value ?? ''
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+  const onUpdateRef = useRef(onUpdate)
+  onUpdateRef.current = onUpdate
+  const aliveRef = useRef(true)
+  const queueRef = useRef([])
+  const activeRef = useRef(0)
+  // Bu editörün yer tutucusu metinde duran (sırada ya da süren) yüklemeleri — sökülürken metinden silinir
+  const pendingRef = useRef(new Set())
+  useEffect(() => {
+    aliveRef.current = true
+    const pending = pendingRef.current
+    const queue = queueRef
+    return () => {
+      aliveRef.current = false
+      queue.current = []                                   // sıradakiler başlamaz
+      if (pending.size === 0) return
+      const tokens = [...pending]
+      pending.clear()
+      for (const tk of tokens) endUpload(tk)
+      // Yarım yer tutucular kaydı kilitlemesin / metinde kalmasın: üst bileşenin EN GÜNCEL değeri üzerinde silinir
+      try { onUpdateRef.current?.((cur) => removeUploadPlaceholders(cur, tokens)) } catch { /* yoksay */ }
+    }
+  }, [])
+
+  const emit = useCallback((next) => {
+    valueRef.current = next
+    onChangeRef.current?.(next)
+  }, [])
 
   // Komut KURUCUSU (kütüphane tembel yüklenir; createMdEditor onu yüklendikten sonra çağırır) — kimliği eskiden
   // useMemo'lanan dizininkiyle aynı bağımlılıklara bağlı, editör komutları aynı anlarda yeniden kaydeder.
@@ -106,17 +228,111 @@ export default function MarkdownEditor({ value, onChange, editable = true, heigh
     caretRef.current = { start: e.target.selectionStart, end: e.target.selectionEnd }
   }
 
+  /** Görseli yüklemeye hazırlar: `prepareFile` (tam çözünürlük, tür / boyut denetimi) ya da eski küçültme. */
+  async function prepare(file) {
+    if (prepareFile) return prepareFile(file)
+    return { file: await downscaleImage(file) }
+  }
+
+  /** Sıradaki yüklemeleri başlatır (aynı anda en çok MAX_PARALLEL_UPLOADS). */
+  function pump() {
+    while (aliveRef.current && activeRef.current < MAX_PARALLEL_UPLOADS && queueRef.current.length > 0) {
+      const job = queueRef.current.shift()
+      activeRef.current++
+      runJob(job).finally(() => {
+        activeRef.current--
+        if (aliveRef.current) setInFlight((n) => Math.max(0, n - 1))
+        pump()
+      })
+    }
+  }
+
+  async function runJob({ file, token, name }) {
+    let url = null
+    let problem = null
+    try {
+      try {
+        const prepared = await prepare(file)
+        if (!aliveRef.current) return
+        url = await uploadImage(prepared.file, name)
+        if (!url) problem = t('wr.uploadFailed')
+      } catch (e) {
+        problem = e?.message || t('wr.uploadFailed')
+      }
+      if (!aliveRef.current) return
+      const replacement = url ? `![${safeAlt(name)}](${url})` : ''
+      const r = replaceUploadPlaceholder(valueRef.current, token, replacement)
+      if (r.found) emit(r.text)
+      if (problem) toast.error(t('md.uploadFailedNamed', name, problem))
+    } finally {
+      pendingRef.current.delete(token)
+      endUpload(token)
+    }
+  }
+
+  /** Yapıştırılan / bırakılan görselleri imlece yer tutucularıyla ekler ve yüklemeleri sıraya koyar. */
+  function addFiles(files, caret) {
+    if (!uploadImage || !files.length) return
+    const list = files.slice(0, MAX_FILES_PER_DROP)
+    if (files.length > list.length) toast.info(t('md.tooManyFiles', MAX_FILES_PER_DROP, files.length))
+    const jobs = list.map((f) => {
+      const base = pastedName(f)
+      const name = makeUniqueCaption ? makeUniqueCaption(base) : base
+      const token = uploadToken()
+      pendingRef.current.add(token)
+      beginUpload(token)
+      return { file: f, token, name }
+    })
+    const cur = valueRef.current
+    const at = caret && typeof caret.start === 'number' ? Math.min(caret.start, cur.length) : cur.length
+    const end = caret && typeof caret.end === 'number' ? Math.min(Math.max(caret.end, at), cur.length) : at
+    const before = cur.slice(0, at)
+    const after = cur.slice(end)
+    const snippet = jobs.map((j) => uploadPlaceholder(t('md.uploadingAlt', j.name), j.token)).join('\n\n')
+    const lead = before === '' || before.endsWith('\n\n') ? '' : (before.endsWith('\n') ? '\n' : '\n\n')
+    const tail = after === '' || after.startsWith('\n\n') ? '' : (after.startsWith('\n') ? '\n' : '\n\n')
+    emit(before + lead + snippet + tail + after)
+    caretRef.current = null
+    queueRef.current.push(...jobs)
+    setInFlight((n) => n + jobs.length)
+    pump()
+  }
+
   function handlePasteCapture(e) {
     if (e.target?.tagName !== 'TEXTAREA') return
-    const md = clipboardToMarkdownTable(e.clipboardData)
-    if (!md) return
+    let md = null
+    try { md = clipboardToMarkdownTable(e.clipboardData) } catch { md = null }
+    if (md) {
+      e.preventDefault()
+      e.stopPropagation()
+      const ta = e.target
+      const cur = valueRef.current
+      const start = Math.min(ta.selectionStart ?? cur.length, cur.length)
+      const end = Math.min(Math.max(ta.selectionEnd ?? start, start), cur.length)
+      emit(cur.slice(0, start) + md + cur.slice(end))
+      toast.success(t('wr.pasteTableDone'))
+      return
+    }
+    if (!uploadImage) return
+    const files = clipboardFiles(e.clipboardData)
+    if (files.length === 0) return
+    // Dosya + metin (ör. Office'ten kopyalanan biçimli metin): metin yapıştırılır. Görsel dosyası varsa görsel alınır.
+    const images = files.filter((f) => String(f.type || '').startsWith('image/'))
+    const types = Array.from(e.clipboardData?.types || []).map(String)
+    if (images.length === 0 && types.some((x) => x.startsWith('text/'))) return
     e.preventDefault()
     e.stopPropagation()
     const ta = e.target
-    const start = ta.selectionStart ?? (value?.length ?? 0)
-    const end = ta.selectionEnd ?? start
-    onChange((value ?? '').slice(0, start) + md + (value ?? '').slice(end))
-    toast.success(t('wr.pasteTableDone'))
+    addFiles(images.length ? images : files, { start: ta.selectionStart, end: ta.selectionEnd })
+  }
+
+  function handleDrop(e) {
+    if (!uploadImage || !isFileDrag(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    setDrag(false)
+    const files = Array.from(e.dataTransfer?.files || []).filter(Boolean)
+    if (files.length) addFiles(files, caretRef.current)
   }
 
   async function handleFileChosen(e) {
@@ -125,8 +341,15 @@ export default function MarkdownEditor({ value, onChange, editable = true, heigh
     if (!file) return
     setCaption('')
     setPendingFile({ processing: true, name: file.name, originalSize: file.size })
-    const processed = await downscaleImage(file)
-    setPendingFile({ file: processed, name: file.name, originalSize: file.size, processedSize: processed.size })
+    try {
+      const prepared = await prepare(file)
+      if (!aliveRef.current) return
+      setPendingFile({ file: prepared.file, name: file.name, originalSize: file.size, processedSize: prepared.file.size })
+    } catch (err) {
+      if (!aliveRef.current) return
+      setPendingFile(null)
+      toast.error(err?.message || t('wr.uploadFailed'))
+    }
   }
 
   async function doUpload() {
@@ -142,12 +365,12 @@ export default function MarkdownEditor({ value, onChange, editable = true, heigh
       if (url) {
         const captionLine = userCap ? `\n**${uniqueName}**\n` : '\n'
         const insert = `${captionLine}\n![${uniqueName}](${url})\n`
-        const v = value ?? ''
+        const v = valueRef.current
         const c = caretRef.current
         if (c && typeof c.start === 'number' && c.start <= v.length) {
-          onChange(v.slice(0, c.start) + insert + v.slice(c.end ?? c.start))
+          emit(v.slice(0, c.start) + insert + v.slice(c.end ?? c.start))
         } else {
-          onChange(v + insert)
+          emit(v + insert)
         }
         caretRef.current = null
         if (pendingFile.processedSize < pendingFile.originalSize) {
@@ -158,8 +381,8 @@ export default function MarkdownEditor({ value, onChange, editable = true, heigh
       } else {
         toast.error(t('wr.uploadFailed'))
       }
-    } catch {
-      toast.error(t('wr.uploadFailed'))
+    } catch (err) {
+      toast.error(err?.message || t('wr.uploadFailed'))
     } finally {
       setUploading(false)
     }
@@ -168,26 +391,36 @@ export default function MarkdownEditor({ value, onChange, editable = true, heigh
   if (!editable) {
     return (
       <div className="show-markdown" data-color-mode={isDark ? 'dark' : 'light'}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{value || '—'}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={imagePreview ? PREVIEW_COMPONENTS : undefined}>{value || '—'}</ReactMarkdown>
       </div>
     )
   }
 
   return (
-    <div onPasteCapture={handlePasteCapture} onKeyUp={recordCaret} onMouseUp={recordCaret}>
-      <div className="wr-editor" data-color-mode={isDark ? 'dark' : 'light'}>
+    <div onPasteCapture={handlePasteCapture} onKeyUp={recordCaret} onMouseUp={recordCaret} onSelect={recordCaret}
+      onDragOver={uploadImage ? (e) => { if (isFileDrag(e)) { e.preventDefault(); setDrag(true) } } : undefined}
+      onDragLeave={uploadImage ? () => setDrag(false) : undefined}
+      onDrop={uploadImage ? handleDrop : undefined}>
+      <div className={cn('wr-editor rounded-[3px]', drag && 'ring-2 ring-primary/60')} data-color-mode={isDark ? 'dark' : 'light'}
+        data-drag={drag || undefined}>
         <LazyMdEditor
           value={value ?? ''}
-          onChange={(v) => onChange(v ?? '')}
+          onChange={(v) => emit(v ?? '')}
           preview="edit"
           height={height}
           visibleDragbar={true}
           highlightEnable={false}
           commands={editorCommands}
           extraCommands={(mdCommands) => [mdCommands.codeEdit, mdCommands.codePreview, mdCommands.divider, mdCommands.fullscreen]}
+          textareaProps={textareaProps}
         />
       </div>
-      <div className="mt-1 text-xs text-muted-foreground">{t('wr.pasteHint')}</div>
+      <div className="mt-1 text-xs text-muted-foreground">{t(uploadImage ? 'md.pasteHintImages' : 'wr.pasteHint')}</div>
+      {inFlight > 0 && (
+        <div data-slot="md-uploading" role="status" className="mt-1 text-xs font-medium text-primary">
+          {t('md.uploadingCount', inFlight)}
+        </div>
+      )}
 
       {uploadImage && (
         <Input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp"

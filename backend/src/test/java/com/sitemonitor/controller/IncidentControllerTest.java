@@ -785,4 +785,70 @@ class IncidentControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.field").value("since"));
     }
+
+    // ── Hızlı Giriş (2026-11-20) ────────────────────────────────────────────────────────────────────────────
+
+    private IncidentRecord withMarkdown() {
+        IncidentRecord e = sample();
+        e.setRcaSummary("Kök neden");
+        e.setDescription("Açıklama ![g](/api/incidents/images/3)");
+        e.setResolutionSteps("Adımlar");
+        e.setBusinessImpact("Etki");
+        e.setRunbookUrl("https://wiki.example.com/rb");
+        return e;
+    }
+
+    @Test
+    @DisplayName("Hızlı Giriş: fields=summary → dört markdown metni yok + markdown_omitted; parametre yoksa tam satır (bugünkü yanıt)")
+    void list_summaryFields() throws Exception {
+        when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
+        when(service.list(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(withMarkdown())));
+        mvc.perform(get("/api/incidents").param("fields", "summary").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].title").value("DB pool tükendi"))
+                .andExpect(jsonPath("$.data[0].runbook_url").value("https://wiki.example.com/rb"))
+                .andExpect(jsonPath("$.data[0].version").exists())
+                .andExpect(jsonPath("$.data[0].markdown_omitted").value(true))
+                .andExpect(jsonPath("$.data[0].rca_summary").doesNotExist())
+                .andExpect(jsonPath("$.data[0].description").doesNotExist())
+                .andExpect(jsonPath("$.data[0].resolution_steps").doesNotExist())
+                .andExpect(jsonPath("$.data[0].business_impact").doesNotExist());
+        mvc.perform(get("/api/incidents").session(adminSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].markdown_omitted").doesNotExist())
+                .andExpect(jsonPath("$.data[0].rca_summary").value("Kök neden"))
+                .andExpect(jsonPath("$.data[0].business_impact").value("Etki"));
+        // Bilinmeyen değer = tam satır (eski davranış)
+        mvc.perform(get("/api/incidents").param("fields", "everything").session(adminSession()))
+                .andExpect(jsonPath("$.data[0].description").value("Açıklama ![g](/api/incidents/images/3)"));
+    }
+
+    @Test
+    @DisplayName("Hızlı Giriş: önizleme görsel planı yalnız OKUNABİLEN kaydın kimliğiyle — görülemeyen / silinmiş kimlik gövdeden çıkarılır; isteyen kullanıcı geçer")
+    void preview_unreadableIdStripped() throws Exception {
+        allowManage();
+        when(notificationService.previewHtml(anyMap(), anyString(), any())).thenReturn("<html/>");
+        IncidentRecord foreign = sample();
+        foreign.setTeamId(9L);
+        when(service.get(1L)).thenReturn(foreign);
+        when(service.get(2L)).thenThrow(new java.util.NoSuchElementException("yok"));
+        IncidentRecord own = sample();
+        own.setId(3L);
+        own.setTeamId(5L);
+        when(service.get(3L)).thenReturn(own);
+        MockHttpSession s = userSessionTeam(5L);
+        for (long id : new long[]{1L, 2L}) {
+            mvc.perform(post("/api/incidents/preview-notification").session(s)
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"id\":" + id + ",\"title\":\"x\",\"kind\":\"NEW\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.html").value("<html/>"));
+        }
+        mvc.perform(post("/api/incidents/preview-notification").session(s)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"id\":3,\"title\":\"x\",\"kind\":\"UPDATED\"}"))
+                .andExpect(status().isOk());
+        verify(notificationService, times(2)).previewHtml(argThat(m -> !m.containsKey("id")), eq("NEW"), eq("sre1"));
+        verify(notificationService).previewHtml(argThat(m -> m.get("id") instanceof Number n && n.longValue() == 3L),
+                eq("UPDATED"), eq("sre1"));
+    }
 }
