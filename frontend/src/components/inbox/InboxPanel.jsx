@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/shadcn/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/shadcn/tabs'
 import { cn } from '@/lib/utils'
 import InboxRow from './InboxRow.jsx'
+import { useCoarsePointer } from '../../hooks/useCoarsePointer.js'
 import { groupByDay } from './inboxModel.js'
 
 const GROUP_KEY = { upcoming: 'inbox.groupUpcoming', today: 'inbox.groupToday', yesterday: 'inbox.groupYesterday', earlier: 'inbox.groupEarlier' }
@@ -57,9 +58,11 @@ export default function InboxPanel({ inbox, view, onViewChange, mobile = false, 
   onOpenItem, onOpenMonitor }) {
   const t = useT()
   const unread = inbox.unreadCount
+  // Dokunmatik tablet (768, H paketi 2026-11-26): satır eylemleri hover'da gizlenmesin — tek okuma, satırlara değer olarak
+  const touch = useCoarsePointer()
 
   const rowProps = (it, { history = false } = {}) => ({
-    it, history, mobile, tick: inbox.tick,
+    it, history, mobile, touch, tick: inbox.tick,
     unread: !history && !inbox.seen.has(it.key),
     dismissed: !history && inbox.dismissed.has(it.key),
     onOpen: onOpenItem, onOpenMonitor: it.monitor_tab ? onOpenMonitor : undefined,
@@ -109,14 +112,14 @@ export default function InboxPanel({ inbox, view, onViewChange, mobile = false, 
           : <span aria-live="polite" className="sr-only">{unread > 0 ? t('inbox.unread', unread) : t('inbox.allRead')}</span>}
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
           <Button type="button" variant="ghost" size="sm" onClick={inbox.markAll} disabled={!unread} title={t('inbox.markAll')}
-            className={cn('text-muted-foreground hover:text-foreground has-[>svg]:px-2', mobile && 'size-10 px-0')}>
+            className={cn('text-muted-foreground hover:text-foreground has-[>svg]:px-2 pointer-coarse:h-10', mobile && 'size-10 px-0')}>
             <CheckCheck aria-hidden="true" />
             <span className={cn(mobile && 'sr-only')}>{t('inbox.markAll')}</span>
           </Button>
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button type="button" variant="ghost" size="icon-sm" aria-label={t('inbox.more')} title={t('inbox.more')}
-                className={cn('text-muted-foreground hover:text-foreground', mobile && 'size-10')}>
+                className={cn('text-muted-foreground hover:text-foreground pointer-coarse:size-10', mobile && 'size-10')}>
                 <MoreHorizontal aria-hidden="true" />
               </Button>
             </DropdownMenuTrigger>

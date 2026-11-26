@@ -279,7 +279,13 @@ export function columnLabel(t, col) {
   return localized(t, keys.col(col.code), col.label)
 }
 
-/** Ay seçenekleri (sunucu listesi; yoksa bu ay + 12). */
+/**
+ * Seçilebilir en eski ay: bu ay + son 24 ay (H paketi 2026-11-26, rapor B6) — sunucu ExecutiveSummaryService.MAX_MONTHS_BACK
+ * ile AYNI (sunucu 24 ayı kabul ediyordu, seçici yalnız 12 ay sunuyordu). Kapı: executiveModel.test.js Java sabitini okur.
+ */
+export const MAX_MONTHS_BACK = 24
+
+/** Ay seçenekleri (sunucu listesi; yoksa bu ay + son MAX_MONTHS_BACK ay). */
 export function monthOptions(months, lang = 'tr', now = new Date()) {
   const list = Array.isArray(months) && months.length ? months : fallbackMonths(now)
   return list.filter((m) => MONTH_RE.test(m?.month)).map((m) => ({
@@ -325,7 +331,7 @@ function fallbackMonths(now) {
   let y = Number(parts.find((p) => p.type === 'year')?.value)
   let m = Number(parts.find((p) => p.type === 'month')?.value)
   const out = []
-  for (let i = 0; i <= 12; i++) {
+  for (let i = 0; i <= MAX_MONTHS_BACK; i++) {
     out.push({ month: `${y}-${String(m).padStart(2, '0')}`, current: i === 0 })
     m -= 1
     if (m === 0) { m = 12; y -= 1 }

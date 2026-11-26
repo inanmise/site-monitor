@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-26T04:27:45Z",
+  "generatedAt": "2026-11-26T06:35:47Z",
   "repo": "inanmise/site-monitor",
-  "count": 875,
+  "count": 876,
   "releases": [
+    {
+      "version": "20.227.1",
+      "tag": "v20.227.1",
+      "releasedAt": "2026-11-26T06:35:36Z",
+      "commit": "ff4f6aeaedec7aad40f5d1020f5ac3b6a4a314ba",
+      "prevVersion": "20.227.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "ff4f6aea",
+          "subject": "uçtan uca inceleme hata paketi — bakım ve sertifika alarmları, erişilebilirlik sayımı, yenileme planı, AD girişi, denetim zinciri, silinen kişinin kişileri, gezinme ve tekli izleme akordeonu"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.227.0",
       "tag": "v20.227.0",

@@ -29,16 +29,35 @@ import { cn } from '@/lib/utils'
  * Sunucu `windows` göndermiyorsa (eski sunucu) düğme noktasız çizilir; pencerede 30 günlük özet + "x hatalı saat".
  * Kart "stretched button" deseninde: çağıran bu bloğu örtünün ÜSTÜNE (CARD_LAYER) koyar.
  */
-export default function MonitorSpark({ spark, unit = 'ms', sla = null, slaTarget = null, slaDays = 30, rowLabel }) {
+export default function MonitorSpark({ spark, unit = 'ms', sla = null, slaTarget = null, slaDays = 30, rowLabel, slaUnknown = null }) {
   const hasSpark = !!(spark && spark.n)
   const hasSla = !!(sla && sla.n && sla.up_pct != null)
-  if (!hasSpark && !hasSla) return null
+  // H paketi (2026-11-26): erişilebilirlik ÖLÇÜLEMEDİ (ör. ICMP'nin ölçemediği ping satırları sayılmaz → sunucu n = 0,
+  // up_pct null) ve çağıran nedenini biliyorsa satır gri "—" + neden olarak çizilir — ne yeşil ne kırmızı, ne de sessizce
+  // kaybolur. Neden verilmezse (yeni izleme, eski davranış) satır çizilmez.
+  const unknownSla = !hasSla && !!sla && !!slaUnknown
+  if (!hasSpark && !hasSla && !unknownSla) return null
   return (
     // Olay yayılımı durur: tıklanabilir bir kabın (kart/satır) içinde kullanılırsa Popover'a basmak detayı açmasın.
     <div data-slot="monitor-spark" className="mt-1.5 mb-1 flex min-w-0 flex-col gap-1" onClick={(e) => e.stopPropagation()}>
       {hasSpark && <TrendRow spark={spark} unit={unit} />}
       {hasSla && <AvailabilityLine sla={sla} target={slaTarget} days={slaDays} rowLabel={rowLabel} />}
+      {unknownSla && <AvailabilityUnknown days={slaDays} reason={slaUnknown} />}
     </div>
+  )
+}
+
+/** Ölçülemeyen erişilebilirlik: gri "—" + neden; tıklanmaz (açılacak dönem verisi yok). Metin sarar, kesilmez. */
+function AvailabilityUnknown({ days, reason }) {
+  const t = useT()
+  return (
+    <p data-slot="availability-unknown" data-verdict="unknown"
+      className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-[11px] leading-snug text-muted-foreground">
+      <span className="sr-only">{t('spark.availDays', days)}:</span>
+      <span aria-hidden="true" className="shrink-0 font-semibold">{t('spark.avail')}</span>
+      <span data-slot="availability-pct" className="shrink-0 font-bold tabular-nums">—</span>
+      <span className="min-w-0 [overflow-wrap:anywhere]">{reason}</span>
+    </p>
   )
 }
 

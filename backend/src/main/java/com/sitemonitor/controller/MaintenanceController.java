@@ -247,19 +247,35 @@ public class MaintenanceController {
         return toggle(id, true, session, request);
     }
 
+    /**
+     * Duraklat / sürdür (H paketi 2026-11-26, izleme 2): yalnız {@code active} + {@code updated_at} kolonları HEDEFLİ koşullu
+     * UPDATE ile yazılır — eskiden okunan varlık BÜTÜNÜYLE kaydediliyordu; arada başka sekmede yapılan düzenleme (ad, hedefler,
+     * süre) geri yazılıyordu. Durum zaten istenen değerdeyse (0 satır) hiçbir şey yazılmaz, denetlenmez; değiştiyse denetim +
+     * DEĞİŞİKLİK GEÇMİŞİ satırı (eskiden geçmişe hiç yazılmıyordu — "kim duraklattı?" sorusu cevapsızdı).
+     */
     private ResponseEntity<Map<String, Object>> toggle(Long id, boolean active, HttpSession session, HttpServletRequest request) {
         permissionService.require(session, "maintenance.manage", "edit");
         MaintenanceWindow w = requireManageable(id, session);
         // Sürdürme bastırmayı YENİDEN açar → oluşturmayla aynı kapı (eski/yabancı kapsamlı pencere geri açılamasın).
         // Duraklatma yalnız bastırmayı kaldırır; kapıya takılmaz.
         if (active) requireWindowScope(w, session);
-        w.setActive(active);
-        w.setUpdatedAt(now());
-        MaintenanceWindow saved = repo.save(w);
+        Map<String, Object> before = AuditDiff.snapshot(w, MAINTENANCE_FIELDS);
+        int changed = repo.setActiveIfChanged(id, active, now());
+        MaintenanceWindow saved = repo.findById(id).orElse(null);
+        if (saved == null) throw new NoSuchElementException("Bakım penceresi bulunamadı");   // arada silindi → 404
         maintenanceService.refresh();
-        auditService.recordAction(active ? "MAINTENANCE_RESUME" : "MAINTENANCE_PAUSE", session, request,
-                "MAINTENANCE_WINDOW", String.valueOf(id),
-                AuditDetail.of("name", saved.getName(), "active", active, "team_id", saved.getTeamId()));
+        if (changed > 0) {
+            auditService.recordAction(active ? "MAINTENANCE_RESUME" : "MAINTENANCE_PAUSE", session, request,
+                    "MAINTENANCE_WINDOW", String.valueOf(id),
+                    AuditDetail.of("name", saved.getName(), "active", active, "team_id", saved.getTeamId()));
+            // Koşullu UPDATE 1 satır değiştirdiyse önceki durum KESİNLİKLE !active'tir (bağımsız inceleme, H paketi): okunan
+            // varlık eski olabilir (arada başka sekme durumu çevirdi) — "önce" değeri ondan alınırsa geçmiş "true → true" yazardı.
+            before.put("active", !active);
+            Map<String, Object> after = new LinkedHashMap<>(before);
+            after.put("active", active);   // geçmiş satırı YALNIZ bu isteğin değiştirdiğini gösterir
+            monitorHistory.record(MonitorHistoryService.MAINTENANCE, id, saved.getName(), saved.getTeamId(),
+                    MonitorHistoryService.UPDATE, before, after, active ? "Sürdürüldü" : "Duraklatıldı", session);
+        }
         return ok(Map.of("data", dto(saved, Instant.now()), "message", active ? "Resumed" : "Paused"));
     }
 
@@ -288,6 +304,9 @@ public class MaintenanceController {
         maintenanceService.refresh();
         auditService.recordAction("MAINTENANCE_QUICK", session, request, "MAINTENANCE_WINDOW",
                 String.valueOf(saved.getId()), auditDetailOf(saved));
+        // H paketi (2026-11-26, izleme 2): "hemen başlat" de bir oluşturmadır — değişiklik geçmişine yazılır (create ile aynı).
+        monitorHistory.record(MonitorHistoryService.MAINTENANCE, saved.getId(), saved.getName(), saved.getTeamId(),
+                MonitorHistoryService.CREATE, null, AuditDiff.snapshot(saved, MAINTENANCE_FIELDS), "Hemen başlatıldı", session);
         return ok(Map.of("data", dto(saved, Instant.now()), "message", "Maintenance started"));
     }
 

@@ -32,6 +32,23 @@ const CLEAN = {
 const HTTP_OK = { summary: { total_requests: 1000, error_rate_pct: 0.4, avg_ms: 120, max_ms: 900 }, history: [{ avg_ms: 100, errors: 0 }, { avg_ms: 140, errors: 1 }] }
 const PUSH_OK = { sent: 240, failed: 3, pending: 0, blocked: 0 }
 
+// H paketi (2026-11-26, yönetim B7): denetim izi yedek dosyası — sayı YANITLAYAN pod'un dosyası, sebep pod adıyla
+describe('healthModel — denetim yedek dosyası', () => {
+  const run = (extra) => deriveOverall({ health: { ...CLEAN, served_by_pod: 'pod-a', ...extra }, httpMetrics: HTTP_OK, pushKpi: PUSH_OK })
+  it('bekleyen > 0 → uyarı, sys bölümü, sunucunun pod adıyla; -1 → "sayılamadı" uyarısı; 0 / alan yok → sebep yok', () => {
+    const o = run({ audit_fallback_pending: 7, audit_fallback_pending_pod: 'site-monitor-7d9f-xk2' })
+    expect(o.level).toBe('warn')
+    expect(o.reasons).toEqual([{ level: 'warn', code: 'auditFallback', section: 'sys', args: [7], pod: 'site-monitor-7d9f-xk2' }])
+    const u = run({ audit_fallback_pending: -1, audit_fallback_pending_pod: null })
+    expect(u.reasons).toEqual([{ level: 'warn', code: 'auditFallbackUnknown', section: 'sys', args: [], pod: 'pod-a' }])   // ad yoksa yanıtlayan pod
+    // Kart (SystemSection) her eksi değeri "bilinmiyor" çizer; bant da aynı kural (yalnız -1 değil)
+    expect(run({ audit_fallback_pending: -2, audit_fallback_pending_pod: null }).reasons.map((r) => r.code)).toEqual(['auditFallbackUnknown'])
+    expect(run({ audit_fallback_pending: 0, audit_fallback_pending_pod: 'pod-a' }).reasons).toEqual([])
+    expect(run({ audit_fallback_pending: '7' }).reasons).toEqual([])   // sayı değil → sebep yok
+    expect(run({}).reasons).toEqual([])   // eski sunucu
+  })
+})
+
 describe('healthModel — genel seviye', () => {
   it('temiz payload → ok, sebep yok, her bölüm ok', () => {
     const o = deriveOverall({ health: CLEAN, httpMetrics: HTTP_OK, pushKpi: PUSH_OK })

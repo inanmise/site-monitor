@@ -6,7 +6,7 @@ import { usePermissions } from '../../../contexts/PermissionsProvider.jsx'
 import SegmentedControl from '../../ui/SegmentedControl.jsx'
 import { Skeleton } from '@/components/shadcn/skeleton'
 import { cn } from '@/lib/utils'
-import { ALARM_VIEW_KEY, alarmTabFromUrl, inPageTarget } from './monitorAlarmsModel.js'
+import { ALARM_VIEW_KEY, alarmTabFromUrl, initialAlarmTab, inPageTarget } from './monitorAlarmsModel.js'
 
 /** Ağır görünüm (Alarm Geçmişi listesi) yalnız Alarmlar görünümü açılınca indirilir. */
 const MonitorAlarmsView = lazy(() => import('./MonitorAlarmsView.jsx'))
@@ -47,7 +47,8 @@ const TAB_PARAMS_EVENT = 'sm:tab-params'
  *        App), verilmezse sayfanın kendi `usePermissions()`'ı
  */
 export function useMonitorAlarmsView(src, { onSearch, enabled = true, allowed: allowedOpt } = {}) {
-  const [tab, setTab] = useState(() => alarmTabFromUrl(readUrlParam(ALARM_VIEW_KEY, null)))
+  // Adres bir izleme istiyorsa (`monitor=`) açılışta İzlemeler — derin bağlantının penceresi görünür olsun (initialAlarmTab)
+  const [tab, setTab] = useState(() => initialAlarmTab(readUrlParam(ALARM_VIEW_KEY, null), readUrlParam('monitor', null)))
   const { perms, loaded } = usePermissions()
   const allowed = typeof allowedOpt === 'boolean' ? allowedOpt : alarmsAllowed(perms, loaded)
   useUrlQuerySync({ [ALARM_VIEW_KEY]: allowed ? tab : null }, { enabled })

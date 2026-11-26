@@ -288,7 +288,8 @@ class EmailTemplateBuilderTest {
         assertThat(text).contains("Bitişe 25 gün / 90 günlük pencere");
         assertThat(text).contains("GoDaddy.com, LLC");
         assertThat(text).contains("Önerilen Aksiyon:");
-        assertThat(text).contains("http://cm.local/?tab=domain&domain=kartfree.com");
+        // H paketi (deneyim 1–2): izleme kimliği yoksa sayfanın arama parametresi (q) — domain= okunmuyordu
+        assertThat(text).contains("http://cm.local/?tab=domain&q=kartfree.com");
         // ≤3 gün → ACİL öneki
         assertThat(b.buildText(domainMail("CRITICAL", 2))).contains("ACİL 2 GÜN KALDI");
     }
@@ -519,8 +520,10 @@ class EmailTemplateBuilderTest {
     void certAlertLinkOpensCertificateWindow() {
         assertThat(EmailTemplateBuilder.alertQuery("CHAIN_BROKEN", "www.example.com"))
                 .isEqualTo("/?tab=dashboard&domain=www.example.com&open=cert");
-        assertThat(EmailTemplateBuilder.alertQuery("DOMAINMON_EXPIRY", "example.com")).isEqualTo("/?tab=domain&domain=example.com");
-        assertThat(EmailTemplateBuilder.alertQuery("ACCESSIBILITY", "example.com")).isEqualTo("/?tab=status&domain=example.com");
+        // H paketi (deneyim 1–2): izleme türleri domain= değil q= (sayfanın arama kutusu) ya da monitor=<id>;
+        // erişilebilirlik Durum Sayfası değil Durum İzleme sekmesi (tab=uptime)
+        assertThat(EmailTemplateBuilder.alertQuery("DOMAINMON_EXPIRY", "example.com")).isEqualTo("/?tab=domain&q=example.com");
+        assertThat(EmailTemplateBuilder.alertQuery("ACCESSIBILITY", "example.com")).isEqualTo("/?tab=uptime&q=example.com");
         assertThat(EmailTemplateBuilder.alertQuery(null, null)).isEqualTo("/?tab=dashboard");
 
         var cert = new EmailTemplateBuilder.AlertMail("CHAIN_BROKEN", "HIGH", "www.example.com",
@@ -543,10 +546,105 @@ class EmailTemplateBuilderTest {
         assertThat(EmailTemplateBuilder.alertQuery("HTTP_DOWN", "https://api.example.com/health", ctx)).isEqualTo("/?tab=http&monitor=12");
         assertThat(EmailTemplateBuilder.alertQuery("HTTP_SSL", "https://api.example.com/", Map.<String, Object>of("monitor_id", "7")))
                 .isEqualTo("/?tab=http&monitor=7");
-        assertThat(EmailTemplateBuilder.alertQuery("HTTP_DOWN", "https://api.example.com/", null)).isEqualTo("/?tab=http");
+        // kimlik yoksa q= ile hedef (H paketi) — sorgu dizesi / kullanıcı bilgisi bağlantıya düşmez
+        assertThat(EmailTemplateBuilder.alertQuery("HTTP_DOWN", "https://api.example.com/", null))
+                .isEqualTo("/?tab=http&q=" + enc("https://api.example.com/"));
         var m = new EmailTemplateBuilder.AlertMail("HTTP_DOWN", "HIGH", "https://api.example.com/health",
                 "HTTP 503", null, ctx, "Takım A");
         assertThat(b.buildText(m)).contains("http://cm.local/?tab=http&monitor=12").doesNotContain("open=cert");
+    }
+
+    private static String enc(String s) {
+        return java.net.URLEncoder.encode(s, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    @Test
+    @DisplayName("H paketi (deneyim 1–2): her izleme türü kimlikle izlemeyi, kimliksiz hedefe süzülmüş listeyi açar; "
+            + "erişilebilirlik Durum İzleme satırını (envanter kimliği); sertifika bugünkü gibi")
+    void monitorLinksOpenTheMonitorOrSearch() {
+        Map<String, String> tabs = new LinkedHashMap<>();
+        tabs.put("PORT_DOWN", "port");
+        tabs.put("PING_DOWN", "ping");
+        tabs.put("DNS_FAILURE", "dns");
+        tabs.put("KEYWORD", "keyword");
+        tabs.put("PAGE_DOWN", "page");
+        tabs.put("PAGESPEED_SLOW", "pagespeed");
+        tabs.put("SCRIPTED_FAIL", "scripted");
+        tabs.put("DOMAINMON_EXPIRY", "domain");
+        tabs.put("HTTP_DOWN", "http");
+        tabs.put("DBQUERY_FAIL", "dbquery");
+        for (var e : tabs.entrySet()) {
+            assertThat(EmailTemplateBuilder.alertQuery(e.getKey(), "hedef.example.com", Map.<String, Object>of("monitor_id", 31)))
+                    .as(e.getKey()).isEqualTo("/?tab=" + e.getValue() + "&monitor=31");
+            assertThat(EmailTemplateBuilder.alertQuery(e.getKey(), "hedef.example.com", Map.of()))
+                    .as(e.getKey()).isEqualTo("/?tab=" + e.getValue() + "&q=hedef.example.com");
+            assertThat(EmailTemplateBuilder.alertQuery(e.getKey(), null, null)).as(e.getKey()).isEqualTo("/?tab=" + e.getValue());
+        }
+        // Erişilebilirlik: monitor_id değil envanter kimliği (inventory_id); yoksa host araması
+        assertThat(EmailTemplateBuilder.alertQuery("ACCESSIBILITY", "www.example.com", Map.<String, Object>of("inventory_id", 44, "port", 443)))
+                .isEqualTo("/?tab=uptime&monitor=44");
+        assertThat(EmailTemplateBuilder.alertQuery("ACCESSIBILITY", "www.example.com", Map.<String, Object>of("monitor_id", 9)))
+                .isEqualTo("/?tab=uptime&q=www.example.com");
+        // Sertifika ailesi değişmez (Pano + pencere); izleme kimliği olsa da domain= kalır
+        assertThat(EmailTemplateBuilder.alertQuery("EXPIRY", "www.example.com", Map.<String, Object>of("monitor_id", 9)))
+                .isEqualTo("/?tab=dashboard&domain=www.example.com&open=cert");
+        // HTML ve düz metin aynı bağlantı
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        ctx.put("inventory_id", 44);
+        ctx.put("port", 443);
+        var acc = new EmailTemplateBuilder.AlertMail("ACCESSIBILITY", "HIGH", "www.example.com", "Erişilemiyor", null, ctx, "Takım A");
+        assertThat(b.buildText(acc)).contains("http://cm.local/?tab=uptime&monitor=44").doesNotContain("tab=status");
+        assertThat(b.buildHtml(acc)).satisfiesAnyOf(h -> assertThat(h).contains("?tab=uptime&amp;monitor=44"),
+                h -> assertThat(h).contains("?tab=uptime&monitor=44"));
+    }
+
+    @Test
+    @DisplayName("Bağımsız inceleme (H paketi): bağlantı alarmı ÜRETEN izlemenin sekmesini açar — HTTP'nin DOMAIN_EXPIRY'si "
+            + "HTTP sekmesinde HTTP izlemesini (tab=domain&monitor=<HTTP kimliği> DEĞİL); her türde kimliğin türü = sekme")
+    void linkTabIsTheProducingMonitorType() {
+        Map<String, Object> ctx = Map.of("monitor_id", 7);
+        assertThat(EmailTemplateBuilder.alertQuery("DOMAIN_EXPIRY", "https://site.example.com/giris", ctx))
+                .isEqualTo("/?tab=http&monitor=7");
+        assertThat(EmailTemplateBuilder.alertQuery("DOMAIN_EXPIRY", "https://site.example.com/giris", Map.of()))
+                .isEqualTo("/?tab=http&q=" + enc("https://site.example.com/giris"));
+        assertThat(EmailTemplateBuilder.alertQuery("KEYWORD_DOMAIN_EXPIRY", "https://k.example.com/", ctx))
+                .isEqualTo("/?tab=keyword&monitor=7");
+        assertThat(EmailTemplateBuilder.alertQuery("KEYWORD_SSL", "https://k.example.com/", ctx))
+                .isEqualTo("/?tab=keyword&monitor=7");
+        assertThat(EmailTemplateBuilder.alertQuery("PAGE_INTEGRITY", "https://p.example.com/", ctx))
+                .isEqualTo("/?tab=page&monitor=7");
+        assertThat(EmailTemplateBuilder.alertQuery("DOMAINMON_EXPIRY", "example.com", ctx))
+                .isEqualTo("/?tab=domain&monitor=7");
+        // Kapsam: kimlik taşıyan HER izleme alarm türünde sekme = kimliği üreten tür (isStillMonitored eşlemesi)
+        for (String t : EscalationService.MONITORING_ALERT_TYPES) {
+            String owner = com.sitemonitor.service.evalstate.RecheckRefs.monitorType(t);
+            if (owner == null) continue;
+            String q = EmailTemplateBuilder.alertQuery(t, "hedef.example.com",
+                    "ACCESSIBILITY".equals(t) ? Map.<String, Object>of("inventory_id", 5) : ctx);
+            assertThat(q).as(t).startsWith("/?tab=" + owner + "&monitor=");
+        }
+        // HTML gövdesindeki bağlantı da aynı (alan adı şablonu, HTTP sekmesi)
+        var m = new EmailTemplateBuilder.AlertMail("DOMAIN_EXPIRY", "HIGH", "https://site.example.com/giris",
+                "Alan adı 10 gün içinde doluyor.", 10, new LinkedHashMap<>(ctx), "Takım A");
+        assertThat(b.buildText(m)).contains("http://cm.local/?tab=http&monitor=7").doesNotContain("tab=domain&monitor=7");
+    }
+
+    @Test
+    @DisplayName("H paketi: arama hedefinde sorgu dizesi, parça ve kullanıcı bilgisi yok (ham '/' içeren parola dahil)")
+    void searchTargetDropsSecrets() {
+        assertThat(EmailTemplateBuilder.searchTarget("https://api.example.com/v1/x?token=abc#frag"))
+                .isEqualTo("https://api.example.com/v1/x");
+        assertThat(EmailTemplateBuilder.searchTarget("https://user:pa/ss@api.example.com/x?y=1"))
+                .isEqualTo("https://api.example.com/x");
+        assertThat(EmailTemplateBuilder.searchTarget("https://user:secret@api.example.com"))
+                .isEqualTo("https://api.example.com");
+        assertThat(EmailTemplateBuilder.searchTarget("  db.example.com ")).isEqualTo("db.example.com");
+        assertThat(EmailTemplateBuilder.searchTarget("  ")).isNull();
+        assertThat(EmailTemplateBuilder.searchTarget(null)).isNull();
+        assertThat(EmailTemplateBuilder.searchTarget("x".repeat(5000))).hasSize(EmailTemplateBuilder.SEARCH_TARGET_MAX);
+        assertThat(EmailTemplateBuilder.alertQuery("KEYWORD", "https://u:p@shop.example.com/a b?k=v", Map.of()))
+                .isEqualTo("/?tab=keyword&q=" + enc("https://shop.example.com/a b"))
+                .doesNotContain("k%3Dv").doesNotContain("u%3Ap");
     }
 
     @Test

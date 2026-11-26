@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   coversLevel, contactNotifies, buildCoverage, filterCoverage, sortCoverage, cellTone,
-  COVERAGE_LEVELS, GAP_FIX_LEVEL,
+  COVERAGE_LEVELS, GAP_FIX_LEVEL, CONTACT_USER_DELETED, contactUserDeleted,
 } from '../components/admin/contactsCoverageModel.js'
 
 describe('contactsCoverageModel — coversLevel (sunucu eşiği)', () => {
@@ -154,5 +154,29 @@ describe('contactsCoverageModel — filtre / sıralama / hücre', () => {
   it('sabitler', () => {
     expect(COVERAGE_LEVELS).toEqual(['WARNING', 'HIGH', 'CRITICAL'])
     expect(GAP_FIX_LEVEL).toBe('WARNING')
+  })
+})
+
+describe('contactsCoverageModel — silinmiş kullanıcıya bağlı kişi (H paketi 2026-11-26, yönetim B1)', () => {
+  it('contactUserDeleted: user_deleted ya da deactivated_reason USER_DELETED', () => {
+    expect(CONTACT_USER_DELETED).toBe('USER_DELETED')
+    expect(contactUserDeleted({ user_deleted: true })).toBe(true)
+    expect(contactUserDeleted({ deactivated_reason: 'USER_DELETED' })).toBe(true)
+    expect(contactUserDeleted({ deactivated_reason: null, user_deleted: false })).toBe(false)
+    expect(contactUserDeleted({ deactivated_reason: 'OTHER' })).toBe(false)
+    expect(contactUserDeleted(null)).toBe(false)
+  })
+  it('elle yeniden etkinleştirilse ve kullanıcı listesi onu bilmese de BİLDİRİM GÖNDERMEZ (bilinmiyor da değil)', () => {
+    expect(contactNotifies({ active: true, user_id: 9, deactivated_reason: 'USER_DELETED' }, null)).toBe(false)
+    expect(contactNotifies({ active: true, user_id: 9, user_deleted: true }, new Set(), new Set(['5']))).toBe(false)
+    expect(contactNotifies({ active: true, user_id: 9, user_deleted: true, user_active: true }, new Set())).toBe(false)
+  })
+  it('kapsamda sayılmaz: takımın tek kritik kişisi silinmiş kullanıcıya bağlıysa takım boşlukta', () => {
+    const cov = buildCoverage(
+      [{ id: 1, user_id: 9, active: true, user_deleted: true, min_alert_level: 'CRITICAL', team_id: 1 }],
+      [{ id: 1, name: 'A' }], new Set(), { 1: { monitors: 2 } })
+    const row = cov.rows.find((r) => String(r.teamId) === '1')
+    expect(row.tone).toBe('gap')
+    expect(row.counts.CRITICAL).toBe(0)
   })
 })

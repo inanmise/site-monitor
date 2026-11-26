@@ -55,16 +55,17 @@ function requestFromUrl() {
  * @param {Array<{id: number|string}>} monitors  sayfanın TAM listesi (süzgeç/sayfalama ÖNCESİ)
  * @param {(m: object) => void} open             eşleşen izlemenin detayını açar
  * @param {{ loaded?: boolean, onNotFound?: (id: string) => void, onEdit?: (m: object) => void,
- *           canEdit?: (m: object) => boolean, nocType?: string }} [opts]
+ *           canEdit?: (m: object) => boolean, nocType?: string, idOf?: (m: object) => any }} [opts]
  *        `loaded` verilmezse (eski çağıranlar) boş olmayan liste "yüklendi" sayılır ve boş listede beklenir.
+ *        `idOf` satırın kimliğini verir (varsayılan `m.id`) — Durum İzleme satırı envanter kimliği taşır (H paketi 2026-11-26).
  */
-export function useMonitorDeepLink(monitors, open, { loaded, onNotFound, onEdit, canEdit, nocType } = {}) {
+export function useMonitorDeepLink(monitors, open, { loaded, onNotFound, onEdit, canEdit, nocType, idOf } = {}) {
   const pending = useRef(undefined)
   if (pending.current === undefined) pending.current = requestFromUrl()   // yalnız ilk render'da (mount)
   const [nonce, setNonce] = useState(0)
   // Geri çağrılar her render'da yeni closure; ref'le taşınır ki etki yalnız veri/istek değişince koşsun.
   const cb = useRef({})
-  cb.current = { open, onNotFound, onEdit, canEdit, nocType }
+  cb.current = { open, onNotFound, onEdit, canEdit, nocType, idOf }
 
   const list = Array.isArray(monitors) ? monitors : []
   const ready = loaded === undefined ? list.length > 0 : !!loaded
@@ -85,7 +86,8 @@ export function useMonitorDeepLink(monitors, open, { loaded, onNotFound, onEdit,
     if (!req || !ready) return
     pending.current = null
     if (req.action != null) stripOpenParam()
-    const m = list.find((x) => String(x?.id) === String(req.id))
+    const key = cb.current.idOf || ((x) => x?.id)
+    const m = list.find((x) => x != null && String(key(x)) === String(req.id))
     if (!m) { cb.current.onNotFound?.(String(req.id)); return }
     const { onEdit: edit, canEdit: may } = cb.current
     if (req.action === DEEP_OPEN.NOC && edit && (may ? may(m) : true)) {

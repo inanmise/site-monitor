@@ -169,17 +169,28 @@ class ExecutiveSummaryServiceTest {
     }
 
     @Test
-    @DisplayName("ay listesi: bu ay + 12 ay, gönderim durumuyla")
+    @DisplayName("ay listesi: bu ay + 24 ay (sunucunun kabul ettiği aralığın tamamı, H paketi B6), gönderim durumuyla")
     void months() {
         ExecutiveSummaryReport sent = new ExecutiveSummaryReport();
         sent.setReportYear(2026);
         sent.setReportMonth(9);
         sent.setStatus(ExecutiveSummaryReport.SENT);
-        when(repo.findAllByOrderByReportYearDescReportMonthDesc(any())).thenReturn(List.of(sent));
+        ExecutiveSummaryReport old = new ExecutiveSummaryReport();
+        old.setReportYear(2024);
+        old.setReportMonth(11);
+        old.setStatus(ExecutiveSummaryReport.SENT);
+        when(repo.findAllByOrderByReportYearDescReportMonthDesc(any())).thenReturn(List.of(sent, old));
         var months = svc(List.of()).months();
-        assertThat(months).hasSize(13);
+        assertThat(months).hasSize(ExecutiveSummaryService.MAX_MONTHS_BACK + 1);
         assertThat(months.get(0)).containsEntry("month", "2026-10").containsEntry("current", true);
         assertThat(months.get(1)).containsEntry("month", "2026-09").containsEntry("status", "SENT");
+        // 23 ay önceki gönderilmiş özet listede (eskiden 12. ayda bitiyordu)
+        assertThat(months.get(23)).containsEntry("month", "2024-11").containsEntry("status", "SENT");
+        assertThat(months.get(24)).containsEntry("month", "2024-10");
+        org.mockito.ArgumentCaptor<org.springframework.data.domain.Pageable> page =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
+        org.mockito.Mockito.verify(repo).findAllByOrderByReportYearDescReportMonthDesc(page.capture());
+        assertThat(page.getValue().getPageSize()).isEqualTo(ExecutiveSummaryService.MAX_MONTHS_BACK + 1);
     }
 
     @Test

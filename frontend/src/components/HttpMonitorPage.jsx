@@ -21,7 +21,7 @@ import { Trash2, Globe, FlaskConical, AlertTriangle, LayoutDashboard, CheckCircl
 import { duplicateName } from '../utils/duplicateName.js'
 import { normalizeUrl } from '../utils/normalizeUrl.js'
 import { usePagination } from '../hooks/usePagination.js'
-import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
+import { useUrlQuerySync, readUrlParam, readUrlInt, readSearchParam } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import { formTeamSelect, routingLockOf, useMonitorTeamPick, withRoutingDefaults } from '../hooks/useMonitorTeamPick.js'
 import { useMonitorResume } from '../hooks/useMonitorResume.js'
@@ -185,7 +185,7 @@ export default function HttpMonitorPage({ systemRole, teamId, teamName, myTeams 
     return runId && monitorId ? { monitorId, runId, initialRunId: runId } : null
   })
   const [baselineFor, setBaselineFor] = useState(null)   // dinamik taban çizgisi diyaloğu (2026-11-12)
-  const [search, setSearch] = useState(() => readUrlParam('q', ''))
+  const [search, setSearch] = useState(readSearchParam)   // q, yoksa eski e-postaların domain'i (H paketi 2026-11-26)
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
   const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)

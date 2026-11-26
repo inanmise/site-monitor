@@ -8,7 +8,8 @@ import { act, render, screen, fireEvent, waitFor, within } from './test-utils.js
  *    (giriş öncesi / yalıtılmış ekran) kart BUGÜNKÜ gibi — yıldız yok
  *  - detay penceresi başlığında aynı anahtar
  *  - İzleme Panosu: "Favoriler" hızlı görünümü yalnız favori varken; sayı rozeti; tıklayınca liste favorilere süzülür (mo_fav)
- *  - komut paleti: boş sorguda "Favoriler" grubu; seçilince türün sayfasına adıyla aranmış gider
+ *  - komut paleti: boş sorguda "Favoriler" grubu; seçilince izleme KİMLİKLE açılır (H paketi 2026-11-26: `monitor=<id>`;
+ *    ada göre arama yeniden adlandırılan izlemede boş liste veriyordu); ad, kartın güncel adla eşitlediği saklı ad
  */
 const { withApiFallback } = await vi.hoisted(() => import('./apiMock.js'))
 const server = { doc: {} }
@@ -77,7 +78,8 @@ describe('favori yıldızı — izleme kartı ve detay penceresi', () => {
   it('kartta yıldız: aria-pressed + eylem adı; tıklama detayı açmaz; seçim sunucuya TEK PUT ile gider', async () => {
     const onOpen = vi.fn()
     const { container } = render(<PrefsShell><HttpMonitorCard monitor={MON} status="up" onOpen={onOpen} /></PrefsShell>)
-    const star = await screen.findByRole('button', { name: /^(Add to favourites|Favorilere ekle): https:\/\/www\.example\.com\/$/ })
+    // Ad TEK kaynaktan (inceleme bulgusu 4): izlemenin kendi adı — eskiden kart satır etiketini (URL) saklıyordu
+    const star = await screen.findByRole('button', { name: /^(Add to favourites|Favorilere ekle): Corporate site$/ })
     expect(star).toHaveAttribute('aria-pressed', 'false')
     expect(star).toHaveAttribute('data-slot', 'favorite-toggle')
     // Kartın sağ üst grubunda (örtünün üstünde) — kart dosyası elle koymadı, MonitorCardTop çizdi
@@ -87,11 +89,49 @@ describe('favori yıldızı — izleme kartı ve detay penceresi', () => {
     const on = screen.getByRole('button', { name: /^(Remove from favourites|Favorilerden çıkar): / })
     expect(on).toHaveAttribute('aria-pressed', 'true')
     await waitFor(() => expect(api.me.savePreferences).toHaveBeenCalledTimes(1))
-    expect(api.me.savePreferences.mock.calls[0][0]).toEqual({ favorites: [{ type: 'http', id: 7, name: URL_ }] })
+    expect(api.me.savePreferences.mock.calls[0][0]).toEqual({ favorites: [{ type: 'http', id: 7, name: 'Corporate site' }] })
     // Geri alma da aynı yoldan
     fireEvent.click(on)
     await waitFor(() => expect(api.me.savePreferences).toHaveBeenCalledTimes(2))
     expect(api.me.savePreferences.mock.calls[1][0]).toEqual({ favorites: null })
+  })
+
+  it('ad eşitleme (H paketi 2026-11-26): favorinin saklı adı eskiyse KART onu güncel adla TEK PUT ile günceller; aynıysa yazmaz', async () => {
+    server.doc = { favorites: [{ type: 'http', id: 7, name: 'Eski ad' }, { type: 'ping', id: 3, name: 'GW' }] }
+    render(<PrefsShell><HttpMonitorCard monitor={MON} status="up" onOpen={() => {}} /></PrefsShell>)
+    await screen.findByRole('button', { name: /^(Remove from favourites|Favorilerden çıkar): / })
+    await waitFor(() => expect(api.me.savePreferences).toHaveBeenCalledTimes(1))
+    expect(api.me.savePreferences.mock.calls[0][0]).toEqual({ favorites: [{ type: 'http', id: 7, name: 'Corporate site' }, { type: 'ping', id: 3, name: 'GW' }] })
+    // Eşitlendikten sonra yeniden yazım yok (döngü yok)
+    await new Promise((r) => setTimeout(r, 80))
+    expect(api.me.savePreferences).toHaveBeenCalledTimes(1)
+  })
+
+  it('ad eşitleme: ad zaten günceldeyse HİÇ yazım yok; kart ve başlık AYNI adı kullanır (izlemenin kendi adı)', async () => {
+    server.doc = { favorites: [{ type: 'http', id: 7, name: 'Corporate site' }] }
+    render(<PrefsShell>
+      <HttpMonitorCard monitor={MON} status="up" onOpen={() => {}} />
+      <MonitorDetailModal onClose={() => {}} title="Kurumsal site (başlık)" noc={{ type: 'HTTP', monitor: { id: 7, name: 'Corporate site', url: URL_, active: true }, canEdit: false }}>
+        <p>gövde</p>
+      </MonitorDetailModal>
+    </PrefsShell>)
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="favorite-toggle"][data-on="true"]').length).toBe(2))
+    const names = [...document.querySelectorAll('[data-slot="favorite-toggle"]')].map((b) => b.getAttribute('aria-label'))
+    expect(names.every((n) => /: Corporate site$/.test(n))).toBe(true)
+    await new Promise((r) => setTimeout(r, 80))
+    expect(api.me.savePreferences).not.toHaveBeenCalled()
+  })
+
+  it('adı olmayan izleme (ping): kart ve başlık yedek adı (host) kullanır; ad alanı boş / yalnız boşluksa da yedek', async () => {
+    server.doc = { favorites: [{ type: 'ping', id: 3, name: '10.0.0.1' }] }
+    render(<PrefsShell>
+      <MonitorDetailModal onClose={() => {}} title={<span>başlık</span>} noc={{ type: 'PING', monitor: { id: 3, name: '   ', host: '10.0.0.1', active: true }, canEdit: false }}>
+        <p>gövde</p>
+      </MonitorDetailModal>
+    </PrefsShell>)
+    await screen.findByRole('button', { name: /^(Remove from favourites|Favorilerden çıkar): 10\.0\.0\.1$/ })
+    await new Promise((r) => setTimeout(r, 60))
+    expect(api.me.savePreferences).not.toHaveBeenCalled()
   })
 
   it('tercih sağlayıcısı yoksa (giriş öncesi / yalıtılmış ekran) kart bugünkü gibi — yıldız YOK', () => {
@@ -166,7 +206,7 @@ describe('İzleme Panosu — "Favoriler" hızlı görünümü', () => {
 describe('komut paleti — Favoriler grubu', () => {
   const heading = (rx) => screen.queryByText(rx, { selector: '[cmdk-group-heading]' })
 
-  it('boş sorguda Favoriler grubu en üstte; seçilince türün sayfasına adıyla aranmış gider; sorgu yazılınca gizlenir', async () => {
+  it('boş sorguda Favoriler grubu en üstte; seçilince türün sayfasında KİMLİKLE açılır (monitor=id); sorgu yazılınca gizlenir', async () => {
     server.doc = { favorites: [{ type: 'http', id: 2, name: 'Portal' }, { type: 'ping', id: 3 }] }
     const nav = vi.fn()
     window.addEventListener('sm:navigate', nav)
@@ -186,7 +226,7 @@ describe('komut paleti — Favoriler grubu', () => {
     expect(headings[0]).toMatch(/^(Favourites|Favoriler)$/)
     fireEvent.click(items[0])
     await waitFor(() => expect(nav).toHaveBeenCalled())
-    expect(nav.mock.calls[0][0].detail).toEqual({ tab: 'http', params: { q: 'Portal' } })
+    expect(nav.mock.calls[0][0].detail).toEqual({ tab: 'http', params: { monitor: '2' } })
     // Yeniden aç + sorgu: favoriler gizlenir
     act(() => { window.dispatchEvent(new CustomEvent('sm:palette')) })
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'he' } })

@@ -16,7 +16,8 @@ export default function WelcomeCard({ kind = 'welcome', isMobile = false, onStar
       title={t(whatsNew ? 'tour.newTitle' : 'tour.welcomeTitle')}
       footer={(
         <div className="flex w-full flex-wrap items-center gap-2">
-          <Button type="button" variant="link" size="sm" className="h-auto px-1 font-normal text-muted-foreground" onClick={onNever}>
+          {/* Dokunmatikte 40 px (H paketi 2026-11-26): bağlantı görünümlü düğmenin dokunma alanı */}
+          <Button type="button" variant="link" size="sm" className="h-auto px-1 font-normal text-muted-foreground pointer-coarse:min-h-10" onClick={onNever}>
             {t('tour.never')}
           </Button>
           <span className="flex-1" />

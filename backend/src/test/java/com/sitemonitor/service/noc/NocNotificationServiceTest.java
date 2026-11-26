@@ -620,7 +620,7 @@ class NocNotificationServiceTest {
                 .isEqualTo("http://cm.local/?tab=dashboard&domain=www.example.com&open=cert");
         assertThat(NocNotificationService.monitorUrl("http://cm.local", NocType.SSL, ssl,
                 com.sitemonitor.service.EscalationService.TYPE_ACCESSIBILITY))
-                .isEqualTo("http://cm.local/?tab=status&domain=www.example.com");
+                .isEqualTo("http://cm.local/?tab=uptime&monitor=7");   // H paketi: Durum İzleme satırı (envanter kimliği)
         var http = new NocMonitorDirectory.Row(NocType.HTTP, 9, "api", "https://api.example.com", 10L, null,
                 true, true, null, false);
         assertThat(NocNotificationService.monitorUrl("http://cm.local", NocType.HTTP, http, "HTTP_DOWN"))

@@ -42,6 +42,17 @@ public class HttpCheck {
     @Column(name = "checked_at")
     private String checkedAt;
 
+    // ── Köken (H paketi 2026-11-26, rapor B2): yalnız TRUE yazılır, NULL = planlı tarama / dağıtık iş ya da eski satır.
+    // İkisi de erişilebilirliğe (özet kovaları, kart SLA) GİRMEZ — AvailabilityRows.
+
+    /** Elle "Şimdi kontrol et" satırı. */
+    @Column(name = "manual")
+    private Boolean manual;
+
+    /** Teyit / kurtarma zincirinin yeniden kontrolü. */
+    @Column(name = "recheck")
+    private Boolean recheck;
+
     /** {@code error} sütununun boyu (VARCHAR(255), ddl-auto varsayılanı). */
     public static final int ERROR_MAX = 255;
 

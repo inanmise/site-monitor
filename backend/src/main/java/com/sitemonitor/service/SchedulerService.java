@@ -922,6 +922,12 @@ public class SchedulerService {
         // + sürüm tablosunun indeksleri. Tablo ddl-auto ile kurulur; indeksler açık ve idempotent. Kayıt başına TEK geçerli
         // sürüm kısmi tekil indeksle korunur (yenileme eski satırı önce düşürür, sonra yenisini ekler).
         patch("ALTER TABLE certificate_inventory ADD COLUMN cert_source VARCHAR(16)");
+        // Sertifika yenileme planı TABANI (2026-11-26, H paketi sertifika B5): plan anındaki sertifikanın parmak izi + bitişi —
+        // "tamamlandı" = bundan farklı ve daha uzun geçerli sertifika görüldü. NULL = eski plan (eski kural).
+        patch("ALTER TABLE certificate_inventory ADD COLUMN renewal_planned_fingerprint VARCHAR(128)");
+        patch("ALTER TABLE certificate_inventory ADD COLUMN renewal_planned_not_after VARCHAR(40)");
+        // Planın bu sürümle yazıldığı an (bağımsız inceleme): doluysa tabansız plan eski kuralla KAPANMAZ (taban benimsenir).
+        patch("ALTER TABLE certificate_inventory ADD COLUMN renewal_planned_recorded_at VARCHAR(30)");
         patch("CREATE INDEX IF NOT EXISTS idx_mcv_inventory_current ON manual_certificate_versions(inventory_id, is_current)");
         patch("CREATE INDEX IF NOT EXISTS idx_mcv_fingerprint ON manual_certificate_versions(fingerprint)");
         patch("CREATE UNIQUE INDEX IF NOT EXISTS uq_mcv_inventory_version ON manual_certificate_versions(inventory_id, version)");
@@ -977,6 +983,9 @@ public class SchedulerService {
         patch("ALTER TABLE app_users ADD COLUMN failed_since_login INTEGER DEFAULT 0");
         patch("ALTER TABLE app_users ADD COLUMN failed_before_login INTEGER DEFAULT 0");
         patch("ALTER TABLE app_users ADD COLUMN tour_state TEXT");   // 2026-09-13 ürün turu durumu (JSON)
+        // H paketi B4 (2026-11-26): son başarılı AD doğrulaması (ISO UTC) — AD ulaşılamazken beni-hatırla / kodla giriş
+        // yalnız son 24 saatte doğrulanmış LDAP hesabına izin verir. Yalnız hedefli native UPDATE yazar; NULL = hiç.
+        patch("ALTER TABLE app_users ADD COLUMN ad_verified_at VARCHAR(30)");
         // DEFAULT yalnız YENİ satırlara uygulanır; mevcut satırlar NULL kalır ve `COALESCE`suz
         // bir artış NULL'a düşerdi. Sayaçları bir kez sıfırla (idempotent).
         patch("UPDATE app_users SET failed_since_login = 0 WHERE failed_since_login IS NULL");
@@ -1161,6 +1170,9 @@ public class SchedulerService {
         // DATA-3 (2026-10-22): Teams Workflows webhook adresi 255 karakteri aşar (~290) — kolon TEXT'e genişler (küçük tablo;
         // SchemaDdlGuard zaten TEXT ise atlar).
         patch("ALTER TABLE escalation_contacts ALTER COLUMN webhook_url TYPE TEXT");
+        // H paketi B1 (2026-11-26): kişi neden pasif — 'USER_DELETED' = bağlı kullanıcı silindi (UserService.deleteUser,
+        // hedefli koşullu UPDATE). NULL = bilinmiyor / elle; eski satırlar NULL kalır.
+        patch("ALTER TABLE escalation_contacts ADD COLUMN deactivated_reason VARCHAR(40)");
         // Adım kararları + tekilleştirme kilidi — UNIQUE(alarm, kişi, seviye); ddl-auto aynı tabloyu entity'den de kurar.
         patch("""
             CREATE TABLE IF NOT EXISTS alert_escalation_steps (
@@ -1678,6 +1690,20 @@ public class SchedulerService {
         patch("ALTER TABLE pagespeed_checks ADD COLUMN extended BOOLEAN");
         patch("ALTER TABLE pagespeed_checks ADD COLUMN manual BOOLEAN");
         patch("ALTER TABLE pagespeed_checks ADD COLUMN recheck BOOLEAN");
+        // H paketi (2026-11-26, rapor B2): işaretsiz türlerin geçmiş satırına köken — yalnız TRUE yazılır, eski satır NULL;
+        // ikisi de erişilebilirliğe girmez (AvailabilityRows). Katalog-yalnız ADD COLUMN (varsayılansız).
+        patch("ALTER TABLE http_checks ADD COLUMN manual BOOLEAN");
+        patch("ALTER TABLE http_checks ADD COLUMN recheck BOOLEAN");
+        patch("ALTER TABLE keyword_results ADD COLUMN manual BOOLEAN");
+        patch("ALTER TABLE keyword_results ADD COLUMN recheck BOOLEAN");
+        patch("ALTER TABLE port_checks ADD COLUMN manual BOOLEAN");
+        patch("ALTER TABLE port_checks ADD COLUMN recheck BOOLEAN");
+        patch("ALTER TABLE ping_checks ADD COLUMN manual BOOLEAN");
+        patch("ALTER TABLE ping_checks ADD COLUMN recheck BOOLEAN");
+        patch("ALTER TABLE page_checks ADD COLUMN manual BOOLEAN");
+        patch("ALTER TABLE page_checks ADD COLUMN recheck BOOLEAN");
+        patch("ALTER TABLE uptime_checks ADD COLUMN manual BOOLEAN");
+        patch("ALTER TABLE uptime_checks ADD COLUMN recheck BOOLEAN");
         patch("ALTER TABLE pagespeed_checks ALTER COLUMN breached_metrics TYPE VARCHAR(120)");
         patch("ALTER TABLE pagespeed_checks ALTER COLUMN undecided_metrics TYPE VARCHAR(120)");
         patch("ALTER TABLE pagespeed_resources ADD COLUMN found_in TEXT");
@@ -2874,17 +2900,30 @@ public class SchedulerService {
     static final String HOURLY_TABLE = "monitor_check_hourly";
     static final String HOURLY_COL = "hour_bucket";
 
-    /** 7 izleme türünü tek kova genişliğiyle hedef tabloya yazar; toplam satır döner. */
+    /**
+     * İzleme-kimlikli özet türleri: tür, ham tablo, "ayakta" kolonu, süre kolonu (H paketi 2026-11-26: tek liste —
+     * saatlik / günlük özet ve tek seferlik yeniden hesap ({@code AvailabilityRollupRecompute}) aynı listeyi okur).
+     * Durum İzleme (UPTIME, alan adı anahtarlı) ayrı SQL'le ({@link #uptimeUpsertSql}) özetlenir.
+     */
+    record RollupType(String type, String table, String upCol, String respCol) {}
+
+    static final List<RollupType> ROLLUP_TYPES = List.of(
+            new RollupType("PORT",      "port_checks",      "open", "response_ms"),
+            new RollupType("PING",      "ping_checks",      "up",   "rtt_ms"),
+            new RollupType("KEYWORD",   "keyword_results",  "ok",   "response_ms"),
+            new RollupType("HTTP",      "http_checks",      "ok",   "response_ms"),
+            new RollupType("PAGE",      "page_checks",      "ok",   "response_ms"),
+            new RollupType("SCRIPTED",  "scripted_checks",  "ok",   "duration_ms"),
+            new RollupType("PAGESPEED", "pagespeed_checks", "ok",   "response_ms"),
+            new RollupType("DBQUERY",   "dbquery_checks",   "ok",   "duration_ms"));
+
+    /** Sekiz izleme-kimlikli türü (Port, Ping, Keyword, HTTP, Sayfa, Sentetik, Sayfa Hızı, DB sorgusu) + Durum İzleme'yi
+     *  (UPTIME, alan adı anahtarlı) tek kova genişliğiyle hedef tabloya yazar; toplam satır döner. */
     private int rollupAllTypes(String target, String bucketCol, int len, String from, String to) {
         int total = 0;
-        total += Math.max(0, rollupInto(target, bucketCol, len, "PORT",     "port_checks",     "open", "response_ms", from, to));
-        total += Math.max(0, rollupInto(target, bucketCol, len, "PING",     "ping_checks",     "up",   "rtt_ms",      from, to));
-        total += Math.max(0, rollupInto(target, bucketCol, len, "KEYWORD",  "keyword_results", "ok",   "response_ms", from, to));
-        total += Math.max(0, rollupInto(target, bucketCol, len, "HTTP",     "http_checks",     "ok",   "response_ms", from, to));
-        total += Math.max(0, rollupInto(target, bucketCol, len, "PAGE",     "page_checks",     "ok",   "response_ms", from, to));
-        total += Math.max(0, rollupInto(target, bucketCol, len, "SCRIPTED", "scripted_checks", "ok",   "duration_ms", from, to));
-        total += Math.max(0, rollupInto(target, bucketCol, len, "PAGESPEED", "pagespeed_checks", "ok", "response_ms", from, to));
-        total += Math.max(0, rollupInto(target, bucketCol, len, "DBQUERY", "dbquery_checks", "ok", "duration_ms", from, to));
+        for (RollupType t : ROLLUP_TYPES) {
+            total += Math.max(0, rollupInto(target, bucketCol, len, t.type(), t.table(), t.upCol(), t.respCol(), from, to));
+        }
         total += Math.max(0, rollupUptimeInto(target, bucketCol, len, from, to));
         return total;
     }
@@ -3033,14 +3072,16 @@ public class SchedulerService {
     }
 
     /** SQL üretimi ayrı: günlük ve saatlik yolun BİRE BİR aynı olduğunu test doğrudan kanıtlayabilsin
-     *  (tek fark hedef tablo, kova kolonu ve kova genişliği). Tablo/kolon adları yalnız KOD-kontrollü. */
+     *  (tek fark hedef tablo, kova kolonu ve kova genişliği). Tablo/kolon adları yalnız KOD-kontrollü.
+     *  H paketi (2026-11-26, rapor B1 / B2): yalnız erişilebilirliğe SAYILAN satırlar özetlenir — elle tetik, teyit /
+     *  kurtarma yeniden kontrolü ve ICMP'nin ölçemediği ping satırı çıkar ({@link AvailabilityRows}, kart SLA ile aynı). */
     static String upsertSql(String target, String bucketCol, int len, String type, String table,
                             String upCol, String respCol) {
         return "INSERT INTO " + target + " (monitor_type, monitor_key, " + bucketCol + ", total_checks, up_checks, avg_response_ms, max_response_ms) "
             + "SELECT '" + type + "', CAST(monitor_id AS varchar), substr(checked_at,1," + len + "), "
             + "count(*), sum(CASE WHEN " + upCol + " THEN 1 ELSE 0 END), "
             + "CAST(round(avg(" + respCol + ")) AS int), max(" + respCol + ") "
-            + "FROM " + table + " WHERE checked_at >= ? AND checked_at < ? "
+            + "FROM " + table + " WHERE checked_at >= ? AND checked_at < ?" + AvailabilityRows.andCounted(table) + " "
             + "GROUP BY monitor_id, substr(checked_at,1," + len + ") "
             + "ON CONFLICT (monitor_type, monitor_key, " + bucketCol + ") DO UPDATE SET "
             + "total_checks = EXCLUDED.total_checks, up_checks = EXCLUDED.up_checks, "
@@ -3063,7 +3104,8 @@ public class SchedulerService {
             + "SELECT 'UPTIME', domain, substr(checked_at,1," + len + "), "
             + "count(*), sum(CASE WHEN status = 'up' THEN 1 ELSE 0 END), "
             + "CAST(round(avg(response_ms)) AS int), max(response_ms) "
-            + "FROM uptime_checks WHERE checked_at >= ? AND checked_at < ? AND (maintenance = false OR maintenance IS NULL) "
+            + "FROM uptime_checks WHERE checked_at >= ? AND checked_at < ? AND (maintenance = false OR maintenance IS NULL)"
+            + AvailabilityRows.andCounted("uptime_checks") + " "   // H paketi: teyit / kurtarma satırı sayılmaz (rapor B2)
             + "GROUP BY domain, substr(checked_at,1," + len + ") "
             + "ON CONFLICT (monitor_type, monitor_key, " + bucketCol + ") DO UPDATE SET "
             + "total_checks = EXCLUDED.total_checks, up_checks = EXCLUDED.up_checks, "
@@ -4249,13 +4291,15 @@ public class SchedulerService {
         h.put("scan",       scanMap);
         h.put("scan_alarm", scanAlarm);
 
-        // Denetim izi boşluğu: DB'ye yazılamayıp fallback dosyasına düşen kayıtlar. Bu dosyayı
-        // GERİ OKUYAN hiçbir kod yok; sayaç olmadan kayıp tamamen görünmezdi (>0 = elle inceleme).
+        // Denetim izi boşluğu: DB'ye yazılamayıp fallback dosyasına düşen kayıtlar. H paketi B7 (2026-11-26): her pod kendi
+        // dosyasını DB okunabilir olunca kendiliğinden geri aktarır (AuditService.replayFallback); sayaç YANITLAYAN pod'un
+        // dosyasıdır — hangi pod olduğu audit_fallback_pending_pod ile söylenir (küme toplamı değil).
         try {
             h.put("audit_fallback_pending", auditService.pendingFallbackAuditCount());
         } catch (Exception e) {
             h.put("audit_fallback_pending", -1L);   // bilinmiyor ≠ temiz
         }
+        h.put("audit_fallback_pending_pod", AuditService.podName());
 
         h.put("timestamp", ISO.format(Instant.now()));
         return h;
@@ -5903,10 +5947,15 @@ public class SchedulerService {
                         inv.getDomain() + ":" + port, inv.getTeamId(), false, "scheduler", r,
                         row == null ? null : ActivityLogService.Refs.check(row.getId(), null, row.getFailureReason(),
                                 row.getFailureDetail()));
+                // inventory_id (H paketi 2026-11-26): alarm e-postasının bağlantısı Durum İzleme satırını açar. monitor_id
+                // DEĞİL — o anahtar izleme türlerinin kimliğidir; sertifika ailesi alarmları envanter satırıyla eşleşir.
+                Map<String, Object> accCtx = new LinkedHashMap<>();
+                accCtx.put("port", port);
+                if (inv.getId() != null) accCtx.put("inventory_id", inv.getId());
                 sweep.add(new MonitoringOutageService.SweepItem(
                         EscalationService.TYPE_ACCESSIBILITY, inv.getDomain(), String.valueOf(port),
                         "up".equals(r.get("status")), (String) r.get("error"),
-                        Map.of("port", port),
+                        accCtx,
                         () -> recheckUptime(inv.getDomain(), port, uptimeViaProxy(inv))));
             } catch (Exception e) {
                 log.warn("Uptime check failed for {}:{}: {}", inv.getDomain(), port, e.getMessage());
@@ -5959,6 +6008,7 @@ public class SchedulerService {
             check.setMaintenance(maintenanceService.isUnderMaintenance(domain));   // bakımdaysa uptime %'den hariç
             check.setFailureReason(CheckFailure.reasonOf(r));   // hata teşhisi (2026-10-05) — yalnız "down"da dolu
             check.setFailureDetail(CheckFailure.detailOf(r));
+            check.setRecheck(CheckRunContext.recheckFlag());   // H paketi: teyit / kurtarma satırı erişilebilirliğe girmez
             UptimeCheck written = uptimeCheckRepo.save(check);
             saved = written != null ? written : check;
         } catch (Exception e) {
@@ -6151,6 +6201,7 @@ public class SchedulerService {
             check.setCheckedAt(ISO.format(Instant.now()));
             check.setFailureReason(CheckFailure.reasonOf(r));   // hata teşhisi (2026-10-05) — yalnız kapalıda dolu
             check.setFailureDetail(CheckFailure.detailOf(r));
+            check.setRecheck(CheckRunContext.recheckFlag());   // H paketi: teyit / kurtarma satırı erişilebilirliğe girmez
             PortCheck saved = portCheckRepo.save(check);
             written = saved != null ? saved : check;
         } catch (Exception e) {
@@ -6391,6 +6442,7 @@ public class SchedulerService {
         try {
             // Satır eşlemesi elle "Şimdi kontrol et" ile ORTAK (teşhis alanları iki yolda da aynı yazılsın).
             KeywordResult res = com.sitemonitor.service.keyword.KeywordResultMapper.build(m, r, ok, ISO.format(Instant.now()));
+            res.setRecheck(CheckRunContext.recheckFlag());   // H paketi: teyit / kurtarma satırı erişilebilirliğe girmez
             KeywordResult saved = keywordResultRepo.save(res);
             written = saved != null ? saved : res;
         } catch (Exception e) {
@@ -7981,6 +8033,7 @@ public class SchedulerService {
             res.setError((String) r.get("error"));
             res.setErrorDetail(r.get("error_detail") instanceof String d ? d : null);
             res.setCheckedAt(ISO.format(Instant.now()));
+            res.setRecheck(CheckRunContext.recheckFlag());   // H paketi: teyit / kurtarma satırı erişilebilirliğe girmez
             HttpCheck saved = httpCheckRepo.save(res);
             written = saved != null ? saved : res;
         } catch (Exception e) {
@@ -8626,6 +8679,9 @@ public class SchedulerService {
                 pc.setFailureReason(pf.code());
                 pc.setFailureDetail(pf.json());
             }
+            // H paketi (2026-11-26, rapor B2): elle tetik ve teyit / kurtarma satırı erişilebilirliğe girmez — yalnız TRUE yazılır
+            if (manual) pc.setManual(Boolean.TRUE);
+            pc.setRecheck(CheckRunContext.recheckFlag());
             PageCheck savedPc = pageCheckRepo.save(pc);
             pageWritten = savedPc != null ? savedPc : pc;
             if (!res.issues().isEmpty()) {
@@ -12079,6 +12135,7 @@ public class SchedulerService {
             // yine up=false (geçmiş/oran davranışı aynı), ama "hedef çöktü" ile karışmaz.
             check.setFailureReason(CheckFailure.reasonOf(r));
             check.setFailureDetail(CheckFailure.detailOf(r));
+            check.setRecheck(CheckRunContext.recheckFlag());   // H paketi: teyit / kurtarma satırı erişilebilirliğe girmez
             PingCheck savedPing = pingCheckRepo.save(check);
             pingWritten = savedPing != null ? savedPing : check;
             persistedAt = check.getCheckedAt();

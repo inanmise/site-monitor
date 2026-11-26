@@ -1,10 +1,10 @@
 import {
-  memo, useState, useEffect, useRef } from 'react'
+  memo, useState, useEffect, useRef, useMemo } from 'react'
 import { useT } from '../i18n/index.jsx'
 // Komut paleti (cmdk) ilk Ctrl/⌘+K ya da `sm:palette` isteğinde yüklenir — başlatıcı ilk basışı da karşılar (2026-10-09).
 import CommandPaletteLauncher from './CommandPaletteLauncher.jsx'
 import KeyboardShortcuts from './KeyboardShortcuts.jsx'
-import { SHORTCUTS_EVENT } from '../utils/keyboardShortcuts.js'
+import { SHORTCUTS_EVENT, isMacPlatform } from '../utils/keyboardShortcuts.js'
 import { openGapsDialog } from './gaps/gapsBus.js'
 import InboxBell from './InboxBell.jsx'
 import {
@@ -50,11 +50,13 @@ function writeOpenSection(key) {
 
 /**
  * İzleme alt grupları (2026-11-05, kullanıcı isteği: "Erişilebilirlik, Alan Adı ve DNS, İçerik ve Deneyim ayrı ayrı akordeon
- * gibi açılsın, izlemelere altından erişilsin"): açık alt grupların KÜMESİ — birbirinden bağımsız açılıp kapanır, tarayıcıda
- * kalır (kullanıcı tercihi olarak aynalanmaz, `nav-section-open` gibi). Bilinmeyen / bozuk değer = hiçbiri açık değil.
+ * gibi açılsın, izlemelere altından erişilsin"). TEKLİ akordeon (2026-11-26, kullanıcı kararı: "aynı anda yalnız biri
+ * açık"): bir grup açılınca — tıklama, etkin sekme ya da tur hedefi — öteki açık grup kapanır. Saklı değer en çok BİR
+ * anahtarlık dizi (eski sürümün çok anahtarlı dizisinden yalnız ilk bilinen anahtar kalır), tarayıcıda kalır (kullanıcı
+ * tercihi olarak aynalanmaz, `nav-section-open` gibi). Bilinmeyen / bozuk değer = hiçbiri açık değil.
  */
 const SUB_OPEN_KEY = 'nav-subsection-open'
-const SUB_OPEN_MAX = 16
+const SUB_OPEN_MAX = 1
 /**
  * Saklı değeri BİLİNEN alt grup anahtarlarına süzer, tekrarları atar (hata avı 2026-11-06): eski sürümün / elle yazılmış
  * bilinmeyen ya da tekrarlanan anahtarlar 16'lık tavanı doldurunca yeni açılan grup `slice` ile düşüyor, hiç açık kalmıyordu.
@@ -85,6 +87,8 @@ function Nav({ activeTab, onTabChange, username, teamName, myTeams = [], systemR
   const { scope: permScope } = usePermissions()
   const t = useT()
   const tour = useTour()   // ürün turu: kullanıcı menüsünden yeniden başlat + sm:nav-reveal (2026-09-13)
+  // Palet kısayol ipucu (2026-11-26, H paketi): Mac / iOS'ta ⌘K — Kısayollar penceresiyle aynı platform kuralı
+  const paletteKeyHint = useMemo(() => (isMacPlatform() ? '⌘K' : 'Ctrl K'), [])
   // Açık/daraltılmış durum SidebarProvider'da (App.jsx; localStorage 'sidebar-open' ile kalıcı).
   const { state, setOpen, isMobile, setOpenMobile } = useSidebar()
   const collapsed = state === 'collapsed' && !isMobile
@@ -229,19 +233,21 @@ function Nav({ activeTab, onTabChange, username, teamName, myTeams = [], systemR
   }
   const knownSubs = knownSubsRef.current
   const [openSubs, setOpenSubs] = useState(() => readOpenSubs(knownSubs))
-  // Alt grubu AÇIK yapar (açıksa dokunmaz) — etkin sekme ve tur hedefi için; diğer açık gruplar korunur.
+  // Alt grubu AÇIK yapar (yalnız o açık kalır; zaten tek açıksa dokunmaz) — etkin sekme ve tur hedefi için (tekli akordeon).
+  // Bilinmeyen anahtar (menüde olmayan grup) hiçbir şeyi değiştirmez: açık grup kapanmaz.
   const ensureSubOpen = (sub) => {
-    if (!sub) return
+    if (!sub || !knownSubs.has(sub)) return
     setOpenSubs((prev) => {
-      if (prev.includes(sub)) return prev
-      const next = cleanOpenSubs([...prev, sub], knownSubs)
+      if (prev.length === 1 && prev[0] === sub) return prev
+      const next = [sub]
       writeOpenSubs(next, knownSubs)
       return next
     })
   }
+  // Tıklama: açık grup kapanır; kapalı grup açılır ve ÖTEKİ açık grup kapanır.
   function toggleSub(sub) {
     setOpenSubs((prev) => {
-      const next = cleanOpenSubs(prev.includes(sub) ? prev.filter((k) => k !== sub) : [...prev, sub], knownSubs)
+      const next = prev.includes(sub) ? [] : cleanOpenSubs([sub], knownSubs)
       writeOpenSubs(next, knownSubs)
       return next
     })
@@ -319,7 +325,7 @@ function Nav({ activeTab, onTabChange, username, teamName, myTeams = [], systemR
                 className={NAV_ITEM}>
                 <Search aria-hidden="true" />
                 <span className="min-w-0 flex-1 truncate">{t('palette.trigger')}</span>
-                <Kbd className="ml-auto bg-background/70 group-data-[collapsible=icon]:hidden">Ctrl K</Kbd>
+                <Kbd className="ml-auto bg-background/70 group-data-[collapsible=icon]:hidden">{paletteKeyHint}</Kbd>
               </SidebarMenuButton>
             </SidebarMenuItem>
             {/* Bildirim kutusu (2026-09-12, #2). Telefonda zil mobil üst çubukta (MobileTopBar) — tek örnek.

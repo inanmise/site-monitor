@@ -81,8 +81,8 @@ export function MonitorDetailModal({ open = true, onClose, status = 'unknown', b
         )}
         {/* Favori yıldızı (2026-10-02, öneri 23) — kartla AYNI anahtar; tercihler hazır değilse çizilmez */}
         {noc?.monitor?.id != null && (
-          <FavoriteToggle type={String(noc.type || '').toLowerCase()} id={noc.monitor.id} size="header"
-            name={typeof title === 'string' ? title : (noc.monitor.name || noc.monitor.url || noc.monitor.host || noc.monitor.domain)} />
+          <FavoriteToggle type={String(noc.type || '').toLowerCase()} id={noc.monitor.id} size="header" monitor={noc.monitor}
+            name={typeof title === 'string' ? title : (noc.monitor.url || noc.monitor.host || noc.monitor.domain)} />
         )}
         {/* Telefonda daralabilir (içteki MonitorModalActions flex-wrap ile satır atlar — çok düğmeli başlık 390 px'i taşmasın);
             masaüstünde eski davranış (tek satır, shrink-0). */}

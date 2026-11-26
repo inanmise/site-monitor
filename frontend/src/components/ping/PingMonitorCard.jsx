@@ -99,7 +99,9 @@ export default function PingMonitorCard({ monitor: m, spark, sla, slaTarget, sla
           <PingMetricTiles monitor={m} baseline={baseline} />
           <PingFailureReason reason={reason} />
           <PingLatencyRange baseline={baseline} />
-          <div className={CARD_LAYER}><MonitorSpark rowLabel={m.host} spark={spark} sla={sla} slaTarget={slaTarget} slaDays={slaDays} /></div>
+          {/* ICMP ölçemiyor (na): ölçülemeyen satırlar erişilebilirliğe sayılmaz (H paketi 2026-11-26) — SLA gri "—" + neden */}
+          <div className={CARD_LAYER}><MonitorSpark rowLabel={m.host} spark={spark} sla={sla} slaTarget={slaTarget} slaDays={slaDays}
+            slaUnknown={reason?.kind === 'na' ? t('ping.card.slaUnmeasured') : null} /></div>
           {hasMeta && (
             <div className={cn(CARD_LAYER, 'mt-2 mb-2.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5')}>
               <MonitorCardMeta monitor={m} />

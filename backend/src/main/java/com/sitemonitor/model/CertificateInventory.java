@@ -13,6 +13,9 @@ import lombok.NoArgsConstructor;
 @Data
 @NoArgsConstructor
 @InventoryDomainKey   // biçim kuralı kaynağa göre (ağ kaydı: eski @Pattern'in AYNISI) — bkz. InventoryDomainKey
+// H paketi (2026-11-26): yönetilen bir kaydın kaydı YALNIZ değişen kolonları yazar — düzenleme ile eşzamanlı hedefli yazım
+// (kontrolün beklenen parmak izini temizlemesi) okunan değerle geri ezilmez.
+@org.hibernate.annotations.DynamicUpdate
 public class CertificateInventory implements NocTarget {
 
     /** {@link #certSource} değeri: elle yüklenen sertifika (dosyadan takip, 2026-10-06). */
@@ -80,15 +83,82 @@ public class CertificateInventory implements NocTarget {
     @Column(name = "team_id")
     private Long teamId;
 
-    /** SHA-256 hex of the expected (newly renewed) cert — used for DEPLOYMENT_INCOMPLETE detection */
+    /**
+     * SHA-256 hex of the expected (newly renewed) cert — used for DEPLOYMENT_INCOMPLETE detection.
+     *
+     * <p>H paketi (2026-11-26, sertifika B2): JSON erişimi açık adlı yöntemlerden geçer ve "gövdede geldi mi" bilgisini
+     * taşır ({@code noc_notify} deseni) — gövdede ANAHTAR YOKSA güncelleme saklanan değeri korur, boş / null gelirse
+     * temizler. Eskiden form alanı göstermiyor ama eski değeri her kayıtta geri gönderiyordu; dağıtım tamamlanınca da
+     * temizlenmiyordu (bir yıl sonraki yenilemede yanlış KRİTİK "dağıtım eksik"). Dağıtım tamamlanınca kontrol hattı
+     * hedefli yazımla temizler ({@code CertificateService}).
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String expectedFingerprint;
+
+    @Transient @com.fasterxml.jackson.annotation.JsonIgnore
+    private transient boolean expectedFingerprintSupplied;
+
+    @com.fasterxml.jackson.annotation.JsonProperty("expected_fingerprint")
+    public String expectedFingerprintForJson() {
+        return expectedFingerprint;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonProperty("expected_fingerprint")
+    public void expectedFingerprintFromJson(String v) {
+        this.expectedFingerprint = v;
+        this.expectedFingerprintSupplied = true;
+    }
+
+    /**
+     * Karışık sürüm güvenliği (H paketi bağımsız inceleme): form, kullanıcı alanı DEĞİŞTİRMEDİYSE saklanan değeri bu bayrakla
+     * gönderir ({@code expected_fingerprint_unchanged: true}). Yeni sunucu bayrak {@code true} iken gelen değeri YOK SAYAR ve
+     * şu an saklananı korur (doğrulama, fark, geçmiş satırı yok) — arada sunucunun temizlediği (dağıtım tamamlandı) parmak izi
+     * formdaki eski kopyayla geri yazılmaz. Eski pod bayrağı bilmez, değeri eskisi gibi yazar. Yalnız GÜNCELLEMEDE anlamlı;
+     * eklemede yok sayılır. Yalnız yazılır, yanıtta yer almaz.
+     */
+    @Transient @com.fasterxml.jackson.annotation.JsonIgnore
+    private transient boolean expectedFingerprintUnchanged;
+
+    @com.fasterxml.jackson.annotation.JsonProperty("expected_fingerprint_unchanged")
+    public void expectedFingerprintUnchangedFromJson(Boolean v) {
+        this.expectedFingerprintUnchanged = Boolean.TRUE.equals(v);
+    }
 
     @Column(columnDefinition = "TEXT")
     private String expectedSubject;
 
     // ── İkinci takım (Uygulama Geliştirici / UG) ──────────────────────────────
+    /**
+     * H paketi (2026-11-26, sertifika B6): gövdede ANAHTAR YOKSA güncelleme saklanan UG takımını korur (herkes için);
+     * açık null = temizle (yalnız SY takımını yöneten). Eskiden form her kayıtta null gönderiyor, içe aktarma / UG aktarımıyla
+     * atanmış UG takımı sessizce düşüyordu.
+     */
     @Column(name = "ug_team_id")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private Long ugTeamId;
+
+    @Transient @com.fasterxml.jackson.annotation.JsonIgnore
+    private transient boolean ugTeamIdSupplied;
+
+    @com.fasterxml.jackson.annotation.JsonProperty("ug_team_id")
+    public Long ugTeamIdForJson() {
+        return ugTeamId;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonProperty("ug_team_id")
+    public void ugTeamIdFromJson(Long v) {
+        this.ugTeamId = v;
+        this.ugTeamIdSupplied = true;
+    }
+
+    /** {@code ug_team_id_unchanged: true} — {@link #expectedFingerprintUnchanged} ile aynı sözleşme (yalnız güncellemede). */
+    @Transient @com.fasterxml.jackson.annotation.JsonIgnore
+    private transient boolean ugTeamIdUnchanged;
+
+    @com.fasterxml.jackson.annotation.JsonProperty("ug_team_id_unchanged")
+    public void ugTeamIdUnchangedFromJson(Boolean v) {
+        this.ugTeamIdUnchanged = Boolean.TRUE.equals(v);
+    }
 
     /** Mantıksal grup (ör. "X Sistemleri") — takım-bazlı; monitoring_groups registry'sine bağlı. */
     @Column(name = "group_name")
@@ -311,9 +381,33 @@ public class CertificateInventory implements NocTarget {
     }
 
     // ── Planlanan yenileme (2026-09-12, vade takvimi #6): operatör "bu tarihte yenileyeceğiz" der; takvimde
-    // taralı çizilir, gerçek yenileme (parmak izi değişimi) görülünce sunucu temizler. Hepsi nullable.
-    @Column(name = "renewal_planned_at", length = 10)      private String renewalPlannedAt;      // YYYY-MM-DD
-    @Column(name = "renewal_planned_by", length = 100)     private String renewalPlannedBy;
-    @Column(name = "renewal_planned_by_name")              private String renewalPlannedByName;
-    @Column(name = "renewal_planned_note", length = 500)   private String renewalPlannedNote;
+    // taralı çizilir. Hepsi nullable.
+    //
+    // H paketi (2026-11-26, sertifika B5 / B7): plan kolonları bütün varlık kaydında YAZILMAZ (updatable = false) — yalnız
+    // hedefli koşullu UPDATE'ler yazar (CertificateInventoryRepository.writeRenewalPlan / clearRenewalPlanIfUnchanged; alan
+    // adı planı deseni). Plan TABANI: plan oluşturulduğunda sunulan sertifikanın parmak izi + bitişi — "tamamlandı" = bu
+    // sertifikadan FARKLI ve DAHA UZUN geçerli bir sertifika görüldü (erken yenileme de); görülünce kontrol hattı planı
+    // kapatır (CertificateService). Taban boşsa (eski plan / sertifika okunamadı) eski kural: not_before ≥ plan günü.
+    @Column(name = "renewal_planned_at", length = 10, updatable = false)      private String renewalPlannedAt;      // YYYY-MM-DD
+    @Column(name = "renewal_planned_by", length = 100, updatable = false)     private String renewalPlannedBy;
+    @Column(name = "renewal_planned_by_name", updatable = false)              private String renewalPlannedByName;
+    @Column(name = "renewal_planned_note", length = 500, updatable = false)   private String renewalPlannedNote;
+
+    @Column(name = "renewal_planned_fingerprint", length = 128, updatable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String renewalPlannedFingerprint;
+
+    @Column(name = "renewal_planned_not_after", length = 40, updatable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String renewalPlannedNotAfter;
+
+    /**
+     * Bağımsız inceleme (H paketi): planın BU sürümle (taban kuralıyla) yazıldığı an — yeni kod her planda yazar, sertifika
+     * kontrolü yokken de. NULL = eski sürümün planı → eski kural (not_before ≥ plan günü). Doluysa ve taban yoksa plan eski
+     * kuralla KAPANMAZ: ilk görülen sertifika taban olarak benimsenir, kapanış yalnız ondan farklı + daha uzun geçerli
+     * sertifikayla (geçmiş tarihli yeni plan ilk kontrolde kendiliğinden kapanmasın).
+     */
+    @Column(name = "renewal_planned_recorded_at", length = 30, updatable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String renewalPlannedRecordedAt;
 }

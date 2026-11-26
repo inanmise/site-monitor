@@ -23,6 +23,16 @@ export function alarmTabFromUrl(v) {
   return ALARM_TABS.includes(s) ? s : null
 }
 
+/**
+ * Sayfa açılırken görünüm (H paketi 2026-11-26): adres bir izleme istiyorsa (`monitor=<kimlik>`, ör. e-postadaki "İzlemeyi aç")
+ * `mal` olsa da İzlemeler — ayrıntı penceresi İzlemeler gövdesinde yaşar; Alarmlar açık kalsaydı derin bağlantı görünmez bir
+ * pencere açardı. Aynı sekme olayındaki kuralın (useMonitorAlarmsView) açılış karşılığı.
+ */
+export function initialAlarmTab(malRaw, monitorRaw) {
+  if (String(monitorRaw ?? '').trim()) return null
+  return alarmTabFromUrl(malRaw)
+}
+
 const n = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Math.trunc(Number(v)) : 0)
 
 /**

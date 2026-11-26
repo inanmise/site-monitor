@@ -8,7 +8,7 @@ import { useRunningChecks } from '../hooks/useRunningChecks.js'
 import AlertBanner from './ui/AlertBanner.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
-import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
+import { useUrlQuerySync, readUrlParam, readUrlInt, readSearchParam } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
@@ -243,7 +243,7 @@ export default function PageMonitorPage({ systemRole, teamId, teamName, myTeams 
   // canlı yenilemesi yetmiyor: 1. sayfa dışındaysan ya da özel aralık seçtiysen KAPALI. Sinyal,
   // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
   const [histReload, setHistReload] = useState(0)
-  const [search, setSearch] = useState(() => readUrlParam('q', ''))
+  const [search, setSearch] = useState(readSearchParam)   // q, yoksa eski e-postaların domain'i (H paketi 2026-11-26)
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
   const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)

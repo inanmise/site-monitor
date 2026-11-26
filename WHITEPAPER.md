@@ -114,6 +114,8 @@ Yaprak sertifikadan kök CA'ya kadar tüm zincir analiz edilir; ara CA sertifika
 
 Yeni sertifikayı temin ettiniz ama sunucuya dağıtmayı unuttunuz — klasik bir operasyon hatası. Envantere beklenen parmak izini girerseniz, Site Monitor her taramada sunucudaki gerçek parmak iziyle karşılaştırır ve uyuşmazlıkta `MISMATCH` alarmı üretir.
 
+Sunucu beklenen sertifikayı sunmaya başlayınca dağıtım tamamlanmış sayılır ve beklenen parmak izi kendiliğinden temizlenir; kaydın değişiklik geçmişinde "dağıtım tamamlandı" notu görünür. Beklenen sertifika bir süre sunulduktan sonra daha yeni bir sertifikayla değiştirildiyse de alan temizlenir; eski bir beklenti yüzünden yanlış uyuşmazlık alarmı açılmaz. Kontrol bir adın arkasındaki düğümlerden yalnız birini görür: yük dengeleyicinin arkasında birden çok düğüm varsa her düğümü ayrıca doğrulayın.
+
 ### 3.4 Domain Bazlı Proxy Yönlendirmesi
 
 Kontroller varsayılan olarak doğrudan (direkt outbound) bağlantıyla yapılır. Bazı WAF/firewall yapılandırmaları izleme pod'unun IP'sini reddeder; bu durumda envanterde ilgili domainin "Proxy Üzerinden Kontrol Et" (`use_proxy`) işaretini açarsınız ve yalnız o domainin kontrolü kurumsal HTTP CONNECT proxy üzerinden gider. OCSP/CRL sorguları da aynı proxy ayarını kullanır.
@@ -121,6 +123,8 @@ Kontroller varsayılan olarak doğrudan (direkt outbound) bağlantıyla yapılı
 ### 3.5 Kritiklik Katmanı
 
 Her domain bir tier'a atanır: 1 = Müşteriye Dönük Prod, 2 = Dahili Prod, 3 = UAT/Pre-Prod, 4 = Dev/Sandbox. Tier; sıralamayı, kritiklik rozetlerini ve eskalasyon kişi seçimini etkiler — Tier 1 alarmları daha yüksek öncelikle takım yöneticilerine taşınır.
+
+Süresi bitmek üzere olan sertifikanın alarmı, genel uyarı günü ile kaydın katmanının uyarı günü arasından **hangisi daha erkense** o gün açılır; alarmın seviyesi katmanın kuralından gelir. Uyarılar listesi, sertifika kartı ve eşik önizlemesi aynı kuralı kullanır. Katmanı genel ayardan daha uzun bir uyarı süresi isteyen kayıtlarda alarm bu yüzden genel ayarın söylediğinden önce açılabilir.
 
 ### 3.6 Sertifika Dışı İzleme Ailesi
 
@@ -714,6 +718,8 @@ Alarm e-postasının gövdesi büyük "kalan gün" sayacı, sertifika bilgileri 
 
 Alan adı izleme (`DOMAINMON_*`) e-postalarının detay tablosu her gönderimde en güncel kontrol kaydından yeniden kurulur — yeniden bildirim ve çözülme mailleri de her zaman güncel veriyi taşır.
 
+Alarm e-postasındaki **Site Monitor'de Görüntüle** bağlantısı alarmı üreten izlemenin sayfasını açar ve o izlemenin ayrıntısını gösterir (ör. bir HTTP izlemesinin açtığı alan adı vade alarmı HTTP sayfasına gider). İzleme bilinmiyorsa sayfa, arama kutusuna hedef yazılmış olarak açılır. Erişilebilirlik alarmları Durum İzleme sayfasına, sertifika alarmları Sertifika Panosu'ndaki sertifika penceresine gider. İzleme o arada silinmişse sayfa "izleme bulunamadı" der. Eski e-postalardaki bağlantılar da çalışır.
+
 ### 9.2 Webhook Desteği
 
 E-posta tek kanal değildir. Her eskalasyon kişisine e-posta adresinin yanında bir webhook adresi tanımlayabilirsiniz:
@@ -956,6 +962,10 @@ Bir pencere tanımlarken ad ve açıklama girer, hedefleri seçersiniz: tek tek 
 
 Pencere aktifken etkisi kesindir: hedef monitör için alarm açılmaz ve hiçbir kanaldan bildirim gitmez — ilk alarm, günlük hatırlatma ve DNS değişikliği dahil. Pencere içinde düzelen mevcut alarmlar sessizce kapanır (çözülme maili de gitmez — tam sessizlik). Bakımdaki kontroller uptime yüzdesi hesabından hariç tutulur, yani planlı kesinti erişilebilirlik istatistiğinizi cezalandırmaz. Aktif hedef kümesi bellek içinde tutulur ve yaklaşık 30 saniyede bir ile her kayıt değişikliğinde tazelenir; sweep yolunda pencere sorgusu O(1)'dir.
 
+Sertifikalar için kural şöyledir: bakımdaki alan adında sertifika **kusur** alarmları (zincir kopuk, ad uyuşmazlığı, güvenilmeyen ya da iptal edilmiş sertifika, kontrol hatası) açılmaz, tırmanmaz ve hatırlatılmaz; gönderilmeyen her bildirim, bildirim günlüğünde "bakım penceresi" nedeniyle görünür. **Süre bitiyor** alarmı ise bakımda da açılır — bakım, bitmekte olan bir sertifikayı gizlemez. Pencere bittiğinde kusur sürüyorsa alarm normal kurallarla açılır; düzelen alarmların kapanması değişmez.
+
+Bakım sekmesindeki hızlı işlemler — **Şimdi bakım başlat** ile açılan pencere, pencereyi duraklatma ve sürdürme — da pencerenin değişiklik geçmişine kim ve ne zaman bilgisiyle yazılır.
+
 Ne zaman kullanmalı? Örneğin her Pazar 02:00–04:00 arası veritabanı bakımınız varsa haftalık bir pencere tanımlarsınız: ilgili monitörler o aralıkta susar, 04:01'de sorun devam ediyorsa normal alarm düzeni kaldığı yerden çalışır.
 
 ---
@@ -971,6 +981,10 @@ Oturum tabanlı kimlik doğrulama kullanılır: HTTP oturumları Spring Session 
 LDAP/Active Directory doğrulaması açıldığında giriş anında AD'ye bind edilir; ilk başarılı girişte kullanıcı otomatik provizyon edilir (orgRole, müdür ilişkisi, takım). Yerel bootstrap admin hesabı her zaman geçerlidir (acil erişim); LDAP/SMTP ayarları yalnız bu hesaba açıktır. Bind parolası `SITE_MONITOR_SECRET_KEY` ile AES-GCM şifreli saklanır.
 
 "Beni Hatırla" özelliği 7 günlük kalıcı oturum sağlar: HMAC imzalı token veritabanında tutulur ve her oturum açılışında yenilenir.
+
+**AD hesabında otomatik giriş ve kodla giriş.** LDAP / AD hesaplarında "Beni Hatırla" ile otomatik girişte ve kodla girişte (doğru koddan sonra) hesabın AD'deki durumu da sorulur. Hesap AD'de devre dışı bırakılmışsa ya da dizinde artık yoksa giriş reddedilir; "Beni Hatırla" kaydı da silinir. AD'ye o an ulaşılamıyorsa: hesap son 24 saat içinde AD'de etkin olarak doğrulanmışsa giriş sürer, daha eskiyse kullanıcıdan kullanıcı adı ve parolasıyla giriş yapması istenir. Böyle reddedilen girişler denetim kaydına ve kişinin Etkinliklerim / cihaz geçmişine kendi nedeniyle ("AD'de devre dışı", "AD'de doğrulanamadı") yazılır ve kilitleme sayacına girmez. Yerel hesaplar bu denetimden etkilenmez.
+
+**İlk kurulumdaki yönetici parolası.** Kurulumdaki yönetici hesabının parolası örnek değerde ya da boş bırakıldıysa hesap ilk girişte parolasını değiştirmeye zorlanır; parolası hiç değiştirilmemiş mevcut kurulumlarda da aynı kural uygulanır.
 
 **Kullanıcı adı ön eki.** Kurumda bir kişinin iki hesabı olabilir (ör. N ile başlayan sicil hesabı ve MP ile başlayan ikinci hesap). **Ayarlar → Güvenlik → Giriş Yöntemleri → Kullanıcı adı ön eki** kartında global yönetici yalnız belirli ön eklerle (ör. `N`) başlayan kullanıcı adlarının giriş yapmasına izin verebilir; kural şifre, LDAP, kodla giriş ve "Beni Hatırla" yollarının hepsinde geçerlidir, büyük / küçük harf fark etmez. Kurala uymayan bir hesap, parolası doğrulandıktan sonra "yalnız N ile başlayan kullanıcı adlarıyla giriş yapılabilir" iletisiyle reddedilir; yanlış parola her adda aynı genel hatayı alır. Kodla girişte yanıt her zaman aynıdır ve kod gönderilmez; kurala uymayan hesap e-postadaki onay bağlantılarıyla da karar veremez. Kural açıldığında kurala uymayan hesapların açık oturumları birkaç saniye içinde kapanır ve ekranda 10 saniyelik bir bildirim görünür. Muaf listeye yazılan hesaplar (ör. servis hesabı) ve kurulumdaki yönetici hesabı her zaman girer. Kaydetmeden önce **Etki önizlemesi** kaç aktif kullanıcının giremeyeceğini ve adlarını gösterir; kendi hesabınızı dışarıda bırakan bir değer kaydedilmez. Kural açıkken giriş sayfası kullanıcı adı alanının altında izinli ön eki hatırlatır.
 
@@ -1186,7 +1200,9 @@ Arayüz tek sayfa uygulamasıdır; sekmeler arasında geçiş sayfa yenilemez. B
 
 **Dil, tema ve kimlik.** Kenar çubuğunun altındaki kullanıcı adınıza tıkladığınızda açılan menüde son giriş bilgilerinizi görür, parolanızı değiştirir (6–64 karakter; başında ya da sonunda boşluk olamaz), dili (Türkçe / İngilizce) ve temayı (açık / koyu) değiştirirsiniz; dil ve tema tarayıcınızda saklanır. Yetkiliyseniz **Ayarlar** ekranına da buradan ulaşırsınız; **Sorun Bildir** hemen altında, her ekrandan erişilebilir. **Çıkış yap** bu menünün en altındadır. Çıkış bağlantı kopukken de bu tarayıcıdaki oturumu kapatır: sunucu çıkışı onaylayamazsa bir not bunu söyler ve sunucu oturumu bağlantı geri gelince (en geç bir sonraki girişten önce) kapatılır. Başka bir sekmede çıkış yapılır ya da başka bir kullanıcıyla giriş yapılırsa açık sekmeler de bunu hemen fark eder (2026-10-22).
 
-**İzleme menüsü.** İzleme türleri dört alt grupta durur; her grup menüde kendi başlığıyla ayrı ayrı açılıp kapanır, izlemelere açılan grubun altından erişilirsiniz. Açtığınız gruplar tarayıcınızda hatırlanır, açık olduğunuz sayfanın grubu kendiliğinden açılır ve kapalı bir grubun başlığında altındaki izlemelerin açık alarm sayısı görünür. Gruplar: **Erişilebilirlik** (HTTP / Website, Ping, Port — ayakta mı?), **Alan Adı ve DNS** (DNS, Alan Adı — adres doğru ve geçerli mi?), **İçerik ve Deneyim** (Keyword, Sayfa Bütünlüğü, Sayfa Hızı, Sentetik — sayfa doğru, eksiksiz ve hızlı mı?) ve **Veri ve iş kuralları** (Veritabanı Sorgu İzleme — veritabanındaki sonuç beklendiği gibi mi?).
+**İzleme menüsü.** İzleme türleri dört alt grupta durur; izlemelere açtığınız grubun altından erişirsiniz. Aynı anda yalnız bir grup açık durur: bir grubu açınca önceki kendiliğinden kapanır. Açık olduğunuz sayfanın grubu kendiliğinden açılır (ürün turu bir grubu gösterirken de), son açtığınız grup tarayıcınızda hatırlanır ve kapalı bir grubun başlığında altındaki izlemelerin açık alarm sayısı görünmeye devam eder. Gruplar: **Erişilebilirlik** (HTTP / Website, Ping, Port — ayakta mı?), **Alan Adı ve DNS** (DNS, Alan Adı — adres doğru ve geçerli mi?), **İçerik ve Deneyim** (Keyword, Sayfa Bütünlüğü, Sayfa Hızı, Sentetik — sayfa doğru, eksiksiz ve hızlı mı?) ve **Veri ve iş kuralları** (Veritabanı Sorgu İzleme — veritabanındaki sonuç beklendiği gibi mi?).
+
+**Gezinme.** Başka bir sekmeye geçtiğinizde sayfa en başından açılır; aynı sekmede süzgeç değiştirmek ve tarayıcının geri / ileri düğmeleri bulunduğunuz konumu korur. Komut paletinde (Ctrl K, Mac'te ⌘K — kenar çubuğundaki arama ipucu da buna göre yazar) yıldızladığınız izlemeler adı sonradan değişse de doğru izlemeyi açar ve güncel adıyla görünür; silinmiş bir izlemenin favorisi "bulunamadı" der. Bildirim kutusunda (zil) dokunmatik ekranlarda satır eylemleri her zaman görünür; uzun başlıklar ve takım adları satıra sarılır. Etkinliklerim'deki **Açılış sekmesi** seçimi yalnız menüde görebildiğiniz sayfaları listeler; artık göremediğiniz bir sayfa açılış sekmesi olarak kayıtlıysa uygulama Sertifika Panosu ile açılır.
 
 Her izleme sayfasında iki yerleşik yardım yüzeyi bulunur: sayfanın başındaki kutu o izleme türünün ne yaptığını ve veriyi nereden aldığını anlatır, form yanındaki rehber butonu ise alanların nasıl doldurulacağını örnekle gösterir.
 
@@ -1248,6 +1264,8 @@ Aşağıdaki tablo her ekranın adres çubuğundaki anahtarını ve görünürl�
 | Kalıcı kilit | Mesaj gösterilir, admin müdahalesi gerekir |
 | Sorun Bildir | Giriş yapamayan kullanıcı ekran görüntülü sorun kaydı bırakır (bkz. §14.23) |
 | Başka cihazda oturum varken giriş | 409 + onay penceresi → onaylarsanız eski oturum düşürülür |
+| Parolayı göster | Parola alanının yanındaki göz düğmesi fareyle de klavyeyle de (Tab, Enter / Boşluk) kullanılır |
+| Kodla giriş AD'de reddedilirse | Doğru koddan sonra hesap AD'de devre dışıysa ya da AD doğrulanamadıysa neden formda yazar; kod yeniden gönderilmez, parolayla girişe dönülür (bkz. §12.1) |
 
 ### 14.4 Sertifika Panosu
 
@@ -1295,6 +1313,8 @@ Kart yerine tablo görünümü: Domain, Issuer, Subject, Bitiş Tarihi, Kalan G�
 
 Her sertifika için öncelik sıralı Türkçe aksiyon önerileri üretir: Kritik (derhal müdahale), Uyarı (yenileme planlanmalı), Bilgi (takip edilmesi gerekenler). Yenileme koordinasyonunu yürüten operasyon ekiplerinin haftalık gündem listesidir.
 
+**Yenileme planı.** Bir sertifika için yenileme planı girerken tarih takvimde gerçekten var olan bir gün olmalıdır (ör. 31 Şubat kabul edilmez) ve not en çok 500 karakterdir; fazlası kesilmez, hata alanın altında yazar. Plan, planı girdiğiniz andaki sertifikadan **farklı ve daha uzun geçerli** bir sertifika görüldüğünde kendiliğinden kapanır; değişiklik geçmişinde ve aktivite logunda "yenileme görüldü" olarak iz bırakır. Aynı sertifika yeniden kurulduysa ya da kontrol henüz yeni sertifikayı görmediyse plan açık kalır. Siz planı kaldırırken başka biri onu değiştirdiyse hiçbir şey değiştirilmez; pencere bunu söyler ve güncel planı gösterir. Sertifika kartı ve Vade Takvimi aynı kuralı ve aynı İstanbul günü hesabını kullanır.
+
 ### 14.10 Değişim Rehberi
 
 Sertifika yenileme için kurum kaynaklarını, CA portallarını ve platform yönergelerini tek yerde toplar. Sertifikaların çoğu ticari bir sertifika otoritesinden (CA) satın alındığı için sayfanın ana içeriği kaynaklardır; elle anahtar üretimi en altta, katlanmış durur. Yukarıdan aşağıya:
@@ -1322,6 +1342,8 @@ Yeni domain eklerken beş bölümlü form doldurursunuz:
 - Açıklamalar: genel açıklama + süreç notu.
 - Gelişmiş: beklenen parmak izi (SHA-256, dağıtım kontrolü için) ve beklenen subject.
 
+Beklenen parmak izi alanı düzenleme formunda da görünür, değiştirilebilir ve boşaltılarak temizlenebilir. 64 onaltılık karakter olmalıdır; iki nokta, boşluk ve tire yazabilirsiniz, kendiliğinden atılır. Geçersiz değerde hata alanın altında yazar. Alana dokunmadan kaydettiğinizde saklı değer olduğu gibi korunur — dağıtım tamamlanınca sunucu alanı kendiliğinden temizler (bkz. §3.3). Kaydın UG takımı formda salt okunur bir satır olarak görünür; UG takımı CSV içe aktarımıyla atanır, Devret yalnız sorumlu (SY) takımı değiştirir. Formu kaydetmek UG takımını değiştirmez.
+
 Silme kalıcıdır ve geri alınamaz: onay penceresi silinecek kayıtları ve neyin birlikte silineceğini söyler; kart onay anında listeden kalkar. Devret aksiyonu sertifikayı başka takıma taşır. Domain adını değiştirirseniz tüm geçmiş atomik taşınır (bkz. §3.9).
 
 ### 14.13 Zayıf Algoritma Raporu
@@ -1335,6 +1357,8 @@ SHA-1 imza, RSA-1024 gibi güvensiz algoritma kullanan sertifikaları listeler: 
 Sayfanın üstünde o türe ait açıklama kutusu ve istatistik şeridi (toplam / çalışan / sorunlu / duraklatılmış) bulunur; istatistik kartına tıklamak listeyi o duruma filtreler. Altında durum, grup, takım ve serbest metin filtreleriyle daraltılabilen, sayfalanmış monitör listesi durur. Sağ üstte **+ Yeni Monitör** ve o türe özel **Rehber** butonu vardır.
 
 HTTP / Website, Port, Ping, DNS, Keyword, Sayfa Bütünlüğü, Sayfa Hızı ve Sentetik izlemede her monitör kartının altında son 24 saatin yanıt süresi trendi ve son beş kontrol noktası, en altta da 30 günlük erişilebilirlik satırı (ör. `30 gün: %99.95 · hedef %99.9 ✓`) bulunur. Satırın sağındaki **1 gün · 7 gün · 15 gün · 30 gün** etiketleri o dönemde hata görülüp görülmediğini gösterir: hatasız dönem yeşil, hata görülen dönem ⚠ ikonuyla turuncu, erişilebilirliği hedefin altına düşen dönem ⚠ ikonuyla kırmızıdır; o dönemde hiç kontrol yoksa etiket soluktur. Etiketin üzerine gelince dönemin kontrol sayısı, hata sayısı ve erişilebilirlik yüzdesi, altında da hata görülen her saat dilimi o dilimde kaç hata alındığıyla listelenir (ör. `23.09 17:00–18:00 — 5 hata alındı`); en yeni altı dilim gösterilir, fazlası "+N saat dilimi daha" diye belirtilir. Port İzleme kartında izlenen uç nokta başlığın hemen altında durur: büyük `:port`, kontrol türüne göre renkli protokol rozeti (TCP, TLS, HTTP, Banner, UDP), HTTP türünde denetlenen yol ve bilinen portlarda hizmet adı (ör. 5432 → PostgreSQL). Ping İzleme kartında aynı yerde renkli **ICMP** rozeti (IPv6'da **ICMPv6**), seçilmişse IP sürümü (IPv4 / IPv6) ve kontrol başına gönderilen paket sayısı görünür.
+
+**Erişilebilirlik neyi sayar.** Erişilebilirlik oranları (kartın 30 günlük satırı, dönem etiketleri, son beş nokta ve haftalık erişilebilirlik raporu) yalnız planlı kontrolleri sayar: elle yapılan **Şimdi kontrol et**, alarmın teyit ve düzelme için yaptığı yeniden kontroller ve ICMP'nin ölçemediği ping kontrolleri sayılmaz. Bu yüzden bazı izlemelerin oranı önceki sürüme göre yükselebilir. Kartın durumu yine en son kontrolden okunur. Yalnız ölçülemeyen kontrolleri olan bir ping izlemesi oran yerine gri "—" ve nedenini gösterir; %0 göstermez.
 
 **Port İzleme vekil üzerinden.** Port formundaki **Kurumsal vekil** alanı varsayılan olarak **Doğrudan**dır; mevcut izlemelerin yolu değişmez. **Her zaman vekil üzerinden** ya da **Envanterle aynı** seçilirse TCP, TLS, HTTP ve Banner kontrolleri kurumsal vekilin `CONNECT` tüneliyle yapılır; sonuç hedefe *vekilin ağından* erişilebildiğini gösterir ve yanıt süresine vekil geçişi eklenir. Vekiller tünele yalnız izin verdikleri portlarda izin verir: form, **vekil üzerinden denetlenebilen portları** her zaman gösterir (varsayılan 443, 8443; Ayarlar → İzleme → *Vekilin CONNECT izni verdiği portlar*). Vekil seçiliyken listede olmayan bir port yazılırsa ya da tür **UDP** seçilirse form uyarır: UDP HTTP vekilinden geçemez ve her zaman doğrudan yapılır. Vekil bir tüneli reddederse kontrol "port kapalı" değil, **"vekil tüneli reddetti"** hatasıyla (izinli portlar mesajda) sonuçlanır.
 
@@ -1415,6 +1439,8 @@ Kendi hesabınızın denetim izi: giriş/çıkışlarınız, başarısız giriş
 
 Global admin ve AUDIT rolüne açık, sistem genelindeki denetim kayıtları ekranı. Özet panel (24 saat / 7 gün olay ve başarısız giriş sayıları, anomali sayısı), kullanıcı / olay tipi / sonuç / yalnız-anomaliler filtreleri ve tarih, olay tipi, kullanıcı, IP, coğrafi konum, kaynak, sonuç, tarayıcı kolonlu tablo. Satırı genişlettiğinizde alan bazında eski → yeni değer farkları görünür.
 
+**Zincir doğrulaması.** Kayıtlar birbirine zincirle bağlıdır; ekranın doğrulama sonucu zincirin sağlam olup olmadığını söyler. Çok büyük bir kayıt defterinde tarama süre sınırına takılırsa sonuç "Doğrulama tamamlanamadı" olur: bu zincirin bozuk olduğu anlamına gelmez, o turda kaç kaydın doğrulandığı yazar ve daha sonra yeniden doğrulayabilirsiniz. Başka bir doğrulama o an sürüyorsa ekran birkaç saniye sonra yeniden denemenizi söyler. Bu iki durum yeşil ("sağlam") ya da kırmızı ("bozuk") gösterilmez.
+
 ### 14.23 Sorun Bildirimleri
 
 Giriş ekranındaki "Sorun Bildir" akışıyla gelen kayıtların yönetim ekranı. Giriş yapamayan kullanıcı ekran görüntüsü ekleyerek kayıt bırakır; siz kayıtları OPEN → IN_PROGRESS → RESOLVED akışında yönetir, yanlış kapatılan kaydı yeniden açarsınız. Parola/kilit kaynaklı çağrı trafiğini yapılandırılmış kayda dönüştürür.
@@ -1425,7 +1451,7 @@ Giriş ekranındaki "Sorun Bildir" akışıyla gelen kayıtların yönetim ekran
 
 Yönetim işlevlerinin merkezi: envanter, kullanıcılar, takımlar, eskalasyon kişileri ve alarm eşikleri alt sekmeleri.
 
-Eskalasyon Kişileri: kullanıcı, takım, org rolü, minimum alarm seviyesi (WARNING / HIGH / CRITICAL), isteğe bağlı Slack/Teams webhook URL'si ve aktiflik ile kişi tanımlarsınız. Ekranda eskalasyon matrisi özeti gösterilir: WARNING → PO + TECH; HIGH → + MANAGER; CRITICAL → + C-LEVEL. Kişi silindiğinde geçmiş bildirim logları korunur.
+Eskalasyon Kişileri: kullanıcı, takım, org rolü, minimum alarm seviyesi (WARNING / HIGH / CRITICAL), isteğe bağlı Slack/Teams webhook URL'si ve aktiflik ile kişi tanımlarsınız. Ekranda eskalasyon matrisi özeti gösterilir: WARNING → PO + TECH; HIGH → + MANAGER; CRITICAL → + C-LEVEL. Kişi silindiğinde geçmiş bildirim logları korunur. Bir kişinin bağlı olduğu **kullanıcı silinirse** kişi kaydı silinmez, pasife alınır ve listede **Kullanıcı silindi** rozetiyle görünür; bu kişiye bildirim gitmez ve takımın kapsam / eksik değerlendirmesinde etkin sayılmaz. Kaydı başka bir kullanıcıya bağlayıp yeniden etkinleştirebilirsiniz. Kullanıcı silme işleminin denetim kaydı, silinen kişinin liderliği, müdürlüğü, astları ve pasife alınan eskalasyon kişilerinin sayısını da yazar. Yönetim panosundaki "tek yönetici / yönetici yok" uyarısı yalnız global yöneticileri sayar; AD'den gelen, takım kapsamlı yönetici hesapları bu sayıya girmez.
 
 Alarm Eşikleri: Uyarı Günü (varsayılan 30), Yüksek Gün (15), Kritik Gün (7) ve Tekrar Bildirim Aralığı (24 saat) kartlarını satır içi düzenlersiniz.
 
@@ -1470,6 +1496,7 @@ Platformun kendi sağlık panosudur; 30 saniyede bir otomatik yenilenir. Bölüm
 - Veritabanı analitiği: `pg_stat_statements` ile DB genelinde en sık/en yavaş sorgular (eklenti yoksa playground geçmişine düşer), tablo boyutları, bağlantı durumu, saatlik/günlük zaman serileri.
 - Kullanıcı/Oturum: login zaman serisi (1g/7g/30g + özel aralık), ISO haftalık 7×24 aktivite ısı haritası, en çok giriş yapan kullanıcılar ve kaynak IP'ler (reverse-DNS adlarıyla), aktif oturum listesi ve oturum sonlandırma.
 - Tanı araçları: OpenSSL, ağ, HSTS ve bağlantı tanıları; koşu geçmişi `diagnostic_runs` tablosunda saklanır.
+- Denetim yedek dosyası: veritabanına o an yazılamayan denetim kayıtları pod'un yedek dosyasında bekler; sistem satırı bekleyen kayıt sayısını o pod'un adıyla gösterir ve genel durum bandına uyarı olarak girer (sayı okunamazsa "bilinmiyor" — temiz sayılmaz). Veritabanı yeniden yazılabilir olunca her pod kendi yedeğini kendiliğinden denetim kaydına aktarır; aktarılamayan satır elle incelenmek üzere bekletilir.
 - **Metrikler** (sayfanın üstündeki "Metrikleri aç" kartı): Site Monitor'ün kendi ölçümleri, pod başına. Her pod dakikada bir örnek yazar ve örnekler 7 gün saklanır (Ayarlar → Genel, "Sistem metrikleri saklama"). Üstte anlık özet (canlı pod sayısı, en yüksek işlemci ve bellek, veritabanı havuzu, görev kuyruğu, son saatin HTTP istekleri ve ERROR günlük satırları), altında pod listesi (canlı; sessiz = kapanış işareti olmadan susan pod, uyarıdır; durdu = dağıtım ya da ölçeklemeyle düzgün kapanan pod, uyarı değildir; son örnek, çalışma süresi; canlı podlar önce gelir, aynı durumdaki podlardan en son açılanı en üsttedir, durmuş podlar en sondadır — pod seçici de aynı sırayı izler) ve grafikler: işlemci, heap, iş parçacığı, GC duraklaması; istek / dakika, hata oranı, yanıt süresi; veritabanı bağlantıları ve bekleyen istekler; görev havuzu, kuyruk ve taşma; günlük satırları ve önbellek isabet oranı. Aralık 1 saat / 6 saat / 24 saat / 7 gün, pod seçimi tek bir podu gösterir; seçim adres çubuğuna yazılır, bağlantıyı paylaşabilirsiniz. Okunamayan değer "—" olarak görünür, hiçbir zaman yeşil sayılmaz; podun örneği olmayan dilim grafikte boşluk kalır.
 
 ### 14.28 SQL Playground
@@ -1496,7 +1523,7 @@ Uygulamaya **ilk kez giren** kullanıcıya, veriler yüklendikten kısa süre so
 
 **Sayfa turları:** bazı sayfalar kendi kısa turunu taşır (Tüm Sertifikalar: süzgeçler, durum menüsü, sütunlar, ön ayarlar, CSV, satır seçimi, satır menüsü; HTTP izleme: nasıl çalışır, yeni izleme, nasıl doldurulur, kartlar). Böyle bir sayfaya ilk gelişinizde sağ altta "Bu sayfayı tanımak ister misiniz?" çipi görünür; kapatırsanız o sayfa için bir daha çıkmaz.
 
-**Başlangıç listesi:** Sertifika Panosu'nun üstünde yeni kullanıcı için altı maddelik küçük bir liste durur (turu tamamla, bir kart aç, Tüm Sertifikalar'ı gez, bir izleme sayfasına bak, haftalık raporları gör, yardımı aç). Maddeler siz sayfaları gezdikçe kendiliğinden işaretlenir; hepsi bitince ya da ✕ ile gizlediğinizde kaybolur.
+**Başlangıç listesi:** Sertifika Panosu'nun üstünde yeni kullanıcı için altı maddelik küçük bir liste durur (turu tamamla, bir kart aç, Tüm Sertifikalar'ı gez, bir izleme sayfasına bak, haftalık raporları gör, yardımı aç). Maddeler siz sayfaları gezdikçe kendiliğinden işaretlenir; hepsi bitince ya da ✕ ile gizlediğinizde kaybolur. Size uymayan madde listede görünmez: "haftalık raporları gör" yalnız takımınızda haftalık raporlar açıksa, "bir kart aç" yalnız takımınızın sertifikası varsa çıkar; sayaç yalnız görünen maddeleri sayar. Listenin, sayfa turu çipinin ve karşılama kartının düğmeleri dokunmatik ekranda rahat dokunulacak boydadır.
 
 **Turu yeniden bulmak:** kullanıcı menüsü → **Ürün turu**; sağ alttaki "?" yardım çekmecesinde **Ürün turu** ve (varsa) **Bu sayfada tur**; Yardım sayfasındaki düğme; komut paletinde (Ctrl K) "Ürün turunu başlat". "Bir daha gösterme" demiş olsanız da bu yollarla turu istediğiniz zaman açabilirsiniz.
 
@@ -1590,7 +1617,7 @@ Acil durumda (CRITICAL): alarmı hemen onaylayın, yenilemeyi derhal başlatın,
 
 1. Yeni sertifikayı sunucuya/platforma dağıtın.
 2. Site Monitor bir sonraki saatlik taramada yeni sertifikayı tespit eder.
-3. Envanterde beklenen parmak izini güncellediyseniz dağıtım uyumluluğu da doğrulanır.
+3. Envanterde beklenen parmak izini güncellediyseniz dağıtım uyumluluğu da doğrulanır; sunucu yeni sertifikayı sunmaya başlayınca alan kendiliğinden temizlenir. Yük dengeleyici arkasında birden çok düğüm varsa her düğümü ayrıca doğrulayın.
 4. **Alarm Geçmişi** ekranında ilgili alarmı "Çözüldü İşaretle" ile kapatın; `RESOLUTION` bildirimi otomatik gider.
 
 ### 15.4 Takım Kurulumu

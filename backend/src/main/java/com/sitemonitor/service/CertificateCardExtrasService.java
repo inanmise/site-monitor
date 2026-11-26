@@ -261,13 +261,19 @@ public class CertificateCardExtrasService {
     }
 
     // ── 5) Yenileme planı ─────────────────────────────────────────────────────────────────
-    /** Plan varsa {planned_at, by, note, overdue}: plan tarihi geçmiş ve sertifika plandan SONRA verilmemişse gecikmiş. */
+    /**
+     * Plan varsa {planned_at, by, note, overdue, done}: plan tarihi geçmiş ve plan TAMAMLANMAMIŞSA gecikmiş. Tamamlandı kuralı
+     * Vade Takvimi ile TEK kaynak ({@link CertRenewalPlanService#isDone}, H paketi 2026-11-26 sertifika B5): plan tabanından
+     * farklı ve daha uzun geçerli sertifika (erken yenileme dahil); tabansız eski planda verilme İSTANBUL günü ≥ plan günü
+     * (kart eskiden UTC gününü kullanıyordu — 21:00–24:00 UTC arası verilen sertifikada iki yüzey farklı diyordu).
+     */
     private Map<String, Object> renewal(CertificateInventory inv, LatestCheck lc, String today) {
         if (inv.getRenewalPlannedAt() == null || inv.getRenewalPlannedAt().isBlank()) return null;
         String plannedAt = inv.getRenewalPlannedAt();
         boolean past = plannedAt.compareTo(today) < 0;
-        String notBefore = lc == null || lc.getNotBefore() == null ? null : lc.getNotBefore().substring(0, Math.min(10, lc.getNotBefore().length()));
-        boolean renewedSincePlan = notBefore != null && notBefore.compareTo(plannedAt) >= 0;
+        boolean renewedSincePlan = lc != null && CertRenewalPlanService.isDone(plannedAt, inv.getRenewalPlannedRecordedAt(),
+                inv.getRenewalPlannedFingerprint(), inv.getRenewalPlannedNotAfter(), lc.getFingerprint(), lc.getNotBefore(),
+                lc.getNotAfter());
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("planned_at", plannedAt); m.put("by", inv.getRenewalPlannedByName() != null ? inv.getRenewalPlannedByName() : inv.getRenewalPlannedBy());
         m.put("note", inv.getRenewalPlannedNote()); m.put("overdue", past && !renewedSincePlan); m.put("done", renewedSincePlan);

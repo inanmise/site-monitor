@@ -9,7 +9,7 @@ import AlertBanner from './ui/AlertBanner.jsx'
 import HintPopover from './ui/HintPopover.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
-import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
+import { useUrlQuerySync, readUrlParam, readUrlInt, readSearchParam } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import BaselineControl from './baseline/BaselineControl.jsx'   // dinamik taban çizgisi (2026-11-12)
@@ -361,7 +361,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
   // sekmeyi remount ETMEDEN yeniden okutur (remount seçilen aralığı/sayfayı/filtreyi sıfırlardı).
   const [histReload, setHistReload] = useState(0)
   const [metric, setMetric] = useState('load')
-  const [search, setSearch] = useState(() => readUrlParam('q', ''))
+  const [search, setSearch] = useState(readSearchParam)   // q, yoksa eski e-postaların domain'i (H paketi 2026-11-26)
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
   const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
@@ -958,6 +958,7 @@ export default function PageSpeedMonitorPage({ systemRole, teamId, teamName, myT
     tag: tagFilter === 'all' ? null : tagFilter,
     via: proxyFilter === 'all' ? null : proxyFilter,   // vekil süzgeci (2026-09-22)
     q: search.trim() || null,
+    domain: null,   // eski e-posta parametresi aramaya alındı (H paketi 2026-11-26)
     stat: statFilter || null,
     page: pager.page > 1 ? pager.page : null,
     // ps de yazılır (standart kural, monitorUrlState ile aynı): 2. sayfada varsayılan boyutta bile — bağlantıyı

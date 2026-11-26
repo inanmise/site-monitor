@@ -662,6 +662,30 @@ class MonitoringOutageServiceTest {
         assertThat(calls.get()).isEqualTo(2); // n=1 up, n=2 down → dur
     }
 
+    @Test
+    @DisplayName("H paketi (rapor B2): teyit ve kurtarma zincirinin yeniden kontrolü CheckRunContext.recheck() içinde koşar "
+            + "(yazıcı satıra recheck=TRUE yazar); zincir dışında bağlam temiz")
+    void rechecksRunInRecheckContext() {
+        java.util.List<Boolean> seen = new java.util.ArrayList<>();
+        service.handleSweepResults(EscalationService.TYPE_PORT_DOWN, List.of(
+                item(EscalationService.TYPE_PORT_DOWN, "ctx.example.com", "8443/TCP", false,
+                        Map.of("port", 8443, "protocol", "TCP"),
+                        () -> { seen.add(CheckRunContext.recheck()); return down("timeout"); })));
+        assertThat(seen).as("teyit adımları").isNotEmpty().containsOnly(true);
+        assertThat(CheckRunContext.recheck()).isFalse();
+
+        seen.clear();
+        ReflectionTestUtils.setField(service, "recoveryExecutor", immediateExecutor());
+        when(alertEventRepo.findOpenByDomainIn(anyCollection()))
+                .thenReturn(List.of(openAlert("kw.example.com", EscalationService.TYPE_KEYWORD)));
+        Map<String, Object> extra = Map.of("monitor_recovery_checks", 3, "monitor_recovery_interval_ms", 20000L);
+        service.handleSweepResults(EscalationService.TYPE_KEYWORD, List.of(
+                item(EscalationService.TYPE_KEYWORD, "kw.example.com", "keyword", true, extra,
+                        () -> { seen.add(CheckRunContext.recheck()); return up(); })));
+        assertThat(seen).as("kurtarma adımları").isNotEmpty().containsOnly(true);
+        assertThat(CheckRunContext.recheck()).isFalse();
+    }
+
     // ── Sentetik: teyit anahtarı + "yürütülemedi" cevabı ────────────────────────────────────
 
     /** Kontrol YÜRÜTÜLEMEDİ cevabı (k6 havuzu dolu / k6 yok). */

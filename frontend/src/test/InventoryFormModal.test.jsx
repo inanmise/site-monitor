@@ -193,7 +193,14 @@ describe('InventoryFormModal', () => {
     // camelCase anahtar sessizce yok sayiliyordu. Test payload SEKLINI dogruluyor ama ucun onu
     // KABUL ETTIGINI dogrulamiyordu; o yuzden bug'i yillarca sabitledi. Asil kapi backend'de:
     // AdminControllerTest.updateInventory_snakeCaseKeys_bind.
+    // H paketi 2026-11-26 (sertifika B2 + inceleme bulgusu 1): beklenen parmak izi DEĞİŞMEDİYSE saklı HAM değer + bayrak
+    // gider — yeni sunucu bayrakta değeri yok sayar, sürüm geçişinde eski pod aynısını yazar (anahtar yoksa SİLERDİ).
+    // Kayıttaki 'AA:BB:CC' biçimce bozuk (SHA-256 değil) ama değişmediği için kaydı ENGELLEMEZ ve normalize edilmez.
     expect(payload.expected_fingerprint).toBe('AA:BB:CC')
+    expect(payload.expected_fingerprint_unchanged).toBe(true)
+    // UG takımı formda değişmez (sertifika B6): saklı değer (burada yok → null) + bayrak
+    expect(payload.ug_team_id).toBeNull()
+    expect(payload.ug_team_id_unchanged).toBe(true)
     expect(payload.expected_subject).toBe('CN=a.example.com')
     // Diğer taşınan alanlar
     expect(payload.port).toBe(8443)
@@ -251,7 +258,12 @@ describe('InventoryFormModal', () => {
     const payload = api.admin.addInventory.mock.calls[0][0]
     expect(payload.domain).toBe('b.example.com')
     // Beklenen parmak izi kopyalansaydı yeni domain sürekli DEPLOYMENT_INCOMPLETE alarmı üretirdi.
-    expect(payload.expected_fingerprint).toBeNull()
+    // Kopya boş parmak iziyle açılır (taban da boş) → anahtar gövdede yok; yeni kayıtta saklanan değer null.
+    // OLUŞTURMADA bayrak gönderilmez (inceleme bulgusu 1).
+    expect('expected_fingerprint' in payload).toBe(false)
+    expect('expected_fingerprint_unchanged' in payload).toBe(false)
+    expect('ug_team_id' in payload).toBe(false)
+    expect('ug_team_id_unchanged' in payload).toBe(false)
     expect(payload.expected_subject).toBeNull()
     // Değişiklik açıklaması KOPYALANIR (kullanıcı kararı 2026-09-22) — uçtan uca: kayıt → form → payload
     expect(payload.change_description).toBe('2026-01 yenilendi')

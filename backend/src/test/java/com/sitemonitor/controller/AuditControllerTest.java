@@ -280,6 +280,29 @@ class AuditControllerTest {
     }
 
     @Test
+    @DisplayName("integrity (H paketi B2): süre sınırında bitmeyen doğrulama 409 AUDIT_VERIFY_INCOMPLETE + checked / checked_to_seq — asla ok değil")
+    void integrity_incomplete_conflict() throws Exception {
+        when(auditService.verifyChain()).thenReturn(new com.sitemonitor.service.AuditService.ChainVerification(
+                false, null, null, 250_000, null, 0, true, 250_000L));
+        mvc.perform(get("/api/admin/audit/integrity").session(session("ADMIN")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("AUDIT_VERIFY_INCOMPLETE"))
+                .andExpect(jsonPath("$.checked").value(250000))
+                .andExpect(jsonPath("$.checked_to_seq").value(250000))
+                .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("integrity (H paketi B2): pod'da başka doğrulama sürüyorsa 409 AUDIT_VERIFY_RUNNING")
+    void integrity_running_conflict() throws Exception {
+        when(auditService.verifyChain()).thenThrow(new com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException(
+                com.sitemonitor.service.AuditService.VERIFY_RUNNING, "sürüyor"));
+        mvc.perform(get("/api/admin/audit/integrity").session(session("AUDIT")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("AUDIT_VERIFY_RUNNING"));
+    }
+
+    @Test
     @DisplayName("export: CSV döner + dışa aktarma İŞLEMİ AUDIT_EXPORT olarak denetlenir (denetimin denetimi)")
     void export_selfAudited() throws Exception {
         when(auditLogRepo.findAdvanced(any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), any(), any(), any(), any()))

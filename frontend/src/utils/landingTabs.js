@@ -53,13 +53,41 @@ export const LANDING_TAB_ORDER = Object.freeze([
   { id: 'settings', labelKey: 'nav.settings' },
 ])
 
-/** Kullanıcının GERÇEKTEN açabildiği sekmeler (Pano hariç), kenar çubuğu sırasıyla. */
-export function landingTabOptions({ systemRole, globalAdmin, weeklyReportsVisible } = {}) {
+/**
+ * Kullanıcının GERÇEKTEN açabildiği sekmeler (Pano hariç), kenar çubuğu sırasıyla. Kurallar Nav.jsx'in `show`
+ * koşullarıyla BİREBİR (H paketi 2026-11-26): Yönetici Özeti rol ADMIN (kapsamlı yönetici / müdür dahil — takım özeti)
+ * ya da AUDIT; Kanal Teknik Hata Raporları `/api/me/permissions` `scope.channel_reports` false DEĞİLSE (bilinmiyor /
+ * eski sunucu = gösterilir, menüyle aynı). Görünmeyen bir sekme kayıtlı açılış sekmesiyse App Pano'da kalır
+ * (resolveLandingTab), kayıt silinmez.
+ *
+ * @param {{ systemRole?: string, globalAdmin?: boolean, weeklyReportsVisible?: boolean,
+ *           channelReportsVisible?: boolean|null }} [opts]  `channelReportsVisible`: null / verilmedi = bilinmiyor → göster
+ */
+export function landingTabOptions({ systemRole, globalAdmin, weeklyReportsVisible, channelReportsVisible = null } = {}) {
   return LANDING_TAB_ORDER.filter(({ id }) => {
     if (id === 'settings') return systemRole === 'ADMIN'
     if (id === 'sqlplayground') return !!globalAdmin
     if (id === 'weeklyreports') return !!weeklyReportsVisible
-    if (id === 'executive') return !!globalAdmin || systemRole === 'AUDIT'
+    if (id === 'executive') return !!globalAdmin || systemRole === 'ADMIN' || systemRole === 'AUDIT'
+    if (id === 'channelreports') return channelReportsVisible !== false
     return true
   })
+}
+
+/**
+ * Kayıtlı açılış sekmesi Kanal Teknik Hata Raporları iken izin kapsamı için EN ÇOK bu kadar beklenir (inceleme bulgusu 6);
+ * sonra görünürlük hâlâ bilinmiyorsa açılış sekmesi uygulanmaz (Pano'da kalınır) — kullanıcı geç taşınmaz.
+ */
+export const LANDING_SCOPE_WAIT_MS = 5000
+
+/**
+ * Kanal Teknik Hata Raporları menüde görünür mü — ÜÇ durumlu: true / false / null (BİLİNMİYOR). İzin anlık görüntüsü
+ * okunana dek, okuma BAŞARISIZSA da null (H paketi inceleme, 2026-11-26): bilinmeyen ≠ görünür — açılış sekmesi kararı en
+ * çok LANDING_SCOPE_WAIT_MS bekler, sonra Pano'da kalır (izni okunamayan sekmeye taşınmaz); açılış seçenekleri null'ı menü
+ * gibi "göster" sayar (landingTabOptions). Okununca menü kuralı: `scope.channel_reports !== false` (kapsam yok = eski
+ * sunucu → görünür).
+ */
+export function channelReportsVisibility(scope, loaded) {
+  if (!loaded) return null
+  return scope?.channel_reports !== false
 }

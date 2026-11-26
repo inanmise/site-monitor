@@ -30,6 +30,13 @@ export function availableChannels(methods) {
   return out
 }
 
+/** Sunucu hata metni (boş / metin değilse null; Alert sarar, uzunluk 500 karakterle sınırlanır). */
+function serverText(res) {
+  const m = typeof res?.error === 'string' ? res.error : (typeof res?.message === 'string' ? res.message : '')
+  const v = m.trim()
+  return v ? v.slice(0, 500) : null
+}
+
 /** Doğrulama/istek yanıtı → ekranda gösterilecek hata ({kind, attemptsLeft?}); başarı ve 409 burada değil. */
 export function otpErrorOf(res) {
   if (!res || res.networkError) return { kind: 'network' }
@@ -42,6 +49,10 @@ export function otpErrorOf(res) {
   if (code === 'USERNAME_REQUIRED') return { kind: 'usernameRequired' }
   if (code === 'PHONE_REQUIRED') return { kind: 'phoneRequired' }
   if (code === 'EMAIL_REQUIRED') return { kind: 'emailRequired' }
+  // AD hesap durumu (H paketi 2026-11-26): LDAP hesabı AD'de devre dışı / bulunamadı (403) ya da AD'ye ulaşılamadı ve hesap
+  // son 24 saatte doğrulanmamış — kod kullanılamaz, parolayla giriş gerekir. Sunucunun (Msg.t, arayüz dilinde) metni gösterilir.
+  if (code === 'AD_ACCOUNT_DISABLED') return { kind: 'adDisabled', message: serverText(res) }
+  if (code === 'AD_UNVERIFIED') return { kind: 'adUnverified', message: serverText(res) }
   if (isAccountInactivePayload(res)) return { kind: 'inactive' }
   if (isMaintenancePayload(res)) return { kind: 'maintenance' }
   // 2026-10-21: kural açılmadan önce istenmiş gerçek kod doğru girildi ama hesap ön ek kuralına uymuyor (403)
@@ -63,6 +74,8 @@ function errorText(t, err) {
     case 'maintenance': return t('sysmaint.login.error')
     case 'usernamePrefix': return err.prefixes?.length ? t('login.prefixError', err.prefixes.join(', ')) : t('login.prefixErrorGeneric')
     case 'accountLocked': return t('otp.err.accountLocked')
+    case 'adDisabled': return err.message || t('otp.err.adDisabled')
+    case 'adUnverified': return err.message || t('otp.err.adUnverified')
     case 'network': return t('login.serverError')
     default: return t('login.serverError')
   }
@@ -70,6 +83,8 @@ function errorText(t, err) {
 
 /** Kod yeniden istemek gereken hata mı (kod kutusu kapanır, "Yeni kod iste" öne çıkar). */
 const NEEDS_NEW_CODE = new Set(['expired', 'locked'])
+/** AD reddi: yeni kod da işe yaramaz — kod kutusu kapanır, "Şifreyle giriş yap" öne çıkar (yeniden gönder yok). */
+const AD_REJECTED = new Set(['adDisabled', 'adUnverified'])
 
 /** Kanal adı (bilgi metni / başlık) — literal anahtarlar. */
 function channelTitle(t, ch) { return ch === 'email' ? t('otp.title.email') : t('otp.title.push') }
@@ -152,7 +167,8 @@ export default function OtpLoginFlow({ methods, initialUsername = '', initialCha
   const left = challenge ? secondsLeft(challenge.expiresAt, now) : 0
   const expired = !!challenge && left === 0
   const resendLeft = challenge ? secondsLeft(challenge.resendAt, now) : 0
-  const blocked = expired || NEEDS_NEW_CODE.has(error?.kind)
+  const adRejected = AD_REJECTED.has(error?.kind)
+  const blocked = expired || NEEDS_NEW_CODE.has(error?.kind) || adRejected
 
   const sendCode = useCallback(async (e) => {
     e?.preventDefault?.()
@@ -346,7 +362,7 @@ export default function OtpLoginFlow({ methods, initialUsername = '', initialCha
 
           {(error || expired) && (
             <Alert variant="destructive" id={errorId} data-slot="otp-error" data-kind={error?.kind || 'expired'}>
-              {error?.kind === 'inactive' ? <UserX /> : error?.kind === 'maintenance' ? <Wrench /> : <AlertCircle />}
+              {error?.kind === 'inactive' || error?.kind === 'adDisabled' ? <UserX /> : error?.kind === 'maintenance' ? <Wrench /> : <AlertCircle />}
               <AlertDescription>{error ? errorText(t, error) : t('otp.expiredNow')}</AlertDescription>
             </Alert>
           )}
@@ -358,22 +374,31 @@ export default function OtpLoginFlow({ methods, initialUsername = '', initialCha
             </Button>
           )}
 
-          <Button type="button" variant={blocked ? 'default' : 'outline'} size={blocked ? 'lg' : 'default'}
-            className="min-h-10 w-full whitespace-normal" disabled={resendLeft > 0 || sending}
-            onClick={() => sendCode()} data-slot="otp-resend" data-wait={resendLeft || undefined}>
-            {sending ? <Spinner size={16} inline decorative /> : <RotateCw />}
-            {blocked
-              ? (resendLeft > 0 ? t('otp.newCodeIn', resendLeft) : t('otp.newCode'))
-              : (resendLeft > 0 ? t('otp.resendIn', resendLeft) : t('otp.resendNow'))}
-          </Button>
+          {adRejected ? (
+            /* AD reddi (H paketi 2026-11-26): yeni kod da reddedilir — birincil eylem parolayla giriş */
+            <Button type="button" size="lg" className="min-h-10 w-full whitespace-normal" onClick={onCancel} data-slot="otp-back">
+              <ArrowLeft /> {t('otp.backToPassword')}
+            </Button>
+          ) : (
+            <Button type="button" variant={blocked ? 'default' : 'outline'} size={blocked ? 'lg' : 'default'}
+              className="min-h-10 w-full whitespace-normal" disabled={resendLeft > 0 || sending}
+              onClick={() => sendCode()} data-slot="otp-resend" data-wait={resendLeft || undefined}>
+              {sending ? <Spinner size={16} inline decorative /> : <RotateCw />}
+              {blocked
+                ? (resendLeft > 0 ? t('otp.newCodeIn', resendLeft) : t('otp.newCode'))
+                : (resendLeft > 0 ? t('otp.resendIn', resendLeft) : t('otp.resendNow'))}
+            </Button>
+          )}
 
           <div className="flex flex-col gap-1 sm:flex-row sm:justify-between">
             <Button type="button" variant="link" className="min-h-10 px-0" onClick={backToRequest} data-slot="otp-change-user">
               {contactKind ? t('otp.changeDetails') : t('otp.changeUser')}
             </Button>
-            <Button type="button" variant="link" className="min-h-10 px-0" onClick={onCancel} data-slot="otp-back">
-              <ArrowLeft /> {t('otp.backToPassword')}
-            </Button>
+            {!adRejected && (
+              <Button type="button" variant="link" className="min-h-10 px-0" onClick={onCancel} data-slot="otp-back">
+                <ArrowLeft /> {t('otp.backToPassword')}
+              </Button>
+            )}
           </div>
         </form>
       )}

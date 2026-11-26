@@ -12,7 +12,7 @@
  */
 import { addDays, dayDiff, isHoliday, isWeekend, lastBusinessDay } from '../pages/forecastModel.js'
 
-/** Not üst sınırı — sunucudaki kolonla aynı (renewal_planned_note length = 500; sunucu fazlasını keser). */
+/** Not üst sınırı — sunucudaki kolonla aynı (renewal_planned_note length = 500; sunucu fazlasını 400 alan `note` ile reddeder — H paketi 2026-11-26). */
 export const NOTE_MAX = 500
 /** Sayaç bu eşikten sonra uyarı tonuna döner (son 50 karakter). */
 export const NOTE_WARN_AT = NOTE_MAX - 50

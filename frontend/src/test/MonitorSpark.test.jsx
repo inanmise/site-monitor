@@ -147,6 +147,23 @@ describe('MonitorSpark — erişilebilirlik satırı (tek düğme + Popover)', (
     render(<MonitorSpark spark={undefined} sla={{ n: 10, fail: 0, up_pct: null }} slaTarget={99.9} />)
     expect(document.querySelector('[data-slot="monitor-spark"]')).toBeNull()
   })
+
+  it('H paketi 2026-11-26: `slaUnknown` nedeni verilirse ölçülemeyen SLA gri "—" + neden (düğme yok); veri varsa yok sayılır', () => {
+    const { unmount } = render(<MonitorSpark spark={undefined} sla={{ n: 0, fail: 0, up_pct: null }} slaTarget={99.9} slaUnknown="Ölçülemedi — ICMP yok" />)
+    const line = document.querySelector('[data-slot="availability-unknown"]')
+    expect(line).not.toBeNull()
+    expect(line.textContent).toMatch(/—.*Ölçülemedi — ICMP yok/)
+    expect(document.querySelector('[data-slot="availability-trigger"]')).toBeNull()
+    unmount()
+    // SLA satırı henüz gelmediyse (yükleniyor) bilinmiyor da çizilmez
+    const r2 = render(<MonitorSpark spark={undefined} sla={null} slaUnknown="x" />)
+    expect(document.querySelector('[data-slot="monitor-spark"]')).toBeNull()
+    r2.unmount()
+    // Ölçülmüş veri varsa gerçek satır; neden metni görünmez
+    render(<MonitorSpark spark={undefined} sla={{ n: 100, fail: 0, up_pct: 100 }} slaTarget={99.9} slaUnknown="x" />)
+    expect(document.querySelector('[data-slot="availability-unknown"]')).toBeNull()
+    expect(trigger()).toHaveAttribute('data-verdict', 'met')
+  })
 })
 
 describe('MonitorSpark — hedef kararı kesin orandan (2026-11-15, prod kapısı)', () => {

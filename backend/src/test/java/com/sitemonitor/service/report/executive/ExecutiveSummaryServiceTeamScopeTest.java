@@ -177,7 +177,7 @@ class ExecutiveSummaryServiceTeamScopeTest {
         r.setSentAt("2026-10-01T06:00:00");
         when(teamRepo.findByTeamIdOrderByReportYearDescReportMonthDesc(eq(5L), any())).thenReturn(List.of(r));
         List<Map<String, Object>> months = svc(List.of()).months(5L);
-        assertThat(months).hasSize(13);
+        assertThat(months).hasSize(ExecutiveSummaryService.MAX_MONTHS_BACK + 1);
         assertThat(months.get(1)).containsEntry("month", "2026-09").containsEntry("status", "SENT");
         assertThat(months.get(0)).containsEntry("current", true).containsEntry("status", null);
     }

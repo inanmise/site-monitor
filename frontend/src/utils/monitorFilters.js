@@ -67,6 +67,7 @@ export function monitorUrlState({ teamFilter, groupFilter, tagFilter = 'all', pr
     group: groupFilter === 'all' ? null : groupFilter,
     tag: tagFilter === 'all' ? null : tagFilter,   // etiket filtresi (2026-09-18)
     q: search.trim() || null,
+    domain: null,   // eski alarm e-postalarının `domain`'i aramaya alındı (readSearchParam) — adresten silinir (H paketi 2026-11-26)
     stat: statFilter && statFilter !== 'total' ? statFilter : null,
     page: pager.page > 1 ? pager.page : null,
     ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,

@@ -195,7 +195,9 @@ class IdentityMaskGateTest {
             "DeviceHistoryService.java", "tüketicileri AuditController (requireAuditAccess: global admin / AUDIT) ve "
                     + "AuthController (kişinin KENDİ cihazları)",
             "AlarmFeedAdminController.java", "alarm akışı çağrı günlüğü: IP / user-agent kişinin değil DIŞ sistemin (izleme "
-                    + "ekibi sunucusu); uç yalnız global yönetici (requireGlobal) — maskenin koruduğu görüntüleyici yok");
+                    + "ekibi sunucusu); uç yalnız global yönetici (requireGlobal) — maskenin koruduğu görüntüleyici yok",
+            "AuditService.java", "fallbackJson yalnız pod içindeki denetim yedek DOSYASININ satırını yazar (veritabanı yazılamazken; "
+                    + "yeniden oynatılıp audit_log'a girer) — hiçbir API yanıtı değil, maskenin koruduğu görüntüleyici yok");
 
     @Test
     @DisplayName("kaynak kapısı: kimlik izini Map satırına koyan her denetleyici / servis IdentityMask'ten geçer (ya da gerekçeli istisna)")

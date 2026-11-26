@@ -449,7 +449,7 @@ class AdminControllerTest {
     }
 
     @Test
-    @DisplayName("BO9: PUT inventory — UG temizleme (null, tek takıma yakınsama) ve AYNI değer serbest")
+    @DisplayName("BO9 + H paketi B6: PUT inventory — AYNI UG serbest; açık null yalnız SY takımını YÖNETEN için temizler")
     void updateInventory_ugClearOrSame_allowed() throws Exception {
         when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         CertificateInventory existing = inventory("ug.example.com");
@@ -463,10 +463,254 @@ class AdminControllerTest {
                 .andExpect(status().isOk());
         assertThat(existing.getUgTeamId()).isEqualTo(5L);
 
+        // Takım üyesi USER'ın null'ı "değişmedi" (eski form her kayıtta null gönderiyordu — UG sessizce düşüyordu)
         mvc.perform(put("/api/admin/inventory/1").session(userSession())
                         .contentType(MediaType.APPLICATION_JSON).content(String.format(INV_BODY, "null")))
                 .andExpect(status().isOk());
-        assertThat(existing.getUgTeamId()).as("ön uç her düzenlemede null gönderir — temizleme korunur").isNull();
+        assertThat(existing.getUgTeamId()).as("yönetmeyen üyenin null'ı UG'yi düşürmez").isEqualTo(5L);
+
+        // SY takımını yöneten TEAM_ADMIN açık null ile temizler
+        mvc.perform(put("/api/admin/inventory/1").session(teamAdminSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(String.format(INV_BODY, "null")))
+                .andExpect(status().isOk());
+        assertThat(existing.getUgTeamId()).as("yöneten açık null ile temizler").isNull();
+    }
+
+    @Test
+    @DisplayName("H paketi B6: PUT inventory gövdesinde ug_team_id ANAHTARI YOKSA saklanan UG korunur (global admin dahil)")
+    void updateInventory_ugKeyAbsent_keepsStoredUg() throws Exception {
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        String bodyWithoutUg = "{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"ug.example.com\",\"port\":443,"
+                + "\"active\":true,\"team_id\":2}";
+        for (MockHttpSession s : new MockHttpSession[]{userSession(), teamAdminSession(), authSession()}) {
+            CertificateInventory existing = inventory("ug.example.com");
+            existing.setId(1L);
+            existing.setTeamId(2L);
+            existing.setUgTeamId(5L);
+            when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+            mvc.perform(put("/api/admin/inventory/1").session(s)
+                            .contentType(MediaType.APPLICATION_JSON).content(bodyWithoutUg))
+                    .andExpect(status().isOk());
+            assertThat(existing.getUgTeamId()).as((String) s.getAttribute("username")).isEqualTo(5L);
+        }
+        // Global admin açık null ile temizler
+        CertificateInventory existing = inventory("ug.example.com");
+        existing.setId(1L);
+        existing.setTeamId(2L);
+        existing.setUgTeamId(5L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        mvc.perform(put("/api/admin/inventory/1").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(String.format(INV_BODY, "null")))
+                .andExpect(status().isOk());
+        assertThat(existing.getUgTeamId()).isNull();
+    }
+
+    @Test
+    @DisplayName("H paketi B2: expected_fingerprint ANAHTARI YOKSA saklanan korunur; boş / null temizler; yeni değer normalize")
+    void updateInventory_expectedFingerprint_keyAbsentKeeps_nullClears_normalized() throws Exception {
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        String fp = "ab:cd:ef:01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef:01:23:45:67:89";
+        String base = "{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"fp.example.com\",\"port\":443,\"active\":true";
+        CertificateInventory existing = inventory("fp.example.com");
+        existing.setId(1L);
+        existing.setTeamId(2L);
+        existing.setExpectedFingerprint("STORED");
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+
+        mvc.perform(put("/api/admin/inventory/1").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(base + "}"))
+                .andExpect(status().isOk());
+        assertThat(existing.getExpectedFingerprint()).as("anahtar yok → saklanan korunur").isEqualTo("STORED");
+
+        // Saklananla AYNI (eski, geçersiz biçimli) değer yeniden doğrulanmaz
+        mvc.perform(put("/api/admin/inventory/1").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(base + ",\"expected_fingerprint\":\"stored\"}"))
+                .andExpect(status().isOk());
+        assertThat(existing.getExpectedFingerprint()).isEqualTo("STORED");
+
+        mvc.perform(put("/api/admin/inventory/1").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(base + ",\"expected_fingerprint\":\"" + fp + "\"}"))
+                .andExpect(status().isOk());
+        assertThat(existing.getExpectedFingerprint()).as("büyük harf + ayraçsız")
+                .isEqualTo("ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789");
+
+        mvc.perform(put("/api/admin/inventory/1").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(base + ",\"expected_fingerprint\":null}"))
+                .andExpect(status().isOk());
+        assertThat(existing.getExpectedFingerprint()).as("açık null temizler").isNull();
+
+        existing.setExpectedFingerprint("X");
+        mvc.perform(put("/api/admin/inventory/1").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(base + ",\"expected_fingerprint\":\"  \"}"))
+                .andExpect(status().isOk());
+        assertThat(existing.getExpectedFingerprint()).as("boş temizler").isNull();
+    }
+
+    @Test
+    @DisplayName("H paketi B2: geçersiz yeni beklenen parmak izi (SHA-1 / onaltılık değil) → 400 alan expected_fingerprint, yazılmaz")
+    void updateInventory_expectedFingerprint_invalid_400() throws Exception {
+        CertificateInventory existing = inventory("fp.example.com");
+        existing.setId(1L);
+        existing.setTeamId(2L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+        String base = "{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"fp.example.com\",\"port\":443,\"active\":true";
+        for (String bad : new String[]{"AA:BB:CC", "A94A8FE5CCB19BA61C4C0873D391E987982FBBD3",
+                "ZZ" + "0".repeat(62)}) {
+            mvc.perform(put("/api/admin/inventory/1").session(authSession())
+                            .contentType(MediaType.APPLICATION_JSON).content(base + ",\"expected_fingerprint\":\"" + bad + "\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.field").value("expected_fingerprint"));
+        }
+        verify(inventoryRepo, never()).save(any());
+        assertThat(existing.getExpectedFingerprint()).isNull();
+    }
+
+    @Test
+    @DisplayName("Bağımsız inceleme: *_unchanged: true → gelen (eski) değer YOK SAYILIR, şu an saklanan korunur; doğrulama yok")
+    void updateInventory_unchangedFlags_keepStoredValue() throws Exception {
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        String base = "{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"fp.example.com\",\"port\":443,\"active\":true,\"team_id\":2";
+        String staleFp = "AB".repeat(32);
+        CertificateInventory existing = inventory("fp.example.com");
+        existing.setId(1L);
+        existing.setTeamId(2L);
+        existing.setExpectedFingerprint(null);   // kontrol hattı arada temizledi (dağıtım tamamlandı)
+        existing.setUgTeamId(null);               // arada UG kaldırıldı
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+
+        // Form eski kopyayı bayrakla gönderir (kullanıcı alanlara dokunmadı) → saklanan null kalır; UG için 403 de yok
+        for (MockHttpSession s : new MockHttpSession[]{authSession(), userSession()}) {
+            mvc.perform(put("/api/admin/inventory/1").session(s)
+                            .contentType(MediaType.APPLICATION_JSON).content(base
+                                    + ",\"expected_fingerprint\":\"" + staleFp + "\",\"expected_fingerprint_unchanged\":true"
+                                    + ",\"ug_team_id\":9,\"ug_team_id_unchanged\":true}"))
+                    .andExpect(status().isOk());
+            assertThat(existing.getExpectedFingerprint()).as("bayrak: eski kopya geri yazılmaz").isNull();
+            assertThat(existing.getUgTeamId()).as("bayrak: eski UG geri yazılmaz, başka takım 403'ü de yok").isNull();
+        }
+
+        // Bayrak varken GEÇERSİZ değer doğrulanmaz (400 yok), saklanan korunur
+        existing.setExpectedFingerprint("STORED");
+        mvc.perform(put("/api/admin/inventory/1").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(base
+                                + ",\"expected_fingerprint\":\"AA:BB\",\"expected_fingerprint_unchanged\":true}"))
+                .andExpect(status().isOk());
+        assertThat(existing.getExpectedFingerprint()).isEqualTo("STORED");
+
+        // Bayrak + saklananla AYNI değer → geçmiş anlık görüntülerinde fark yok (geçmiş satırı yazılmaz), DOMAIN_EDIT farkında yok
+        existing.setExpectedFingerprint(staleFp);
+        existing.setUgTeamId(5L);
+        org.mockito.Mockito.clearInvocations(monitorHistory, auditService);
+        mvc.perform(put("/api/admin/inventory/1").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(base
+                                + ",\"expected_fingerprint\":\"" + staleFp + "\",\"expected_fingerprint_unchanged\":true"
+                                + ",\"ug_team_id\":5,\"ug_team_id_unchanged\":true}"))
+                .andExpect(status().isOk());
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> hb = (org.mockito.ArgumentCaptor) org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> ha = (org.mockito.ArgumentCaptor) org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(monitorHistory).record(eq(com.sitemonitor.service.MonitorHistoryService.INVENTORY), eq(1L), any(), any(),
+                eq(com.sitemonitor.service.MonitorHistoryService.UPDATE), hb.capture(), ha.capture(), any(), any());
+        assertThat(ha.getValue().get("expectedFingerprint")).isEqualTo(hb.getValue().get("expectedFingerprint"));
+        assertThat(ha.getValue().get("ugTeamId")).isEqualTo(hb.getValue().get("ugTeamId"));
+        org.mockito.ArgumentCaptor<String> diff = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(auditService, org.mockito.Mockito.atMost(1)).recordAction(eq("DOMAIN_EDIT"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), ArgumentMatchers.anyString(), ArgumentMatchers.anyString(),
+                diff.capture());
+        for (String d : diff.getAllValues()) {
+            assertThat(d).doesNotContain("expectedFingerprint").doesNotContain("ugTeamId");
+        }
+        assertThat(existing.getExpectedFingerprint()).isEqualTo(staleFp);
+        assertThat(existing.getUgTeamId()).isEqualTo(5L);
+    }
+
+    @Test
+    @DisplayName("Bağımsız inceleme: bayrak YOK ya da false → bugünkü kurallar (değer yazılır + doğrulanır; başka UG 403)")
+    void updateInventory_unchangedFlagsAbsentOrFalse_todaysRules() throws Exception {
+        when(inventoryRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        String base = "{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"fp.example.com\",\"port\":443,\"active\":true,\"team_id\":2";
+        String fp = "CD".repeat(32);
+        CertificateInventory existing = inventory("fp.example.com");
+        existing.setId(1L);
+        existing.setTeamId(2L);
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(existing));
+
+        mvc.perform(put("/api/admin/inventory/1").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(base
+                                + ",\"expected_fingerprint\":\"" + fp + "\",\"expected_fingerprint_unchanged\":false}"))
+                .andExpect(status().isOk());
+        assertThat(existing.getExpectedFingerprint()).as("false = bayrak yok: değer yazılır").isEqualTo(fp);
+
+        mvc.perform(put("/api/admin/inventory/1").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(base + ",\"expected_fingerprint\":\"AA:BB\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("expected_fingerprint"));
+
+        mvc.perform(put("/api/admin/inventory/1").session(userSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(base + ",\"ug_team_id\":9,\"ug_team_id_unchanged\":false}"))
+                .andExpect(status().isForbidden());
+
+        mvc.perform(put("/api/admin/inventory/1").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(base + ",\"expected_fingerprint\":null}"))
+                .andExpect(status().isOk());
+        assertThat(existing.getExpectedFingerprint()).as("bayraksız açık null temizler").isNull();
+    }
+
+    @Test
+    @DisplayName("Bağımsız inceleme: EKLEMEDE *_unchanged bayrağı yok sayılır — değer normal kuralla doğrulanır / yazılır")
+    void addInventory_unchangedFlagIgnored() throws Exception {
+        String base = "{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"fpflag.example.com\",\"port\":443,\"team_id\":1";
+        mvc.perform(post("/api/admin/inventory").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(base
+                                + ",\"expected_fingerprint\":\"AA:BB\",\"expected_fingerprint_unchanged\":true}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("expected_fingerprint"));
+        verify(inventoryRepo, never()).save(any());
+
+        when(inventoryRepo.save(any())).thenAnswer(a -> { CertificateInventory i = a.getArgument(0); i.setId(8L); return i; });
+        String fp = "EF".repeat(32);
+        mvc.perform(post("/api/admin/inventory").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(base
+                                + ",\"expected_fingerprint\":\"" + fp + "\",\"expected_fingerprint_unchanged\":true}"))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<CertificateInventory> cap = org.mockito.ArgumentCaptor.forClass(CertificateInventory.class);
+        verify(inventoryRepo).save(cap.capture());
+        assertThat(cap.getValue().getExpectedFingerprint()).isEqualTo(fp);
+    }
+
+    @Test
+    @DisplayName("H paketi B2: POST /inventory de beklenen parmak izini doğrular — geçersiz → 400 alan expected_fingerprint (kayıt yok); geçerli normalize edilir; boş → null")
+    void addInventory_expectedFingerprint_validatedAndNormalized() throws Exception {
+        String base = "{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"fpnew.example.com\",\"port\":443,\"team_id\":1";
+        for (String bad : new String[]{"AA:BB:CC", "A94A8FE5CCB19BA61C4C0873D391E987982FBBD3", "ZZ" + "0".repeat(62)}) {
+            mvc.perform(post("/api/admin/inventory").session(authSession())
+                            .contentType(MediaType.APPLICATION_JSON).content(base + ",\"expected_fingerprint\":\"" + bad + "\"}"))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                    .andExpect(jsonPath("$.field").value("expected_fingerprint"));
+        }
+        verify(inventoryRepo, never()).save(any());
+
+        when(inventoryRepo.save(any())).thenAnswer(a -> { CertificateInventory i = a.getArgument(0); i.setId(7L); return i; });
+        String hex = "ab".repeat(32);
+        StringBuilder colons = new StringBuilder();
+        for (int i = 0; i < hex.length(); i += 2) colons.append(i == 0 ? "" : ":").append(hex, i, i + 2);
+        String withColons = colons.toString();   // ab:ab:…:ab (tarayıcıdan kopyalanan biçim)
+        mvc.perform(post("/api/admin/inventory").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(base + ",\"expected_fingerprint\":\" " + withColons + " \"}"))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<CertificateInventory> cap = org.mockito.ArgumentCaptor.forClass(CertificateInventory.class);
+        verify(inventoryRepo).save(cap.capture());
+        assertThat(cap.getValue().getExpectedFingerprint()).isEqualTo(hex.toUpperCase(java.util.Locale.ROOT));
+
+        org.mockito.Mockito.clearInvocations(inventoryRepo);
+        mvc.perform(post("/api/admin/inventory").session(authSession())
+                        .contentType(MediaType.APPLICATION_JSON).content(base.replace("fpnew", "fpblank") + ",\"expected_fingerprint\":\"  \"}"))
+                .andExpect(status().isOk());
+        verify(inventoryRepo).save(cap.capture());
+        assertThat(cap.getValue().getExpectedFingerprint()).isNull();
     }
 
     @Test
@@ -689,14 +933,15 @@ class AdminControllerTest {
                         .session(authSession())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"group_name\":\"Grup A\",\"tags\":\"t1\",\"domain\":\"old.com\",\"port\":443,\"active\":true,"
-                               + "\"expected_fingerprint\":\"AA:BB:CC\","
+                               + "\"expected_fingerprint\":\"" + "AA:".repeat(31) + "AA" + "\","
                                + "\"expected_subject\":\"CN=old.com\"}"))
                 .andExpect(status().isOk());
 
         ArgumentCaptor<CertificateInventory> cap = ArgumentCaptor.forClass(CertificateInventory.class);
         verify(inventoryRepo, atLeastOnce()).save(cap.capture());
         CertificateInventory saved = cap.getAllValues().get(cap.getAllValues().size() - 1);
-        assertThat(saved.getExpectedFingerprint()).isEqualTo("AA:BB:CC");
+        // H paketi B2 (2026-11-26): yeni değer SHA-256 biçiminde doğrulanır ve normalize edilir (büyük harf, ayraçsız)
+        assertThat(saved.getExpectedFingerprint()).isEqualTo("AA".repeat(32));
         assertThat(saved.getExpectedSubject()).isEqualTo("CN=old.com");
     }
 
@@ -4046,6 +4291,66 @@ class AdminControllerTest {
     }
 
     @Test
+    @DisplayName("DELETE /api/admin/users/{id}: silme etkisi (lider / müdür / ast + pasife alınan kişiler) USER_DELETE ayrıntısında; her kişi kendi CONTACT_UPDATE satırını alır (H paketi B1 + B5)")
+    void deleteUser_impactAndContactsAudited() throws Exception {
+        AppUser target = new AppUser();
+        target.setId(20L); target.setUsername("normal"); target.setTeamId(1L);
+        target.setSystemRole("USER"); target.setActive(true);
+        when(userRepo.findById(20L)).thenReturn(Optional.of(target));
+        when(userService.deleteUser(20L)).thenReturn(new UserService.DeleteImpact(1, 2, 3,
+                List.of(new UserService.DeactivatedContact(5L, "Ayşe", 1L, true))));
+
+        mvc.perform(delete("/api/admin/users/20").session(authSession()))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<String> detail = ArgumentCaptor.forClass(String.class);
+        verify(auditService).recordAction(eq("USER_DELETE"), any(jakarta.servlet.http.HttpSession.class),
+                any(jakarta.servlet.http.HttpServletRequest.class), eq("USER"), eq("20"), detail.capture());
+        assertThat(detail.getValue()).contains("\"username\":\"normal\"")
+                .contains("\"leaderOfTeams\":1").contains("\"managerOfTeams\":2").contains("\"subordinates\":3")
+                .contains("\"deactivatedContacts\":1").contains("\"deactivatedContactIds\":[5]");
+        ArgumentCaptor<String> changes = ArgumentCaptor.forClass(String.class);
+        verify(auditService).recordAction(eq("CONTACT_UPDATE"), any(jakarta.servlet.http.HttpSession.class),
+                eq("ESCALATION_CONTACT"), eq("5"), eq("Ayşe"), changes.capture());
+        assertThat(changes.getValue()).contains("\"active\":{\"from\":true,\"to\":false}")
+                .contains("\"deactivatedReason\":{\"from\":null,\"to\":\"USER_DELETED\"}");
+    }
+
+    @Test
+    @DisplayName("PUT /contacts/{id}: 'kullanıcı silindi' nedeni bağ değişmeden korunur; başka kullanıcıya bağlanınca ya da bağ kaldırılınca temizlenir (H paketi B1)")
+    void updateContact_relinkClearsDeletedReason() throws Exception {
+        EscalationContact c = contact("eski@example.com", "PO");
+        c.setId(6L); c.setTeamId(1L); c.setUserId(77L); c.setActive(false);
+        c.setDeactivatedReason(EscalationContact.DEACTIVATED_USER_DELETED);
+        when(contactRepo.findById(6L)).thenReturn(Optional.of(c));
+        when(contactRepo.save(any(EscalationContact.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        // Bağ değişmeden yeniden etkinleştirme → neden kalır (alıcı süzgeci silinmiş kullanıcıya bağlı kişiyi yine düşürür)
+        mvc.perform(put("/api/admin/contacts/6").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"active\":true}"))
+                .andExpect(status().isOk());
+        assertThat(c.getDeactivatedReason()).isEqualTo(EscalationContact.DEACTIVATED_USER_DELETED);
+
+        // Var olan başka kullanıcıya bağlanır → neden temizlenir
+        AppUser u = new AppUser();
+        u.setId(12L); u.setUsername("yeni"); u.setDisplayName("Yeni Kişi"); u.setEmail("yeni@example.com"); u.setTeamId(1L);
+        when(userRepo.findById(12L)).thenReturn(Optional.of(u));
+        mvc.perform(put("/api/admin/contacts/6").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"user_id\":12}"))
+                .andExpect(status().isOk());
+        assertThat(c.getDeactivatedReason()).isNull();
+        assertThat(c.getUserId()).isEqualTo(12L);
+
+        // Bağı kaldırma (elle kişi) da temizler
+        c.setDeactivatedReason(EscalationContact.DEACTIVATED_USER_DELETED);
+        mvc.perform(put("/api/admin/contacts/6").session(authSession()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Elle\",\"email\":\"elle@example.com\"}"))
+                .andExpect(status().isOk());
+        assertThat(c.getUserId()).isNull();
+        assertThat(c.getDeactivatedReason()).isNull();
+    }
+
+    @Test
     @DisplayName("PUT /api/admin/users/{id} as ADMIN can promote target to ADMIN role")
     void updateUser_asAdmin_promotesToAdmin_returns200() throws Exception {
         AppUser target = new AppUser();
@@ -4268,12 +4573,13 @@ class AdminControllerTest {
     }
 
     @Test
-    @DisplayName("GET /contacts/all: bağlı kullanıcının etkinliği satıra user_active olarak yazılır (tek dar sorgu); bağsız / silinmiş → yok (2026-11-13)")
+    @DisplayName("GET /contacts/all: bağlı kullanıcının etkinliği satıra user_active olarak yazılır (tek dar sorgu); silinmiş → false + user_deleted (H paketi B1); bağsız → yok")
     void listContacts_carriesUserActive() throws Exception {
         com.sitemonitor.model.EscalationContact passive = new com.sitemonitor.model.EscalationContact();
         passive.setId(1L); passive.setUserId(9L); passive.setRole("MANAGER"); passive.setTeamId(2L); passive.setActive(true);
         com.sitemonitor.model.EscalationContact gone = new com.sitemonitor.model.EscalationContact();
-        gone.setId(2L); gone.setUserId(77L); gone.setRole("PO"); gone.setTeamId(2L); gone.setActive(true);
+        gone.setId(2L); gone.setUserId(77L); gone.setRole("PO"); gone.setTeamId(2L); gone.setActive(false);
+        gone.setDeactivatedReason(com.sitemonitor.model.EscalationContact.DEACTIVATED_USER_DELETED);
         com.sitemonitor.model.EscalationContact hook = new com.sitemonitor.model.EscalationContact();
         hook.setId(3L); hook.setRole("TECH"); hook.setTeamId(2L); hook.setActive(true); hook.setWebhookUrl("https://x.example/h");
         when(contactRepo.findAll()).thenReturn(List.of(passive, gone, hook));
@@ -4281,8 +4587,25 @@ class AdminControllerTest {
         mvc.perform(get("/api/admin/contacts/all").session(authSession()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].user_active").value(false))
-                .andExpect(jsonPath("$.data[1].user_active").doesNotExist())
-                .andExpect(jsonPath("$.data[2].user_active").doesNotExist());
+                .andExpect(jsonPath("$.data[0].user_deleted").doesNotExist())
+                .andExpect(jsonPath("$.data[1].user_active").value(false))
+                .andExpect(jsonPath("$.data[1].user_deleted").value(true))
+                .andExpect(jsonPath("$.data[1].deactivated_reason").value("USER_DELETED"))
+                .andExpect(jsonPath("$.data[2].user_active").doesNotExist())
+                .andExpect(jsonPath("$.data[2].deactivated_reason").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("GET /contacts/all: kullanıcı etkinliği okunamazsa user_active / user_deleted yazılmaz (silinmiş sanılmaz)")
+    void listContacts_userFlagsUnreadable_noDeletedClaim() throws Exception {
+        com.sitemonitor.model.EscalationContact c = new com.sitemonitor.model.EscalationContact();
+        c.setId(1L); c.setUserId(9L); c.setRole("MANAGER"); c.setTeamId(2L); c.setActive(true);
+        when(contactRepo.findAll()).thenReturn(List.of(c));
+        when(userRepo.findActiveFlagsByIds(any())).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+        mvc.perform(get("/api/admin/contacts/all").session(authSession()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].user_active").doesNotExist())
+                .andExpect(jsonPath("$.data[0].user_deleted").doesNotExist());
     }
 
     // ── İzleme sayfası Alarmlar görünümü (2026-11-19): type-summary + satır izleme referansı ───────────────────

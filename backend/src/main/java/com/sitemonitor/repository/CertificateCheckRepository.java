@@ -109,6 +109,21 @@ public interface CertificateCheckRepository extends JpaRepository<CertificateChe
     // deleteByDomain KALDIRILDI (2026-10-07): kalıcı envanter silmesi kontrol geçmişini PermanentDeletionService'te
     // (tek işlem, JDBC) siler; çöp kutusu purge uçları ve gece otomatik boşaltma yok.
 
+    /**
+     * Bir parmak izinin bu uçta İLK görülmesi: [checkedAt, notAfter] (en çok 1 satır; yoksa boş). Beklenen parmak izinin
+     * "eskimiş" olduğunu kanıtlamak için (H paketi 2026-11-26, sertifika B2) — yalnız sunulan ≠ beklenen iken çağrılır.
+     * {@code domain IN (:d, :d)} + {@code ORDER BY domain, checkedAt}: genel (generic) planda da {@code idx_cc_domain_ts}
+     * sırasını kullanır ve ilk eşleşmede durur (Performance rules); 3 sn sorgu sınırı. {@code from} (bağımsız inceleme): taramanın
+     * alt sınırı — parmak izi hiç görülmemişse tarama alan adının tüm geçmişini değil yalnız bu pencereyi okur (yasal tutmada
+     * saklama süresinin ötesine birikmiş geçmiş dahil).
+     */
+    @org.springframework.data.jpa.repository.QueryHints(
+            @jakarta.persistence.QueryHint(name = "jakarta.persistence.query.timeout", value = "3000"))
+    @Query("SELECT c.checkedAt, c.notAfter FROM CertificateCheck c WHERE c.domain IN (:domain, :domain) "
+         + "AND c.checkedAt >= :from AND c.fingerprint IN :fps ORDER BY c.domain ASC, c.checkedAt ASC LIMIT 1")
+    List<Object[]> firstSightingOf(@Param("domain") String domain, @Param("fps") java.util.Collection<String> fps,
+                                   @Param("from") String from);
+
     /** Saklama seffafligi: bu izlemenin elde TUTULAN en eski ve en yeni kaydi ([min, max]).
      *  Kullanici Kontrol Gecmisi'nde "veri su tarihten itibaren tutuluyor" bilgisini gorur.
      *  Zaman kolonu indexli oldugundan MIN/MAX index-seek'tir (tablo taramasi yok). */

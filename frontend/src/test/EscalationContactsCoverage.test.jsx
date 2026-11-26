@@ -96,4 +96,34 @@ describe('EscalationContacts — kapsam matrisi', () => {
     const row = document.querySelector('[data-slot="contact-user-inactive"]').closest('tr')
     expect(row.textContent).toContain('Kapsam Dışı Pasif')
   })
+
+  it('H paketi 2026-11-26: silinmiş kullanıcıya bağlı kişi — "Kullanıcı silindi" rozeti (Pasif yerine), sarar; kapsamda sayılmaz', async () => {
+    // Takım 6'nın TEK kritik kişisi silinmiş kullanıcıya bağlı — elle yeniden etkinleştirilmiş olsa da (active: true) alarm
+    // almaz: takım 6 boşlukta kalır (sahte yeşil yok)
+    api.admin.getContacts.mockResolvedValue({ success: true, data: [
+      ...CONTACTS,
+      { id: 4, user_id: 55, user_active: false, user_deleted: true, deactivated_reason: 'USER_DELETED',
+        name: 'Silinmiş Kullanıcının Kişisi (Dijital Kanallar / Uzun Unvan)', email: 'eski@x', role: 'MANAGER',
+        min_alert_level: 'CRITICAL', active: true, team_id: 6 },
+    ] })
+    renderEc()
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="contact-user-deleted"]')).toHaveLength(1))
+    const badge = document.querySelector('[data-slot="contact-user-deleted"]')
+    expect(badge.textContent).toMatch(/Kullanıcı silindi|User deleted/)
+    expect(badge.className).toMatch(/whitespace-normal/)
+    expect(badge.className).not.toMatch(/\btruncate\b/)
+    expect(badge.closest('tr').querySelector('[data-slot="contact-user-inactive"]')).toBeNull()
+    await waitFor(() => expect(rows().length).toBe(2))
+    expect([...rows()].find(r => r.getAttribute('data-team') === '6').getAttribute('data-tone')).toBe('gap')
+  })
+
+  it('yalnız deactivated_reason (eski sunucu user_deleted göndermese de) aynı rozeti çizer', async () => {
+    api.admin.getContacts.mockResolvedValue({ success: true, data: [
+      ...CONTACTS,
+      { id: 5, user_id: 56, deactivated_reason: 'USER_DELETED', name: 'Eski Kayıt', email: 'old@x', role: 'PO',
+        min_alert_level: 'WARNING', active: false, team_id: 6 },
+    ] })
+    renderEc()
+    await waitFor(() => expect(document.querySelectorAll('[data-slot="contact-user-deleted"]')).toHaveLength(1))
+  })
 })

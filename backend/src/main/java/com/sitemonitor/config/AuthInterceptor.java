@@ -167,6 +167,16 @@ public class AuthInterceptor implements HandlerInterceptor {
     /** Test kancası. */
     void setNocOperators(com.sitemonitor.service.noc.NocOperatorService s) { this.nocOperators = s; }
 
+    /**
+     * AD hesap durumu (H paketi B4, 2026-11-26) — İSTEĞE BAĞLI (dilim testleri). Yalnız beni-hatırla çereziyle oturum KURULURKEN
+     * sorulur (her istekte değil); yerel hesaplar sorulmaz. Yoksa bugünkü davranış birebir.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.AdAccountStatusService adAccountStatus;
+
+    /** Test kancası. */
+    void setAdAccountStatus(com.sitemonitor.service.AdAccountStatusService s) { this.adAccountStatus = s; }
+
     private void syncNocOperator(HttpSession session) {
         try {
             if (nocOperators != null) nocOperators.sync(session);
@@ -365,8 +375,15 @@ public class AuthInterceptor implements HandlerInterceptor {
             if (userOpt.isPresent()
                     && Boolean.TRUE.equals(userOpt.get().getActive())
                     && !userService.checkLockout(username).isBlocked()) {
-                HttpSession newSession = req.getSession(true);
                 AppUser user = userOpt.get();
+                // AD HESAP DURUMU (H paketi B4, 2026-11-26): AD hesabının çerezi oturum kurmadan önce AD'ye sorulur (≤ 5 sn,
+                // ≤ 5 dk bellek; yerel hesap sorulmaz). Devre dışı / dizinde yok → belirteçler silinir + 401; AD'ye ulaşılamıyor
+                // ve son 24 saatte AD doğrulaması yok → 401 (giriş formu; belirteç kalır, AD dönünce çerez yine çalışır).
+                if (adAccountStatus != null) {
+                    com.sitemonitor.service.AdAccountStatusService.Decision ad = adAccountStatus.checkForLogin(user);
+                    if (ad != null && !ad.allowed()) return refuseRememberMeForAd(user, ad.code(), rememberIp, req, res);
+                }
+                HttpSession newSession = req.getSession(true);
                 authController.populateSession(newSession, user);
                 // Tek aktif oturum: remember-me ile kurulan oturum da kullanıcının "aktif" oturumu olsun.
                 // Bu yol bir GİRİŞTİR: damgası basılır ve — bugüne kadar hiç yazılmayan — denetim
@@ -534,6 +551,28 @@ public class AuthInterceptor implements HandlerInterceptor {
         if (inactiveAuditAtMs.size() > REAUTH_MAP_MAX) inactiveAuditAtMs.clear();
         inactiveAuditAtMs.put(key, now);
         return true;
+    }
+
+    /**
+     * Beni-hatırla çerezi AD hesap durumu yüzünden reddedildi (H paketi B4): {@code AD_ACCOUNT_DISABLED} → kullanıcının tüm
+     * belirteçleri silinir + çerez düşer; {@code AD_UNVERIFIED} (AD'ye ulaşılamadı, son 24 saatte doğrulama yok) → belirteç KALIR
+     * (AD dönünce çerez yine çalışır). İkisinde de oturum kurulmaz, 401 + kararlı kod (istemci giriş formunu açar). Denetim
+     * {@code LOGIN_FAILED} BLOCKED (kilit sayacına girmez), aynı kişi için 30 sn'de bir.
+     */
+    private boolean refuseRememberMeForAd(AppUser u, String code, String ip, HttpServletRequest req,
+                                          HttpServletResponse res) throws Exception {
+        if (com.sitemonitor.service.AdAccountStatusService.CODE_DISABLED.equals(code)) {
+            try { rememberMeService.invalidateAllForUser(u.getUsername()); } catch (Exception ignored) { /* best-effort */ }
+            clearRememberMeCookie(res);
+        }
+        if (shouldAuditInactive("RMAD|" + u.getUsername())) {
+            auditService.recordAdAccountRefused(u.getUsername(), u.getId(), u.getTeamId(), u.getSystemRole(),
+                    ip, req.getHeader("User-Agent"), "REMEMBER_ME", code);
+        }
+        res.setStatus(401);
+        res.setContentType("application/json;charset=UTF-8");
+        mapper.writeValue(res.getWriter(), com.sitemonitor.service.AdAccountStatusService.refusalBody(code));
+        return false;
     }
 
     /** 401 + {@code ACCOUNT_INACTIVE} gövdesi — istemci "Hesabınız pasife alındı" penceresini açar (yönlendirme değil). */

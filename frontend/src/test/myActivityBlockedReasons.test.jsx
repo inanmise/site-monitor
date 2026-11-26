@@ -39,6 +39,9 @@ const TABLE = [
   ['ACCOUNT_LOCKED: hesap kilitli — kimlik doğrulandı, giriş reddedildi (OTP_PUSH)', 'myact.s.refused', 'myact.reason.accountLocked'],
   ['ACCOUNT_INACTIVE: pasif hesap — kimlik doğrulandı, giriş reddedildi (LOCAL)', 'myact.s.refused', 'lastLogin.reasonAccountInactive'],
   ['MAINTENANCE: sistem bakımı — yalnız global yöneticiler giriş yapabilir (LDAP)', 'myact.s.refused', 'lastLogin.reasonMaintenance'],
+  // H paketi (2026-11-26): AD hesap durumu — beni-hatırla / kodla giriş
+  ["AD_ACCOUNT_DISABLED: hesap AD'de devre dışı ya da dizinde yok (REMEMBER_ME)", 'myact.s.refused', 'myact.reason.adDisabled'],
+  ["AD_UNVERIFIED: AD'ye ulaşılamadı, son 24 saatte AD doğrulaması yok (OTP_PUSH)", 'myact.s.refused', 'myact.reason.adUnverified'],
   ['YENI_KOD: gelecekte eklenen bir engel', 'myact.s.refused', null],
 ]
 

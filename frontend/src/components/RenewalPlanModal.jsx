@@ -9,6 +9,7 @@ import AlertBanner from './ui/AlertBanner.jsx'
 import DateTimeField from './ui/DateTimeField.jsx'
 import Field from './ui/Field.jsx'
 import { ProgressBar, Spinner } from './ui/Progress.jsx'
+import { focusFormError, serverFieldErrors } from '../utils/formErrors.js'
 import { dayDiff, isWeekend, lastBusinessDay, todayKey } from '../pages/forecastModel.js'
 import {
   NOTE_MAX, NOTE_WARN_AT, daysTone, formatDay, modKeyLabel, offDaySuggestion, planState, quickPicks,
@@ -45,9 +46,13 @@ import { cn } from '@/lib/utils'
  *   • Tarih/not değiştiyse İptal / Escape / X / örtü "değişiklikler atılsın mı?" sorar (useDialog).
  *   • İstek sürerken tüm düğmeler kapalı, ModalShell `busy` kapatma yollarını kilitler; çift Ctrl+Enter tek istek.
  *   • Açılışta odak tarih seçicide. Telefonda (<640 px) pencere alttan açılan sayfa olur; alt çubuk hep görünür.
- *   • Sunucuda tarih kuralı YOK (yalnız yyyy-MM-dd biçimi; ForecastController / DomainRenewalPlanService) → geç ya da
- *     geçmiş gün ENGELLENMEZ, yalnız uyarılır.
+ *   • Sunucu tarihin GERÇEK bir gün olduğunu ve notun 500 karakteri aşmadığını denetler (400 VALIDATION_FAILED + field
+ *     `date` / `note`, H paketi 2026-11-26) — ileti ALANIN ALTINDA gösterilir, alan odaklanır; alan düzenlenince kalkar.
+ *     Geç ya da geçmiş gün ENGELLENMEZ, yalnız uyarılır.
  */
+
+/** Sunucunun alan hatası verdiği ve pencerede çizilen alanlar. */
+const SERVER_FIELDS = new Set(['date', 'note'])
 
 // Telefonda (<640 px) alttan açılan sayfa: tam genişlik, alta yaslı, üst köşeler yuvarlak — birincil düğme başparmak
 // bölgesinde. ModalShell'e dokunulmadı: sınıflar `className` ile eklenir (cn/twMerge; max-sm: medya kuralı temel
@@ -83,6 +88,12 @@ function setDescribedBy(el, ids) {
   if (ids) el.setAttribute('aria-describedby', ids)
   else el.removeAttribute('aria-describedby')
 }
+/** Tarih tetiğinin geçersizlik işareti (inceleme bulgusu 9) — DateTimeField aria prop'u iletmediği için DOM'da kurulur. */
+function setInvalid(el, on) {
+  if (!el) return
+  if (on) el.setAttribute('aria-invalid', 'true')
+  else el.removeAttribute('aria-invalid')
+}
 
 export default function RenewalPlanModal({ row, onClose, onSaved, onCleared, plan = null, unplan = null, hint = null }) {
   const t = useT(); const toast = useToast(); const { showConfirm } = useDialog()
@@ -103,6 +114,17 @@ export default function RenewalPlanModal({ row, onClose, onSaved, onCleared, pla
   const [date, setDate] = useState(initial.date)
   const [note, setNote] = useState(initial.note)
   const [busy, setBusy] = useState(null)               // null | 'save' | 'clear'
+  // Sunucu alan hataları (H paketi 2026-11-26): { date?, note? } — alanın altında; alan değişince o anahtar silinir
+  const [fieldErr, setFieldErr] = useState({})
+  const bodyRef = useRef(null)
+  const pickDate = useCallback((v) => {
+    setDate(v)
+    setFieldErr((prev) => (prev.date ? { ...prev, date: undefined } : prev))
+  }, [])
+  const changeNote = useCallback((v) => {
+    setNote(v)
+    setFieldErr((prev) => (prev.note ? { ...prev, note: undefined } : prev))
+  }, [])
   const inflight = useRef(false)                       // çift Ctrl+Enter / çift tık → tek istek
   const confirming = useRef(false)                     // "atılsın mı?" penceresi açıkken ikinci kez sorma
 
@@ -147,9 +169,10 @@ export default function RenewalPlanModal({ row, onClose, onSaved, onCleared, pla
   else if (state === 'afterRenewBy') warnings.push({ kind: 'afterRenewBy', text: t('forecast.planAfterRenewByWarn', fmt(renewBy)) })
 
   const relId = `${uid}-rel`
+  const dateErrId = `${uid}-date-err`
   const warnId = (kind) => `${uid}-w-${kind}`
   const describedBy = [
-    relation && relId, ...warnings.map((w) => warnId(w.kind)), off && warnId('offday'),
+    fieldErr.date && dateErrId, relation && relId, ...warnings.map((w) => warnId(w.kind)), off && warnId('offday'),
   ].filter(Boolean).join(' ')
 
   // DateTimeField kimlik/aria prop'u İLETMİYOR (ui/ — bu işin kapsamı dışında); tetik düğmesine açıklama bağı DOM'da
@@ -158,11 +181,13 @@ export default function RenewalPlanModal({ row, onClose, onSaved, onCleared, pla
   // ÖNCE — odak zaten içerideyse FocusScope dokunmaz (autoFocus ile aynı yol).
   const dateWrap = useRef(null)
   const describedByRef = useRef('')
+  const dateInvalidRef = useRef(false)
   const attachDateWrap = useCallback((el) => {
     dateWrap.current = el
     if (!el) return
     const tr = dateTrigger(el)
     setDescribedBy(tr, describedByRef.current)
+    setInvalid(tr, dateInvalidRef.current)
     ;(tr || el.querySelector('button, input'))?.focus({ preventScroll: true })
   }, [])
   // Pencere içeriği portal'la bir SONRAKİ çizimde bağlanır: son değer ref'te tutulur, bağlanınca ref geri çağrısı uygular.
@@ -170,6 +195,11 @@ export default function RenewalPlanModal({ row, onClose, onSaved, onCleared, pla
     describedByRef.current = describedBy
     setDescribedBy(dateTrigger(dateWrap.current), describedBy)
   }, [describedBy])
+  const dateInvalid = !!fieldErr.date
+  useLayoutEffect(() => {
+    dateInvalidRef.current = dateInvalid
+    setInvalid(dateTrigger(dateWrap.current), dateInvalid)
+  }, [dateInvalid])
 
   async function save() {
     if (!canSave || inflight.current) return
@@ -177,7 +207,20 @@ export default function RenewalPlanModal({ row, onClose, onSaved, onCleared, pla
     try {
       const r = plan ? await plan(date, note) : await api.forecastPlan(row.domain, date, note)
       if (r?.success) { toast.success(t('forecast.planSaved', row.domain)); onSaved(r.data) }
-      else toast.error(r?.error || t('forecast.planError'))
+      else {
+        // Alan hatası (gerçek olmayan gün, 500'ü aşan not) ALANIN ALTINDA + odak; başka hata tost
+        const fe = serverFieldErrors(r, (name) => (SERVER_FIELDS.has(name) ? name : null))
+        if (fe) {
+          setFieldErr(fe)
+          // Odak, ileti çizildikten sonra (bir sonraki kare) — alan YALNIZ pencerenin kendi gövdesinde aranır: pencere
+          // bu arada kapandıysa (gövde yok / bağlı değil) hiç odaklanılmaz, belgenin geri kalanına düşülmez (bulgu 9)
+          requestAnimationFrame(() => {
+            const root = bodyRef.current
+            if (!root || !root.isConnected) return
+            focusFormError(fe, root)
+          })
+        } else toast.error(r?.error || t('forecast.planError'))
+      }
     } catch (e) { toast.error(e?.message || t('forecast.planError')) }
     finally { inflight.current = false; setBusy(null) }
   }
@@ -195,7 +238,13 @@ export default function RenewalPlanModal({ row, onClose, onSaved, onCleared, pla
     inflight.current = true; setBusy('clear')
     try {
       const r = unplan ? await unplan() : await api.forecastUnplan(row.domain)
-      if (r?.success) { toast.success(t('forecast.planCleared', row.domain)); onCleared(r.data) }
+      if (r?.success) {
+        // H paketi (2026-11-26): `changed: false` = plan arada değişmiş / zaten yok — sunucu hiçbir şey yazmadı; "kaldırıldı"
+        // denmez, güncel durum (data) çağırana verilir, çağıran listeyi yeniden okur. Alan yoksa (eski sunucu) bugünkü gibi.
+        if (r.data?.changed === false) toast.info(t('forecast.planClearChanged', row.domain))
+        else toast.success(t('forecast.planCleared', row.domain))
+        onCleared(r.data)
+      }
       else toast.error(r?.error || t('forecast.planError'))
     } catch (e) { toast.error(e?.message || t('forecast.planError')) }
     finally { inflight.current = false; setBusy(null) }
@@ -272,7 +321,7 @@ export default function RenewalPlanModal({ row, onClose, onSaved, onCleared, pla
           </div>
         </div>
       )}>
-      <div data-slot="renewal-plan" className="flex flex-col gap-5 pb-1" onKeyDown={onKeyDown}>
+      <div ref={bodyRef} data-slot="renewal-plan" className="flex flex-col gap-5 pb-1" onKeyDown={onKeyDown}>
         {(dateRows.length > 0 || timeline) && (
           <section data-slot="plan-summary" className="rounded-lg border bg-muted/40 p-3 sm:p-4">
             {dateRows.length > 0 && (
@@ -302,10 +351,14 @@ export default function RenewalPlanModal({ row, onClose, onSaved, onCleared, pla
         <div className="flex flex-col gap-2">
           {/* Tarih: proje geneli ui/DateTimeField (gün kipi, yyyy-MM-dd). Kimlik prop'u almadığı için etiket seçiciyi
               SARAR (etiket ↔ tetik bağı). Takvim body'ye portal'lanır (ModalShell modal değil → tıklanabilir). */}
-          <label ref={attachDateWrap} className="flex flex-col gap-1.5 text-sm font-semibold">
+          <label ref={attachDateWrap} data-field="date" data-invalid={fieldErr.date ? true : undefined}
+            className="flex flex-col gap-1.5 text-sm font-semibold">
             <span>{t('forecast.planDate')}</span>
-            <DateTimeField dateOnly value={date} onChange={setDate} />
+            <DateTimeField dateOnly value={date} onChange={pickDate} />
           </label>
+          {fieldErr.date && (
+            <p id={dateErrId} data-slot="plan-date-error" className="text-xs text-destructive [overflow-wrap:anywhere]">{fieldErr.date}</p>
+          )}
           {relation && <p id={relId} data-slot="plan-relation" className="text-xs text-muted-foreground">{relation}</p>}
 
           {picks.length > 0 && (
@@ -313,7 +366,7 @@ export default function RenewalPlanModal({ row, onClose, onSaved, onCleared, pla
               <span id={`${uid}-quick`} className="text-xs font-medium text-muted-foreground">{t('forecast.planQuick')}</span>
               <ToggleGroup type="single" variant="outline" spacing={2} value={activePick} aria-labelledby={`${uid}-quick`}
                 data-slot="plan-quick" disabled={!!busy}
-                onValueChange={(v) => { const p = picks.find((x) => x.key === v); if (p) setDate(p.date) }}
+                onValueChange={(v) => { const p = picks.find((x) => x.key === v); if (p) pickDate(p.date) }}
                 className="grid w-full grid-cols-[repeat(auto-fit,minmax(6.5rem,1fr))]">
                 {picks.map((p) => (
                   <ToggleGroupItem key={p.key} value={p.key} data-pick={p.key}
@@ -341,7 +394,7 @@ export default function RenewalPlanModal({ row, onClose, onSaved, onCleared, pla
                     {' '}
                     {off.direction === 'before' ? t('forecast.planOffDayBefore', fmt(off.date)) : t('forecast.planOffDayAfter', fmt(off.date))}
                   </p>
-                  <Button type="button" variant="outline" size="sm" disabled={!!busy} onClick={() => setDate(off.date)}
+                  <Button type="button" variant="outline" size="sm" disabled={!!busy} onClick={() => pickDate(off.date)}
                     className="mt-1 min-h-10 sm:pointer-fine:min-h-8">
                     {t('forecast.planMoveTo', fmt(off.date, { year: false }))}
                   </Button>
@@ -351,7 +404,7 @@ export default function RenewalPlanModal({ row, onClose, onSaved, onCleared, pla
           )}
         </div>
 
-        <Field label={t('forecast.planNote')} className="mb-0"
+        <Field label={t('forecast.planNote')} className="mb-0" name="note" error={fieldErr.note}
           hint={(
             <span className="flex items-baseline justify-between gap-3">
               <span>{t('forecast.planNoteOptional')}</span>
@@ -363,7 +416,8 @@ export default function RenewalPlanModal({ row, onClose, onSaved, onCleared, pla
           )}>
           {({ id, describedBy: noteDescribedBy }) => (
             <Textarea id={id} rows={3} maxLength={NOTE_MAX} value={note} disabled={!!busy} aria-describedby={noteDescribedBy}
-              onChange={(e) => setNote(e.target.value)} placeholder={t('forecast.planNotePh')} className="min-h-20" />
+              aria-invalid={fieldErr.note ? true : undefined}
+              onChange={(e) => changeNote(e.target.value)} placeholder={t('forecast.planNotePh')} className="min-h-20" />
           )}
         </Field>
 

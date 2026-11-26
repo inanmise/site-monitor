@@ -23,7 +23,7 @@ import { useUrlQuerySync, readUrlParam, PAGE_STATE_PARAMS, PAGE_STATE_PREFIXES }
 import { useUserPrefsController, UserPrefsContext } from './hooks/useUserPrefs.js'   // kişisel tercihler (2026-10-02, öneri 23)
 import { resolveLandingTab } from './hooks/userPrefsModel.js'
 import { useThemePrefSync } from './hooks/useThemePrefSync.js'   // tema seçimi sunucudan (2026-10-05)
-import { landingTabOptions } from './utils/landingTabs.js'
+import { LANDING_SCOPE_WAIT_MS, landingTabOptions } from './utils/landingTabs.js'
 import { installLeaveBeacon } from './utils/tabPresence.js'
 import { APPLY_VIEW_EVENT, applyTabView } from './utils/navigate.js'
 import DashboardFilters from './components/dashboard/DashboardFilters.jsx'   // Genel Bakış kart araç çubuğu (2026-09-28)
@@ -95,6 +95,7 @@ import StatusBlock from './components/ui/StatusBlock.jsx'
 import CollapsibleSection from './components/ui/CollapsibleSection.jsx'
 import PageHeader from './components/ui/PageHeader.jsx'
 import { AlarmsPermissionProbe, MonitorPageBody, MonitorViewSwitch, useMonitorAlarmsView } from './components/monitoring/alarms/MonitorAlarms.jsx'
+import ChannelReportsScopeProbe from './components/ChannelReportsScopeProbe.jsx'
 import { isTvModeActive, onTvModeChange } from './utils/tvMode.js'
 import { TAB_META } from './components/palette/paletteModel.js'   // sekme başlığı ikonu = kenar çubuğundaki ikon
 // Markalı 404 + sayfa meta'sı (2026-10-08): sekme anahtarları tek kaynakta; bilinmeyen/kapalı sekmede panel
@@ -164,6 +165,7 @@ import RecentChangesLine from './components/RecentChangesLine.jsx'
 import HelpDrawer from './components/HelpDrawer.jsx'
 import { TourProvider } from './components/tour/TourProvider.jsx'
 import OnboardingChecklist from './components/tour/OnboardingChecklist.jsx'
+import { scrollPageTopForTab } from './utils/tabScroll.js'
 import TourPageChip from './components/tour/TourPageChip.jsx'
 import { readMirror, writeMirror, mergeState } from './components/tour/tourEngine.js'
 import { Button } from '@/components/shadcn/button'
@@ -513,6 +515,9 @@ export default function App() {
       return
     }
     if (id !== tab) {
+      // Kullanıcı kendisi başka sekmeye geçti: bekleyen açılış sekmesi kararı artık uygulanmaz (inceleme bulgusu 6 — Pano'ya
+      // geri dönse de geç bir karar onu taşımasın)
+      landingRef.current.done = true
       try {
         const url = new URL(window.location.href)
         url.searchParams.set('tab', id)
@@ -526,9 +531,14 @@ export default function App() {
         if (extraParams) {
           for (const [k, v] of Object.entries(extraParams)) if (v != null && v !== '') url.searchParams.set(k, String(v))
         }
+        // Eski sekmenin `#çapa`sı (ör. Yönetici özeti içindekiler `#ex-sec-…`) yeni sekmeye TAŞINMAZ (H paketi inceleme
+        // bulgusu 2): taşınınca sonraki her sekme değişiminde "çapa var" sanılıp başa dönülmüyordu.
+        url.hash = ''
         const qs = url.searchParams.toString()
-        window.history.pushState({ tab: id }, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
+        window.history.pushState({ tab: id }, '', url.pathname + (qs ? `?${qs}` : ''))
       } catch { /* history yoksay */ }
+      // Gerçek sekme değişimi → sayfa başa (H paketi 2026-11-26); hedefin mount odağı / kaydırması sonra koşar ve kazanır
+      scrollPageTopForTab()
     }
     setTab(id)
   }
@@ -545,6 +555,10 @@ export default function App() {
   // pasifler oraya KARIŞMAZ; ayrı okunur (loadData içinde, aynı dalgada) ve yalnız Pano kart listesine katılır. Silinen
   // pasif kart da "yakın zamanda silindi" işaretiyle ANINDA düşer (2026-10-09; eskiden sonraki yüklemeye kadar kalıyordu).
   const [pausedCerts, setPausedRaw] = useState([])
+  // Pasif liste YERLEŞTİ Mİ (inceleme bulgusu 8): 'pending' | 'ok' | 'failed'. Başlangıç listesinin "kart" maddesi
+  // "sertifika yok" kararını ancak aktif VE pasif liste okununca verir — yalnız pasif kartı olan takımda madde gizlenmez.
+  // Bir kez okunduktan sonraki tazeleme hatası bilineni silmez (kartlar gibi).
+  const [pausedState, setPausedState] = useState('pending')
   const setPausedCerts = useCallback((data) => setPausedRaw((prev) => replaceEqualDeep(prev, filterDeleted('cert', data || [], (c) => c.domain))), [])
   useEffect(() => { setPausedRaw((list) => filterDeleted('cert', list, (c) => c.domain)) }, [deletedMarks])
   const [stats, setStats] = useState(null)
@@ -755,6 +769,10 @@ export default function App() {
         const nextTab = p.get('tab')
         // Geri ile tanınmayan bir ?tab= adresine dönülürse yine panel (2026-10-08); ?tab= yoksa Pano
         const target = nextTab ? (VALID_TABS.has(nextTab) ? nextTab : NOT_FOUND_TAB) : 'dashboard'
+        // Geri / İleri'de başa KAYDIRILMAZ (H paketi inceleme bulgusu 3): tarayıcı o kaydın konumunu kendisi geri yükler;
+        // burada scrollTo onunla yarışıyordu. Başa dönme yalnız gerçek sekme değişiminde (handleTabChange).
+        // Kullanıcı gezindi: bekleyen açılış sekmesi kararı uygulanmaz (inceleme bulgusu 6)
+        if (target !== tabRef.current) landingRef.current.done = true
         setTab(target)
         const d = p.get('domain')
         if (d && target === 'dashboard') setSearch(d)   // başka sekmenin `domain`'i Pano aramasına sızmaz (Ek 3/4)
@@ -833,12 +851,38 @@ export default function App() {
   // Açılış sekmesi (öneri 23): YALNIZ adreste derin bağlantı yokken, tercihler yüklendikten sonra, girişte bir kez ve
   // kullanıcı bu arada başka sekmeye geçmediyse. Değer görünür sekmeler listesine karşı doğrulanır (bilinmeyen/yasak →
   // Pano). Saklanan değer yoksa davranış bugünküyle aynıdır. Geçmişe kayıt eklenmez (Geri seçilmemiş Pano'ya dönmesin).
+  // Kanal Teknik Hata Raporları görünürlüğü (H paketi 2026-11-26): menüyle aynı kural, sağlayıcının altındaki
+  // ChannelReportsScopeProbe'dan (true / false / null = okunmadı ya da okunamadı). Kayıtlı açılış sekmesi bu sekmeyse karar izin
+  // okunana dek en çok 5 sn BEKLER; görünmüyorsa ya da 5 sn'de okunamadıysa Pano'da kalınır. Kullanıcı bu arada kendisi
+  // başka sekmeye geçtiyse (handleTabChange / Geri) karar hiç uygulanmaz.
+  const [chReportsVisible, setChReportsVisible] = useState(null)
   const landingIds = useMemo(
-    () => landingTabOptions({ systemRole, globalAdmin, weeklyReportsVisible }).map((o) => o.id).filter((id) => VALID_TABS.has(id)),
-    [systemRole, globalAdmin, weeklyReportsVisible])
+    () => landingTabOptions({ systemRole, globalAdmin, weeklyReportsVisible, channelReportsVisible: chReportsVisible })
+      .map((o) => o.id).filter((id) => VALID_TABS.has(id)),
+    [systemRole, globalAdmin, weeklyReportsVisible, chReportsVisible])
+  // Bekleme SINIRLI (inceleme bulgusu 6): izin anlık görüntüsü asılı kalırsa (istek ≤ 90 sn) karar o kadar bekleyip
+  // kullanıcıyı geç taşıyordu. En çok LANDING_SCOPE_WAIT_MS (5 sn) beklenir; sonra görünürlük BİLİNMİYORSA açılış sekmesi
+  // uygulanmaz, Pano'da kalınır. Zamanlayıcı aynı oturumun (landingRef nesnesi) kaydına yazar — yeni giriş yeni nesne açar.
+  const [landingWaitTick, setLandingWaitTick] = useState(0)
+  useEffect(() => {
+    const L = landingRef.current
+    if (!user || !prefsCtl.ready || L.done || L.waitOver) return
+    if (prefsCtl.landingTab !== 'channelreports' || chReportsVisible != null) return
+    const id = setTimeout(() => {
+      if (landingRef.current !== L) return
+      L.waitOver = true
+      setLandingWaitTick((n) => n + 1)
+    }, LANDING_SCOPE_WAIT_MS)
+    return () => clearTimeout(id)
+  }, [user, prefsCtl.ready, prefsCtl.landingTab, chReportsVisible])
   useEffect(() => {
     const L = landingRef.current
     if (!user || !prefsCtl.ready || L.done) return
+    if (prefsCtl.landingTab === 'channelreports' && chReportsVisible == null) {
+      if (!L.waitOver) return   // izin kapsamı okunana dek bekle (≤ 5 sn)
+      L.done = true             // okunamadı: bilinmiyor → açılış sekmesi uygulanmaz, Pano'da kalınır
+      return
+    }
     L.done = true
     if (!L.eligible || tabRef.current !== 'dashboard' || !landingEligibleFromUrl()) return
     const target = resolveLandingTab(prefsCtl.landingTab, landingIds)
@@ -851,7 +895,7 @@ export default function App() {
       window.history.replaceState({ tab: target }, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
     } catch { /* history yoksay */ }
     setTab(target)
-  }, [user, prefsCtl.ready, prefsCtl.landingTab, landingIds])
+  }, [user, prefsCtl.ready, prefsCtl.landingTab, landingIds, chReportsVisible, landingWaitTick])
 
   useEffect(() => {
     if (!user) return
@@ -963,7 +1007,8 @@ export default function App() {
     silent:   { fetch: () => api.getSilentAlertDomains(), apply: (r) => setSilentAlertDomains((prev) => keepSameSet(prev, new Set(r.data))) },
     paused:   {
       fetch: () => (typeof api.getPausedCertificates === 'function' ? api.getPausedCertificates() : null),
-      ok: (r) => r?.success && Array.isArray(r.data), apply: (r) => setPausedCerts(r.data), after: 'certs',
+      ok: (r) => r?.success && Array.isArray(r.data), apply: (r) => { setPausedCerts(r.data); setPausedState('ok') }, after: 'certs',
+      fail: () => setPausedState((s) => (s === 'ok' ? s : 'failed')),
     },
     mailFail: { fetch: () => api.getMailFailureDomains(), apply: (r) => setMailFailureDomains((prev) => keepSameSet(prev, new Set(r.data ?? []))) },
     extras:   { fetch: () => api.getCardExtras(), apply: (r) => setCardExtras((prev) => replaceEqualDeep(prev, r.data || {})) },
@@ -1320,12 +1365,14 @@ export default function App() {
     checkCancelRef.current = true
     checkRunSeqRef.current += 1
     setRefreshing(false); setCheckingDomain(null)
-    setCerts([]); setPausedCerts([]); setStats(null); setTeamStats(null); setTeamStatsStatus('loading'); setCardExtras({})
+    setCerts([]); setPausedCerts([]); setPausedState('pending'); setStats(null); setTeamStats(null); setTeamStatsStatus('loading'); setCardExtras({})
     setSilentAlertDomains(new Set()); setMailFailureDomains(new Set()); setWeakAlgStats(null)
     setNetworkStatus(null); setLastUpdate(null); setCertsFailed(false)
     setModalCert(null); setInvForm(null); setSharedCert(null); setPlanRow(null); setCaModal(false); setCheckRun(null)
     setSearch(''); setSortOrder('default'); setStatusFilter('all'); setExpiryFilter('all'); setTeamFilter('all')
     setGroupFilter('all'); setTagFilter('all'); setStatsFilter(null); setPlatformFilter([]); setActivityFilter('all')
+    // Önceki kullanıcının Kanal raporları görünürlüğü sonraki girişin açılış kararına taşınmasın (H paketi 2026-11-26)
+    setChReportsVisible(null)
   }
 
   /**
@@ -2120,6 +2167,7 @@ export default function App() {
   return (
     <PermissionsProvider user={user}>
       <AlarmsPermissionProbe onChange={setDashAlarmsPerm} />
+      <ChannelReportsScopeProbe onChange={setChReportsVisible} />
     <UserDirectoryProvider>
     <TeamDirectoryProvider>
     <TourProvider ctx={tourCtx} tourState={tourState} onPersist={persistTour}>
@@ -2260,8 +2308,12 @@ export default function App() {
             {tab === 'dashboard' && !dashAlarms.active && (
               <div className="tab-content active">
                 {/* "Sizin için — bugün" paneli artık yukarıda, İstatistikler'in altında (stats-section içinde). */}
-                {/* Başlangıç listesi (ürün turu, 2026-09-13): yeni kullanıcıya ilk adımlar; biter ya da kapatılırsa kaybolur */}
-                <OnboardingChecklist />
+                {/* Başlangıç listesi (ürün turu, 2026-09-13): yeni kullanıcıya ilk adımlar; biter ya da kapatılırsa kaybolur.
+                    H paketi (2026-11-26): yapamayacağı madde gösterilmez — rapor modülü kapalıysa "report", sertifikası
+                    olmadığı KESİNSE "card" — aktif VE pasif liste okunduktan sonra (biri yüklenmeden / okunamadıysa
+                    bilinmiyor → gösterilir; yalnız pasif kartı olan takımda da gösterilir — inceleme bulgusu 8). */}
+                <OnboardingChecklist weeklyReportsVisible={weeklyReportsVisible}
+                  hasCertificates={dashAll.length > 0 ? true : (lastUpdate != null && !certsFailed && pausedState === 'ok' ? false : null)} />
                 {/* Kart listesinin araç çubuğu (2026-09-28 yeniden tasarım): başlık + sonuç sayısı + SSL Checker, kart görünümü
                     (ortak ui/CardDensityToggle — kapı cardDensityStandard App.jsx'i okur), arama, süzgeç hapları (telefonda
                     "Süzgeçler (N)" alt Sheet'i), etkin süzgeç çipleri. Durum ve anlam BURADA kalır (boru hattı, URL q/platform,
@@ -2447,7 +2499,7 @@ export default function App() {
                     return res
                   }}
                   // Açılış sekmesi (öneri 23): yalnız açabildiği sekmeler (Pano varsayılan seçenek, listede yok)
-                  landingOptions={landingTabOptions({ systemRole, globalAdmin, weeklyReportsVisible }).filter((o) => VALID_TABS.has(o.id))} />
+                  landingOptions={landingTabOptions({ systemRole, globalAdmin, weeklyReportsVisible, channelReportsVisible: chReportsVisible }).filter((o) => VALID_TABS.has(o.id))} />
               </div>
             )}
 

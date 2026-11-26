@@ -75,6 +75,18 @@ public class InactiveRecipientGuard {
         this.userRepo = userRepo;
     }
 
+    /**
+     * Silinmiş kullanıcıya bağlı kişiler (2026-11-26, H paketi B1): {@code user_id}'si dolu ama kullanıcı satırı olmayan
+     * kişi de pasif kullanıcı gibi düşer (eski veri — silme kararından önce silinmiş kullanıcıya bağlı kalmış, hâlâ etkin
+     * kişiler). Yoksa (el yapımı test) bu katman yok = bugünkü davranış.
+     */
+    private volatile com.sitemonitor.repository.EscalationContactRepository contactRepo;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setContactRepo(com.sitemonitor.repository.EscalationContactRepository repo) {
+        this.contactRepo = repo;
+    }
+
     /** Önbelleği düşürür — sonraki çağrı DB'den tazeler (aktiflik değişti); öteki pod'lar veri yoluyla (MP-30). */
     public void evict() {
         evictLocal();
@@ -130,6 +142,17 @@ public class InactiveRecipientGuard {
                     if (r[0] instanceof Number n) ids.add(n.longValue());
                     String e = norm(r[1] == null ? null : r[1].toString());
                     if (e != null) emails.add(e);
+                }
+            }
+            // Silinmiş kullanıcıya bağlı kişiler (H paketi B1): kendi try'ında — bu okuma düşerse pasif kullanıcı listesi
+            // yine uygulanır (silme yolu kişiyi zaten pasife aldığı için bu katman yalnız eski veriye karşı yedektir).
+            com.sitemonitor.repository.EscalationContactRepository cr = contactRepo;
+            if (cr != null) {
+                try {
+                    List<Long> dangling = cr.findDanglingUserIds();
+                    if (dangling != null) for (Long d : dangling) if (d != null) ids.add(d);
+                } catch (Exception e) {
+                    log.debug("Silinmiş kullanıcıya bağlı kişiler okunamadı: {}", e.toString());
                 }
             }
             if (!emails.isEmpty()) {

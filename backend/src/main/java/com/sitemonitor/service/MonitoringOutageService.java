@@ -2652,7 +2652,8 @@ public class MonitoringOutageService implements EvalStateSource {
             ConfirmState progressed = inFlight.computeIfPresent(key, (k, s) -> new ConfirmState(s.alertType(), s.domain(),
                     s.detail(), n, s.totalAttempts(), s.startedAt(), System.currentTimeMillis() + effDelayMs(item)));
             if (progressed != null) noteChainProgress(key, chainId, progressed, attempts);   // 3-1 ikili yazım
-            Map<String, Object> r = item.recheck().get();
+            // H paketi (2026-11-26, rapor B2): yeniden kontrolün yazdığı geçmiş satırı recheck = TRUE taşır (erişilebilirliğe girmez)
+            Map<String, Object> r = CheckRunContext.asRecheck(item.recheck());
             if (!chainCurrent(key, chainId, epoch)) {   // yeniden kontrol saniyeler sürdü; o arada liderlik değişti
                 log.debug("Teyit zinciri liderlik değişiminde düştü ({}. deneme sonrası): {}", n, key);
                 return;
@@ -2765,7 +2766,7 @@ public class MonitoringOutageService implements EvalStateSource {
             boolean allUp = true;
             boolean skipped = false;
             for (SweepItem it : items) {
-                Map<String, Object> r = it.recheck().get();
+                Map<String, Object> r = CheckRunContext.asRecheck(it.recheck());   // H paketi: recheck = TRUE (rapor B2)
                 if (!"up".equals(r.get("status"))) {
                     allUp = false;
                     skipped = "skipped".equals(r.get("status"));

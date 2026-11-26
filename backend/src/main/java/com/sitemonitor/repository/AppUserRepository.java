@@ -472,4 +472,37 @@ public interface AppUserRepository extends JpaRepository<AppUser, Long> {
                                 @Param("neverOnly") boolean neverOnly,
                                 @Param("nowIso") String nowIso,
                                 Pageable pageable);
+
+    // ── H paketi (2026-11-26) ───────────────────────────────────────────────────────────────
+
+    /**
+     * AKTİF GLOBAL yönetici sayısı (B8): rol ADMIN ve AD kaynaklı DEĞİL — {@code UserService.computeViewTeamIds} AD
+     * ADMIN'i (müdür) kapsamlı yapar ({@code viewTeamIds} dolu), yerel / bootstrap ADMIN'i global. Yönetim paneli "tek /
+     * hiç yönetici" uyarısı bunu sayar.
+     */
+    @Query("SELECT COUNT(u) FROM AppUser u WHERE u.active = true AND u.systemRole = 'ADMIN' "
+        + "AND (u.authSource IS NULL OR UPPER(u.authSource) <> 'LDAP')")
+    long countActiveGlobalAdmins();
+
+    /**
+     * Yer tutucu parolalı önyükleme yöneticisine "parolayı değiştir" zorunluluğu (B3) — hedefli + koşullu: yalnız
+     * {@code must_change_password} yazılır ve parola özeti okunan değerle AYNIYSA (bu arada parola değiştirildiyse 0 satır).
+     * Zaten zorunluysa da 0 satır (denetim satırı yalnız gerçekten yazan çağrıda).
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE AppUser u SET u.mustChangePassword = true WHERE u.id = :id AND u.passwordHash = :hash "
+        + "AND (u.mustChangePassword IS NULL OR u.mustChangePassword = false)")
+    int requirePasswordChangeIfHashUnchanged(@Param("id") Long id, @Param("hash") String hash);
+
+    /**
+     * Son başarılı AD doğrulaması (B4): parola bind'ı ya da beni-hatırla / kodla girişteki AD hesap durumu sorgusu
+     * "etkin" dediğinde. Hedefli NATIVE yazım — kolon varlıkta salt okunur ({@code insertable/updatable = false}), tüm-varlık
+     * kaydı (LDAP provizyonu) onu ezmez. Yalnız daha yeni damga yazılır (eşzamanlı iki doğrulama geri almaz).
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @Modifying
+    @Query(value = "UPDATE app_users SET ad_verified_at = :at WHERE id = :id AND (ad_verified_at IS NULL OR ad_verified_at < :at)",
+           nativeQuery = true)
+    int markAdVerified(@Param("id") Long id, @Param("at") String at);
 }

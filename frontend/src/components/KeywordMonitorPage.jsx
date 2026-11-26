@@ -20,7 +20,7 @@ import TagInput from './ui/TagInput.jsx'
 import { Trash2, Target, FlaskConical, Check, AlertTriangle, LayoutDashboard, CheckCircle2, TriangleAlert, ServerCrash, Siren, BellDot, ChevronDown, ShieldCheck, Inbox, Copy, Stethoscope, FileSearch } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
-import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
+import { useUrlQuerySync, readUrlParam, readUrlInt, readSearchParam } from '../hooks/useUrlQuerySync.js'
 import { useTeamOptions } from '../hooks/useTeamOptions.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import BaselineControl from './baseline/BaselineControl.jsx'   // dinamik taban çizgisi (2026-11-12)
@@ -286,7 +286,7 @@ export default function KeywordMonitorPage({ systemRole, teamId, teamName, myTea
     const runId = readUrlInt('kdx', null), monitorId = readUrlInt('monitor', null)
     return runId && monitorId ? { monitorId, runId, initialRunId: runId } : null
   })
-  const [search, setSearch] = useState(() => readUrlParam('q', ''))
+  const [search, setSearch] = useState(readSearchParam)   // q, yoksa eski e-postaların domain'i (H paketi 2026-11-26)
   const [teamFilter, setTeamFilter] = useState(() => readUrlParam('team', 'all'))
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
   const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)

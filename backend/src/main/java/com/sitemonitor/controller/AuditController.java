@@ -160,7 +160,22 @@ public class AuditController {
     public ResponseEntity<Map<String, Object>> integrity(HttpSession session) {
         requireAuditAccess(session);
         permissionService.require(session, "audit_log.read", "view");
+        // Aynı pod'da başka doğrulama sürüyorsa servis 409 AUDIT_VERIFY_RUNNING fırlatır (H paketi B2).
         AuditService.ChainVerification v = auditService.verifyChain();
+        if (v.incomplete()) {
+            // Süre sınırında bitmedi (H paketi B2): ne temiz ne kırık — 409, istemci "doğrulanamadı" gösterir (asla yeşil değil).
+            Map<String, Object> extra = new java.util.LinkedHashMap<>();
+            extra.put("checked", v.checked());
+            extra.put("checked_to_seq", v.checkedToSeq());
+            extra.put("unverified", v.unverified());
+            throw new com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException(AuditService.VERIFY_INCOMPLETE,
+                    com.sitemonitor.util.Msg.t(
+                            "Denetim zinciri doğrulaması süre sınırında bitmedi (" + v.checked()
+                                    + " kayıt denetlendi, kırık bulunmadı). Sonuç bilinmiyor — daha sonra yeniden deneyin.",
+                            "The audit chain verification did not finish within its time limit (" + v.checked()
+                                    + " records checked, no break found). The result is unknown — try again later."),
+                    extra);
+        }
         Map<String, Object> data = new java.util.LinkedHashMap<>();
         data.put("ok", v.ok());
         data.put("checked", v.checked());

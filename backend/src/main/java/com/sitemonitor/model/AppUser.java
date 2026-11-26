@@ -256,6 +256,16 @@ public class AppUser {
     @Column(name = "temp_password_expires_at", length = 30)
     private String tempPasswordExpiresAt;
 
+    /**
+     * Son başarılı AD doğrulaması — ISO-8601 UTC (H paketi B4, 2026-11-26): parola bind'ı ya da beni-hatırla / kodla
+     * girişteki AD hesap durumu sorgusu "etkin" dediğinde yazılır. AD ulaşılamazken beni-hatırla / kodla giriş yalnız bu
+     * damga son 24 saat içindeyse kabul edilir. Varlıkta SALT OKUNUR: yalnız {@code AppUserRepository.markAdVerified}
+     * (hedefli native UPDATE) yazar — tüm-varlık kaydı (LDAP provizyonu) ezmez. Yerel hesapta hep NULL.
+     */
+    @JsonIgnore
+    @Column(name = "ad_verified_at", length = 30, insertable = false, updatable = false)
+    private String adVerifiedAt;
+
     /** Tek aktif oturum: kullanıcının EN GÜNCEL oturumunun ID'si. Yeni login/remember-me reauth bunu
      *  günceller; AuthInterceptor her istekte karşılaştırır, eşleşmeyen (eski) oturumu kapatır.
      *  Store-agnostik (bellek/jdbc fark etmez). İstemciye sızmasın diye @JsonIgnore. */

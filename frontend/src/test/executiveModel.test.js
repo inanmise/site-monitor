@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
 import { TR } from '../i18n/tr.js'
 import { EN } from '../i18n/en.js'
 import {
   buildMonthlyCron, dailyPoints, formatValue, invalidEmails, isSummaryPayload, kpiView, localized, monthLabel,
-  changedFields, isCompletedMonth, monthSendState, runHintKey, legacyRenewals, monthOptions, noteText, parseEmails, parseMonthlyCron, renewalSegments, verdictText, yFloor, fmtPct,
+  MAX_MONTHS_BACK, changedFields, isCompletedMonth, monthSendState, runHintKey, legacyRenewals, monthOptions, noteText, parseEmails, parseMonthlyCron, renewalSegments, verdictText, yFloor, fmtPct,
   distributionSegments, TLS_GRADE_SEGMENTS, CRYPTO_CATEGORY_SEGMENTS, CODE_LABEL_KEY,
   scopeOptions, statusCounts, STATUS_SEGMENTS, teamToForm, teamToBody, teamDirty, filterMembers, filterTeams, isTeamScope,
   TEAM_NOTE_KEY, TEAM_ID_RE,
@@ -169,13 +171,33 @@ describe('executiveModel — yardımcılar', () => {
     expect(isSummaryPayload({ month: '2026-09' })).toBe(false)
   })
 
-  it('ay etiketi ve seçenekleri (sunucu listesi yoksa bu ay + 12, İstanbul takvimi)', () => {
+  it('ay etiketi ve seçenekleri (sunucu listesi yoksa bu ay + son 24 ay, İstanbul takvimi — H paketi 2026-11-26)', () => {
     expect(monthLabel('2026-09', 'tr')).toBe('Eylül 2026')
     expect(monthLabel('2026-09', 'en')).toBe('September 2026')
     const opts = monthOptions([], 'tr', new Date('2026-09-30T21:30:00Z'))   // İstanbul'da 1 Ekim
-    expect(opts).toHaveLength(13)
+    expect(opts).toHaveLength(MAX_MONTHS_BACK + 1)
     expect(opts[0]).toMatchObject({ value: '2026-10', current: true })
     expect(opts[12].value).toBe('2025-10')
+    expect(opts[24].value).toBe('2024-10')
+    expect(opts.filter((o) => o.current)).toHaveLength(1)
+  })
+
+  it('KAPI: seçici ay sayısı sunucunun ExecutiveSummaryService.MAX_MONTHS_BACK sabitiyle aynı', () => {
+    const src = fs.readFileSync(path.resolve(__dirname,
+      '../../../backend/src/main/java/com/sitemonitor/service/report/executive/ExecutiveSummaryService.java'), 'utf8')
+    const m = src.match(/public static final int MAX_MONTHS_BACK = (\d+);/)
+    expect(m).not.toBeNull()
+    expect(MAX_MONTHS_BACK).toBe(Number(m[1]))
+  })
+
+  it('sunucu listesi verildiyse o kullanılır (24 ay + bu ay), geçersiz ay atılır', () => {
+    const months = Array.from({ length: 25 }, (_, i) => {
+      const d = new Date(Date.UTC(2026, 10 - i, 1))
+      return { month: `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`, current: i === 0 }
+    })
+    const opts = monthOptions([...months, { month: 'bozuk' }], 'en')
+    expect(opts).toHaveLength(25)
+    expect(opts[24].value).toBe('2024-11')
   })
 
   it('cron ↔ gün/saat; kalıp dışı ifade özel kalır', () => {

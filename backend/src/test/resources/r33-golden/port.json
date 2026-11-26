@@ -254,8 +254,10 @@
             "failureDetail": null,
             "failureReason": null,
             "id": null,
+            "manual": null,
             "monitorId": 1,
             "open": true,
+            "recheck": null,
             "responseMs": 120
           }
         }
@@ -299,8 +301,10 @@
             "failureDetail": null,
             "failureReason": null,
             "id": null,
+            "manual": null,
             "monitorId": 2,
             "open": true,
+            "recheck": null,
             "responseMs": 900
           }
         }
@@ -344,8 +348,10 @@
             "failureDetail": null,
             "failureReason": null,
             "id": null,
+            "manual": null,
             "monitorId": 3,
             "open": false,
+            "recheck": null,
             "responseMs": 15
           }
         }
@@ -390,8 +396,10 @@
             "failureDetail": null,
             "failureReason": null,
             "id": null,
+            "manual": null,
             "monitorId": 4,
             "open": false,
+            "recheck": null,
             "responseMs": null
           }
         }
@@ -435,8 +443,10 @@
             "failureDetail": null,
             "failureReason": null,
             "id": null,
+            "manual": null,
             "monitorId": 6,
             "open": true,
+            "recheck": null,
             "responseMs": 40
           }
         }

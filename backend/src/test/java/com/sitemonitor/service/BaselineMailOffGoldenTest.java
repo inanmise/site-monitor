@@ -30,15 +30,21 @@ import static org.mockito.Mockito.mock;
  */
 class BaselineMailOffGoldenTest {
 
-    /** Tür → (ileti + alarm HTML + alarm metin + çözüm HTML + çözüm metin) SHA-256 — taban bandı eklenmeden önceki koddan. */
+    /**
+     * Tür → (ileti + alarm HTML + alarm metin + çözüm HTML + çözüm metin) SHA-256 — taban bandı eklenmeden önceki koddan.
+     * Bilinçli değişiklik (H paketi 2026-11-26, madde 11): HTTP dışındaki türlerde "Site Monitor'de Görüntüle" bağlantısı
+     * {@code ?tab=<tür>&domain=<hedef>} yerine {@code ?tab=<tür>&monitor=<monitor_id>} oldu (bağlam {@code monitor_id} 44
+     * taşır). Yeni çıktıda bu bağlantı eskisine geri çevrildiğinde ESKİ özetlerin birebir çıktığı doğrulandı (KEYWORD 26b252…,
+     * PORT 858d7f…, PING 991879…, PAGESPEED a19be6…, SCRIPTED ce107d…, DNS 968720…); başka hiçbir bayt değişmedi.
+     */
     private static final Map<String, String> GOLDEN = Map.of(
             "HTTP_SLOW", "ac351e800d175f11ded0cb5b45f78de0b0aadb31f847f3dc5b0d00bd7116e0db",
-            "KEYWORD_SLOW", "26b252d15078684179a4f139d7bc065e180e10ea1f5afe6aa668f149c20c8b47",
-            "PORT_SLOW", "858d7f916c2daefbcf6349b82bf88be905eb128c37e189faea04519e0293f607",
-            "PING_SLOW", "991879fcf3fd2463b631d2b0b65c67cdc365d97949603b5e8b31f8a98ecfcae2",
-            "PAGESPEED_SLOW", "a19be6ad7da06804fe4bd5ec3d4ea402fe0ad5676513e67e1e15b61ffe58822d",
-            "SCRIPTED_SLOW", "ce107ddc179fa083c00af3a1fca83053cf801294de2f4d7af24864fe837373a8",
-            "DNS_SLOW", "968720fc5d63b659470c913111117077d60bb68d5cafcdc0764352dfbaa774c0");
+            "KEYWORD_SLOW", "ef23f045b75b30811b388cbedbd0cf5ef39f8e550ab4b11a6e0775cb9b5f4545",
+            "PORT_SLOW", "a6a04e024b37b7742986542796538bc0b02a2a78e59ad566663f1f838f4834fe",
+            "PING_SLOW", "951e8eef9f953f878893d1950242063e69f2fde8fbd11e55ba8c4efaa2e2d4bd",
+            "PAGESPEED_SLOW", "4eccf9c3e04b01c5672aa55191724ce89f69700e556355574062b12096d34334",
+            "SCRIPTED_SLOW", "ae173135a46102a8ecf77b672dadc03b256cc1c2920356697d488f9bd4104d21",
+            "DNS_SLOW", "23391e0350d9044b7bb6c54bb9c96c46ba0ca7f1f4d93bf4ff0be99ddcca87a1");
 
     private EscalationService escalation;
     private EmailNotificationService email;

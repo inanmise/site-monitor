@@ -271,6 +271,100 @@ class AuthControllerOtpTest {
         verify(auditService).recordLockedLogin(eq("ALICE"), eq(7L), any(), eq("USER"), any(), any(), eq("OTP_PUSH"));
     }
 
+    // ── AD hesap durumu (H paketi B4, 2026-11-26) ─────────────────────────────
+
+    private com.sitemonitor.service.AdAccountStatusService adStatus(boolean allowed, String code) {
+        var s = org.mockito.Mockito.mock(com.sitemonitor.service.AdAccountStatusService.class);
+        when(s.checkForLogin(any())).thenReturn(new com.sitemonitor.service.AdAccountStatusService.Decision(allowed, code,
+                allowed ? com.sitemonitor.service.AdAccountStatusService.Status.ACTIVE
+                        : com.sitemonitor.service.AdAccountStatusService.Status.DISABLED));
+        return s;
+    }
+
+    @Test
+    @DisplayName("B4: doğru kod ama AD hesabı devre dışı → 403 AD_ACCOUNT_DISABLED; istek kapatılır, oturum yok, kilit sayacı yok")
+    void verify_adDisabled_403() throws Exception {
+        controller.setAdAccountStatus(adStatus(false, "AD_ACCOUNT_DISABLED"));
+        try {
+            verified();
+            MvcResult r = mvc.perform(post("/api/login/otp/verify").contentType(MediaType.APPLICATION_JSON).content(verifyBody(false)))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("AD_ACCOUNT_DISABLED"))
+                    .andExpect(jsonPath("$.error_code").value("AD_ACCOUNT_DISABLED"))
+                    .andReturn();
+            assertThat(r.getRequest().getSession(false)).isNull();
+            verify(loginOtp).block(challenge);
+            verify(loginOtp, never()).consume(any());
+            verify(auditService).recordAdAccountRefused(eq("ALICE"), eq(7L), any(), eq("USER"), any(), any(),
+                    eq("OTP_PUSH"), eq("AD_ACCOUNT_DISABLED"));
+            verify(userService, never()).applyProgressiveLockout(anyString());
+            verify(userService, never()).recordSuccessfulLogin(any(), any(), any(), any());
+        } finally {
+            controller.setAdAccountStatus(null);
+        }
+    }
+
+    @Test
+    @DisplayName("B4: AD'ye ulaşılamadı + 24 saatte doğrulama yok → 403 AD_UNVERIFIED (503 değil), açık metin")
+    void verify_adUnverified_403() throws Exception {
+        controller.setAdAccountStatus(adStatus(false, "AD_UNVERIFIED"));
+        try {
+            verified();
+            mvc.perform(post("/api/login/otp/verify").header("X-Lang", "en").contentType(MediaType.APPLICATION_JSON)
+                            .content(verifyBody(false)))
+                    .andExpect(status().isForbidden())
+                    .andExpect(jsonPath("$.code").value("AD_UNVERIFIED"))
+                    .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("username and password")));
+            verify(loginOtp).block(challenge);
+        } finally {
+            controller.setAdAccountStatus(null);
+        }
+    }
+
+    @Test
+    @DisplayName("B4: AD izin verdi → oturum bugünkü gibi; kod İSTEK ucu AD'ye hiç sormaz (numaralandırma yok, gövde aynı)")
+    void verify_adAllowed_andRequestUntouched() throws Exception {
+        var s = adStatus(true, null);
+        controller.setAdAccountStatus(s);
+        try {
+            verified();
+            mvc.perform(post("/api/login/otp/verify").contentType(MediaType.APPLICATION_JSON).content(verifyBody(false)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.success").value(true));
+            Map<String, Object> ok = new LinkedHashMap<>();
+            ok.put("success", true);
+            ok.put("challenge_id", CID);
+            when(loginOtp.request(any(), any(), any(), any(), any(), any(), anyBoolean()))
+                    .thenReturn(new LoginOtpService.Result(200, ok));
+            mvc.perform(post("/api/login/otp/request").contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"username\":\"alice\",\"channel\":\"push\"}"))
+                    .andExpect(status().isOk());
+            verify(s, org.mockito.Mockito.times(1)).checkForLogin(any());
+        } finally {
+            controller.setAdAccountStatus(null);
+        }
+    }
+
+    @Test
+    @DisplayName("B4: AD parola bind'ı başarılı → ad_verified_at damgası (AD etkin kanıtı)")
+    void ldapPasswordLogin_marksAdVerified() throws Exception {
+        var s = adStatus(true, null);
+        controller.setAdAccountStatus(s);
+        try {
+            ldapIntegrationOn();
+            when(userService.findByUsername("alice")).thenReturn(Optional.of(alice));
+            when(userService.findByUsername("ALICE")).thenReturn(Optional.of(alice));
+            when(ldapDirectory.authenticate("alice", "pw")).thenReturn(Optional.of(
+                    new com.sitemonitor.service.LdapDirectoryService.LdapUser("ALICE", "cn=alice,dc=x", Map.of())));
+            when(ldapProvisioning.provisionFromAd(eq("ALICE"), eq("cn=alice,dc=x"), any())).thenReturn(alice);
+            mvc.perform(post("/api/login").contentType(MediaType.APPLICATION_JSON).content(loginBody("alice", "pw")))
+                    .andExpect(status().isOk());
+            verify(s).markVerified(7L);
+        } finally {
+            controller.setAdAccountStatus(null);
+        }
+    }
+
     @Test
     @DisplayName("hata yanıtları servisten AYNEN: 401 OTP_INVALID + attempts_left; oturum kurulmaz")
     void verify_failure_passThrough() throws Exception {

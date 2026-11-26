@@ -634,6 +634,9 @@ public class AdminController {
         // UG takımı (BO9): yeni kayıtta yalnız boş ya da kaydın KENDİ takımı — başka takıma açmak admin kapılı
         // transfer-ug işidir (gövdeden gelen değer kaydı başka takımın görünürlüğüne + alarmlarına açıyordu).
         item.setUgTeamId(requireUgUnchangedOrCleared(session, item.getTeamId(), item.getUgTeamId(), item.getDomain()));
+        // Beklenen parmak izi (H paketi 2026-11-26): güncellemedeki kural eklemede de — boş → null, normalize (büyük harf,
+        // ayraçsız), 64 onaltılık değilse 400 alan expected_fingerprint (SHA-1 / yanlış kopya kalıcı sahte "dağıtım eksik").
+        item.setExpectedFingerprint(expectedFingerprintForUpdate(null, item.getExpectedFingerprint()));
         if (item.getPort() == null) item.setPort(443);
         if (item.getPort() < 1 || item.getPort() > 65535)
             throw new IllegalArgumentException("Port must be between 1 and 65535");
@@ -704,6 +707,25 @@ public class AdminController {
                     "Kayıt yönetim kapsamınız dışındaki bir takıma taşınamaz; hedef takımı yöneten biri taşıyabilir.",
                     "The record can't be moved to a team outside your management scope; someone who manages the target team can move it."));
         }
+        // H paketi (2026-11-26, sertifika B6): UG ANAHTARI GÖVDEDE YOKSA saklanan UG korunur (herkes için). Açık null =
+        // temizle — YALNIZ kaydı kendi kapsamıyla yazabilen VE SY takımını yöneten (global admin / müdür / TEAM_ADMIN);
+        // diğerlerinin null'ı "değişmedi" sayılır (eski form her kayıtta null gönderiyordu: içe aktarma / UG aktarımıyla
+        // atanmış UG takımı bir üyenin sıradan düzenlemesiyle sessizce düşüyordu; karışık sürümde 403 yerine korunur).
+        // Karışık sürüm güvenliği (bağımsız inceleme): `ug_team_id_unchanged: true` = kullanıcı alanı değiştirmedi — gelen
+        // (formun okuduğu, belki eski) değer YOK SAYILIR, şu an saklanan korunur (doğrulama / fark / geçmiş yok).
+        if (!item.isUgTeamIdSupplied() || item.isUgTeamIdUnchanged() || (item.getUgTeamId() == null
+                && !(SessionScope.canWriteInventoryOwn(session, existing.getTeamId())
+                     && canManageTeamResource(session, existing.getTeamId())))) {
+            item.setUgTeamId(existing.getUgTeamId());
+        }
+        // H paketi (2026-11-26, sertifika B2): beklenen parmak izi ANAHTARI YOKSA saklanan korunur; boş / null = temizle.
+        // Yeni değer normalize edilir (büyük harf, ayraçsız) ve SHA-256 (64 onaltılık) olmalı → 400 alan expected_fingerprint.
+        // Saklananla aynı değer yeniden doğrulanmaz (eski kayıt başka alan için düzenlenebilsin).
+        // `expected_fingerprint_unchanged: true` (bağımsız inceleme): gelen değer YOK SAYILIR — arada kontrol hattının temizlediği
+        // (dağıtım tamamlandı) parmak izi formdaki eski kopyayla geri yazılmaz; doğrulama, fark, geçmiş satırı yok.
+        item.setExpectedFingerprint(item.isExpectedFingerprintSupplied() && !item.isExpectedFingerprintUnchanged()
+                ? expectedFingerprintForUpdate(existing.getExpectedFingerprint(), item.getExpectedFingerprint())
+                : existing.getExpectedFingerprint());
         // Takım erişim paylaşımı (2026-10-12): bildirim YÖNLENDİRMESİ paylaşılmaz — kayda yalnız paylaşımla yazabilen
         // kişi bildirim grubunu / 7/24 ayarını DEĞİŞTİREMEZ (aynı değer gönderilebilir: tam yük gönderen form).
         if (!SessionScope.canWriteInventoryOwn(session, existing.getTeamId())) {
@@ -2082,7 +2104,10 @@ public class AdminController {
 
     /**
      * Kişi satırlarına bağlı kullanıcının etkinliğini yazar ({@code user_active}, saklanmaz) — tek dar sorgu. Okunamazsa
-     * alan boş kalır (istemci kendi kullanıcı listesine döner: bugünkü davranış). Silinmiş kullanıcı → null (bilinmiyor).
+     * alan boş kalır (istemci kendi kullanıcı listesine döner: bugünkü davranış). Silinmiş kullanıcı (okuma başarılı ama
+     * satır yok, H paketi B1 2026-11-26) → {@code user_active = false} + {@code user_deleted = true}: alıcı süzgeci
+     * ({@code InactiveRecipientGuard}) silinmiş kullanıcıya bağlı kişiyi düşürür, kapsam panosu da onu "göndermiyor" sayar.
+     * Satır ayrıca {@code deactivated_reason} taşır (kolon; silme anında 'USER_DELETED').
      */
     private List<EscalationContact> withUserActive(List<EscalationContact> contacts) {
         Set<Long> ids = new HashSet<>();
@@ -2093,7 +2118,16 @@ public class AdminController {
             for (Object[] r : userRepo.findActiveFlagsByIds(ids)) {
                 if (r != null && r.length > 1 && r[0] instanceof Number n) active.put(n.longValue(), !Boolean.FALSE.equals(r[1]));
             }
-            for (EscalationContact c : contacts) if (c.getUserId() != null) c.setUserActive(active.get(c.getUserId()));
+            for (EscalationContact c : contacts) {
+                if (c.getUserId() == null) continue;
+                Boolean a = active.get(c.getUserId());
+                if (a == null) {   // okuma başarılı, kullanıcı satırı yok → silinmiş
+                    c.setUserActive(false);
+                    c.setUserDeleted(true);
+                } else {
+                    c.setUserActive(a);
+                }
+            }
         } catch (RuntimeException e) {
             log.debug("Kişi listesi: kullanıcı etkinliği okunamadı: {}", e.toString());
         }
@@ -2283,7 +2317,8 @@ public class AdminController {
                 .orElseThrow(() -> new NoSuchElementException("Contact not found: " + id));
         requireTeamScopedAdmin(session, existing.getTeamId());
         requirePerm(session, "contacts.crud", "edit");
-        String[] cf = {"name", "email", "role", "minAlertLevel", "webhookType", "active", "teamId", "userId", "delayMinutes"};
+        String[] cf = {"name", "email", "role", "minAlertLevel", "webhookType", "active", "teamId", "userId", "delayMinutes",
+                "deactivatedReason"};
         java.util.Map<String, Object> _before = AuditDiff.snapshot(existing, cf);
         applyContactFields(existing, body, session);
         EscalationContact saved = contactRepo.save(existing);
@@ -2323,12 +2358,16 @@ public class AdminController {
                 }
             }
             if (u != null) {
+                // Başka (var olan) kullanıcıya bağlandı → "kullanıcı silindi" nedeni artık geçerli değil (H paketi B1).
+                if (!unchanged) c.setDeactivatedReason(null);
                 c.setUserId(userId);
                 c.setName(u.getDisplayName() != null && !u.getDisplayName().isBlank()
                         ? u.getDisplayName() : u.getUsername());
                 c.setEmail(u.getEmail());
             }
         } else if (body.containsKey("user_id") || body.containsKey("name") || body.containsKey("email")) {
+            // Bağ kaldırıldı (elle girilen kişi) → "kullanıcı silindi" nedeni düşer (H paketi B1).
+            if (c.getUserId() != null) c.setDeactivatedReason(null);
             // 2026-11-13 hata taraması: düzenleme formu yalnız DEĞİŞEN alanları gönderir — kullanıcı bağı / ad / e-posta
             // gövdede hiç yoksa kişinin bağına dokunulmaz (eskiden anahtarsız gövde bağı sessizce koparıyordu).
             String name = (String) body.get("name");
@@ -4671,9 +4710,23 @@ public class AdminController {
         requireCanAdministerTarget(session, target);
         guardLastActiveAdmin(target, false);
         // Silmede yok olan durum yazilir: kayit gittikten sonra kimse arayip bulamaz.
-        String detail = AuditDiff.snapshotJson(AuditDiff.snapshot(target,
+        Map<String, Object> snap = new LinkedHashMap<>(AuditDiff.snapshot(target,
                 "username", "displayName", "email", "teamId", "systemRole", "orgRole", "active", "authSource"));
-        userService.deleteUser(id);
+        com.sitemonitor.service.UserService.DeleteImpact impact = userService.deleteUser(id);
+        // Silme etkisi denetime yazılır (H paketi B5, 2026-11-26 — eskiden servis hesaplıyor, burada atılıyordu): boşaltılan
+        // liderlik / müdürlük / ast bağları ve pasife alınan eskalasyon kişileri (B1).
+        if (impact != null) {
+            snap.put("leaderOfTeams", impact.leaderOfTeams());
+            snap.put("managerOfTeams", impact.managerOfTeams());
+            snap.put("subordinates", impact.subordinates());
+            snap.put("deactivatedContacts", impact.deactivatedContacts().size());
+            if (!impact.deactivatedContacts().isEmpty()) {
+                List<Long> contactIds = new ArrayList<>();
+                for (var c : impact.deactivatedContacts()) contactIds.add(c.id());
+                snap.put("deactivatedContactIds", contactIds);
+            }
+        }
+        String detail = AuditDiff.snapshotJson(snap);
         // Silinen kullanıcının oturumu ve hatırlanan girişleri biter (2026-10-22, hata avı AUTH-1 / AUTH-16): token'lar
         // kullanıcı ADIYLA tutulur — aynı ad geri gelirse (LDAP yeniden provizyonu) eski çerez yeni satıra girerdi. Canlı
         // oturum bir sonraki istekte AuthInterceptor'ın silinmiş hesap kapısında kapanır; bu pod'un önbelleği hemen boşalır.
@@ -4683,6 +4736,20 @@ public class AdminController {
         if (grantsRemoved > 0) auditService.recordAction("TEAM_ACCESS_GRANT_DELETE", session, request, "USER", id.toString(),
                 com.sitemonitor.service.AuditDetail.of("cascade", "user_delete", "count", grantsRemoved));
         auditService.recordAction("USER_DELETE", session, request, "USER", id.toString(), detail);
+        // Pasife alınan eskalasyon kişileri kendi denetim satırını alır (H paketi B1): kişi geçmişi "neden pasif oldu"yu
+        // gösterir. Diff biçimi tekil düzenlemeyle aynı (active true→false, deactivatedReason null→USER_DELETED).
+        if (impact != null) {
+            for (com.sitemonitor.service.UserService.DeactivatedContact c : impact.deactivatedContacts()) {
+                Map<String, Object> before = new LinkedHashMap<>();
+                before.put("active", c.wasActive());
+                before.put("deactivatedReason", null);
+                Map<String, Object> after = new LinkedHashMap<>();
+                after.put("active", false);
+                after.put("deactivatedReason", EscalationContact.DEACTIVATED_USER_DELETED);
+                auditService.recordAction("CONTACT_UPDATE", session, "ESCALATION_CONTACT", String.valueOf(c.id()),
+                        c.name(), AuditDiff.diff(before, after));
+            }
+        }
         return ok(Map.of("message", "User deleted"));
     }
 
@@ -5210,6 +5277,34 @@ public class AdminController {
             log.warn("Unauthorized admin access attempt by user={}", actor(session));
             throw new SecurityException("Admin access required");
         }
+    }
+
+    /**
+     * Envanter güncellemesinde / eklemesinde gövdede GELEN beklenen parmak izi (H paketi 2026-11-26, sertifika B2): boş → null
+     * (temizle); saklananla (normalize edilmiş hâliyle) aynıysa saklanan olduğu gibi kalır (eklemede {@code stored} null); yeni
+     * değer büyük harf + ayraçsız 64 onaltılık (kontrol hattının SHA-256 biçimi) olmalı — SHA-1 ya da yanlış kopya kalıcı sahte
+     * "dağıtım eksik" demekti.
+     */
+    static String expectedFingerprintForUpdate(String stored, String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        if (raw.length() > 512) throw expectedFingerprintInvalid();
+        String n = com.sitemonitor.service.CertificateService.normalizeFingerprint(raw.trim());
+        if (stored != null && n.equals(com.sitemonitor.service.CertificateService.normalizeFingerprint(stored))) return stored;
+        if (n.length() != 64) throw expectedFingerprintInvalid();
+        for (int i = 0; i < n.length(); i++) {
+            char c = n.charAt(i);
+            if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'))) throw expectedFingerprintInvalid();
+        }
+        return n;
+    }
+
+    private static com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException expectedFingerprintInvalid() {
+        return new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException("expected_fingerprint",
+                com.sitemonitor.util.Msg.t(
+                        "Beklenen parmak izi SHA-256 olmalı: 64 onaltılık karakter (iki nokta ve boşluk olabilir). "
+                                + "Sertifikanın SHA-256 parmak izini kopyalayın ya da alanı boş bırakın.",
+                        "The expected fingerprint must be SHA-256: 64 hexadecimal characters (colons and spaces allowed). "
+                                + "Copy the certificate's SHA-256 fingerprint or leave the field empty."));
     }
 
     /**

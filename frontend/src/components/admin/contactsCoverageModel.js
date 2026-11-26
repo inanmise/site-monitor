@@ -13,6 +13,18 @@ export function coversLevel(minLevel, level) {
   return (RANK[minLevel] ?? 0) <= (RANK[level] ?? 0)
 }
 
+/** `deactivated_reason` değeri: bağlı kullanıcı silindi (sunucu EscalationContact.DEACTIVATED_USER_DELETED, kalıcı ad). */
+export const CONTACT_USER_DELETED = 'USER_DELETED'
+
+/**
+ * Kişinin bağlı olduğu kullanıcı SİLİNDİ mi (H paketi 2026-11-26, yönetim B1): sunucu kişi satırına
+ * `deactivated_reason: 'USER_DELETED'` (silme anında yazılır, kolon) ve / veya `user_deleted: true` (okuma anında
+ * hesaplanır — eski veride de doğru) koyar. Böyle bir kişi elle yeniden etkinleştirilse de alarm ALMAZ.
+ */
+export function contactUserDeleted(c) {
+  return !!c && (c.user_deleted === true || c.deactivated_reason === CONTACT_USER_DELETED)
+}
+
 /**
  * Kişi GERÇEKTEN bildirim gönderir mi: aktif VE pasif kullanıcıya bağlı değil. Webhook-yalnız kişi (user_id yok) her
  * zaman sayılır — pasif KULLANICI süzgeci onu düşürmez (InactiveRecipientGuard yalnız kullanıcı-bağlı adresi düşürür).
@@ -24,6 +36,8 @@ export function coversLevel(minLevel, level) {
  */
 export function contactNotifies(c, inactiveIds, knownIds) {
   if (!c || c.active === false) return false
+  // Silinmiş kullanıcıya bağlı kişi elle yeniden etkinleştirilse de alarm ALMAZ (sunucu alıcı süzgeci düşürür) — etkin sayılmaz
+  if (contactUserDeleted(c)) return false
   const uid = c.user_id != null && c.user_id !== '' ? String(c.user_id) : null
   if (!uid) return true
   // Sunucunun kişi satırına yazdığı bağlı kullanıcı etkinliği önce gelir (2026-11-13 son inceleme): kapsamlı müdürün

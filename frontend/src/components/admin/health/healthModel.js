@@ -187,6 +187,13 @@ export function deriveOverall({ health, httpMetrics, pushKpi, smtpPeriod = '7d',
     else if (it.key === 'cleanup') add(it.level, 'cleanup', s)
     else add(it.level, it.key, s)
   }
+  // Denetim izi boşluğu (H paketi 2026-11-26, yönetim B7): DB'ye yazılamayıp yanıtlayan pod'un yedek dosyasında bekleyen kayıt.
+  // Sayı O POD'un dosyasıdır (küme toplamı değil) — sebep pod adıyla. -1 = sayılamadı (bilinmiyor ≠ temiz). Eski sunucu alanı
+  // göndermez → sebep yok.
+  const afp = h.audit_fallback_pending
+  const afPod = h.audit_fallback_pending_pod || hp
+  if (typeof afp === 'number' && afp > 0) add('warn', 'auditFallback', 'sys', [afp], afPod)
+  else if (typeof afp === 'number' && afp < 0) add('warn', 'auditFallbackUnknown', 'sys', [], afPod)
   for (const part of ['metrics', 'http', 'users']) if (loadErrors[part]) add('warn', 'loadPart', part === 'metrics' ? 'sys' : part, [part])
   // Sunucunun okuyamadığı alt yükler (2026-10-22, FE-8): kartları UIA-D5'ten beri "bilinmiyor" çiziliyor ama genel bant
   // "Tüm sistemler çalışıyor" diyordu — bilinmeyen asla yeşil değil; aynı "Veri alınamadı" sebebi, ilgili bölüme götürür.

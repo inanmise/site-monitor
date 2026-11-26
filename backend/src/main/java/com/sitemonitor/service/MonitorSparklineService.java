@@ -287,10 +287,12 @@ public class MonitorSparklineService {
         }
 
         // Saatlik kovalar — tek sorgu; görünür küme küçükse IN ile daraltılır (O-7), büyükse id süzgeci bellekte.
+        // H paketi (2026-11-26): yalnız erişilebilirliğe SAYILAN satırlar (AvailabilityRows — özet kovalarıyla aynı süzgeç).
         IdFilter f = IdFilter.of(ids, restrict);
+        String counted = AvailabilityRows.andCounted(k.table());
         String bucketSql = "SELECT t.monitor_id, t.bucket, COUNT(*) AS n, SUM(t.fail) AS fail, AVG(t.ms) AS ms FROM ("
                 + "  SELECT monitor_id, substr(checked_at,1,13) AS bucket, " + k.msCol() + " AS ms, " + k.failExpr() + " AS fail"
-                + "    FROM " + k.table() + " WHERE checked_at >= ?" + f.sql()
+                + "    FROM " + k.table() + " WHERE checked_at >= ?" + counted + f.sql()
                 + ") t GROUP BY t.monitor_id, t.bucket ORDER BY t.monitor_id, t.bucket";
         jdbc.query(bucketSql, rs -> {
             long id = rs.getLong(1);
@@ -312,7 +314,7 @@ public class MonitorSparklineService {
         String lastSql = "SELECT monitor_id, checked_at, ms, fail FROM ("
                 + "  SELECT monitor_id, checked_at, " + k.msCol() + " AS ms, " + k.failExpr() + " AS fail,"
                 + "         ROW_NUMBER() OVER (PARTITION BY monitor_id ORDER BY checked_at DESC) AS rn"
-                + "    FROM " + k.table() + " WHERE checked_at >= ?" + f.sql()
+                + "    FROM " + k.table() + " WHERE checked_at >= ?" + counted + f.sql()
                 + ") t WHERE t.rn <= " + LAST_N + " ORDER BY monitor_id, checked_at ASC";
         try {
             jdbc.query(lastSql, rs -> {
@@ -413,10 +415,12 @@ public class MonitorSparklineService {
             }
         }
         IdFilter f = IdFilter.of(ids, restrict);   // O-7: görünür kümeyle daralt
+        // H paketi (2026-11-26, rapor B1 / B2): elle tetik, teyit / kurtarma ve ICMP'nin ölçemediği ping satırı sayılmaz.
+        String counted = AvailabilityRows.andCounted(k.table());
         sql.append(" FROM (SELECT monitor_id, checked_at, ").append(k.failExpr()).append(" AS fail");
         if (budget) sql.append(", ").append(k.breachExpr()).append(" AS breach, ").append(k.undecidedExpr()).append(" AS undecided");
         sql.append(" FROM ").append(k.table())
-           .append(" WHERE checked_at >= ?").append(f.sql()).append(") t GROUP BY monitor_id");
+           .append(" WHERE checked_at >= ?").append(counted).append(f.sql()).append(") t GROUP BY monitor_id");
         args.add(from);
         args.addAll(f.args());
         int head = budget ? 6 : 4;   // pencere sütunlarının başladığı indeks (1 tabanlı)
@@ -443,7 +447,8 @@ public class MonitorSparklineService {
         List<Object> badArgs = new ArrayList<>();
         for (String wf : winFrom) { badSql.append(", SUM(CASE WHEN t.checked_at >= ? THEN 1 ELSE 0 END)"); badArgs.add(wf); }
         badSql.append(" FROM (SELECT monitor_id, checked_at, substr(checked_at,1,13) AS bucket, ").append(k.failExpr())
-              .append(" AS fail FROM ").append(k.table()).append(" WHERE checked_at >= ?").append(f.sql()).append(") t WHERE t.fail = 1")
+              .append(" AS fail FROM ").append(k.table()).append(" WHERE checked_at >= ?").append(counted).append(f.sql())
+              .append(") t WHERE t.fail = 1")
               .append(" GROUP BY t.monitor_id, t.bucket ORDER BY t.monitor_id, t.bucket DESC");
         badArgs.add(from);
         badArgs.addAll(f.args());

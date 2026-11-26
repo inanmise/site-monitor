@@ -48,4 +48,16 @@ public class UptimeCheck {
     /** Kompakt JSON ayrıntı (evre, hedef, yol, zaman aşımı, çözümlenen IP'ler …), ≤ 4000 karakter. */
     @Column(name = "failure_detail", columnDefinition = "TEXT")
     private String failureDetail;
+
+    // ── Köken (H paketi 2026-11-26, rapor B2): yalnız TRUE yazılır, NULL = planlı tarama ya da eski satır. Durum
+    // İzleme'nin elle tetiği yok (manual bugün hep NULL); erişilebilirlik teyit / kurtarma yeniden kontrolleri TRUE yazar.
+    // İkisi de erişilebilirliğe (özet kovaları) GİRMEZ — AvailabilityRows.
+
+    /** Elle tetiklenen kontrol (bugün yazan yol yok — tür tutarlılığı için). */
+    @Column(name = "manual")
+    private Boolean manual;
+
+    /** Teyit / kurtarma zincirinin yeniden kontrolü. */
+    @Column(name = "recheck")
+    private Boolean recheck;
 }

@@ -227,6 +227,75 @@ describe('RenewalPlanModal — not, kaydet, kaldır, meşgul', () => {
     expect(api.forecastUnplan).not.toHaveBeenCalled()
   })
 
+  it('H paketi 2026-11-26: sunucunun 400 `date` hatası TARİH alanının altında (tetiğe bağlı), odak tarihte; gün değişince kalkar', async () => {
+    const plan = vi.fn().mockResolvedValue({ success: false, status: 400, code: 'VALIDATION_FAILED', field: 'date',
+      error: 'The planned date must be a real day (YYYY-MM-DD).' })
+    const { dlg, onSaved } = setup({}, { plan })
+    fireEvent.click(saveBtn(dlg))
+    const err = await waitFor(() => {
+      const e = dlg.querySelector('[data-slot="plan-date-error"]')
+      expect(e).not.toBeNull()
+      return e
+    })
+    expect(err).toHaveTextContent('The planned date must be a real day (YYYY-MM-DD).')
+    expect(trigger().getAttribute('aria-describedby')).toContain(err.id)
+    expect(dlg.querySelector('[data-field="date"]')).toHaveAttribute('data-invalid', 'true')
+    // inceleme bulgusu 9: tetik düğmesinin kendisi de geçersiz olarak işaretlenir (ekran okuyucu)
+    expect(trigger()).toHaveAttribute('aria-invalid', 'true')
+    await waitFor(() => expect(document.activeElement).toBe(trigger()))
+    expect(onSaved).not.toHaveBeenCalled()
+    // gün değişince ileti ve geçersizlik işareti kalkar
+    fireEvent.click(within(dlg).getByRole('radio', { name: /In a week/ }))
+    expect(dlg.querySelector('[data-slot="plan-date-error"]')).toBeNull()
+    expect(trigger().getAttribute('aria-describedby') || '').not.toContain(err.id)
+    expect(trigger()).not.toHaveAttribute('aria-invalid')
+  })
+
+  it('inceleme bulgusu 9: pencere bir sonraki kareden ÖNCE kapandıysa odak sayfanın başka bir alanına düşmez', async () => {
+    // Sayfada (pencerenin dışında) aynı alan adını taşıyan bir giriş: eski kod gövde yoksa belgeye düşüp onu odaklardı
+    const outside = document.createElement('div')
+    outside.setAttribute('data-field', 'date')
+    const outsideInput = document.createElement('input')
+    outside.appendChild(outsideInput)
+    document.body.appendChild(outside)
+    const frames = []
+    let raf = null
+    try {
+      let resolvePlan
+      const plan = vi.fn(() => new Promise((r) => { resolvePlan = r }))
+      const { dlg, unmount } = setup({}, { plan })
+      fireEvent.click(saveBtn(dlg))
+      await waitFor(() => expect(plan).toHaveBeenCalledTimes(1))
+      // kare kuyruğu YALNIZ yanıttan hemen önce yakalanır (Radix'in açılış kareleri karışmasın)
+      raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => { frames.push(cb); return frames.length })
+      await act(async () => {
+        resolvePlan({ success: false, status: 400, code: 'VALIDATION_FAILED', field: 'date', error: 'The planned date must be a real day (YYYY-MM-DD).' })
+      })
+      await waitFor(() => expect(frames.length).toBeGreaterThan(0))
+      unmount()                                   // pencere kare çizilmeden kapandı
+      act(() => { for (const cb of frames.splice(0)) cb(0) })
+      expect(document.activeElement).not.toBe(outsideInput)
+    } finally {
+      raf?.mockRestore()
+      outside.remove()
+    }
+  })
+
+  it('sunucunun 400 `note` hatası NOT alanının altında (aria-invalid), odak notta; düzenleyince kalkar; başka alan tost', async () => {
+    const plan = vi.fn().mockResolvedValue({ success: false, status: 400, code: 'VALIDATION_FAILED', field: 'note',
+      error: 'The note may be at most 500 characters.' })
+    const { dlg } = setup({}, { plan })
+    const note = within(dlg).getByLabelText(/^Note$/)
+    fireEvent.change(note, { target: { value: 'x' } })
+    fireEvent.click(saveBtn(dlg))
+    await waitFor(() => expect(note).toHaveAttribute('aria-invalid', 'true'))
+    expect(dlg.querySelector('[data-field="note"]').textContent).toContain('The note may be at most 500 characters.')
+    await waitFor(() => expect(document.activeElement).toBe(note))
+    fireEvent.change(note, { target: { value: 'xy' } })
+    expect(note).not.toHaveAttribute('aria-invalid')
+    expect(dlg.querySelector('[data-field="note"]').textContent).not.toContain('at most 500')
+  })
+
   it('`unplan` yoksa api.forecastUnplan; plan yoksa Kaldır düğmesi yok', async () => {
     api.forecastUnplan.mockResolvedValue({ success: true, data: {} })
     const { dlg, onCleared, unmount } = setup({ renewal_planned_at: '2026-10-05' })
@@ -238,6 +307,29 @@ describe('RenewalPlanModal — not, kaydet, kaldır, meşgul', () => {
     unmount()
     const fresh = setup()
     expect(within(fresh.dlg).queryByRole('button', { name: /Remove plan/ })).toBeNull()
+  })
+
+  it('H paketi 2026-11-26: kaldırma `changed: false` → "arada değişmiş" bilgisi (başarı DEĞİL), güncel durum çağırana gider', async () => {
+    const current = { domain: 'www.example.com', renewal_planned_at: '2026-10-14', renewal_planned_note: 'başkası taşıdı', changed: false }
+    api.forecastUnplan.mockResolvedValue({ success: true, data: current })
+    const { dlg, onCleared } = setup({ renewal_planned_at: '2026-10-05' })
+    fireEvent.click(within(dlg).getByRole('button', { name: /^Remove plan$/ }))
+    const confirm = await screen.findByRole('dialog', { name: 'Remove this plan?' })
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Remove plan' }))
+    await waitFor(() => expect(onCleared).toHaveBeenCalledWith(current))
+    expect(await screen.findByText(/the plan changed in the meantime; the current plan is shown/)).toBeInTheDocument()
+    expect(screen.queryByText('Plan removed for www.example.com')).toBeNull()
+  })
+
+  it('kaldırma `changed: true` (ya da alan yok — eski sunucu) → bugünkü "kaldırıldı" bildirimi', async () => {
+    api.forecastUnplan.mockResolvedValue({ success: true, data: { domain: 'www.example.com', renewal_planned_at: null, changed: true } })
+    const { dlg, onCleared } = setup({ renewal_planned_at: '2026-10-05' })
+    fireEvent.click(within(dlg).getByRole('button', { name: /^Remove plan$/ }))
+    const confirm = await screen.findByRole('dialog', { name: 'Remove this plan?' })
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Remove plan' }))
+    await waitFor(() => expect(onCleared).toHaveBeenCalled())
+    expect(await screen.findByText('Plan removed for www.example.com')).toBeInTheDocument()
+    expect(screen.queryByText(/changed in the meantime/)).toBeNull()
   })
 })
 

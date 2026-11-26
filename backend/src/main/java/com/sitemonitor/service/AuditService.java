@@ -49,8 +49,8 @@ public class AuditService {
 
     private static final DateTimeFormatter ISO =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(ZoneOffset.UTC);
-    private static final String GENESIS = "GENESIS";
-    private static final char SEP = '';   // unit separator — canonical alan ayırıcı
+    static final String GENESIS = "GENESIS";
+    static final char SEP = '';   // unit separator — canonical alan ayırıcı
 
     /** Zincir sırası + son-hash okuması yarış olmadan yürüsün diye tek JVM kilidi (tek pod → maliyet önemsiz). */
     private final ReentrantLock chainLock = new ReentrantLock();
@@ -86,6 +86,9 @@ public class AuditService {
     /** İki yere de yazılamayan (TAMAMEN kaybolan) kayıt sayısı — bekleyen sayısına eklenir: "temiz" yalanı olmasın. */
     private final java.util.concurrent.atomic.AtomicLong droppedFallbackCount = new java.util.concurrent.atomic.AtomicLong();
 
+    /** Fallback dosyasına ekleme ile geri aktarımın dosya taşıması aynı JVM kilidiyle sıralanır (H paketi B7). */
+    private final Object fallbackFileLock = new Object();
+
     private Path secondaryFallbackPath() {
         String dir = fallbackSecondaryDir;
         if (dir == null || dir.isBlank()) return null;
@@ -105,9 +108,8 @@ public class AuditService {
      */
     public long pendingFallbackAuditCount() {
         try {
-            long n = countLines(Path.of(fallbackFile));
-            Path second = secondaryFallbackPath();
-            if (second != null && !second.equals(Path.of(fallbackFile))) n += countLines(second);
+            long n = 0;
+            for (Path p : fallbackPaths()) n += pendingIn(p);
             return n + droppedFallbackCount.get();   // hiçbir yere yazılamayanlar da "denetim izinde yok"
         } catch (Exception e) {
             log.debug("Denetim fallback dosyası okunamadı ({}): {}", fallbackFile, e.getMessage());
@@ -115,10 +117,43 @@ public class AuditService {
         }
     }
 
-    private static long countLines(Path p) throws java.io.IOException {
+    /**
+     * Bir fallback yolundaki bekleyen kayıtlar (H paketi B7): yazılmakta olan dosya + geri aktarılmakta olan
+     * ({@code .replay}; bu pod'un son turda aktardığı satırlar düşülür) + aktarılamayan ({@code .failed}, elle incelenir).
+     */
+    private long pendingIn(Path p) throws java.io.IOException {
+        Path replay = siblingWith(p, REPLAY_SUFFIX);
+        long inReplay = Math.max(0L, countLines(replay) - replayDone.getOrDefault(replay.toString(), 0L));
+        return countLines(p) + inReplay + countLines(siblingWith(p, FAILED_SUFFIX));
+    }
+
+    /** Fallback yolları: birincil + (farklıysa) geçici dizindeki ikinci yer. */
+    private List<Path> fallbackPaths() {
+        List<Path> out = new ArrayList<>(2);
+        Path primary = Path.of(fallbackFile);
+        out.add(primary);
+        Path second = secondaryFallbackPath();
+        if (second != null && !second.equals(primary)) out.add(second);
+        return out;
+    }
+
+    static Path siblingWith(Path p, String suffix) {
+        Path name = p.getFileName();
+        return p.resolveSibling((name == null ? "audit-fallback.jsonl" : name.toString()) + suffix);
+    }
+
+    /**
+     * Kayıt sayısı (B6): boş olmayan satırlar. Yeni satır gerçek JSON'dur (ham satır sonu taşımaz) — her satır bir kayıt.
+     * Eski (kaçışsız) satırlarda bir değer içindeki satır sonu satırı bölebiliyordu; o parçalar sayılmasın diye {@code .jsonl}
+     * dosyalarında yalnız {@code '{'} ile başlayan satırlar sayılır ({@code .failed} dosyası ham parçaları da içerir — hepsi).
+     */
+    static long countLines(Path p) throws java.io.IOException {
         if (!Files.exists(p)) return 0L;
+        boolean rawFile = p.getFileName() != null && p.getFileName().toString().endsWith(FAILED_SUFFIX);
         try (var lines = Files.lines(p, StandardCharsets.UTF_8)) {
-            return lines.filter(l -> !l.isBlank()).count();
+            return lines.filter(l -> !l.isBlank())
+                    .filter(l -> rawFile || l.stripLeading().startsWith("{"))
+                    .count();
         }
     }
 
@@ -281,6 +316,7 @@ public class AuditService {
      * PostgreSQL NULL'ları DESC'te öne koyar; bkz. {@link AuditLogRepository#findTopBySeqIsNotNullOrderBySeqDesc}).
      */
     private AuditLog appendToChain(AuditLog e, boolean locked, boolean genesis) {
+        fitColumns(e);
         e.setSeqLocked(locked ? Boolean.TRUE : null);
         AuditLog last = auditLogRepo.findTopBySeqIsNotNullOrderBySeqDesc().orElse(null);
         long seq = (last != null && last.getSeq() != null) ? last.getSeq() + 1 : 1L;
@@ -289,6 +325,48 @@ public class AuditService {
         e.setPrevHash(prev);
         e.setRowHash(sha256(canonical(e) + SEP + prev));
         return auditLogRepo.save(e);
+    }
+
+    /**
+     * Metin sütunlarının uzunluğu (H paketi hata avı, 2026-11-26) — {@link AuditLog} {@code @Column(length)} ile AYNI
+     * (kapı: {@code AuditFallbackReplayTest.fitLengthsMatchColumns}). Zincire yazılan her satır {@link #fitColumns} ile bu
+     * sınırlara sığdırılır: eskiden sığmayan değer (uzun hata nedeni, kaynak kimliği, oturum kimliği) PostgreSQL'de 22001 ile
+     * yazımı düşürüp satırı pod'a özgü fallback dosyasına gönderiyordu; geri aktarım da aynı değeri 3 turda .failed dosyasına
+     * alıyordu (o dosya pod ölünce gider). Hash sığdırılmış değerden hesaplanır.
+     */
+    static final Map<String, Integer> FIT_LENGTHS = Map.ofEntries(
+            Map.entry("event_type", 50), Map.entry("event_time", 30), Map.entry("actor", 100),
+            Map.entry("actor_role", 20), Map.entry("ip_address", 50), Map.entry("ip_country", 100),
+            Map.entry("ip_city", 100), Map.entry("ip_org", 200), Map.entry("session_id", 100),
+            Map.entry("resource_type", 50), Map.entry("resource_id", 200), Map.entry("correlation_id", 40),
+            Map.entry("outcome", 20), Map.entry("failure_reason", 200), Map.entry("anomaly_flags", 200),
+            Map.entry("ip_reverse_host", 255));
+
+    /** Metin alanlarını sütun sınırına sığdırır (fazlası "…" ile kesilir; vekil çift bölünmez). */
+    static void fitColumns(AuditLog e) {
+        e.setEventType(fitCol(e.getEventType(), FIT_LENGTHS.get("event_type")));
+        e.setEventTime(fitCol(e.getEventTime(), FIT_LENGTHS.get("event_time")));
+        e.setActor(fitCol(e.getActor(), FIT_LENGTHS.get("actor")));
+        e.setActorRole(fitCol(e.getActorRole(), FIT_LENGTHS.get("actor_role")));
+        e.setIpAddress(fitCol(e.getIpAddress(), FIT_LENGTHS.get("ip_address")));
+        e.setIpCountry(fitCol(e.getIpCountry(), FIT_LENGTHS.get("ip_country")));
+        e.setIpCity(fitCol(e.getIpCity(), FIT_LENGTHS.get("ip_city")));
+        e.setIpOrg(fitCol(e.getIpOrg(), FIT_LENGTHS.get("ip_org")));
+        e.setSessionId(fitCol(e.getSessionId(), FIT_LENGTHS.get("session_id")));
+        e.setResourceType(fitCol(e.getResourceType(), FIT_LENGTHS.get("resource_type")));
+        e.setResourceId(fitCol(e.getResourceId(), FIT_LENGTHS.get("resource_id")));
+        e.setCorrelationId(fitCol(e.getCorrelationId(), FIT_LENGTHS.get("correlation_id")));
+        e.setOutcome(fitCol(e.getOutcome(), FIT_LENGTHS.get("outcome")));
+        e.setFailureReason(fitCol(e.getFailureReason(), FIT_LENGTHS.get("failure_reason")));
+        e.setAnomalyFlags(fitCol(e.getAnomalyFlags(), FIT_LENGTHS.get("anomaly_flags")));
+        e.setIpReverseHost(fitCol(e.getIpReverseHost(), FIT_LENGTHS.get("ip_reverse_host")));
+    }
+
+    static String fitCol(String v, int max) {
+        if (v == null || v.length() <= max) return v;
+        int cut = max - 1;
+        if (cut > 0 && Character.isHighSurrogate(v.charAt(cut - 1))) cut--;
+        return v.substring(0, cut) + "…";
     }
 
     // ── Çok pod'lu zincir kilidi (2026-10-09) ────────────────────────────────────
@@ -370,8 +448,8 @@ public class AuditService {
         return pg.booleanValue();
     }
 
-    /** Hash kapsamı: DEĞİŞMEZ çekirdek alanlar. Geo/PTR (async backfill) ve id/rowHash HARİÇ. */
-    private static String canonical(AuditLog e) {
+    /** Hash kapsamı: DEĞİŞMEZ çekirdek alanlar. Geo/PTR (async backfill) ve id/rowHash HARİÇ. Paket içi: kıyas testi. */
+    static String canonical(AuditLog e) {
         StringBuilder b = new StringBuilder(256);
         append(b, e.getSeq()); append(b, e.getEventTime()); append(b, e.getEventType());
         append(b, e.getActor()); append(b, e.getActorId()); append(b, e.getActorTeamId());
@@ -397,22 +475,35 @@ public class AuditService {
 
     private void writeFallback(AuditLog e, Exception cause) {
         log.error("AUDIT DB yazımı BAŞARISIZ (event={} actor={}) — fallback dosyaya yazılıyor: {}",
-                e.getEventType(), e.getActor(), cause.toString());
-        String line = fallbackJson(e) + System.lineSeparator();
+                e.getEventType(), oneLine(e.getActor()), cause.toString());
+        // "\n" — satır içinde ham satır sonu OLAMAZ (JSON kaçışlı, B6); Windows'ta da tek tür ayırıcı. Satır sütun
+        // sınırlarına sığdırılır (geri aktarım doğrulaması bunu bekler) ve HMAC ile imzalanır (geri aktarım yalnız imzalı
+        // satırı zincire yazar — dosyaya yazabilen biri sahte denetim kaydı sokamaz).
+        fitColumns(e);
+        String line;
         try {
-            appendLine(Path.of(fallbackFile), line);
-            return;
-        } catch (Exception fe) {
-            log.error("AUDIT fallback dosyası yazılamadı ({}): {} — geçici dizin deneniyor", fallbackFile, fe.toString());
+            line = fallbackLine(e) + "\n";
+        } catch (RuntimeException signFailed) {
+            // İmzalanamadı (olmaması gereken yol) — kayıt yine dosyaya yazılır; imzasız satır geri aktarılmaz, .failed'da incelenir.
+            log.error("AUDIT fallback satırı imzalanamadı — imzasız yazılıyor: {}", signFailed.toString());
+            line = fallbackJson(e) + "\n";
         }
-        Path second = secondaryFallbackPath();
-        try {
-            if (second == null) throw new java.io.IOException("geçici dizin tanımsız");
-            appendLine(second, line);
-            log.error("AUDIT kaydı geçici fallback dosyasına yazıldı: {} (kalıcı DEĞİL — incelenmeli)", second);
-        } catch (Exception fe2) {
-            droppedFallbackCount.incrementAndGet();
-            log.error("AUDIT fallback dosya yazımı DA başarısız — kayıt kaybı: {}", fe2.toString());
+        synchronized (fallbackFileLock) {   // geri aktarımın dosya taşımasıyla sıralı (B7)
+            try {
+                appendLine(Path.of(fallbackFile), line);
+                return;
+            } catch (Exception fe) {
+                log.error("AUDIT fallback dosyası yazılamadı ({}): {} — geçici dizin deneniyor", fallbackFile, fe.toString());
+            }
+            Path second = secondaryFallbackPath();
+            try {
+                if (second == null) throw new java.io.IOException("geçici dizin tanımsız");
+                appendLine(second, line);
+                log.error("AUDIT kaydı geçici fallback dosyasına yazıldı: {} (kalıcı DEĞİL — incelenmeli)", second);
+            } catch (Exception fe2) {
+                droppedFallbackCount.incrementAndGet();
+                log.error("AUDIT fallback dosya yazımı DA başarısız — kayıt kaybı: {}", fe2.toString());
+            }
         }
     }
 
@@ -421,12 +512,763 @@ public class AuditService {
         Files.writeString(p, line, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
     }
 
-    private static String fallbackJson(AuditLog e) {
-        return "{\"event_time\":\"" + n(e.getEventTime()) + "\",\"event_type\":\"" + n(e.getEventType())
-                + "\",\"actor\":\"" + n(e.getActor()) + "\",\"resource_type\":\"" + n(e.getResourceType())
-                + "\",\"resource_id\":\"" + n(e.getResourceId()) + "\",\"outcome\":\"" + n(e.getOutcome()) + "\"}";
+    // ── Fallback satırı: gerçek JSON (H paketi B6, 2026-11-26) ───────────────────────────────
+    //
+    // Eski satır elle birleştiriliyordu ve yalnız " → ' çevriliyordu: ters bölü geçersiz JSON, satır sonu (başarısız girişte
+    // kullanıcının yazdığı ad!) satırı ikiye bölüyor (sayaç yanlış, sahte satır), kontrol karakterleri kaçışsızdı; satır
+    // ayrıca kayıplıydı (actor_id, IP, ayrıntı yoktu). Şimdi Jackson tam kaçış yapar ve satır kaydı geri aktarmaya yetecek
+    // TÜM çekirdek alanları taşır (B7). {@code fid}: satırın kalıcı kimliği (tekrar yazmayı önleyen nişanın anahtarı).
+
+    /** Satır biçimi sürümü. 1 (alan yok) = eski elle yazılmış, kaçışsız ve kayıplı satır. */
+    static final int FALLBACK_FORMAT = 2;
+    private static final tools.jackson.databind.ObjectMapper FALLBACK_JSON =
+            tools.jackson.databind.json.JsonMapper.builder().build();
+
+    static String fallbackJson(AuditLog e) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("v", FALLBACK_FORMAT);
+        m.put("fid", java.util.UUID.randomUUID().toString());
+        m.put("event_time", e.getEventTime());
+        m.put("event_type", e.getEventType());
+        m.put("actor", e.getActor());
+        m.put("actor_id", e.getActorId());
+        m.put("actor_team_id", e.getActorTeamId());
+        m.put("actor_role", e.getActorRole());
+        m.put("ip_address", e.getIpAddress());
+        m.put("user_agent", e.getUserAgent());
+        m.put("session_id", e.getSessionId());
+        m.put("resource_type", e.getResourceType());
+        m.put("resource_id", e.getResourceId());
+        m.put("detail", e.getDetail());
+        m.put("changes", e.getChanges());
+        m.put("outcome", e.getOutcome());
+        m.put("failure_reason", e.getFailureReason());
+        m.put("anomaly_flags", e.getAnomalyFlags());
+        m.put("correlation_id", e.getCorrelationId());
+        m.put("pod", fitCol(podName(), FALLBACK_POD_MAX));
+        try {
+            return FALLBACK_JSON.writeValueAsString(m);
+        } catch (RuntimeException ex) {
+            // Olmaması gereken yol (düz metin / sayı haritası): yine de geçerli, tek satır JSON yazılır.
+            StringBuilder sb = new StringBuilder("{");
+            boolean first = true;
+            for (Map.Entry<String, Object> en : m.entrySet()) {
+                if (!first) sb.append(',');
+                first = false;
+                sb.append(jsonString(en.getKey())).append(':');
+                Object v = en.getValue();
+                sb.append(v == null ? "null" : v instanceof Number ? v.toString() : jsonString(String.valueOf(v)));
+            }
+            return sb.append('}').toString();
+        }
     }
-    private static String n(String s) { return s == null ? "" : s.replace("\"", "'"); }
+
+    // ── Fallback satırı imzası (H paketi bağımsız inceleme, 2026-11-26) ──────────────────────
+    //
+    // Geri aktarım dosyadaki satırı hash zincirine seq_locked = TRUE ile ekler. Dosyaya yazabilen biri (pod içi süreç; REPORT
+    // kipinde k6 handleSummary) imzasız satırla doğru zincirlenmiş SAHTE denetim kaydı (ör. kilit / anomali sayaçlarını
+    // besleyen LOGIN_FAILED) sokabilirdi. Satır yazılırken gövdesi HMAC-SHA256 ile imzalanır: anahtar
+    // SITE_MONITOR_SECRET_KEY'den türetilen alt anahtar ({@link SecretCipher#hmacSubKey}, amaç {@value #FALLBACK_SIG_PURPOSE};
+    // tüm pod'larda aynı); döndürmede önceki anahtarın alt anahtarı da kabul edilir. Anahtar ayarlı DEĞİLSE (yalnız yerel / dev;
+    // prod profili anahtarsız açılmaz) süreç başına rastgele anahtar + bir WARN — gömülü dev anahtarı açık olduğundan ondan
+    // türetilmez; bedeli: yeniden başlatmadan önce yazılmış satırlar geri aktarılamaz (.failed). Biçim:
+    // {@code {...gövde...,"sig":"<base64url>"}} — imza, sondaki {@code ,"sig":"…"} üyesi çıkarılmış gövdenin TAM metni
+    // üzerindedir (yeniden biçimlendirme yok).
+
+    static final String FALLBACK_SIG_PURPOSE = "audit-fallback";
+    private static final String SIG_MEMBER = ",\"sig\":\"";
+    /** 32 baytlık HMAC'in dolgusuz base64url uzunluğu. */
+    private static final int SIG_B64_LEN = 43;
+    private static final java.util.regex.Pattern SIG_B64 = java.util.regex.Pattern.compile("[A-Za-z0-9_-]{43}");
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private SecretCipher secretCipher;
+    private final Object fallbackKeyLock = new Object();
+    /** [0] güncel, [1] önceki (döndürme; yoksa null). Tembel türetilir. */
+    private volatile byte[][] fallbackKeys;
+
+    /** Test kancası: imza anahtarlarını doğrudan ver (aynı anahtarı paylaşan pod'lar, anahtar döndürme). */
+    void setFallbackKeys(byte[] current, byte[] previous) {
+        this.fallbackKeys = new byte[][] {current, previous};
+    }
+
+    private byte[][] fallbackKeys() {
+        byte[][] k = fallbackKeys;
+        if (k != null) return k;
+        synchronized (fallbackKeyLock) {
+            if (fallbackKeys != null) return fallbackKeys;
+            SecretCipher c = secretCipher;
+            byte[] cur = c == null ? null : c.hmacSubKey(FALLBACK_SIG_PURPOSE);
+            byte[] prev = null;
+            if (cur == null) {
+                cur = new byte[32];
+                new java.security.SecureRandom().nextBytes(cur);
+                log.warn("Denetim fallback satırları: SITE_MONITOR_SECRET_KEY ayarlı değil — satırlar süreç başına rastgele bir "
+                        + "anahtarla imzalanıyor; yeniden başlatmadan önce yazılmış satırlar geri aktarılamaz (.failed). "
+                        + "Prod'da anahtar zorunludur.");
+            } else {
+                prev = c.previousHmacSubKey(FALLBACK_SIG_PURPOSE);
+            }
+            fallbackKeys = new byte[][] {cur, prev};
+            return fallbackKeys;
+        }
+    }
+
+    /** İmzalı tek satır fallback kaydı (satır sonu YOK). */
+    String fallbackLine(AuditLog e) {
+        return signFallbackBody(fallbackJson(e));
+    }
+
+    /** {@code {...}} gövdesine sondaki imza üyesini ekler. */
+    String signFallbackBody(String body) {
+        String sig = hmacB64(fallbackKeys()[0], body);
+        return body.substring(0, body.length() - 1) + SIG_MEMBER + sig + "\"}";
+    }
+
+    private static String hmacB64(byte[] key, String body) {
+        try {
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec(key, "HmacSHA256"));
+            return java.util.Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(mac.doFinal(body.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception ex) {
+            throw new IllegalStateException("HMAC hesaplanamadı");
+        }
+    }
+
+    /** İmza denetimi sonucu: {@code body} = doğrulanmış gövde ya da null; {@code problem} = {@code unsigned} | {@code bad_signature}. */
+    record SigCheck(String body, String problem) {}
+
+    /**
+     * Satırın imzasını JSON AYRIŞTIRILMADAN denetler (sabit zamanlı karşılaştırma; güncel ve — varsa — önceki anahtar HER ZAMAN
+     * hesaplanır). İmza üyesi yok → {@code unsigned} (önceki sürümün v1 satırı da); biçim / değer yanlış → {@code bad_signature}.
+     */
+    SigCheck checkFallbackSignature(String line) {
+        if (line == null || line.length() < 2 || line.charAt(0) != '{' || !line.endsWith("\"}")) {
+            return new SigCheck(null, "unsigned");
+        }
+        int at = line.lastIndexOf(SIG_MEMBER);
+        int sigStart = at + SIG_MEMBER.length();
+        int sigEnd = line.length() - 2;
+        if (at <= 0 || sigStart > sigEnd) return new SigCheck(null, "unsigned");
+        String sig = line.substring(sigStart, sigEnd);
+        if (sig.length() != SIG_B64_LEN || !SIG_B64.matcher(sig).matches()) return new SigCheck(null, "bad_signature");
+        String body = line.substring(0, at) + "}";
+        byte[] given = sig.getBytes(StandardCharsets.US_ASCII);
+        byte[][] k = fallbackKeys();
+        boolean ok = MessageDigest.isEqual(hmacB64(k[0], body).getBytes(StandardCharsets.US_ASCII), given);
+        if (k[1] != null) ok |= MessageDigest.isEqual(hmacB64(k[1], body).getBytes(StandardCharsets.US_ASCII), given);
+        return ok ? new SigCheck(body, null) : new SigCheck(null, "bad_signature");
+    }
+
+    /** Doğrulanmış gövdenin izin verilen anahtarları — yazıcının ({@link #fallbackJson}) yazdıklarıyla aynı. */
+    static final java.util.Set<String> REPLAY_KEYS = java.util.Set.of(
+            "v", "fid", "event_time", "event_type", "actor", "actor_id", "actor_team_id", "actor_role", "ip_address",
+            "user_agent", "session_id", "resource_type", "resource_id", "detail", "changes", "outcome", "failure_reason",
+            "anomaly_flags", "correlation_id", "pod");
+    /** Denetim yazıcılarının kullandığı sonuçlar ({@code null} da geçerli). */
+    static final java.util.Set<String> REPLAY_OUTCOMES = java.util.Set.of("SUCCESS", "FAILURE", "BLOCKED");
+    /** Fallback satırındaki pod adının üst sınırı (yazıcı sığdırır). */
+    static final int FALLBACK_POD_MAX = 255;
+    /**
+     * Kısa metin alanlarının üst sınırı = sütun uzunluğu ({@link #FIT_LENGTHS}, tek kaynak; yazıcı satırı yazmadan önce
+     * {@link #fitColumns} ile sığdırır, yani kendi yazdığımız satır bu denetime takılmaz).
+     */
+    static final Map<String, Integer> REPLAY_STRING_CAPS = replayStringCaps();
+
+    private static Map<String, Integer> replayStringCaps() {
+        Map<String, Integer> m = new java.util.HashMap<>();
+        for (String k : List.of("event_time", "actor", "actor_role", "ip_address", "session_id", "resource_type",
+                "resource_id", "failure_reason", "anomaly_flags", "correlation_id")) {
+            m.put(k, FIT_LENGTHS.get(k));
+        }
+        m.put("user_agent", AuditLog.USER_AGENT_MAX);   // setter kırpar
+        m.put("pod", FALLBACK_POD_MAX);
+        return Map.copyOf(m);
+    }
+
+    /**
+     * Ayrıştırma SINIRLARI (alan uzunluğu, ad uzunluğu, iç içe derinlik, sayı uzunluğu) ayrıştırıcının kendisinde: sınırı
+     * aşan satır ayrıştırılırken reddedilir (bellek baştan sınırlı; satır sınırı ayrıca {@value #REPLAY_MAX_LINE_CHARS}).
+     */
+    private static final tools.jackson.databind.ObjectMapper REPLAY_JSON = tools.jackson.databind.json.JsonMapper.builder(
+            tools.jackson.core.json.JsonFactory.builder()
+                    .streamReadConstraints(tools.jackson.core.StreamReadConstraints.builder()
+                            .maxStringLength(AuditService.REPLAY_MAX_LINE_CHARS)
+                            .maxNameLength(64)
+                            .maxNestingDepth(2)
+                            .maxNumberLength(20)
+                            .build())
+                    .build())
+            .build();
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> parseReplayBody(String body) {
+        try {
+            Object o = REPLAY_JSON.readValue(body, Object.class);
+            return o instanceof Map<?, ?> mm ? (Map<String, Object>) mm : null;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * İmzası doğrulanmış gövdenin alan denetimi: bilinmeyen anahtar yok, sürüm {@value #FALLBACK_FORMAT}, geçerli {@code fid},
+     * olay türü {@link AuditEventCatalog}'da, sonuç bilinen kümede (ya da boş), kimlikler tam sayı, metinler metin ve sütun
+     * sınırında. Geçerliyse {@code null}, değilse kısa sorun kodu.
+     */
+    static String validateReplayFields(Map<String, Object> m) {
+        for (String k : m.keySet()) if (!REPLAY_KEYS.contains(k)) return "unknown_field";
+        if (!(m.get("v") instanceof Integer ver) || ver != FALLBACK_FORMAT) return "version";
+        if (!(m.get("fid") instanceof String fid) || !FID.matcher(fid).matches()) return "fid";
+        if (!(m.get("event_type") instanceof String type) || !AuditEventCatalog.contains(type)) return "event_type";
+        Object outcome = m.get("outcome");
+        if (outcome != null && !(outcome instanceof String os && REPLAY_OUTCOMES.contains(os))) return "outcome";
+        if (!(m.get("event_time") instanceof String)) return "event_time";
+        for (String k : List.of("actor_id", "actor_team_id")) {
+            Object v = m.get(k);
+            if (v != null && !(v instanceof Integer || v instanceof Long)) return k;
+        }
+        for (Map.Entry<String, Integer> cap : REPLAY_STRING_CAPS.entrySet()) {
+            Object v = m.get(cap.getKey());
+            if (v != null && !(v instanceof String s && s.length() <= cap.getValue())) return cap.getKey();
+        }
+        for (String k : List.of("detail", "changes")) {
+            Object v = m.get(k);
+            if (v != null && !(v instanceof String)) return k;
+        }
+        return null;
+    }
+
+    /** Doğrusal JSON metin kaçışı (yedek yol): ters bölü, tırnak, tüm kontrol karakterleri, U+2028 / U+2029. */
+    static String jsonString(String s) {
+        StringBuilder sb = new StringBuilder(s.length() + 2).append('"');
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                default -> {
+                    if (c < 0x20 || c == 0x2028 || c == 0x2029 || c == 0x7F) sb.append(String.format("\\u%04x", (int) c));
+                    else sb.append(c);
+                }
+            }
+        }
+        return sb.append('"').toString();
+    }
+
+    /** Günlük satırı için tek satır (başarısız girişte aktör kullanıcının yazdığıdır — satır sonu günlüğü bölmesin). */
+    private static String oneLine(String s) {
+        if (s == null) return null;
+        String t = s.replace('\r', ' ').replace('\n', ' ');
+        return t.length() > 200 ? t.substring(0, 200) + "…" : t;
+    }
+
+    /** Bu pod'un adı (fallback satırı ve geri aktarım ayrıntısı için); okunamazsa {@code null}. */
+    static String podName() {
+        try {
+            return com.sitemonitor.service.health.ClusterHealthStore.podOf(SchedulerService.instanceId());
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    // ── Fallback dosyasının geri aktarımı (H paketi B7, 2026-11-26) ─────────────────────────
+    //
+    // Dosya pod'a özgüdür (prod: emptyDir log dizini): her pod KENDİ dosyasını, veritabanı okunabilir olunca kendiliğinden
+    // denetim tablosuna aktarır — eskiden dosyayı GERİ OKUYAN hiçbir kod yoktu, pod değişince kayıtlar kalıcı kayboluyordu.
+    // Akış: yazılmakta olan dosya (önceki tur bittiyse) "<ad>.replay" adına taşınır; taşınan dosya bir daha DEĞİŞMEZ, yeni
+    // düşüşler yeni dosyaya yazılır. Her satır kalıcı kimliğiyle ({@code fid}; eski satırda içerik özeti + aynı içerikli
+    // satırların sırası) bir nişan ({@code schema_patch_markers}, anahtar {@value #MARKER_PREFIX}…) alır; nişan ve denetim
+    // satırı AYNI işlemde, zincir kuralıyla ({@link #SQL_CHAIN_LOCK} / JVM kilidi) yazılır — nişan varsa satır atlanır (tekrar
+    // yazım yok, dosya kesme yok). Tüm satırlar nişanlanınca .replay dosyası silinir. Aktarılan satırın zamanı AKTARIM anıdır
+    // (zincir sırası zamanla uyumlu; saklama silmesi zincirin ortasında boşluk açmaz); asıl zaman / kimlik / pod ayrıntıdadır.
+    // Ayrıştırılamayan, aşırı uzun ya da veritabanı sağlıklıyken {@value #REPLAY_MAX_ATTEMPTS} kez yazılamayan satır
+    // "<ad>.failed" dosyasına alınır (elle incelenir, bekleyen sayılır) ve nişanlanır.
+
+    static final String REPLAY_SUFFIX = ".replay";
+    static final String FAILED_SUFFIX = ".failed";
+    static final String MARKER_PREFIX = "audit-fallback:";
+    /** Tur başına en çok yazılan satır. */
+    static final int REPLAY_MAX_WRITES = 2000;
+    /** Tur başına en çok taranan satır — çok büyük dosyada iş sınırlı kalır (kalanlar bekleyen sayılır). */
+    static final int REPLAY_MAX_SCAN = 200_000;
+    /** Satır uzunluk sınırı (karakter) — aşan satır aktarılmaz, .failed dosyasına alınır. */
+    static final int REPLAY_MAX_LINE_CHARS = 512 * 1024;
+    /** Aynı satırın (veritabanı sağlıklıyken) yazılamama sınırı — sonra .failed dosyasına alınır. */
+    static final int REPLAY_MAX_ATTEMPTS = 3;
+    /** Nişanlar bu süreden sonra silinir (gün). */
+    static final int REPLAY_MARKER_KEEP_DAYS = 90;
+    private static final int REPLAY_MARKER_CHUNK = 500;
+    private static final int FAILED_LINE_MAX = 8000;
+    private static final java.util.regex.Pattern FID = java.util.regex.Pattern.compile("[A-Za-z0-9-]{1,64}");
+    private static final java.util.regex.Pattern LONG_TEXT = java.util.regex.Pattern.compile("-?\\d{1,18}");
+
+    private final ReentrantLock replayLock = new ReentrantLock();
+    private final java.util.concurrent.ConcurrentHashMap<String, Integer> replayAttempts = new java.util.concurrent.ConcurrentHashMap<>();
+    /** .replay dosyasında aktarılmış (nişanlı) satır sayısı — bekleyen sayısından düşülür; dosya silinince kalkar. */
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> replayDone = new java.util.concurrent.ConcurrentHashMap<>();
+    private volatile boolean replayClosing;
+    private volatile long lastMarkerPruneMs;
+
+    /** Kapanışta yeni geri aktarım turu başlamaz; süren tur satır aralarında durur (bayrak, bekleme yok). */
+    @org.springframework.context.event.EventListener(org.springframework.context.event.ContextClosedEvent.class)
+    void stopFallbackReplay() {
+        replayClosing = true;
+    }
+
+    /** Her pod kendi dosyasını aktarır — kilit yok (dosya pod'a özgü), çakışma nişanla önlenir. Açılışta 2 dk, sonra 5 dk. */
+    @org.springframework.scheduling.annotation.Scheduled(
+            initialDelayString = "${site.monitor.audit.fallback-replay.initial-delay-ms:120000}",
+            fixedDelayString = "${site.monitor.audit.fallback-replay.interval-ms:300000}")
+    void scheduledFallbackReplay() {
+        try {
+            ReplayResult r = replayFallback();
+            if (r.replayed() > 0 || r.parked() > 0) {
+                log.warn("Denetim fallback dosyası geri aktarıldı: {} kayıt denetim tablosuna yazıldı, {} kayıt aktarılamadı "
+                        + "(.failed dosyasında, elle incelenmeli); bekleyen {}", r.replayed(), r.parked(),
+                        pendingFallbackAuditCount());
+            }
+        } catch (Throwable t) {
+            log.warn("Denetim fallback geri aktarımı başarısız — sonraki turda yeniden denenecek: {}", t.toString());
+        }
+    }
+
+    /**
+     * Tur sonucu: yazılan, zaten aktarılmış (atlanan), .failed'a alınan; {@code dbUnavailable} = tur veritabanı yüzünden durdu;
+     * {@code rejected} = .failed'a alınanlardan imzasız / imzası geçersiz / alanları geçersiz olanlar (zincire HİÇ yazılmaz).
+     */
+    public record ReplayResult(int replayed, int skipped, int parked, boolean dbUnavailable, int rejected) {
+        static final ReplayResult NONE = new ReplayResult(0, 0, 0, false, 0);
+        static final ReplayResult DB_DOWN = new ReplayResult(0, 0, 0, true, 0);
+
+        public ReplayResult(int replayed, int skipped, int parked, boolean dbUnavailable) {
+            this(replayed, skipped, parked, dbUnavailable, 0);
+        }
+    }
+
+    private static final class ReplayCounter {
+        int replayed, skipped, parked, rejected;
+        boolean stopped, dbFailed;
+        final java.util.Map<String, Integer> rejectedBy = new java.util.TreeMap<>();
+    }
+
+    /**
+     * {@code parsed} = imzası ve alanları doğrulanmış gövde (yoksa null → .failed); {@code problem} = reddin kısa kodu
+     * ({@code oversized}, {@code unsigned}, {@code bad_signature}, {@code unparseable}, alan kodu); doğrulanmayan satırın
+     * kimliği İÇERİKTEN türetilir ({@code raw-<sha256>-<sıra>}) — satırın kendi beyan ettiği {@code fid} KULLANILMAZ (sahte
+     * satır, gerçek bir satırın nişanını önceden yazıp onu "aktarılmış" gösteremesin).
+     */
+    private record ReplayLine(String fid, String text, Map<String, Object> parsed, String problem) {}
+
+    /**
+     * Bir geri aktarım turu (paket içi: testler doğrudan çağırır). Sınırlı: en çok {@value #REPLAY_MAX_WRITES} yazım,
+     * {@value #REPLAY_MAX_SCAN} satır tarama; veritabanı okunamazsa ya da sağlıklı veritabanında bir satır yazılamazsa tur
+     * durur (sonraki tur yeniden dener). Altyapı yoksa (elle kurulan birim testi) hiçbir şey yapmaz.
+     */
+    ReplayResult replayFallback() {
+        if (replayClosing) return ReplayResult.NONE;
+        if (!replayLock.tryLock()) return ReplayResult.NONE;
+        try {
+            List<Path> paths = fallbackPaths();
+            boolean work = false;
+            for (Path p : paths) if (hasFallbackWork(p)) { work = true; break; }
+            if (!work) return ReplayResult.NONE;   // dosya yok → veritabanına hiç gidilmez
+            if (!chainSupported()) return ReplayResult.NONE;
+            if (!dbReadable()) return ReplayResult.DB_DOWN;
+            boolean pg = isPostgres();
+            if (chainPostgres == null) return ReplayResult.DB_DOWN;   // tür bilinmeden kilit seçilemez
+            chainJdbc.execute(StandaloneMonitorDeletionBackfill.MARKERS_DDL);
+            pruneReplayMarkers();
+            ReplayCounter c = new ReplayCounter();
+            for (Path p : paths) {
+                if (replayClosing || c.stopped || c.replayed >= REPLAY_MAX_WRITES) break;
+                replayPath(p, pg, c);
+            }
+            if (c.rejected > 0) {
+                log.warn("Denetim fallback dosyasında {} satır doğrulanamadı {} — zincire YAZILMADI, .failed dosyasına alındı "
+                        + "(elle incelenmeli; imzasız / imzası geçersiz satır dosyaya dışarıdan yazılmış olabilir)",
+                        c.rejected, c.rejectedBy);
+            }
+            return new ReplayResult(c.replayed, c.skipped, c.parked, c.dbFailed, c.rejected);
+        } finally {
+            replayLock.unlock();
+        }
+    }
+
+    private static boolean hasFallbackWork(Path p) {
+        try {
+            return Files.exists(siblingWith(p, REPLAY_SUFFIX)) || (Files.exists(p) && Files.size(p) > 0);
+        } catch (java.io.IOException | RuntimeException e) {
+            return false;
+        }
+    }
+
+    private boolean dbReadable() {
+        try {
+            chainJdbc.queryForObject("SELECT 1", Integer.class);
+            return true;
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /** Günde en çok bir kez: süresi dolmuş geri aktarım nişanları silinir (en iyi çaba). */
+    private void pruneReplayMarkers() {
+        long nowMs = System.currentTimeMillis();
+        if (nowMs - lastMarkerPruneMs < 24L * 3600_000L) return;
+        lastMarkerPruneMs = nowMs;
+        try {
+            String cutoff = ISO.format(Instant.ofEpochMilli(nowMs).minus(java.time.Duration.ofDays(REPLAY_MARKER_KEEP_DAYS)));
+            chainJdbc.update("DELETE FROM schema_patch_markers WHERE patch_key LIKE 'audit-fallback:%' AND applied_at < ?", cutoff);
+        } catch (RuntimeException e) {
+            log.debug("Denetim geri aktarım nişanları budanamadı: {}", e.toString());
+        }
+    }
+
+    private void replayPath(Path p, boolean pg, ReplayCounter c) {
+        Path replay = siblingWith(p, REPLAY_SUFFIX);
+        String key = replay.toString();
+        try {
+            synchronized (fallbackFileLock) {
+                if (!Files.exists(replay) && Files.exists(p) && Files.size(p) > 0) {
+                    try {
+                        Files.move(p, replay, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                    } catch (java.nio.file.AtomicMoveNotSupportedException ex) {
+                        Files.move(p, replay);
+                    }
+                    replayDone.remove(key);
+                }
+            }
+        } catch (java.io.IOException | RuntimeException ex) {
+            log.warn("Denetim fallback dosyası geri aktarım için taşınamadı ({}): {}", p, ex.toString());
+            return;
+        }
+        if (!Files.exists(replay)) return;
+        long done = 0;
+        boolean allDone = true;
+        boolean eof = false;
+        int scanned = 0;
+        java.util.Map<String, Integer> occurrence = new java.util.HashMap<>();
+        List<ReplayLine> batch = new ArrayList<>(REPLAY_MARKER_CHUNK);
+        try (BoundedLineReader in = new BoundedLineReader(replay, REPLAY_MAX_LINE_CHARS)) {
+            while (true) {
+                if (replayClosing) { allDone = false; break; }
+                BoundedLineReader.Line line = in.next();
+                if (line == null) { eof = true; break; }
+                if (!line.oversized() && line.text().isBlank()) continue;
+                if (++scanned > REPLAY_MAX_SCAN) { allDone = false; break; }
+                batch.add(toReplayLine(line, occurrence));
+                if (batch.size() >= REPLAY_MARKER_CHUNK) {
+                    long[] o = processReplayBatch(batch, p, pg, c);
+                    batch.clear();
+                    done += o[0];
+                    if (o[1] == 0) { allDone = false; break; }   // durdu (bütçe / hata / kapanış)
+                }
+            }
+            if (!batch.isEmpty()) {
+                long[] o = processReplayBatch(batch, p, pg, c);
+                done += o[0];
+                if (o[1] == 0) allDone = false;
+            }
+        } catch (java.io.IOException | RuntimeException ex) {
+            log.warn("Denetim fallback dosyası okunamadı ({}): {}", replay, ex.toString());
+            return;
+        }
+        replayDone.put(key, done);
+        if (eof && allDone) {
+            try {
+                Files.deleteIfExists(replay);
+                replayDone.remove(key);
+            } catch (java.io.IOException ex) {
+                log.warn("Aktarılmış denetim fallback dosyası silinemedi ({}): {}", replay, ex.toString());
+            }
+        }
+    }
+
+    /** Bu yaştan eski (asıl zamanı) satır aktarılmaz — nişanlar {@value #REPLAY_MARKER_KEEP_DAYS} gün tutulur; saklanmış imzalı
+     *  bir satırın kopyası, nişanı budandıktan sonra zincire yeniden giremesin. */
+    static final int REPLAY_LINE_MAX_AGE_DAYS = 60;
+
+    /**
+     * Sıra: satır sınırı ({@code oversized}) → imza, JSON AYRIŞTIRILMADAN ({@code unsigned} / {@code bad_signature}; önceki
+     * sürümün imzasız v1 satırı da — sahtesi yazılabilirdi) → sınırlı ayrıştırma ({@code unparseable}) → alan denetimi
+     * ({@link #validateReplayFields}) → yaş ({@code stale}). Doğrulanan satırın kimliği kendi {@code fid}'i, doğrulanmayanınki
+     * içerik özeti.
+     */
+    private ReplayLine toReplayLine(BoundedLineReader.Line line, java.util.Map<String, Integer> occurrence) {
+        String text = line.text();
+        Map<String, Object> m = null;
+        String problem;
+        if (line.oversized()) {
+            problem = "oversized";
+        } else {
+            SigCheck sc = checkFallbackSignature(text.strip());
+            if (sc.problem() != null) {
+                problem = sc.problem();
+            } else {
+                m = parseReplayBody(sc.body());
+                problem = m == null ? "unparseable" : validateReplayFields(m);
+                if (problem == null && tooOld((String) m.get("event_time"))) problem = "stale";
+                if (problem != null) m = null;
+            }
+        }
+        String fid;
+        if (m != null) {
+            fid = (String) m.get("fid");
+        } else {
+            String h = sha256((line.oversized() ? "oversized|" : "") + text);
+            int k = occurrence.merge(h, 1, Integer::sum) - 1;
+            fid = "raw-" + h + "-" + k;
+        }
+        return new ReplayLine(fid, text, m, problem);
+    }
+
+    /** Asıl zaman {@value #REPLAY_LINE_MAX_AGE_DAYS} günden eskiyse ya da okunamıyorsa {@code true}. */
+    private static boolean tooOld(String eventTime) {
+        try {
+            String t = eventTime.strip();
+            java.time.LocalDateTime at = java.time.LocalDateTime.parse(t.length() > 19 ? t.substring(0, 19) : t);
+            return at.toInstant(ZoneOffset.UTC).isBefore(Instant.now().minus(java.time.Duration.ofDays(REPLAY_LINE_MAX_AGE_DAYS)));
+        } catch (RuntimeException e) {
+            return true;
+        }
+    }
+
+    /** {@code [aktarılmış satır, hepsi bitti mi (1/0)]}. */
+    private long[] processReplayBatch(List<ReplayLine> batch, Path source, boolean pg, ReplayCounter c) {
+        java.util.Set<String> have = existingMarkers(batch);
+        if (have == null) { c.stopped = true; c.dbFailed = true; return new long[] {0, 0}; }
+        long done = 0;
+        boolean all = true;
+        for (ReplayLine x : batch) {
+            String marker = MARKER_PREFIX + x.fid();
+            if (have.contains(marker)) { done++; c.skipped++; continue; }
+            if (replayClosing || c.stopped || c.replayed >= REPLAY_MAX_WRITES) { all = false; continue; }
+            if (x.parsed() == null) {   // imzasız / imzası geçersiz / ayrıştırılamadı / alanı geçersiz → elle incelemeye
+                if (park(x, source, marker, c)) {
+                    done++;
+                    c.rejected++;
+                    if (c.rejectedBy.size() < 32) c.rejectedBy.merge(String.valueOf(x.problem()), 1, Integer::sum);
+                } else {
+                    all = false;
+                }
+                continue;
+            }
+            try {
+                boolean wrote = insertReplayed(replayedLog(x), marker, pg);
+                done++;
+                if (wrote) c.replayed++; else c.skipped++;
+                replayAttempts.remove(x.fid());
+            } catch (RuntimeException ex) {
+                if (!dbReadable()) {   // veritabanı gitti — satırın suçu değil, deneme sayılmaz
+                    c.stopped = true;
+                    c.dbFailed = true;
+                    all = false;
+                    continue;
+                }
+                if (replayAttempts.size() > 10_000) replayAttempts.clear();
+                int n = replayAttempts.merge(x.fid(), 1, Integer::sum);
+                if (n >= REPLAY_MAX_ATTEMPTS) {
+                    replayAttempts.remove(x.fid());
+                    log.warn("Denetim fallback satırı {} denemede yazılamadı — .failed dosyasına alınıyor (fid={}): {}",
+                            n, x.fid(), ex.toString());
+                    if (park(x, source, marker, c)) done++; else all = false;
+                } else {
+                    log.warn("Denetim fallback satırı yazılamadı (deneme {}/{}, fid={}) — tur durdu: {}",
+                            n, REPLAY_MAX_ATTEMPTS, x.fid(), ex.toString());
+                    c.stopped = true;
+                    all = false;
+                }
+            }
+        }
+        return new long[] {done, all ? 1 : 0};
+    }
+
+    /** Partideki satırların VAR OLAN nişanları; okunamazsa {@code null}. */
+    private java.util.Set<String> existingMarkers(List<ReplayLine> batch) {
+        try {
+            java.util.Set<String> out = new java.util.HashSet<>();
+            List<Object> keys = new ArrayList<>(batch.size());
+            for (ReplayLine x : batch) keys.add(MARKER_PREFIX + x.fid());
+            for (int i = 0; i < keys.size(); i += REPLAY_MARKER_CHUNK) {
+                List<Object> part = keys.subList(i, Math.min(keys.size(), i + REPLAY_MARKER_CHUNK));
+                String in = String.join(",", java.util.Collections.nCopies(part.size(), "?"));
+                out.addAll(chainJdbc.queryForList(
+                        "SELECT patch_key FROM schema_patch_markers WHERE patch_key IN (" + in + ")", String.class, part.toArray()));
+            }
+            return out;
+        } catch (RuntimeException e) {
+            log.debug("Denetim geri aktarım nişanları okunamadı: {}", e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * Nişan + denetim satırı AYNI işlemde, zincir kuralıyla (yazıcılarla aynı kilit). Nişan zaten varsa (başka tur bu arada
+     * yazdı) {@code false}, yazılmaz. Hata yukarı çıkar (çağıran deneme sayar ya da turu durdurur) — fallback'e DÜŞMEZ.
+     */
+    private boolean insertReplayed(AuditLog e, String marker, boolean pg) {
+        java.util.function.Supplier<Boolean> body = () -> chainTx.execute(st -> {
+            if (pg) chainJdbc.execute(SQL_CHAIN_LOCK);
+            Integer n = chainJdbc.queryForObject(
+                    "SELECT COUNT(*) FROM schema_patch_markers WHERE patch_key = ?", Integer.class, marker);
+            if (n != null && n > 0) return Boolean.FALSE;
+            chainJdbc.update("INSERT INTO schema_patch_markers (patch_key, applied_at, rows_affected) VALUES (?, ?, ?)",
+                    marker, now(), 1);
+            appendToChain(e, pg || Boolean.FALSE.equals(chainPostgres));
+            return Boolean.TRUE;
+        });
+        if (pg) return Boolean.TRUE.equals(body.get());
+        chainLock.lock();
+        try {
+            return Boolean.TRUE.equals(body.get());
+        } finally {
+            chainLock.unlock();
+        }
+    }
+
+    /** Satırı .failed dosyasına (tek satır, kırpılmış) ekler ve nişanlar; nişan yazılamazsa {@code false} (tur durur). */
+    private boolean park(ReplayLine x, Path source, String marker, ReplayCounter c) {
+        String raw = x.text().length() > FAILED_LINE_MAX ? x.text().substring(0, FAILED_LINE_MAX) + "…" : x.text();
+        try {
+            synchronized (fallbackFileLock) {
+                appendLine(siblingWith(source, FAILED_SUFFIX), raw.replace('\r', ' ').replace('\n', ' ') + "\n");
+            }
+        } catch (java.io.IOException | RuntimeException ex) {
+            log.warn("Denetim fallback satırı .failed dosyasına yazılamadı (fid={}): {}", x.fid(), ex.toString());
+            c.stopped = true;
+            return false;
+        }
+        try {
+            Integer n = chainJdbc.queryForObject(
+                    "SELECT COUNT(*) FROM schema_patch_markers WHERE patch_key = ?", Integer.class, marker);
+            if (n == null || n == 0) {
+                chainJdbc.update("INSERT INTO schema_patch_markers (patch_key, applied_at, rows_affected) VALUES (?, ?, ?)",
+                        marker, now(), -1);
+            }
+            c.parked++;
+            return true;
+        } catch (org.springframework.dao.DuplicateKeyException already) {
+            // Nişan bu arada yazıldı (aynı dosyayı paylaşan başka bir tur) — satır işlenmiş sayılır, veritabanı hatası değil.
+            c.skipped++;
+            return true;
+        } catch (RuntimeException ex) {
+            log.warn("Denetim fallback satırı nişanlanamadı (fid={}): {}", x.fid(), ex.toString());
+            c.stopped = true;
+            c.dbFailed = true;
+            return false;
+        }
+    }
+
+    /** Fallback satırından aktarılacak denetim kaydı: zaman = aktarım anı; asıl zaman / kimlik / pod ayrıntıda. */
+    private AuditLog replayedLog(ReplayLine x) {
+        Map<String, Object> m = x.parsed();
+        AuditLog e = new AuditLog();
+        e.setEventTime(now());
+        e.setEventType(blankToNull(m.get("event_type")));
+        e.setActor(blankToNull(m.get("actor")));
+        e.setActorId(longOrNull(m.get("actor_id")));
+        e.setActorTeamId(longOrNull(m.get("actor_team_id")));
+        e.setActorRole(blankToNull(m.get("actor_role")));
+        e.setIpAddress(blankToNull(m.get("ip_address")));
+        e.setUserAgent(blankToNull(m.get("user_agent")));
+        e.setSessionId(blankToNull(m.get("session_id")));
+        e.setResourceType(blankToNull(m.get("resource_type")));
+        e.setResourceId(blankToNull(m.get("resource_id")));
+        e.setChanges(blankToNull(m.get("changes")));
+        e.setOutcome(blankToNull(m.get("outcome")));
+        e.setFailureReason(blankToNull(m.get("failure_reason")));
+        e.setAnomalyFlags(blankToNull(m.get("anomaly_flags")));
+        e.setCorrelationId(blankToNull(m.get("correlation_id")));
+        e.setDetail(replayDetail(blankToNull(m.get("detail")), x.fid(), blankToNull(m.get("event_time")),
+                blankToNull(m.get("pod"))));
+        return e;
+    }
+
+    /** Asıl ayrıntı (JSON nesnesiyse anahtarları korunur, değilse {@code original_detail}) + geri aktarım anahtarları. */
+    static String replayDetail(String original, String fid, String originalTime, String pod) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        if (original != null) {
+            Map<String, Object> parsed = original.stripLeading().startsWith("{") ? parseObject(original) : null;
+            if (parsed != null) m.putAll(parsed);
+            else m.put("original_detail", original);
+        }
+        m.put("replayed_from_fallback", Boolean.TRUE);
+        m.put("fallback_id", fid);
+        m.put("original_event_time", originalTime);
+        if (pod != null) m.put("fallback_pod", pod);
+        try {
+            return FALLBACK_JSON.writeValueAsString(m);
+        } catch (RuntimeException ex) {
+            return AuditDetail.of("replayed_from_fallback", true, "fallback_id", fid, "original_event_time", originalTime);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> parseObject(String text) {
+        try {
+            Object o = FALLBACK_JSON.readValue(text, Object.class);
+            return o instanceof Map<?, ?> mm ? (Map<String, Object>) mm : null;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static String blankToNull(Object v) {
+        if (v == null) return null;
+        String s = String.valueOf(v);
+        return s.isBlank() ? null : s;
+    }
+
+    private static Long longOrNull(Object v) {
+        if (v instanceof Number n) return n.longValue();
+        if (v instanceof String s && LONG_TEXT.matcher(s.trim()).matches()) return Long.parseLong(s.trim());
+        return null;
+    }
+
+    /**
+     * Satır satır okur; satır sınırı aşılırsa kalanı atlanır ve satır "aşırı uzun" işaretlenir. Geçersiz UTF-8 baytları
+     * U+FFFD olur (okuma düşmez). Her çağrı dosyada ilerler → döngü dosya boyutuyla sınırlı.
+     */
+    static final class BoundedLineReader implements AutoCloseable {
+        record Line(String text, boolean oversized) {}
+
+        private final java.io.Reader in;
+        private final int max;
+
+        BoundedLineReader(Path p, int max) throws java.io.IOException {
+            this.max = max;
+            var dec = StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPLACE)
+                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPLACE);
+            this.in = new java.io.BufferedReader(new java.io.InputStreamReader(Files.newInputStream(p), dec), 64 * 1024);
+        }
+
+        /** Sonraki satır; dosya bittiyse {@code null}. */
+        Line next() throws java.io.IOException {
+            StringBuilder sb = new StringBuilder();
+            boolean over = false;
+            boolean any = false;
+            int ch;
+            while ((ch = in.read()) != -1) {
+                any = true;
+                if (ch == '\n') break;
+                if (ch == '\r') continue;
+                if (sb.length() < max) sb.append((char) ch);
+                else over = true;
+            }
+            return any ? new Line(sb.toString(), over) : null;
+        }
+
+        @Override
+        public void close() throws java.io.IOException {
+            in.close();
+        }
+    }
 
     // ── Zincirin yeniden başlatılması (2026-10-23, kullanıcı kararı: "yeni zincir dönemi") ─────────────
     //
@@ -542,10 +1384,46 @@ public class AuditService {
      * yazıldı — doğrulanamaz; saklama çapasında 0; seq'siz eski satırlar sayılmaz).
      */
     public record ChainVerification(boolean ok, Long brokenSeq, Long brokenId, long checked,
-                                    VerifiedFrom verifiedFrom, long unverified) {
+                                    VerifiedFrom verifiedFrom, long unverified, boolean incomplete, Long checkedToSeq) {
         public ChainVerification(boolean ok, Long brokenSeq, Long brokenId, long checked) {
             this(ok, brokenSeq, brokenId, checked, null, 0L);
         }
+        public ChainVerification(boolean ok, Long brokenSeq, Long brokenId, long checked,
+                                 VerifiedFrom verifiedFrom, long unverified) {
+            this(ok, brokenSeq, brokenId, checked, verifiedFrom, unverified, false, null);
+        }
+    }
+
+    /** Doğrulama sayfası (anahtar-küme, H paketi B2): sayfa başına en çok bu kadar YENİ satır (+1 örtüşme satırı okunur). */
+    static final int VERIFY_PAGE_SIZE = AuditLogRepository.CHAIN_PAGE_FETCH - 1;
+    /** Doğrulamanın 409 kodları (H paketi B2): pod'da başka doğrulama sürüyor / süre sınırında bitmedi. Kalıcı adlar. */
+    public static final String VERIFY_RUNNING = "AUDIT_VERIFY_RUNNING";
+    public static final String VERIFY_INCOMPLETE = "AUDIT_VERIFY_INCOMPLETE";
+
+    /**
+     * Tek doğrulamanın süre sınırı (saniye, H paketi B2): istemcinin GET zaman aşımı (90 sn) dolmadan dönülür; bitmeyen
+     * tarama "tamamlanamadı" (ne temiz ne kırık) olarak raporlanır. Açılış anahtarı, katalogda değil.
+     */
+    @Value("${site.monitor.audit.verify-max-seconds:75}")
+    private long verifyMaxSeconds = 75L;
+
+    /** Pod başına tek doğrulama (H paketi B2): ikinci istek beklemez, 409 alır — tam taramalar üst üste binmez. */
+    private final ReentrantLock verifyLock = new ReentrantLock();
+
+    /** Test kancası: monoton saat (nanosaniye). */
+    java.util.function.LongSupplier verifyClock = System::nanoTime;
+
+    /** Test kancası: süre sınırı (ms); {@code null} = ayar (saniye). */
+    private volatile Long verifyMaxMillisOverride;
+
+    void setVerifyMaxMillis(Long ms) { this.verifyMaxMillisOverride = ms; }
+
+    private long verifyBudgetNanos() {
+        Long override = verifyMaxMillisOverride;
+        if (override != null) return Math.max(0L, override) * 1_000_000L;
+        // Geçersiz (≤ 0) değer varsayılana düşer; üst sınır 1 sa (uç asla sınırsız taramaz).
+        long s = verifyMaxSeconds <= 0 ? 75L : Math.min(verifyMaxSeconds, 3600L);
+        return s * 1_000_000_000L;
     }
 
     /**
@@ -560,6 +1438,31 @@ public class AuditService {
      * </ul>
      */
     public ChainVerification verifyChain() {
+        // Pod başına tek doğrulama (H paketi B2): ikinci istek BEKLEMEZ — 409. Tam tarama milyonlarca satırı hash'ler; üst
+        // üste binen istekler aynı işi tekrarlayıp havuz bağlantısı ve CPU tüketirdi.
+        if (!verifyLock.tryLock()) {
+            throw new com.sitemonitor.config.GlobalExceptionHandler.CodedConflictException(VERIFY_RUNNING,
+                    com.sitemonitor.util.Msg.t(
+                            "Denetim zinciri doğrulaması bu sunucuda zaten sürüyor. Bir dakika sonra yeniden deneyin.",
+                            "An audit chain verification is already running on this server. Try again in a minute."));
+        }
+        try {
+            return verifyChainLocked();
+        } finally {
+            verifyLock.unlock();
+        }
+    }
+
+    /**
+     * Doğrulamanın gövdesi — anahtar-küme sayfalama (yalnız {@code seq} sırasıyla, {@link AuditLogRepository#findChainPageFrom};
+     * sayfa başına en çok {@value #VERIFY_PAGE_SIZE} yeni satır) ve süre sınırı (H paketi B2). Her sayfa
+     * {@code seq >= son denetlenen seq}'ten başlar: son denetlenen satır kimliğiyle atlanır; aynı seq'li BAŞKA bir satır
+     * (sayfa içinde ya da sayfa sınırında) çataldır → kırık, o seq'te, iki kimliğin büyüğüyle (eski {@code (seq, id)}
+     * sırasının ikinci satırı). Sonuç OFSET sayfalamalı eski yöntemle AYNI (kıyas testi {@code AuditVerifyChainKeysetTest});
+     * süre dolarsa kırık bulunmadıysa {@code incomplete = true} + {@code checkedToSeq} (ne temiz ne kırık).
+     */
+    private ChainVerification verifyChainLocked() {
+        long deadline = verifyClock.getAsLong() + verifyBudgetNanos();
         AuditLog restart = firstChainRestart();
         long fromSeq;
         String prev;
@@ -580,11 +1483,29 @@ public class AuditService {
             unverified = 0L;
         }
         long checked = 0;
-        int page = 0, size = 1000;
+        long afterSeq = fromSeq;
+        Long seenId = null;    // önceki sayfanın son (denetlenmiş) satırı — sonraki sayfanın başında yeniden gelir
+        Long prevSeq = null;   // son denetlenen satırın seq'i / kimliği (çatal denetimi, sayfalar arası da)
+        Long prevId = null;
+        Long lastSeq = null;
+        // Sınırlı: her tam sayfa en az bir YENİ satır denetler (örtüşen tek satır kimliğiyle atlanır; aynı seq'li başka satır
+        // çataldır → döner) ya da biter; süre sınırı ayrıca keser.
         while (true) {
-            List<AuditLog> rows = auditLogRepo.findBySeqGreaterThanEqualOrderBySeqAsc(fromSeq, PageRequest.of(page, size));
-            if (rows.isEmpty()) break;
+            if (verifyClock.getAsLong() - deadline > 0) {
+                return new ChainVerification(false, null, null, checked, from, unverified, true, lastSeq);
+            }
+            List<AuditLog> rows = auditLogRepo.findChainPageFrom(afterSeq);
+            if (rows == null || rows.isEmpty()) break;
+            int fresh = 0;
             for (AuditLog r : rows) {
+                if (seenId != null && seenId.equals(r.getId())) continue;
+                if (fresh >= VERIFY_PAGE_SIZE) break;
+                if (r.getSeq() == null || r.getId() == null) {   // savunma: anahtarsız satır ilerletilemez
+                    return new ChainVerification(false, r.getSeq(), r.getId(), checked, from, unverified);
+                }
+                if (prevSeq != null && prevSeq.equals(r.getSeq())) {   // aynı seq ikinci kez: çatal
+                    return new ChainVerification(false, r.getSeq(), Math.max(prevId, r.getId()), checked, from, unverified);
+                }
                 String expectHash = sha256(canonical(r) + SEP + prev);
                 String storedPrev = r.getPrevHash() == null ? GENESIS : r.getPrevHash();
                 if (!prev.equals(storedPrev) || expectHash == null || !expectHash.equals(r.getRowHash())) {
@@ -592,8 +1513,15 @@ public class AuditService {
                 }
                 prev = r.getRowHash();
                 checked++;
+                lastSeq = r.getSeq();
+                prevSeq = r.getSeq();
+                prevId = r.getId();
+                fresh++;
             }
-            page++;
+            if (fresh == 0) break;
+            afterSeq = prevSeq;
+            seenId = prevId;
+            if (rows.size() < AuditLogRepository.CHAIN_PAGE_FETCH) break;   // getirilenlerin hepsi denetlendi, başka yok
         }
         return new ChainVerification(true, null, null, checked, from, unverified);
     }
@@ -867,6 +1795,28 @@ public class AuditService {
         recordBlockedLogin(actor, actorId, actorTeamId, actorRole, ipAddress, userAgent,
                 REASON_ACCOUNT_LOCKED + ": hesap kilitli — kimlik doğrulandı, giriş reddedildi (" + (method == null ? "?" : method) + ")",
                 method);
+    }
+
+    /** AD hesabı devre dışı / dizinde yok — beni-hatırla / kodla giriş reddi (H paketi B4, 2026-11-26). */
+    public static final String REASON_AD_ACCOUNT_DISABLED = "AD_ACCOUNT_DISABLED";
+    /** AD'ye ulaşılamadı ve hesap son 24 saatte AD ile doğrulanmadı — giriş reddi (H paketi B4). */
+    public static final String REASON_AD_UNVERIFIED = "AD_UNVERIFIED";
+
+    /**
+     * AD (LDAP) hesabının beni-hatırla ya da kodla girişi AD hesap durumu yüzünden REDDEDİLDİ (H paketi B4) —
+     * {@code LOGIN_FAILED}, sonuç {@code BLOCKED}: kaba kuvvet / ilerleyici kilit sayacına GİRMEZ (kimlik doğrulandı; sorun AD
+     * hesabının durumu). {@code code}: {@link #REASON_AD_ACCOUNT_DISABLED} ya da {@link #REASON_AD_UNVERIFIED}.
+     *
+     * @param method {@code REMEMBER_ME}, {@code OTP_PUSH} / {@code OTP_EMAIL}
+     */
+    public void recordAdAccountRefused(String actor, Long actorId, Long actorTeamId, String actorRole,
+                                       String ipAddress, String userAgent, String method, String code) {
+        String why = REASON_AD_UNVERIFIED.equals(code)
+                ? REASON_AD_UNVERIFIED + ": AD'ye ulaşılamadı ve hesap son 24 saatte AD ile doğrulanmadı — giriş reddedildi"
+                : REASON_AD_ACCOUNT_DISABLED + ": AD hesabı devre dışı ya da dizinde yok — giriş reddedildi";
+        recordBlockedLogin(actor, actorId, actorTeamId, actorRole, ipAddress, userAgent,
+                why + " (" + (method == null ? "?" : method) + ")", method);
+        log.info("AD hesap durumu girişi reddetti: actor={} neden={} yol={} IP={}", actor, code, method, ipAddress);
     }
 
     private void recordBlockedLogin(String actor, Long actorId, Long actorTeamId, String actorRole,

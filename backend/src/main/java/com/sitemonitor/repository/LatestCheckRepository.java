@@ -15,6 +15,15 @@ public interface LatestCheckRepository extends JpaRepository<LatestCheck, String
 
     List<LatestCheck> findByWarningTrueOrStatus(String status);
 
+    /**
+     * Uyarılar listesinin TIER adayları (H paketi 2026-11-26, sertifika B1): global {@code warning} bayrağı kalkık OLMAYAN,
+     * hatasız ve kalan günü {@code maxDays}'ten (en geniş tier uyarı eşiği) az olan satırlar. Çağıran yalnız bir tier'ın uyarı
+     * eşiği global eşiği aştığında sorar ve satırı kendi tier eşiğiyle süzer.
+     */
+    @Query("SELECT l FROM LatestCheck l WHERE l.daysRemaining <= :maxDays AND (l.warning IS NULL OR l.warning = false) "
+         + "AND (l.status IS NULL OR l.status <> 'error')")
+    List<LatestCheck> findTierWarningCandidates(@Param("maxDays") int maxDays);
+
     List<LatestCheck> findByDomainIn(java.util.Collection<String> domains);
 
     /** Aynı sertifikayı taşıyan alanlar (paylaşılan sertifika penceresi) — tüm tabloyu çekip elemenin yerine (2026-09-22). */

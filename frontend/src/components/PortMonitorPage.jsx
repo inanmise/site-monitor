@@ -34,7 +34,7 @@ import TagInput from './ui/TagInput.jsx'
 import { Plug, Trash2, FlaskConical, AlertTriangle, Network, Check, X, Pause, ChevronDown, BellDot, Copy, Inbox, Stethoscope } from 'lucide-react'
 import { duplicateName } from '../utils/duplicateName.js'
 import { usePagination } from '../hooks/usePagination.js'
-import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
+import { useUrlQuerySync, readUrlParam, readUrlInt, readSearchParam } from '../hooks/useUrlQuerySync.js'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import BaselineControl from './baseline/BaselineControl.jsx'   // dinamik taban çizgisi (2026-11-12)
 import MonitorCheckRunModal from './check/MonitorCheckRunModal.jsx'
@@ -188,7 +188,7 @@ export default function PortMonitorPage({ systemRole, teamId, teamName, myTeams 
   // Tek kimlik yerine KUME: uzun suren bir kontrol digerlerini bekletmesin ve
   // once biten, hala sureni kilitten cikarmasin.
   const { isRunning, track } = useRunningChecks()
-  const [search, setSearch] = useState(() => readUrlParam('q', ''))
+  const [search, setSearch] = useState(readSearchParam)   // q, yoksa eski e-postaların domain'i (H paketi 2026-11-26)
   const [groupFilter, setGroupFilter] = useState(() => readUrlParam('group', 'all'))
   const [tagFilter, setTagFilter] = useState(() => readUrlParam('tag', 'all'))   // etiket filtresi (2026-09-18)
   const [statFilter, setStatFilter] = useState(() => { const v = readUrlParam('stat', null); return v === 'total' ? null : v })

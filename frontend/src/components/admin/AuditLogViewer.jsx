@@ -24,6 +24,7 @@ import { formatExact } from './audit/AuditBits.jsx'
 import { eventLabel, OUTCOME_KEYS } from './audit/auditFormat.js'
 import { EMPTY_FILTERS, URL_PREFIX, readUrlFilters, writeUrlFilters, normalizeFilters, toApiParams, filterChips, activeFilterCount, splitTypes } from './audit/auditFilters.js'
 import { downloadAuditExport, exportCap } from './audit/auditExport.js'
+import { INTEGRITY_INCOMPLETE, INTEGRITY_RUNNING, integrityFailure, isIntegrityNotice } from './audit/integrityModel.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/shadcn/dropdown-menu'
@@ -194,8 +195,9 @@ export default function AuditLogViewer({ fullScope = true, teamNames }) {
   function checkIntegrity() {
     setIntegrity({ loading: true })
     api.admin.getAuditIntegrity()
-      .then(r => setIntegrity(r?.success ? r.data : { error: true }))
-      .catch(() => setIntegrity({ error: true }))
+      // 409 AUDIT_VERIFY_INCOMPLETE / AUDIT_VERIFY_RUNNING (H paketi 2026-11-26): sunucu metni + uyarı — "bozuk" DEĞİL
+      .then(r => setIntegrity(r?.success ? r.data : integrityFailure(r)))
+      .catch(() => setIntegrity(integrityFailure(null)))
   }
   async function exportAudit(format) {
     if (exporting) return
@@ -253,11 +255,17 @@ export default function AuditLogViewer({ fullScope = true, teamNames }) {
               </Badge>
             )}
             {integrity && !integrity.loading && !integrity.error && integrity.ok && (
-              <ToneBadge tone="success" title={`${t('audit.integrityChecked')}: ${integrity.checked}`}>
+              <ToneBadge tone="success" data-integrity="ok" title={`${t('audit.integrityChecked')}: ${integrity.checked}`}>
                 ✓ {t('audit.integrityOk')} ({integrity.checked})
               </ToneBadge>
             )}
-            {integrity?.error && <ToneBadge tone="warning">{t('audit.integrityErr')}</ToneBadge>}
+            {integrity?.error && (
+              <ToneBadge tone="warning" data-integrity="error" data-code={integrity.code || undefined}
+                className="h-auto overflow-visible rounded-md whitespace-normal">
+                {integrity.code === INTEGRITY_INCOMPLETE ? t('audit.integrityIncomplete')
+                  : integrity.code === INTEGRITY_RUNNING ? t('audit.integrityBusy') : t('audit.integrityErr')}
+              </ToneBadge>
+            )}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -302,6 +310,26 @@ export default function AuditLogViewer({ fullScope = true, teamNames }) {
 
       {!fullScope && (
         <AlertBanner tone="info" title={t('audit.teamScopeTitle')} className="mb-0">{t('audit.teamScopeText')}</AlertBanner>
+      )}
+      {/* Doğrulama TAMAMLANAMADI (süre sınırı) ya da bu pod'da başka doğrulama sürüyor (H paketi 2026-11-26): sunucunun metni
+          uyarı tonuyla — zincir "bozuk" DEĞİL, "doğrulandı" da değil. */}
+      {isIntegrityNotice(integrity) && (
+        <div data-slot="audit-integrity-notice" data-code={integrity.code} className="min-w-0">
+        <AlertBanner tone="warning" role="status" className="mb-0"
+          title={integrity.code === INTEGRITY_INCOMPLETE ? t('audit.integrityIncompleteTitle') : t('audit.integrityBusyTitle')}>
+          <span className="[overflow-wrap:anywhere]">
+            {integrity.message || (integrity.code === INTEGRITY_INCOMPLETE ? t('audit.integrityIncompleteBody') : t('audit.integrityBusyBody'))}
+          </span>
+          {integrity.code === INTEGRITY_INCOMPLETE && integrity.checked != null && (
+            <span data-slot="audit-integrity-checked" className="mt-1 block text-xs">
+              {integrity.checked_to_seq != null
+                ? t('audit.integrityCheckedTo', integrity.checked.toLocaleString(locale), integrity.checked_to_seq)
+                : t('audit.integrityCheckedCount', integrity.checked.toLocaleString(locale))}
+              {integrity.unverified != null && <> · {t('audit.integrityUnverified', integrity.unverified.toLocaleString(locale))}</>}
+            </span>
+          )}
+        </AlertBanner>
+        </div>
       )}
       {integrity && !integrity.loading && !integrity.error && !integrity.ok && (
         <AlertBanner tone="danger" role="alert" title={t('audit.integrityBroken')} className="mb-0">
