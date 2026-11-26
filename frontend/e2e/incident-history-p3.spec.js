@@ -340,6 +340,37 @@ async function settle(page) {
   ]))
 }
 
+/**
+ * "Dışa aktar" menüsünü açar ve `fmt` öğesinin AÇIK menüde göründüğünü bekler. Önceki menünün kapanış canlandırması (~150 ms)
+ * sürerken tetikleyiciye basmak Radix'te "dışarı tıklama" sayılır ve menü açılmaz (CI Linux'ta görüldü, 2026-11-26): eski menü
+ * tümüyle kapanana ve düğme etkinleşene dek beklenir, menü açılmadıysa yeniden basılır (≤ 30 sn).
+ */
+async function openExportMenu(page, fmt) {
+  const trigger = page.locator('[data-action="export"]')
+  const item = page.locator(`[data-slot="dropdown-menu-content"][data-state="open"] [data-slot="ih-export-${fmt}"]`)
+  await expect(async () => {
+    if (!(await item.isVisible())) {
+      await expect(page.locator('[data-slot="dropdown-menu-content"]')).toHaveCount(0, { timeout: 3_000 })
+      await expect(trigger).toBeEnabled({ timeout: 3_000 })
+      await trigger.click()
+    }
+    await expect(item).toBeVisible({ timeout: 3_000 })
+  }).toPass({ timeout: 30_000 })
+  return item
+}
+
+/** Menüden `fmt` indirmesini başlatır; indirme gelmezse ekrandaki iletiler hataya yazılır (neden düştüğü görünsün). */
+async function exportDownload(page, fmt) {
+  const item = await openExportMenu(page, fmt)
+  try {
+    const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 45_000 }), item.click()])
+    return dl
+  } catch (e) {
+    const notes = await page.locator('[role="status"], [role="alert"]').allInnerTexts().catch(() => [])
+    throw new Error(`${fmt} indirmesi başlamadı; ekrandaki iletiler: ${JSON.stringify(notes.filter(Boolean))}\n${e.message}`)
+  }
+}
+
 const VIEWPORTS = [
   { name: 'phone', width: 390, height: 844, touch: true, compact: true },
   { name: 'tablet', width: 768, height: 1024, touch: true, compact: true },
@@ -470,8 +501,7 @@ for (const vp of VIEWPORTS) {
       await checkLayout(page, bd, 'ayrıntılı döküm')
 
       // 3) dışa aktarım — CSV (sunucunun dosyası)
-      await page.locator('[data-action="export"]').click()
-      const [csv] = await Promise.all([page.waitForEvent('download'), page.locator('[data-slot="ih-export-csv"]').click()])
+      const csv = await exportDownload(page, 'csv')
       expect(csv.suggestedFilename()).toBe('olay-gecmisi-20261126-1200.csv')
       const csvText = readFileSync(await csv.path(), 'utf8')
       expect(csvText.charCodeAt(0)).toBe(0xFEFF)
@@ -484,8 +514,7 @@ for (const vp of VIEWPORTS) {
       await expect(page.getByText('olay-gecmisi-20261126-1200.csv indirildi.')).toBeVisible()
 
       // Excel — sunucunun JSON'undan tarayıcıda; gerçek .xlsx açılır, başlıklar çevrilmiş, ham kod yok
-      await page.locator('[data-action="export"]').click()
-      const [xl] = await Promise.all([page.waitForEvent('download'), page.locator('[data-slot="ih-export-xlsx"]').click()])
+      const xl = await exportDownload(page, 'xlsx')
       expect(xl.suggestedFilename()).toMatch(/^olay-gecmisi-\d{8}-\d{4}\.xlsx$/)
       const files = unzipSync(new Uint8Array(readFileSync(await xl.path())))
       const sheet1 = strFromU8(files['xl/worksheets/sheet1.xml'])
@@ -584,8 +613,7 @@ for (const vp of VIEWPORTS) {
 
       // Excel: sunucu 429 EXPORT_BUSY → sunucunun iletisi, indirme yok
       MODE.exportBusy = true
-      await page.locator('[data-action="export"]').click()
-      await page.locator('[data-slot="ih-export-xlsx"]').click()
+      await (await openExportMenu(page, 'xlsx')).click()
       await expect(page.getByText(/Önceki dışa aktarımınız hâlâ hazırlanıyor/).first()).toBeVisible()
       MODE.exportBusy = false
 
@@ -605,8 +633,7 @@ for (const vp of VIEWPORTS) {
       const band = page.locator('[data-slot="ih-ext-unsupported"]')
       await expect(band).toBeVisible()
       await checkLayout(page, band, 'eski sunucu bandı', { targets: false })
-      await page.locator('[data-action="export"]').click()
-      await page.locator('[data-slot="ih-export-csv"]').click()
+      await (await openExportMenu(page, 'csv')).click()
       await expect(page.getByText('Bu sunucu sürümü olay geçmişi dışa aktarımını henüz bilmiyor; dağıtım bitince yeniden deneyin.').first()).toBeVisible()
       await page.locator('[data-slot="stats-toggle"]').click()
       const bd = page.locator('[data-slot="ih-breakdown"]')
@@ -837,9 +864,7 @@ for (const vp of VIEWPORTS) {
       const exportVia = async (fmt) => {
         // Önceki menünün kapanış canlandırması sürerken (~150 ms) tetikleyiciye basılırsa Radix bunu dışarı tıklama sayar ve
         // menü açılmaz (bilinen sınır, Aktivite dışa aktarımıyla aynı) — önce eski menü tümüyle kapanır
-        await expect(page.locator('[data-slot="dropdown-menu-content"]')).toHaveCount(0)
-        await page.locator('[data-action="export"]').click()
-        await page.locator(`[data-slot="ih-export-${fmt}"]`).click()
+        await (await openExportMenu(page, fmt)).click()
       }
       // kesik: dosya iner, bildirim sınırı söyler (CSV 10000 başlıktan, Excel 5000 yanıttan)
       const [csv] = await Promise.all([page.waitForEvent('download'), exportVia('csv')])
