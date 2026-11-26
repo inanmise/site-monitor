@@ -33,7 +33,10 @@ let actionQueries = []
 async function mock(page) {
   saved = null; added = null; actionQueries = []
   await page.addInitScript(() => {
-    try { localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 })) } catch { /* yoksay */ }
+    try {
+      localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 }))
+      sessionStorage.setItem('sm.gaps.prompted', 'demo')   // giriş eksikleri penceresi tıklamayı örtmesin
+    } catch { /* yoksay */ }
   })
   await page.route((u) => new URL(u).pathname.startsWith('/api/'), async (route) => {
     const req = route.request()

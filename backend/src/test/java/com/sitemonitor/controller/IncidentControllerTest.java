@@ -60,7 +60,7 @@ class IncidentControllerTest {
     @DisplayName("GET /api/incidents view varsa → 200 + data")
     void list_view_200() throws Exception {
         when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
-        when(service.list(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(service.list(any(IncidentService.ListFilter.class), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(sample())));
 
         mvc.perform(get("/api/incidents").session(userSession()))
@@ -80,7 +80,7 @@ class IncidentControllerTest {
         IncidentRecord own = sample();
         own.setId(2L);
         own.setTeamId(5L);
-        when(service.list(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(service.list(any(IncidentService.ListFilter.class), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(shared, own)));
         when(service.get(1L)).thenReturn(shared);
         MockHttpSession s = userSessionTeam(5L);
@@ -223,7 +223,7 @@ class IncidentControllerTest {
     @DisplayName("GET /api/incidents/trends view varsa → 200")
     void trends_view_200() throws Exception {
         when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
-        when(service.trends(any(), any(), any())).thenReturn(java.util.Map.of(
+        when(service.trends(any(IncidentService.ListFilter.class), any())).thenReturn(java.util.Map.of(
                 "daily", List.of(), "by_severity", java.util.Map.of(), "summary", java.util.Map.of("total", 0L)));
         mvc.perform(get("/api/incidents/trends").session(userSession()))
                 .andExpect(status().isOk())
@@ -552,7 +552,7 @@ class IncidentControllerTest {
         no.setId(3L);
         no.setTechErrorCount(0L);
         no.setOutageRelated(Boolean.FALSE);
-        when(service.list(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(service.list(any(IncidentService.ListFilter.class), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(unset, yes, no)));
 
         mvc.perform(get("/api/incidents").session(adminSession()))
@@ -713,7 +713,7 @@ class IncidentControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.version").value(7));
         IncidentRecord legacy = sample();
-        when(service.list(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(service.list(any(IncidentService.ListFilter.class), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(legacy)));
         mvc.perform(get("/api/incidents").session(adminSession()))
                 .andExpect(status().isOk())
@@ -778,7 +778,7 @@ class IncidentControllerTest {
     @DisplayName("Sağlam Kayıt: liste tarih süzgeci okunamazsa 400 alan adlı (since / until)")
     void list_invalidSince_400() throws Exception {
         when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
-        when(service.list(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(service.list(any(IncidentService.ListFilter.class), any(), any(), any()))
                 .thenThrow(new com.sitemonitor.config.GlobalExceptionHandler.FieldValidationException(
                         "since", "Başlangıç tarihi okunamadı. Tarihi yyyy-MM-ddTHH:mm:ss biçiminde gönderin."));
         mvc.perform(get("/api/incidents").param("since", "dün").session(adminSession()))
@@ -802,7 +802,7 @@ class IncidentControllerTest {
     @DisplayName("Hızlı Giriş: fields=summary → dört markdown metni yok + markdown_omitted; parametre yoksa tam satır (bugünkü yanıt)")
     void list_summaryFields() throws Exception {
         when(permissionService.allows(any(jakarta.servlet.http.HttpSession.class), eq("incidents.view"), eq("view"))).thenReturn(true);
-        when(service.list(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        when(service.list(any(IncidentService.ListFilter.class), any(), any(), any()))
                 .thenReturn(new PageImpl<>(List.of(withMarkdown())));
         mvc.perform(get("/api/incidents").param("fields", "summary").session(adminSession()))
                 .andExpect(status().isOk())

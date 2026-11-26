@@ -31,6 +31,7 @@ import {
 } from './incidentHistoryModel.js'
 import PostmortemBadges from './postmortem/PostmortemBadges.jsx'
 import StatusQuickUpdate from './StatusQuickUpdate.jsx'
+import IncidentReportActions from './IncidentReportActions.jsx'
 
 // Arka plan kaydırma kilidi sayaçlı (ModalShell / IncidentDetailSheet sözleşmesi): iç içe pencerede erken açılmaz.
 let scrollLocks = 0
@@ -241,6 +242,8 @@ export default function HistoryDetailSheet({
               </Button>
             )}
             <CopyLinkButton variant="outline" className="h-9 pointer-coarse:h-10" url={detailLink(r.id)} />
+            {/* Özeti indir (Markdown) + Yazdır (2026-11-26, "Bul ve Raporla") — kaydın taze hâliyle */}
+            <IncidentReportActions record={r} />
             {/* Kaynak alarm (2026-10-01): kayıt Alarm Geçmişi'ndeki bir alarmdan açıldıysa o alarma geri bağlantı */}
             {r.alert_event_id != null && r.alert_event_id !== '' && (
               <Button type="button" variant="outline" size="sm" className="h-9 pointer-coarse:h-10" data-slot="ih-source-alert"

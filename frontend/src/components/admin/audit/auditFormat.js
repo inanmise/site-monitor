@@ -286,6 +286,10 @@ const SPECIAL = {
   TECH_ERROR_REPORT_EXPORT: 'audit.ev.TECH_ERROR_REPORT_EXPORT',
   ACTIVITY_EXPORT: 'audit.ev.ACTIVITY_EXPORT',   // Kayıtlar → Aktivite tam dışa aktarımı (2026-11-05)
   INCIDENTS_EXPORT: 'audit.ev.INCIDENTS_EXPORT',   // Olaylar CSV / Excel dışa aktarımı (2026-11-13)
+  // Olay ve Hata Geçmişi (2026-11-26, "Bul ve Raporla"): liste dışa aktarımı + seçenek yeniden adlandırma / birleştirme
+  INCIDENT_EXPORT: 'audit.ev.INCIDENT_EXPORT',
+  INCIDENT_OPTIONS_RENAME: 'audit.ev.INCIDENT_OPTIONS_RENAME',
+  INCIDENT_OPTIONS_MERGE: 'audit.ev.INCIDENT_OPTIONS_MERGE',
   TECH_ERROR_REPORT_UPDATE: 'audit.ev.TECH_ERROR_REPORT_UPDATE',
   TECH_ERROR_REPORT_APPROVAL_REQUEST: 'audit.ev.TECH_ERROR_REPORT_APPROVAL_REQUEST',
   TECH_ERROR_REPORT_APPROVE: 'audit.ev.TECH_ERROR_REPORT_APPROVE',

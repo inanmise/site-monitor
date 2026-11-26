@@ -63,20 +63,20 @@ describe('incidentHistoryModel — süzgeç eylemleri', () => {
     expect(patchFilters(f, { severity: '' })).toBe(f)
   })
 
-  it('kart: uygular, tekrar tıklayınca kaldırır; tarih ve takım korunur', () => {
+  it('kart: uygular, tekrar tıklayınca kaldırır; tarih, takım ve arama korunur (2026-11-26: kartlar yalnız kendi boyutunu sıfırlar)', () => {
     const f = { ...FILTER_DEFAULTS, since: '2026-09-01', team_id: '2', q: 'x' }
     const a = applyCardFilter(f, 'sla')
-    expect(a).toMatchObject({ slaBreached: true, since: '2026-09-01', team_id: '2', q: '' })
+    expect(a).toMatchObject({ slaBreached: true, since: '2026-09-01', team_id: '2', q: 'x' })
     expect(isCardActive('sla', a)).toBe(true)
     const b = applyCardFilter(a, 'sla')
     expect(b.slaBreached).toBeUndefined()
     expect(isCardActive('total', b)).toBe(true)
   })
 
-  it('önayar kartı tarihi yazar; tekrar tıklayınca tarihi de temizler', () => {
+  it('önayar kartı tarihi yazar (son 7 gün = bugün dahil 7 takvim günü); tekrar tıklayınca tarihi de temizler', () => {
     const now = new Date(2026, 8, 28, 12)
     const a = applyCardFilter(FILTER_DEFAULTS, 'last7d', now)
-    expect(a).toMatchObject({ since: '2026-09-21', until: '2026-09-28', _preset: 'last7d' })
+    expect(a).toMatchObject({ since: '2026-09-22', until: '2026-09-28', _preset: 'last7d' })
     expect(applyCardFilter(a, 'last7d', now)).toMatchObject({ since: '', until: '', _preset: undefined })
   })
 

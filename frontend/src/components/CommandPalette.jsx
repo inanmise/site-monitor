@@ -289,7 +289,8 @@ export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, sy
     const tags = it.tags ? String(it.tags).split(',').map((x) => x.trim()).filter(Boolean).slice(0, 3) : []
     return (
       <>
-        {it.team_name && <TeamBadge teamId={it.team_id} teamName={it.team_name} size={10} static className="text-[11px]" />}
+        {/* uzun AD takım adı kesilmez (sarar) — olay kaydı / izleme satırlarında takım adı tam görünür (2026-11-26) */}
+        {it.team_name && <TeamBadge teamId={it.team_id} teamName={it.team_name} size={10} static wrap className="text-[11px]" />}
         {it.group_name && <Badge variant="outline" className="h-5 gap-1 px-1.5 text-[11px] font-normal"><FolderOpen aria-hidden="true" /> {it.group_name}</Badge>}
         {it.tier != null && <Badge variant="outline" className="h-5 px-1.5 text-[11px] font-normal">T{it.tier}</Badge>}
         {tags.map((tag) => <Badge key={tag} variant="outline" className="h-5 gap-1 px-1.5 text-[11px] font-normal"><Tag aria-hidden="true" /> {tag}</Badge>)}
@@ -321,6 +322,11 @@ export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, sy
       return <PaletteRow key={itemValue(it.kind, it.id)} value={itemValue(it.kind, it.id)} Icon={iconFor('team')}
         label={<TeamBadge teamId={it.team_id ?? it.id} teamName={it.label} size={12} static className="px-0" />}
         trailing={<span>{t('palette.kind.team')}</span>} onSelect={() => go(it)} />
+    }
+    if (it.kind === 'incident') {
+      // Olay kaydı (2026-11-26, "Bul ve Raporla"): Olay ve Hata Geçmişi'nde ayrıntısı açılır (`incident=<id>`)
+      return <PaletteRow key={itemValue(it.kind, it.id)} value={itemValue(it.kind, it.id)} Icon={iconFor('incident')} label={it.label}
+        sub={it.sub} meta={metaChips(it)} trailing={<span>{t('palette.incidentKind')}</span>} onSelect={() => go(it)} />
     }
     if (it.kind === 'user') {
       return <PaletteRow key={itemValue(it.kind, it.id)} value={itemValue(it.kind, it.id)} Icon={iconFor('user')}
@@ -467,11 +473,11 @@ export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, sy
             </CommandList>
 
             {!isMobile && (
-              <div data-slot="palette-footer" className="flex shrink-0 items-center gap-3 border-t px-3 py-2 text-xs text-muted-foreground">
+              <div data-slot="palette-footer" className="flex shrink-0 flex-wrap items-center gap-3 border-t px-3 py-2 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1"><Kbd>↑</Kbd><Kbd>↓</Kbd> {t('palette.navigate')}</span>
                 <span className="flex items-center gap-1"><Kbd>↵</Kbd> {t('palette.open')}</span>
                 <span className="flex items-center gap-1"><Kbd>Esc</Kbd> {t('palette.close')}</span>
-                <span className="ml-auto truncate tabular-nums">{t('palette.resultCount', totalCount)}</span>
+                <span className="ml-auto shrink-0 whitespace-nowrap tabular-nums">{t('palette.resultCount', totalCount)}</span>
               </div>
             )}
           </Command>

@@ -59,11 +59,40 @@ export const MARKDOWN_KEYS = Object.freeze(['rca_summary', 'description', 'resol
 
 // ── URL ────────────────────────────────────────────────────────────────────────────────────────────────
 
-/** Süzgeç → URL anahtarı (`ih_` öneki; PAGE_STATE_PREFIXES'te). */
+/**
+ * Süzgeç → URL anahtarı (`ih_` öneki; PAGE_STATE_PREFIXES'te). Son altısı 2026-11-26 ("Bul ve Raporla") gelişmiş süzgeçler;
+ * `channel_exact` (inceleme 2026-11-26) döküm kanal satırının TAM öğe süzgeci (araç çubuğunun kanal seçicisi alt dize kalır).
+ */
 export const URL_KEYS = Object.freeze({
   q: 'ih_q', severity: 'ih_sev', status: 'ih_st', category: 'ih_cat', channel: 'ih_ch', team_id: 'ih_team',
   since: 'ih_from', until: 'ih_to', slaBreached: 'ih_sla', open: 'ih_open', _preset: 'ih_preset',
+  service: 'ih_svc', problem_type: 'ih_ptype', error_code: 'ih_ecode', tag: 'ih_tag', mine: 'ih_mine', postmortem: 'ih_pm',
+  channel_exact: 'ih_chx',
 })
+/** Sıralamanın URL anahtarı (süzgeç değildir; "Temizle" sıralamayı korur). */
+export const SORT_KEY = 'ih_sort'
+
+/**
+ * Sıralama seçenekleri — sunucudaki `IncidentService.SORTS` anahtarlarıyla AYNI sırada (test Java kaynağını okur). İlki
+ * varsayılan (en yeni olay önce = bugünkü sıra); varsayılan adrese yazılmaz.
+ */
+export const SORTS = Object.freeze(['occurred_desc', 'occurred_asc', 'severity', 'status', 'duration', 'updated'])
+export const DEFAULT_SORT = SORTS[0]
+/** URL → sıralama (bilinmeyen değer varsayılan). */
+export function sortFromUrl(read) {
+  let v = null
+  try { v = read(SORT_KEY, null) } catch { v = null }
+  return SORTS.includes(v) ? v : DEFAULT_SORT
+}
+
+/** Postmortem süzgeci değerleri (sunucu büyük / küçük harf ve '-' / '_' farkını yok sayar). */
+export const POSTMORTEM_FILTERS = Object.freeze(['none', 'draft', 'in_review', 'published'])
+/** Gelişmiş süzgeç anahtarları ("Daha fazla süzgeç" bölümü; sayısı düğmede yazar). */
+export const ADVANCED_KEYS = Object.freeze(['service', 'problem_type', 'error_code', 'tag', 'mine', 'postmortem'])
+/** Metin süzgeçlerinin üst sınırı — sunucudaki `IncidentService.MAX_FILTER_TEXT` ile aynı. */
+export const MAX_FILTER_TEXT = 200
+/** "Benim açtıklarım" süzgecinin sunucu değeri — `IncidentController.CREATED_BY_ME`. */
+export const CREATED_BY_ME = '@me'
 /** Açık ayrıntının URL anahtarı; `incident` = uygulama düzeyi e-posta derin bağlantısı (yalnız okunur). */
 export const DETAIL_KEY = 'ih_id'
 export const LEGACY_DETAIL_KEY = 'incident'
@@ -71,6 +100,7 @@ export const LEGACY_DETAIL_KEY = 'incident'
 export const FILTER_DEFAULTS = Object.freeze({
   q: '', severity: '', category: '', status: '', channel: '', team_id: '', since: '', until: '',
   slaBreached: undefined, open: undefined, _preset: undefined,
+  service: '', problem_type: '', error_code: '', tag: '', mine: undefined, postmortem: '', channel_exact: '',
 })
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -87,6 +117,9 @@ export function filtersFromUrl(read) {
   const open = r(URL_KEYS.open)
   const preset = r(URL_KEYS._preset)
   const team = r(URL_KEYS.team_id)
+  const text = (k) => String(r(k) ?? '').trim().slice(0, MAX_FILTER_TEXT)
+  const mine = r(URL_KEYS.mine)
+  const pm = String(r(URL_KEYS.postmortem) ?? '').toLowerCase()
   return {
     ...FILTER_DEFAULTS,
     q: String(r(URL_KEYS.q) ?? '').slice(0, 200),
@@ -100,6 +133,13 @@ export function filtersFromUrl(read) {
     slaBreached: sla === 'true' ? true : sla === 'false' ? false : undefined,
     open: open === 'true' || open === '1' ? true : undefined,
     _preset: PRESETS.includes(preset) ? preset : undefined,
+    service: text(URL_KEYS.service),
+    problem_type: text(URL_KEYS.problem_type),
+    error_code: text(URL_KEYS.error_code),
+    tag: text(URL_KEYS.tag),
+    mine: mine === 'true' || mine === '1' ? true : undefined,
+    postmortem: POSTMORTEM_FILTERS.includes(pm) ? pm : '',
+    channel_exact: text(URL_KEYS.channel_exact),
   }
 }
 
@@ -118,6 +158,13 @@ export function filtersToUrl(f) {
     [URL_KEYS.slaBreached]: f.slaBreached === true ? 'true' : f.slaBreached === false ? 'false' : null,
     [URL_KEYS.open]: f.open === true ? 'true' : null,
     [URL_KEYS._preset]: s(f._preset),
+    [URL_KEYS.service]: s(typeof f.service === 'string' ? f.service.trim() : f.service),
+    [URL_KEYS.problem_type]: s(typeof f.problem_type === 'string' ? f.problem_type.trim() : f.problem_type),
+    [URL_KEYS.error_code]: s(typeof f.error_code === 'string' ? f.error_code.trim() : f.error_code),
+    [URL_KEYS.tag]: s(typeof f.tag === 'string' ? f.tag.trim() : f.tag),
+    [URL_KEYS.mine]: f.mine === true ? '1' : null,
+    [URL_KEYS.postmortem]: s(f.postmortem),
+    [URL_KEYS.channel_exact]: s(typeof f.channel_exact === 'string' ? f.channel_exact.trim() : f.channel_exact),
   }
 }
 
@@ -157,7 +204,14 @@ export function localDayToUtcIso(dateStr, endOfDay) {
          `T${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())}:${pad(dt.getUTCSeconds())}`
 }
 
-/** Liste isteğinin parametreleri (tarih sınırları UTC'ye; `_preset` yalnız arayüz işaretidir, sunucuya gitmez). */
+/**
+ * Liste isteğinin parametreleri (tarih sınırları UTC'ye; `_preset` yalnız arayüz işaretidir, sunucuya gitmez). Gelişmiş
+ * süzgeçler (2026-11-26) sunucu adlarıyla: alan adı → `service_exact` (virgüllü alanda TAM öğe), `problem_type` / `tag` (TAM
+ * öğe), `error_code` (tam), "Benim açtıklarım" → `created_by=@me`, `postmortem`. Boş süzgeç gönderilmez (bugünkü sonuç).
+ * Döküm kanal satırı (inceleme 2026-11-26) → `channel_exact` (TAM öğe); araç çubuğu kanalı boşsa aynı değer `channel` (alt
+ * dize) olarak da gider: yeni sunucuda ikisinin kesişimi tam öğedir (aynı sonuç), `channel_exact`'ı bilmeyen eski pod en
+ * azından alt dizeyle süzer (liste boş / süzülmemiş gelmez).
+ */
 export function serverParams(f) {
   const out = {}
   for (const k of ['q', 'severity', 'category', 'status', 'channel', 'team_id']) {
@@ -170,7 +224,48 @@ export function serverParams(f) {
   if (until) out.until = until
   if (f.slaBreached === true || f.slaBreached === false) out.slaBreached = f.slaBreached
   if (f.open === true) out.open = true
+  const text = (v) => (typeof v === 'string' ? v.trim() : '')
+  if (text(f.service)) out.service_exact = text(f.service)
+  if (text(f.problem_type)) out.problem_type = text(f.problem_type)
+  if (text(f.error_code)) out.error_code = text(f.error_code)
+  if (text(f.tag)) out.tag = text(f.tag)
+  if (f.mine === true) out.created_by = CREATED_BY_ME
+  if (POSTMORTEM_FILTERS.includes(f.postmortem)) out.postmortem = f.postmortem
+  if (text(f.channel_exact)) {
+    out.channel_exact = text(f.channel_exact)
+    if (out.channel == null) out.channel = text(f.channel_exact)
+  }
   return out
+}
+
+/** Özet kartlarının süzdüğü boyutlar — eğilim isteğine GİTMEZ (kartlar birbirinin sayısını sıfırlamasın). */
+const CARD_PARAM_KEYS = ['severity', 'status', 'slaBreached', 'open']
+
+/**
+ * Eğilim (özet + döküm) isteğinin süzgeçleri (2026-11-26): liste süzgeçleri EKSİ kartların kendi boyutları (önem, durum,
+ * SLA, açık) — kart sayıları süzgece göre ama birbirinin yüzü olarak kalır. `extra` = tarih aralığı DIŞINDA süzgeç var mı
+ * (yoksa istek bugünkü biçimde gider, sayılar aynı). `withDates=false` → günlük trend penceresi için tarihsiz.
+ */
+export function trendParams(f, { withDates = true } = {}) {
+  const all = serverParams(f)
+  const out = {}
+  for (const [k, v] of Object.entries(all)) {
+    if (CARD_PARAM_KEYS.includes(k)) continue
+    if (!withDates && (k === 'since' || k === 'until')) continue
+    out[k] = v
+  }
+  const extra = Object.keys(out).some((k) => k !== 'since' && k !== 'until')
+  return { params: out, extra }
+}
+
+/** Gelişmiş süzgeçlerden kaçı etkin ("Daha fazla süzgeç (N)"). */
+export function advancedCount(f) {
+  let n = 0
+  for (const k of ADVANCED_KEYS) {
+    const v = f?.[k]
+    if (k === 'mine' ? v === true : (typeof v === 'string' && v.trim() !== '')) n++
+  }
+  return n
 }
 
 /** "dd.MM.yyyy" — gün biçimli süzgeç değerini okunur yazar (yerel takvim günü, UTC dönüşümü yok). */
@@ -244,6 +339,14 @@ export function activeFilters(f) {
   if (f.until) add('until', f.until, { until: '', _preset: undefined })
   if (f.slaBreached === true || f.slaBreached === false) add('slaBreached', f.slaBreached, { slaBreached: undefined })
   if (f.open === true) add('open', true, { open: undefined })
+  const text = (v) => (typeof v === 'string' ? v.trim() : '')
+  if (text(f.service)) add('service', text(f.service), { service: '' })
+  if (text(f.problem_type)) add('problem_type', text(f.problem_type), { problem_type: '' })
+  if (text(f.error_code)) add('error_code', text(f.error_code), { error_code: '' })
+  if (text(f.tag)) add('tag', text(f.tag), { tag: '' })
+  if (f.mine === true) add('mine', true, { mine: undefined })
+  if (POSTMORTEM_FILTERS.includes(f.postmortem)) add('postmortem', f.postmortem, { postmortem: '' })
+  if (text(f.channel_exact)) add('channel_exact', text(f.channel_exact), { channel_exact: '' })
   return out
 }
 
@@ -269,21 +372,26 @@ export function isCardActive(kind, f) {
     case 'resolved': return f.status === 'RESOLVED' && f.slaBreached !== false
     case 'resolved_sla': return f.status === 'RESOLVED' && f.slaBreached === false
     case 'today': case 'last7d': case 'last30d': return f._preset === kind
+    // "Dönem toplamı": kartların kendi boyutlarından hiçbiri etkin değil (2026-11-26: öteki süzgeçler kartı değiştirmez —
+    // sayılar zaten onlara göre)
     case 'total':
-      return !f.severity && !f.status && f.slaBreached === undefined && f.open === undefined
-        && !f.category && !f.channel && !f.q && !f._preset
+      return !f.severity && !f.status && f.slaBreached === undefined && f.open === undefined && !f._preset
     default: return false
   }
 }
 
+/** Önayarın geri gittiği gün sayısı — bugün DAHİL 1 / 7 / 30 takvim günü (sunucunun pencereleriyle aynı). */
+export const PRESET_BACK_DAYS = Object.freeze({ today: 0, last7d: 6, last30d: 29 })
+
 /**
- * Özet kartına tıklama → yeni süzgeç. Tarih penceresi (since/until) ve takım korunur, diğer boyutlar sıfırlanır,
- * kartın boyutu uygulanır; etkin kart tekrar tıklanırsa kalkar. Zaman önayarları (Bugün / 7 / 30 gün) tarihi yazar.
+ * Özet kartına tıklama → yeni süzgeç. Yalnız kartların kendi boyutları (önem, durum, SLA, açık, zaman önayarı) sıfırlanıp
+ * kartınki uygulanır; arama, takım, kanal, kategori, tarih ve gelişmiş süzgeçler KORUNUR (2026-11-26: kart sayıları bu
+ * süzgeçlere göre — tıklanınca liste aynı sayıyı gösterir). Etkin kart tekrar tıklanırsa kalkar. Zaman önayarları (Bugün /
+ * Son 7 gün / Son 30 gün) tarihi yazar: bugün dahil 1 / 7 / 30 takvim günü.
  */
 export function applyCardFilter(prev, kind, now = new Date()) {
   const active = kind !== 'total' && isCardActive(kind, prev)
-  const base = { ...prev, q: '', severity: '', category: '', status: '', channel: '',
-    slaBreached: undefined, open: undefined, _preset: undefined }
+  const base = { ...prev, severity: '', status: '', slaBreached: undefined, open: undefined, _preset: undefined }
   if (kind === 'total' || active) {
     // Etkin önayarı kaldırmak tarih penceresini de boşaltır (önayar tarihi YAZMIŞTI).
     return active && PRESETS.includes(kind) ? { ...base, since: '', until: '' } : base
@@ -300,8 +408,9 @@ export function applyCardFilter(prev, kind, now = new Date()) {
     case 'resolved': return { ...base, status: 'RESOLVED' }
     case 'resolved_sla': return { ...base, status: 'RESOLVED', slaBreached: false }
     case 'today': case 'last7d': case 'last30d': {
-      const back = kind === 'today' ? 0 : kind === 'last7d' ? 7 : 30
-      return { ...base, since: ymd(new Date(now.getTime() - back * 86400000)), until: ymd(now), _preset: kind }
+      const back = PRESET_BACK_DAYS[kind]
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back)   // takvim günü (yaz saati güvenli)
+      return { ...base, since: ymd(start), until: ymd(now), _preset: kind }
     }
     default: return base
   }
