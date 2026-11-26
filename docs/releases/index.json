@@ -1,9 +1,37 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-26T10:26:57Z",
+  "generatedAt": "2026-11-26T12:49:52Z",
   "repo": "inanmise/site-monitor",
-  "count": 877,
+  "count": 878,
   "releases": [
+    {
+      "version": "20.228.1",
+      "tag": "v20.228.1",
+      "releasedAt": "2026-11-26T12:49:41Z",
+      "commit": "e7a8595218608e1dbfa022a81b04f681c4696fd2",
+      "prevVersion": "20.228.0",
+      "bump": "patch",
+      "breaking": false,
+      "counts": {
+        "feat": 0,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 0
+      },
+      "changes": [
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "e7a85952",
+          "subject": "Nöbet Rutinleri gün sayfasında sağ ray kartları geniş ekranda sıkışmıyor"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.228.0",
       "tag": "v20.228.0",

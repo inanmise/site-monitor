@@ -4,8 +4,11 @@
  * sayfa yenilenmez (iyimser; sunucu yanıtı sessizce eşitler), geciken / bekleyen kaydırmadan görünür.
  *
  * Yerleşim (kapsayıcı sorgusu `@container/page`): ≥ 900 px iki sütun (liste + sağda yapışkan ray: nöbetçi, ilerleme, devir,
- * sorunlar, notlar); daha darda tek sütun (nöbetçi + ilerleme üstte yan yana, liste, paneller altta). Altta yapışkan çubuk
- * (`useStickyBottomBar`): ilerleme + "Günü tamamla".
+ * sorunlar, notlar); daha darda tek sütun (nöbetçi + ilerleme üstte — 42rem ile 900 px arasında yan yana, liste, paneller
+ * altta). Altta yapışkan çubuk (`useStickyBottomBar`): ilerleme + "Günü tamamla".
+ * Yan yana kuralı bir ARALIKTIR (`@min-[42rem]/page:@max-[900px]/page:`): Tailwind px cinsinden kapsayıcı sorgularını rem
+ * cinsinden adlandırılmışlardan (`@md`) ÖNCE üretir, "≥ 900 px tek sütun" kuralı sonradan gelen `@md` iki sütun kuralına
+ * yenilip ray kartları geniş ekranda iki dar sütuna sıkışıyordu (2026-11-26).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -471,7 +474,7 @@ export default function DayView({
   const groups = (sheet.groups || []).filter((g) => (g.sections || []).some((s) => (s.items || []).length))
   const rail = (
     <>
-      <div className="grid gap-3 @md/page:grid-cols-2 @min-[900px]/page:grid-cols-1">
+      <div data-slot="or-rail-cards" className="grid gap-3 @min-[42rem]/page:@max-[900px]/page:grid-cols-2">
         <ResponsibleCard teamId={teamId} teamName={teamName} sheet={sheet} member={member} canManage={canManage}
           onChanged={() => { load({ silent: true }); refreshRoutineBadge() }} />
         <DayProgress sheet={sheet} progress={progress} canComplete={canDoComplete} canReopen={!!sheet.can_reopen}

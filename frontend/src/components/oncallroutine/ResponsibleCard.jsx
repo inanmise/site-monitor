@@ -122,13 +122,13 @@ export default function ResponsibleCard({ teamId, teamName, sheet, member = fals
   return (
     <Card data-slot="or-responsible" data-source={source} data-me={r?.is_me || undefined}
       className={cn('gap-3 rounded-xl px-4', compact ? 'py-3' : 'py-4')}>
-      <div className="flex items-start gap-3">
+      <div className="flex flex-wrap items-start gap-3">
         <span aria-hidden="true"
           className={cn('inline-flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold',
             none ? 'bg-muted text-muted-foreground' : 'bg-primary/12 text-primary')}>
           {none ? '?' : initialsOf(r.name)}
         </span>
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div className="flex min-w-[9rem] flex-1 basis-0 flex-col gap-1">
           <p className="m-0 text-xs font-medium text-muted-foreground">{t('or.resp.title')}</p>
           {none ? (
             <p className="m-0 text-sm font-semibold" data-slot="or-responsible-none">{t('or.resp.none')}</p>
@@ -164,13 +164,13 @@ export default function ResponsibleCard({ teamId, teamName, sheet, member = fals
           )}
         </div>
         {items.length > 0 && (
-          <div className="shrink-0" data-slot="or-responsible-takeover">
+          <div className="ml-auto shrink-0" data-slot="or-responsible-takeover">
             {busy ? <Spinner className="m-2.5 size-4" /> : <KebabMenu items={items} variant="labeled" label={t('or.resp.menu')} rowLabel={t('or.resp.title')} />}
           </div>
         )}
       </div>
       {none && canSelf && weekKey && (
-        <Button type="button" size="sm" className="w-full pointer-coarse:h-10" data-slot="or-responsible-take-week" disabled={busy}
+        <Button type="button" size="sm" className="h-auto min-h-8 w-full py-1.5 whitespace-normal pointer-coarse:min-h-10" data-slot="or-responsible-take-week" disabled={busy}
           onClick={() => takeSelf('WEEK')}>
           <UserRoundCheck aria-hidden="true" />{t('or.resp.takeWeek')}
         </Button>
