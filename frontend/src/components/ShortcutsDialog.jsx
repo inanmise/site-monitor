@@ -4,7 +4,7 @@ import { useT } from '../i18n/index.jsx'
 import ModalShell from './ui/ModalShell.jsx'
 import { Kbd, KbdGroup } from '@/components/shadcn/kbd'
 import { GO_SHORTCUTS, isMacPlatform } from '../utils/keyboardShortcuts.js'
-import { TE_EDITOR_CONTEXT, INCIDENT_HISTORY_CONTEXT, activeShortcutContexts } from '../utils/shortcutContexts.js'
+import { TE_EDITOR_CONTEXT, INCIDENT_HISTORY_CONTEXT, OR_PAGE_CONTEXT, activeShortcutContexts } from '../utils/shortcutContexts.js'
 
 /**
  * "Klavye kısayolları" listesi (2026-10-02, öneri 24) — KeyboardShortcuts'ın İLK AÇILIŞTA yüklenen penceresi
@@ -109,6 +109,23 @@ export default function ShortcutsDialog({ open, onClose, tabs = [] }) {
         id: 'incident-history', title: t('shortcuts.grp.incidentHistory'), hint: t('shortcuts.ihHint'), rows: [
           { id: 'ih-new', label: t('shortcuts.ihNew'), chords: [['N']] },
           { id: 'ih-edit', label: t('shortcuts.ihEdit'), chords: [['E']] },
+        ],
+      },
+      // Nöbet Rutinleri (2026-11-26): yalnız sayfa açıkken; satır kimlikleri sözleşmede (§9.6) sabit
+      contexts.has(OR_PAGE_CONTEXT) && {
+        id: 'oncall-routine', title: t('shortcuts.grp.oncallRoutine'), hint: t('shortcuts.orHint'), rows: [
+          { id: 'or-next', label: t('shortcuts.orNext'), chords: [['J']] },
+          { id: 'or-prev', label: t('shortcuts.orPrev'), chords: [['K']] },
+          { id: 'or-toggle', label: t('shortcuts.orToggle'), chords: [['X'], [t('shortcuts.orSpaceKey')]] },
+          { id: 'or-note', label: t('shortcuts.orNote'), chords: [['N']] },
+          { id: 'or-problem', label: t('shortcuts.orProblem'), chords: [['P']] },
+          { id: 'or-skip', label: t('shortcuts.orSkip'), chords: [['S']] },
+          { id: 'or-links', label: t('shortcuts.orLinks'), chords: [['O']] },
+          { id: 'or-section', label: t('shortcuts.orSection'), chords: [['Shift', 'D']] },
+          { id: 'or-complete', label: t('shortcuts.orComplete'), chords: [['C']] },
+          { id: 'or-day-prev', label: t('shortcuts.orDayPrev'), chords: [['[']] },
+          { id: 'or-day-next', label: t('shortcuts.orDayNext'), chords: [[']']] },
+          { id: 'or-today', label: t('shortcuts.orToday'), chords: [['T']] },
         ],
       },
     ].filter(Boolean)

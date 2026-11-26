@@ -73,6 +73,14 @@ class PublicJsonBodyLimitTest {
             return Map.of("success", true, "keys", body.size());
         }
 
+        /** Nöbet rutini şablonu (oturumlu, 512 KB) — gövde ayrıştırılırsa işleyici çağrılır. */
+        @org.springframework.web.bind.annotation.PutMapping("/api/oncall-routines/teams/{teamId}/template")
+        Map<String, Object> oncallTemplate(@org.springframework.web.bind.annotation.PathVariable Long teamId,
+                                           @RequestBody Map<String, Object> body) {
+            HANDLER_CALLED.set(true);
+            return Map.of("success", true, "keys", body.size());
+        }
+
         /** Oturumlu büyük gövde ucu. */
         @PostMapping("/api/test-echo/body")
         Map<String, Object> echo(@RequestBody Map<String, Object> body) {
@@ -333,6 +341,74 @@ class PublicJsonBodyLimitTest {
         assertThat(PublicBodyLimitFilter.containerParsedBody("text/plain")).isFalse();
         assertThat(PublicBodyLimitFilter.containerParsedBody("application/x-www-form-urlencoded;charset=UTF-8")).isTrue();
         assertThat(PublicBodyLimitFilter.containerParsedBody("multipart/form-data")).isTrue();
+    }
+
+    // ── Nöbet rutini şablonu (oturumlu, 512 KB — inceleme 2026-11-26 #7) ─────────────────────────
+
+    @Test
+    @DisplayName("nöbet rutini şablonu: 512 KB'ı aşan Content-Length gövde OKUNMADAN 400 alan 'template' (işleyici çağrılmaz); sınır içi geçer")
+    void oncallTemplate_declaredOverCap_fieldErrorWithoutParsing() throws Exception {
+        HANDLER_CALLED.set(false);
+        byte[] big = jsonWithString((int) PublicBodyLimitFilter.ONCALL_TEMPLATE_BYTES + 10);
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put("/api/oncall-routines/teams/7/template")
+                        .session(session()).contentType(MediaType.APPLICATION_JSON).content(big))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.field").value("template"))
+                .andExpect(jsonPath("$.fields.template").exists());
+        assertThat(HANDLER_CALLED).isFalse();
+
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put("/api/oncall-routines/teams/7/template")
+                        .session(session()).contentType(MediaType.APPLICATION_JSON).content(jsonWithString(100 * 1024)))
+                .andExpect(status().isOk());
+        assertThat(HANDLER_CALLED).isTrue();
+    }
+
+    @Test
+    @DisplayName("nöbet rutini şablonu: chunked gövde SAYILIR, sınırda alan adlı istisna; işleyici bunu 400 alan 'template' yapar")
+    void oncallTemplate_chunkedIsCountedAndMappedToFieldError() throws Exception {
+        byte[] big = jsonWithString((int) PublicBodyLimitFilter.ONCALL_TEMPLATE_BYTES + 10);
+        MockHttpServletRequest req = new MockHttpServletRequest("PUT", "/api/oncall-routines/teams/7/template") {
+            @Override public long getContentLengthLong() { return -1; }
+            @Override public int getContentLength() { return -1; }
+        };
+        req.setContentType("application/json");
+        req.setContent(big);
+        List<HttpServletRequest> seen = new ArrayList<>();
+        new PublicBodyLimitFilter().doFilter(req, new MockHttpServletResponse(), (r, s) -> seen.add((HttpServletRequest) r));
+        assertThat(seen).hasSize(1);
+        ServletInputStream in = seen.get(0).getInputStream();
+        assertThatThrownBy(() -> drain(in))
+                .isInstanceOfSatisfying(PublicBodyLimitFilter.BodyLimitExceededException.class,
+                        e -> assertThat(e.field()).isEqualTo("template"));
+
+        @SuppressWarnings("unchecked")
+        GlobalExceptionHandler handler = new GlobalExceptionHandler(
+                org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
+        var res = handler.handleMalformedJson(new org.springframework.http.converter.HttpMessageNotReadableException("x",
+                new PublicBodyLimitFilter.BodyLimitExceededException(PublicBodyLimitFilter.ONCALL_TEMPLATE_BYTES, "template"),
+                (org.springframework.http.HttpInputMessage) null));
+        assertThat(res.getStatusCode().value()).isEqualTo(400);
+        assertThat(res.getBody()).containsEntry("code", "VALIDATION_FAILED").containsEntry("field", "template");
+        // alan adsız sınır (oturumsuz uç) 413 kalır
+        var plain = handler.handleMalformedJson(new org.springframework.http.converter.HttpMessageNotReadableException("x",
+                new PublicBodyLimitFilter.BodyLimitExceededException(PublicBodyLimitFilter.SMALL_BYTES),
+                (org.springframework.http.HttpInputMessage) null));
+        assertThat(plain.getStatusCode().value()).isEqualTo(413);
+    }
+
+    @Test
+    @DisplayName("nöbet rutini şablon yolu kuralı: yalnız /teams/<rakam>/template; sürümler, başka uçlar, harfli kimlik sınırsız")
+    void oncallTemplatePathRule() {
+        assertThat(PublicBodyLimitFilter.capFor("/api/oncall-routines/teams/7/template"))
+                .isEqualTo(PublicBodyLimitFilter.ONCALL_TEMPLATE_BYTES);
+        assertThat(PublicBodyLimitFilter.fieldFor("/api/oncall-routines/teams/123456789012345678/template")).isEqualTo("template");
+        assertThat(PublicBodyLimitFilter.capFor("/api/oncall-routines/teams/1234567890123456789/template")).isEqualTo(-1);
+        assertThat(PublicBodyLimitFilter.capFor("/api/oncall-routines/teams/7/template/versions")).isEqualTo(-1);
+        assertThat(PublicBodyLimitFilter.capFor("/api/oncall-routines/teams/abc/template")).isEqualTo(-1);
+        assertThat(PublicBodyLimitFilter.capFor("/api/oncall-routines/teams//template")).isEqualTo(-1);
+        assertThat(PublicBodyLimitFilter.capFor("/api/oncall-routines/teams/7/settings")).isEqualTo(-1);
+        assertThat(PublicBodyLimitFilter.fieldFor("/api/login")).isNull();
     }
 
     @Test

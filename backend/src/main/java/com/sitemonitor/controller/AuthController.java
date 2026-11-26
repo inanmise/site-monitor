@@ -123,6 +123,10 @@ public class AuthController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     com.sitemonitor.service.techerror.TechErrorVisibilityService techErrorVisibility;
 
+    /** Nöbet rutinleri modülü görünürlüğü (2026-11-26) — menü gizleme için kapsam bloğuna yazılır. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.sitemonitor.service.oncallroutine.OnCallRoutineVisibility oncallRoutineVisibility;
+
     @Autowired(required = false)
     private com.sitemonitor.service.otp.LoginMethodsService loginMethods;
 
@@ -1190,6 +1194,8 @@ public class AuthController {
                 : SessionScope.isGlobalViewer(session) || nocOperator);
         // Kanal teknik hata raporu modülü (2026-10-17, S6): takım bazlı görünürlük — kapalıysa menüde görünmez
         scope.put("channel_reports", techErrorVisibility == null || techErrorVisibility.sessionSees(session));
+        // Nöbet rutinleri modülü (2026-11-26): takım bazlı görünürlük — kapalıysa menüde görünmez
+        scope.put("oncall_routines", oncallRoutineVisibility == null || oncallRoutineVisibility.sessionSees(session));
         // GLOBAL yönetici mi (2026-10-22, hata avı Theme G / K1): arayüzün "yalnız global yönetici" kapıları rol dizesine
         // (systemRole === 'ADMIN') bakıyordu — kapsamlı müdür de ADMIN'dir ve sunucu onu 403'le reddediyordu. Ek alan.
         scope.put("global_admin", SessionScope.isGlobalAdmin(session));

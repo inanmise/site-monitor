@@ -1,7 +1,7 @@
 import { lazy, useId, useState, useCallback, useEffect, useMemo } from 'react'
 import {
   Settings, Search, SlidersHorizontal, Palette, FolderTree, Layers, Mail, CalendarClock, CalendarDays, FileText, CloudLightning, BellRing, ShieldAlert, KeyRound, LockKeyhole, Stethoscope, Archive, Database, Headset, ServerCog, LogIn, SwatchBook, FileWarning,
-  ChartNoAxesCombined, Cpu, RadioTower, CalendarOff,
+  ChartNoAxesCombined, Cpu, RadioTower, CalendarOff, ListTodo,
 } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useUrlQuerySync, readUrlParam } from '../../hooks/useUrlQuerySync.js'
@@ -44,6 +44,7 @@ const GrafanaDashboardSettings = lazy(() => import('./grafana/GrafanaDashboardSe
 const K6EngineSettings = lazy(() => import('./k6engine/K6EngineSettings.jsx'))   // k6 motoru — 0.49 → 2.3 geçişi, uyumluluk taraması (2026-10-29)
 const AlarmFeedSettings = lazy(() => import('./alarmfeed/AlarmFeedSettings.jsx'))   // Alarm akışı — merkezi izleme ekibinin çektiği herkese açık uç (2026-10-30)
 const HolidayCalendarSettings = lazy(() => import('./HolidayCalendarSettings.jsx'))   // Tatil takvimi — veritabanı sorgu izlemesinin "tatillerde çalışma" günleri (2026-10-31)
+const OnCallRoutineSettings = lazy(() => import('./OnCallRoutineSettings.jsx'))   // Nöbet rutinleri — modül görünürlüğü + bildirimler (2026-11-26)
 
 /**
  * Ayarlar kabuğu (tam sayfa yeniden tasarım, 2026-09-27 — kullanıcı: "Ayarlar sayfası tüm sayfayı kullanmıyor;
@@ -68,6 +69,9 @@ const GROUPS = [
     { id: 'sysmaint', labelKey: 'settings.navSysMaint', icon: ServerCog },
     // Kanal teknik hata raporu modülü (2026-10-17, S6): gören takımlar + kanalların onay akışı — kapsamlı müdür salt okunur
     { id: 'techerror', labelKey: 'settings.navChannelReports', icon: FileWarning },
+    // Nöbet rutinleri (2026-11-26): modülü gören takımlar + kurum geneli bildirim anahtarları + takımların rutin özeti —
+    // kapsamlı müdür SALT OKUNUR görür (anahtarlar GLOBAL_ONLY, sunucu read_only döner)
+    { id: 'oncallroutines', labelKey: 'settings.navOncallRoutines', icon: ListTodo },
     // Grafana panosu (2026-10-18): Prometheus ölçümleri + içe aktarılabilir pano JSON'u — kapsamlı müdür SALT OKUNUR görür
     { id: 'grafana', labelKey: 'settings.navGrafana', icon: ChartNoAxesCombined },
     // Alarm akışı (2026-10-30): merkezi izleme ekibinin dakikada bir çektiği herkese açık uç — YALNIZ global yönetici
@@ -311,6 +315,7 @@ export default function AdminSettings({ globalAdmin = true }) {
           {active === 'holidays' && <HolidayCalendarSettings readOnly={!globalAdmin} />}
           {active === 'sysmaint' && <SystemMaintenanceSettings />}
           {active === 'techerror' && <TechErrorReportSettings readOnly={!globalAdmin} />}
+          {active === 'oncallroutines' && <OnCallRoutineSettings readOnly={!globalAdmin} />}
           {active === 'grafana' && <GrafanaDashboardSettings readOnly={!globalAdmin} />}
           {active === 'k6engine' && <K6EngineSettings />}
           {active === 'alarmfeed' && <AlarmFeedSettings />}

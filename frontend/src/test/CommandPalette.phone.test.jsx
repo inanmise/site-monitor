@@ -23,6 +23,8 @@ describe('CommandPalette (telefon)', () => {
     expect(screen.queryByText('Esc', { selector: '[data-slot="kbd"]' })).toBeNull()
     const cancel = screen.getByRole('button', { name: /Cancel|Vazgeç/ })
     expect(cancel).toHaveAttribute('data-variant', 'ghost')          // shadcn Button (DialogClose asChild data-slot'u "dialog-close" yapar)
+    // Dokunmatikte 40 px (size="sm" 32 px kalırdı — giriş noktası e2e'si ölçer; jsdom CSS uygulamaz, sınıf denetimi bilinçli)
+    expect(cancel.className.split(/\s+/)).toContain('pointer-coarse:h-10')
     // Sonuç satırları cmdk seçeneği olarak duruyor; dokunma = tıklama
     expect(screen.getByText('Yardım').closest('[cmdk-item]')).toHaveAttribute('role', 'option')
     fireEvent.click(cancel)

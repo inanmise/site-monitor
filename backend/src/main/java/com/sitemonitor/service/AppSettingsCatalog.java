@@ -441,6 +441,12 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.tech-error-report.push.decision",          "tech-error-report", Type.BOOL),
         new Setting("site.monitor.tech-error-report.push.delivered",         "tech-error-report", Type.BOOL),
         new Setting("site.monitor.tech-error-report.push.failed",            "tech-error-report", Type.BOOL),
+        // Nöbet rutinleri (2026-11-26) — Ayarlar > Platform > Nöbet rutinleri (kendi sayfası): modülü gören takımlar (boş =
+        // herkes) ve üç yönetici anahtarı (varsayılan AÇIK; takım ayarının üstünde). Hepsi GLOBAL_ONLY (aşağıda).
+        new Setting("site.monitor.oncall-routine.team-ids",          "oncall-routine", Type.CSV),
+        new Setting("site.monitor.oncall-routine.push-reminders",    "oncall-routine", Type.BOOL),
+        new Setting("site.monitor.oncall-routine.completion-notice", "oncall-routine", Type.BOOL),
+        new Setting("site.monitor.oncall-routine.handover-notice",   "oncall-routine", Type.BOOL),
         new Setting("site.monitor.tls-grade.drop-notify",           "tls-grade", Type.BOOL),
         new Setting("site.monitor.tls-grade.drop-notify-min-grade", "tls-grade", Type.ENUM, java.util.List.of("A", "B", "C", "D", "F")),
         // Kendi kendini izleme (2026-10-11) — Ayarlar → Genel → Kendi kendini izleme. Aralıklar WatchdogSettings.validate;
@@ -658,6 +664,7 @@ public final class AppSettingsCatalog {
         new Setting("site.monitor.weekly-report.mail-retention-days", "retention", Type.INT),
         new Setting("site.monitor.weekly-availability.retention-days", "retention", Type.INT),
         new Setting("site.monitor.oncall.weekly-notice.retention-days", "retention", Type.INT),   // haftalık nöbet bildirimi kaydı (2026-11-15)
+        new Setting("site.monitor.oncall-routine.retention-days", "retention", Type.INT),   // nöbet rutini günleri / görevleri / sorunları / geçmişi (2026-11-26)
         new Setting("site.monitor.tech-error-report.note-image-unlinked-retention-days", "retention", Type.INT),   // kanal notunda kullanılmayan görseller (2026-11-20)
         new Setting("site.monitor.cert-note-revision.retention-days", "retention", Type.INT),
         new Setting("site.monitor.scripted.draft-retention-days", "retention", Type.INT),
@@ -824,6 +831,11 @@ public final class AppSettingsCatalog {
         "site.monitor.tech-error-report.push.decision",
         "site.monitor.tech-error-report.push.delivered",
         "site.monitor.tech-error-report.push.failed",
+        // 2026-11-26: nöbet rutinleri modülünün takım bazlı görünürlüğü ve yönetici bildirim anahtarları — kurum geneli karar.
+        "site.monitor.oncall-routine.team-ids",
+        "site.monitor.oncall-routine.push-reminders",
+        "site.monitor.oncall-routine.completion-notice",
+        "site.monitor.oncall-routine.handover-notice",
         // 2026-10-18: Grafana panosu (etiket eşleyicisi altyapı adı taşır) ve ölçüm aktarıcısı (tüm pod'ların yükü) — kurum geneli.
         "site.monitor.grafana.title",
         "site.monitor.grafana.uid",

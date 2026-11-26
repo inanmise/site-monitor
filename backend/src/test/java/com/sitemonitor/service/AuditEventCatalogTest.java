@@ -82,6 +82,19 @@ class AuditEventCatalogTest {
     }
 
     @Test
+    @DisplayName("2026-11-26: nöbet rutini olayları RAPOR (ONCALL_ → TAKIM kuralından önce); hepsi katalogda; nöbet çizelgesi TAKIM kalır")
+    void oncallRoutineIsReport() throws Exception {
+        for (java.lang.reflect.Field f : com.sitemonitor.service.oncallroutine.OnCallRoutineCodes.class.getFields()) {
+            if (!f.getName().startsWith("AUDIT_")) continue;
+            String t = (String) f.get(null);
+            assertThat(AuditEventCatalog.contains(t)).as(t).isTrue();
+            assertThat(AuditEventCatalog.categoryOf(t)).as(t).isEqualTo(AuditEventCatalog.REPORT);
+        }
+        assertThat(AuditEventCatalog.categoryOf("ONCALL_ROUTINE_TEMPLATE_SAVE")).isEqualTo(AuditEventCatalog.REPORT);
+        assertThat(AuditEventCatalog.categoryOf("ONCALL_SCHEDULE_SAVE")).isEqualTo(AuditEventCatalog.TEAM);
+    }
+
+    @Test
     @DisplayName("güvenlik reddi kendi kategorisinde — nötr bir olay gibi görünmemeli")
     void categoryOf_deniedIsSecurity() {
         assertThat(AuditEventCatalog.categoryOf("ACCESS_DENIED")).isEqualTo(AuditEventCatalog.SECURITY);

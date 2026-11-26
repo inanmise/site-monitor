@@ -27,6 +27,8 @@ export const TAB_HELP_SECTION = {
   activity: '14.20', myactivity: '14.21', system: '14.22', 'login-issues': '14.23', admin: '14.24', permissions: '14.25',
   settings: '14.26', health: '14.27', sqlplayground: '14.28', help: '14.29', monitorchanges: '14.14', noc: '14.31',
   channelreports: '14.32',
+  // Nöbet Rutinleri (2026-11-26): kılavuzda §14.33 yoksa çekmece "ayrı bölüm yok" der ve Tam kılavuz bağlantısını gösterir
+  oncallroutines: '14.33',
 }
 
 /** "### 14.N …" başlığından bir sonraki başlığa kadar olan parça — tembel gövdeyle ortak (help/helpSection.js). */

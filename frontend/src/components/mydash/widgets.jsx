@@ -22,6 +22,7 @@ import { SERIES_WIDGETS } from './seriesWidgets.jsx'
 import { PAGESPEED_WIDGETS } from './pageSpeedWidgets.jsx'
 import { GAPS_WIDGETS } from './gapsWidget.jsx'
 import { DOMAIN_WIDGETS } from './domainExpiringWidget.jsx'
+import { ONCALL_ROUTINE_WIDGETS } from './oncallRoutineWidget.jsx'
 import { useWidgetData } from './useWidgetData.js'
 import {
   WATCHDOG_TONE, alertsSummary, certSummary, formatPct, monitorSummary, oncallRows, qualityTone, statusSummary, stormSummary,
@@ -434,6 +435,7 @@ export const WIDGETS = {
   ...PAGESPEED_WIDGETS,
   ...GAPS_WIDGETS,
   ...DOMAIN_WIDGETS,
+  ...ONCALL_ROUTINE_WIDGETS,
   ...STAT_WIDGETS,
 }
 

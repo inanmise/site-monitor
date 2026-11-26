@@ -113,6 +113,13 @@ export default function TeamDeleteImpactModal({ team, teams = [], onClose, onDel
           {(impact.executive_summary?.settings || Number(impact.executive_summary?.reports) > 0) && (
             <p className="text-xs text-muted-foreground" data-slot="team-impact-exec">{t('team.impactExecDeleted')}</p>
           )}
+          {/* Nöbet Rutinleri (2026-11-26) — silmeyi ENGELLEMEZ, yalnız bilgi: kontrol listesi takıma özeldir, "Taşı" taşımaz;
+              takım silinirse şablon, günler, sorunlar ve geçmiş de silinir. Eski sunucu anahtarı göndermez → satır yok. */}
+          {impact.oncall_routine?.configured === true && (
+            <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]" data-slot="team-impact-oncall-routine">
+              {t('team.impactOncallRoutine')}
+            </p>
+          )}
           {/* Alarm iletimi (2026-11-05) — silmeyi ENGELLEMEZ, yalnız bilgi: takımın kendi iletimleri "Taşı" ile hedef takıma
               geçer (takım yalnız silinirse silinir); bu takıma gelen iletimler taşımada da silmede de kaldırılır. */}
           {fwdCount(impact.alert_forwards?.owned) > 0 && (

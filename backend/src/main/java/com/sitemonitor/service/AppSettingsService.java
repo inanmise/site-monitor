@@ -379,6 +379,10 @@ public class AppSettingsService {
         if (com.sitemonitor.service.techerror.TechErrorReportSettings.isKey(s.key())) {
             com.sitemonitor.service.techerror.TechErrorReportSettings.validate(s.key(), val);
         }
+        // Nöbet rutinleri görünürlüğü (2026-11-26): takım kimlikleri CSV.
+        if (com.sitemonitor.service.oncallroutine.OnCallRoutineVisibility.isTeamIdsKey(s.key())) {
+            com.sitemonitor.service.oncallroutine.OnCallRoutineVisibility.validate(s.key(), val);
+        }
         // Grafana panosu + ölçüm aktarıcısı (2026-10-18): kimlik / adres / etiket eşleyicisi / aralıklar — aynı kural her uçta.
         if (com.sitemonitor.service.grafana.GrafanaDashboardSettings.isKey(s.key())) {
             com.sitemonitor.service.grafana.GrafanaDashboardSettings.validate(s.key(), val);

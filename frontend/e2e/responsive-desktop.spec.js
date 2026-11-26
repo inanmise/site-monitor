@@ -9,11 +9,12 @@
 // eklendiğinde ikisine birden eklenir.
 import { test, expect } from '@playwright/test'
 import { mockApi } from './support/monitorMocks.js'
+import { mockOncallRoutinesMinimal } from './support/oncallRoutineMocks.js'
 
 /** responsive.spec.js `TABS` ile aynı (App.jsx VALID_TABS). */
 const TABS = [
   'dashboard', 'mydash', 'all', 'domains', 'manualcerts', 'forecast', 'renewal', 'renewal-guide',
-  'warnings', 'incidents', 'maintenance', 'alerthistory', 'noc', 'stats', 'weakalgo', 'dataquality', 'weeklyreports', 'incident-history', 'executive', 'channelreports',
+  'warnings', 'incidents', 'maintenance', 'alerthistory', 'noc', 'stats', 'weakalgo', 'dataquality', 'weeklyreports', 'incident-history', 'executive', 'channelreports', 'oncallroutines',
   'health', 'uptime', 'monitoring', 'status', 'storms', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted', 'dbquery',
   'activity', 'myactivity', 'system', 'monitorchanges',
   'admin', 'permissions', 'sqlplayground', 'login-issues', 'help', 'settings',
@@ -121,6 +122,7 @@ for (const vp of VIEWPORTS) {
     for (const tab of vp.tabs) {
       test(`${tab}`, async ({ page }) => {
         await mockApi(page)
+        if (tab === 'oncallroutines') await mockOncallRoutinesMinimal(page)
         await page.goto(`/?tab=${tab}`)
         await page.locator('.app-main').waitFor({ timeout: 20_000 })
         // Tembel yüklenen sekme parçası gelene dek ölçülmez: soğuk geliştirme sunucusunda 1,2 sn yetmez ve "Yükleniyor"

@@ -51,6 +51,8 @@ public class HolidayCalendarService {
 
     private final HolidayDayRepository repo;
     private volatile Set<LocalDate> snapshot = Set.of();
+    /** Gün → ad (aynı okumada dolar; nöbet rutinleri sayfası "tatil: …" yazar). */
+    private volatile Map<LocalDate, String> names = Map.of();
     private volatile long loadedAtMs = -1;
     private final AtomicLong generation = new AtomicLong();
     private volatile CacheBus cacheBus;
@@ -71,14 +73,18 @@ public class HolidayCalendarService {
             long gen = generation.get();
             try {
                 Set<LocalDate> out = new HashSet<>();
+                Map<LocalDate, String> named = new java.util.HashMap<>();
                 for (HolidayDay d : repo.findAll()) {
                     try {
-                        out.add(LocalDate.parse(d.getDay()));
+                        LocalDate day = LocalDate.parse(d.getDay());
+                        out.add(day);
+                        if (d.getName() != null && !d.getName().isBlank()) named.put(day, d.getName());
                     } catch (RuntimeException ignored) {
                         // bozuk satır atlanır
                     }
                 }
                 snapshot = Set.copyOf(out);
+                names = Map.copyOf(named);
             } catch (RuntimeException e) {
                 log.warn("Tatil takvimi okunamadı — önceki özet kullanılıyor: {}", e.getClass().getSimpleName());
             }
@@ -86,6 +92,15 @@ public class HolidayCalendarService {
             loadedAtMs = generation.get() == gen ? now : -1;
         }
         return snapshot;
+    }
+
+    /**
+     * Tatil günlerinin adları ({@link #days()} ile aynı 60 sn'lik özet; okuma düşerse önceki özet). Nöbet rutinleri gün
+     * sayfası ve takvimi için (2026-11-26).
+     */
+    public Map<LocalDate, String> names() {
+        days();
+        return names;
     }
 
     /** Takvim değişti — bir sonraki okuma yeniden yükler; öteki pod'lara da yayımlar. */

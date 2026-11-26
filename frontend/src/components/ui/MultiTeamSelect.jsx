@@ -9,11 +9,13 @@ import { PickerContent, PickerTrigger, usePickerOpen } from './PickerPopover.jsx
  * Çoklu seçim açılır listesi (takımlar için). `value` = id dizisi, `onChange(ids)`.
  * SearchableSelect ile aynı shadcn Combobox deseni (Popover + Command, PickerPopover.jsx); farkları:
  * shadcn Checkbox'lı çoklu seçim, seçimde KAPANMAZ, tetikleyicide seçili etiketler virgülle gösterilir.
+ * `wrap` (2026-11-26, isteğe bağlı): seçili adlar ve seçenek adları kırpılmaz, satıra sarar (uzun AD takım adları);
+ * verilmezse görünüm eskisi gibi.
  */
 export default function MultiTeamSelect({
   value = [], onChange, options = [], placeholder, disabled = false, searchThreshold = 4,
   // Ad yolları SearchableSelect ile aynı (role="combobox" içerikten ad almaz — PickerTrigger).
-  ariaLabel, ariaLabelledBy, id,
+  ariaLabel, ariaLabelledBy, id, wrap = false,
 }) {
   const t = useT()
   const { open, openRef, setOpen } = usePickerOpen()
@@ -56,6 +58,7 @@ export default function MultiTeamSelect({
           ariaLabel={ariaLabel}
           ariaLabelledBy={ariaLabelledBy}
           id={id}
+          wrap={wrap}
         >
           {triggerLabel}
         </PickerTrigger>
@@ -91,7 +94,7 @@ export default function MultiTeamSelect({
                     >
                       {/* Görsel işaret: satırın kendisi seçenek; kutu ayrıca odak/tık almaz. */}
                       <Checkbox checked={checked} tabIndex={-1} aria-hidden="true" className="pointer-events-none" />
-                      <span className="min-w-0 flex-1 truncate">{opt.label}</span>
+                      <span className={wrap ? 'min-w-0 flex-1 [overflow-wrap:anywhere]' : 'min-w-0 flex-1 truncate'}>{opt.label}</span>
                     </CommandItem>
                   )
                 })}

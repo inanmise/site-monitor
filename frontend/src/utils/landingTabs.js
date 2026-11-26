@@ -40,6 +40,8 @@ export const LANDING_TAB_ORDER = Object.freeze([
   { id: 'incident-history', labelKey: 'nav.incidentHistory' },
   { id: 'executive', labelKey: 'nav.executiveSummary' },
   { id: 'channelreports', labelKey: 'nav.channelReports' },
+  // Nöbet Rutinleri (2026-11-26): takımın nöbet kontrol listesi — modül kapalıysa sayfa "erişim yok" der
+  { id: 'oncallroutines', labelKey: 'nav.oncallRoutines' },
   { id: 'activity', labelKey: 'nav.activity' },
   { id: 'myactivity', labelKey: 'nav.myActivity' },
   { id: 'system', labelKey: 'nav.system' },

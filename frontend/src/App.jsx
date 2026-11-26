@@ -134,6 +134,8 @@ const ExecutiveSummaryPage = lazy(() => import('./components/executive/Executive
 // Kanal teknik hata raporları (2026-10-13): kanal başına şablon + aylık rapor, PDF ve takım e-postasına gönderim.
 // Herkese açık sekme; izin (tech_error_reports.read) ve takım kapsamı sunucuda.
 const TechErrorReportsPage = lazy(() => import('./components/techerror/TechErrorReportsPage'))
+// Nöbet Rutinleri (2026-11-26): takımın nöbetçi kontrol listesi — tembel parça
+const OnCallRoutinesPage = lazy(() => import('./components/oncallroutine/OnCallRoutinesPage'))
 // Görsel paneli (2026-10-18): raporun yalnız görsel yuvaları, ayrı pencerede (`te_view=images`) — kenar çubuksuz kabuk
 const ImagesPanelPage = lazy(() => import('./components/techerror/capture/ImagesPanelPage'))
 import {
@@ -187,6 +189,7 @@ const NocPage = lazy(() => import('./pages/NocPage'))   // 7/24 Konsolu + Kapsam
 const ManualCertsPage = lazy(() => import('./components/manualcert/ManualCertsPage'))
 import AddCertSplitButton from './components/manualcert/AddCertSplitButton.jsx'
 import { isManualCert } from './components/manualcert/manualCertModel.js'
+import { displayNameOf } from './components/oncallroutine/displayName.js'
 // Envanter formu (kart → Düzenle/Kopyala): MDEditor çektiği için lazy — kendi Suspense sınırında.
 const InventoryFormModalForDomain = lazy(() =>
   import('./components/inventory/InventoryFormModal.jsx').then(m => ({ default: m.InventoryFormModalForDomain })))
@@ -794,6 +797,12 @@ export default function App() {
     const onNav = (e) => {
       const tab = e?.detail?.tab
       if (!tab || !VALID_TABS.has(tab)) return
+      // Nöbet Rutinleri durumunu bağlanırken adresten okur: aynı sekmedeyken gelen param'lar (Panom kutusu, palet) sayfayı
+      // yeni param'larla yeniden bağlar (kayıtlı görünüm yolu) — yalnız adres yazılsaydı görünüm değişmezdi.
+      if (tab === 'oncallroutines' && tabRef.current === 'oncallroutines' && e.detail.params) {
+        applyTabView(tab, e.detail.params)
+        return
+      }
       tabChangeRef.current?.(tab, e.detail.params)
       // Palet/bildirim sonuçları: ?domain= dashboard aramasına, ?team= takım süzgecine düşer — YALNIZ hedef Pano ise
       // (Ek 3/4, 2026-09-28): "Envanterde aç" (`domains` + domain), Envanter çekmecesinin "Sertifikayı aç"ı (`all` + domain)
@@ -2675,6 +2684,7 @@ export default function App() {
             {tab === 'dataquality' && <DataQualityPage globalAdmin={globalAdmin} />}
             {tab === 'executive' && (systemRole === 'ADMIN' || systemRole === 'AUDIT') && <ExecutiveSummaryPage globalAdmin={globalAdmin} />}
             {tab === 'channelreports' && <TechErrorReportsPage />}
+            {tab === 'oncallroutines' && <OnCallRoutinesPage meName={displayNameOf(profile, user)} />}
             {tab === 'http'     && <HttpMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
             {tab === 'domain'   && <DomainMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}
             {tab === 'port'     && <PortMonitorPage systemRole={systemRole} teamId={teamId} teamName={teamName} myTeams={writeTeams} globalAdmin={globalAdmin} />}

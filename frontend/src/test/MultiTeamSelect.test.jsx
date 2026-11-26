@@ -91,4 +91,23 @@ describe('MultiTeamSelect', () => {
       <MultiTeamSelect id="mts-x" value={[]} onChange={() => {}} options={teams} /></>)
     expect(screen.getByRole('combobox', { name: 'Üye olduğu takımlar' })).toBeDefined()
   })
+
+  // 2026-11-26 (Nöbet Rutinleri inceleme): uzun AD takım adları kırpılmasın — `wrap` isteğe bağlı, varsayılan değişmedi
+  it('wrap: seçili adlar ve seçenek adları sarar (kırpılmaz); wrap yoksa eski kırpma', () => {
+    const long = [{ value: 1, label: 'Dijital Kanallar Uygulama Geliştirme ve Operasyon Destek Müdürlüğü (İstanbul)' }, ...teams.slice(1)]
+    const { unmount } = render(<MultiTeamSelect wrap value={[1]} onChange={() => {}} options={long} ariaLabel="Takımlar" />)
+    const trigger = screen.getByRole('combobox', { name: 'Takımlar' })
+    const label = trigger.querySelector('span')
+    expect(label.textContent).toBe(long[0].label)
+    expect(label.className).toContain('[overflow-wrap:anywhere]')
+    expect(label.className).not.toContain('truncate')
+    open()
+    const optLabel = screen.getByRole('option', { name: long[0].label }).querySelector('span:not([data-slot])')
+    expect(optLabel.className).toContain('[overflow-wrap:anywhere]')
+    expect(optLabel.className).not.toContain('truncate')
+    unmount()
+
+    render(<MultiTeamSelect value={[1]} onChange={() => {}} options={long} ariaLabel="Takımlar" />)
+    expect(screen.getByRole('combobox', { name: 'Takımlar' }).querySelector('span').className).toContain('truncate')
+  })
 })

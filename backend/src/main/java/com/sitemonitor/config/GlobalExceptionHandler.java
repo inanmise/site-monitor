@@ -383,6 +383,12 @@ public class GlobalExceptionHandler {
     /** Bozuk JSON body. */
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, Object>> handleMalformedJson(HttpMessageNotReadableException e) {
+        String limitField = bodyLimitField(e);
+        if (limitField != null) {
+            // Oturumlu küçük gövdeli uç (nöbet rutini şablonu, 2026-11-26): sınır aşımı formun alan hatası olarak anlatılır.
+            String[] t = PublicBodyLimitFilter.fieldTexts(limitField);
+            return handleBadRequest(new FieldValidationException(limitField, Msg.t(t[0], t[1])));
+        }
         if (bodyTooLarge(e)) {
             // Gövde sınırı (kapı incelemesi 2026-11-15): Jackson okuma kısıtı (32 MiB belge / 16 MiB metin) ya da oturumsuz
             // uç sınırı (PublicBodyLimitFilter) — biçim hatası değil, boyut: 413.
@@ -395,6 +401,16 @@ public class GlobalExceptionHandler {
         return respond(400, "MALFORMED_REQUEST", Msg.t(
                 "Geçersiz istek formatı: gönderilen veri okunamadı ya da bir alanın türü yanlış (ör. sayı yerine metin). Sayfayı yenileyip tekrar deneyin; sorun sürerse sistem yöneticilerine bildirin.",
                 "Invalid request format: the data sent couldn’t be read or a field has the wrong type (for example text instead of a number). Reload the page and try again; if it keeps happening, tell the system administrators."));
+    }
+
+    /** Neden zincirindeki süzgeç sınırının alan adı (alan hatası olarak anlatılacaksa); yoksa null — tavanlı yürüyüş. */
+    static String bodyLimitField(Throwable e) {
+        Throwable t = e;
+        for (int guard = 0; t != null && guard < com.sitemonitor.util.CauseChain.MAX_DEPTH; guard++, t = t.getCause()) {
+            if (t instanceof PublicBodyLimitFilter.BodyLimitExceededException b) return b.field();
+            if (t.getCause() == t) break;
+        }
+        return null;
     }
 
     /** Neden zincirinde gövde boyutu sınırı var mı (Jackson okuma kısıtı ya da oturumsuz uç süzgeci) — tavanlı yürüyüş. */

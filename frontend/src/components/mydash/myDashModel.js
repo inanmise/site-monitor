@@ -62,6 +62,10 @@ export const WIDGET_CATALOG = Object.freeze([
   // Alan adları (2026-11-15, C2): en az kalan günden (canlı gün) — kaynak mevcut alan adı listesi; yalnız "Kutu ekle"den,
   // varsayılan düzende ve hazır düzenlerde YOK
   { type: 'domain_expiring',       size: 'md', tab: 'domain',    perm: 'monitoring.read' },
+  // Nöbet rutinim (2026-11-26): rutini açık takımlarımın bugünkü kontrol listesi durumu (nöbetçisi olduklarım önce, en çok 3) —
+  // kaynak menü rozetiyle aynı `/api/oncall-routines/me`; modül bu kullanıcıya açıksa (`@oncall_routines`). Yalnız "Kutu
+  // ekle"den — varsayılan düzende ve hazır düzenlerde YOK
+  { type: 'oncall_routine',        size: 'md', tab: 'oncallroutines', perm: ['oncall_routines.read', '@oncall_routines'] },
   // Renkli panel kutuları (2026-10-13): tek gösterge, her zaman renkli panel — "Kutu ekle"de ayrı grup (statDefs.js)
   ...STAT_DEFS.map((d) => ({ type: d.type, size: 'sm', tab: d.tab, perm: d.perm, group: 'stat' })),
 ])
@@ -81,6 +85,13 @@ export const NOC_CONSOLE = '@noc_console'
  * `scope` göndermezse sunulur). İzin matrisi anahtarı DEĞİL.
  */
 export const CHANNEL_REPORTS = '@channel_reports'
+
+/**
+ * Sahte izin (2026-11-26): Nöbet Rutinleri modülü bu kullanıcıya AÇIK mı — `/api/me/permissions` `scope.oncall_routines`
+ * (menü girişiyle aynı kural, ama burada yalnız açık `true` açıktır: eski sunucu alanı göndermez → modül yok, kutu sunulmaz).
+ * İzin matrisi anahtarı DEĞİL.
+ */
+export const ONCALL_ROUTINES = '@oncall_routines'
 
 /**
  * 7/24 komuta düzeni (2026-10-13, kullanıcı isteği "7/24 ekibi önünde olsun"): tek tıkla uygulanan hazır yerleşim. Sıra 3
@@ -347,6 +358,8 @@ export const DETAIL_ONLY_TYPES = Object.freeze(new Set([
   'alert_trend', 'fav_response',
   // Sayfa Hızı (2026-11-14): "en yavaş" bir SIRALAMA — tek sayıya inmez, TV'de liste olarak kalır
   'pagespeed_slowest',
+  // Nöbet rutinim (2026-11-26): takım satırları (durum + ilerleme) — tek sayıya inmez
+  'oncall_routine',
 ]))
 
 /**
