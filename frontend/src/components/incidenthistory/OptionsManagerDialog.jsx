@@ -146,8 +146,7 @@ export default function OptionsManagerDialog({ teams = [], onClose, onChanged })
     if (!ok) return
     setBusy(true)
     let res = null
-    try { res = await api.incidents.renameOptions({ type, team_id: Number(teamId), from, to: target }) } catch { res = null }
-    setBusy(false)
+    try { res = await api.incidents.renameOptions({ type, team_id: Number(teamId), from, to: target }) } catch { res = null } finally { setBusy(false) }
     if (!res?.success) {
       if (oldServer(res)) { setFailure(t('inc.opt.unsupported')); return }
       // Yanıt yok / zaman aşımı / ağ geçidi: değişiklik sunucuda uygulanmış OLABİLİR — liste yeniden okunur, körlemesine
