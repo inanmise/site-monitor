@@ -1398,6 +1398,7 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.scope.noc_operator").value(false))
                 .andExpect(jsonPath("$.scope.noc_console").value(false))
                 .andExpect(jsonPath("$.scope.channel_reports").value(true))   // görünürlük bean'i yok → herkes (S6)
+                .andExpect(jsonPath("$.scope.oncall_routines").value(true))   // görünürlük bean'i yok → herkes (2026-11-26)
                 .andExpect(jsonPath("$.scope.global_admin").value(false));   // K1 (2026-10-22)
 
         MockHttpSession operator = new MockHttpSession();

@@ -286,13 +286,13 @@ describe('tembel parça kapısı — açılış paketi ve ekran ön-yükleme gra
   })
 
   it('Ayarlar bölümleri, Yönetim sekmeleri ve Sistem Sağlığı ağır alt parçaları yalnız açılınca (2026-11-06, PF4 O3)', () => {
-    // Ayarlar: 25 bölüm — hiçbiri statik değil, hepsi import() ile; kabuk tembel bölüm kabını (iskelet + hata sınırı) kullanır
+    // Ayarlar: 26 bölüm — hiçbiri statik değil, hepsi import() ile; kabuk tembel bölüm kabını (iskelet + hata sınırı) kullanır
     const settings = 'components/admin/AdminSettings.jsx'
     const SECTIONS = ['SmtpSettings', 'LdapSettings', 'GeneralSettings', 'MonitorGroups', 'PlatformSettings', 'SecretTools', 'DatabaseInfo',
       'WeeklyAvailabilitySettings', 'WeeklyReportAccessSettings', 'CertInventoryReportSettings', 'StormSettings', 'LoginAnomalySettings',
       'DomainDiagnostics', 'BrandingSettings', 'RetentionSettings', 'UserPushSettings', 'NocSettings', 'TechErrorReportSettings',
       'SystemMaintenanceSettings', 'LoginMethodsSettings', 'ThemeSettings', 'grafana/GrafanaDashboardSettings', 'k6engine/K6EngineSettings',
-      'alarmfeed/AlarmFeedSettings', 'HolidayCalendarSettings']
+      'alarmfeed/AlarmFeedSettings', 'HolidayCalendarSettings', 'OnCallRoutineSettings']
     for (const name of SECTIONS) {
       expect(hasStatic(settings, staticPathRe(name)), name).toBe(false)
       expect(hasDynamic(settings, dynamicPathRe(name)), name).toBe(true)

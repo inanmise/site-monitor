@@ -50,7 +50,7 @@ export default function HintPopover({ content, side = 'top', align = 'start', in
       <PopoverContent side={side} align={align} sideOffset={6} collisionPadding={8}
         id={id} {...contentRole}
         data-slot="hint-popover" data-interactive={interactive ? 'true' : undefined}
-        className={cn('z-(--z-menu) w-auto max-w-[min(20rem,calc(100vw-1rem))] px-3 py-2 text-xs leading-relaxed whitespace-pre-line', className)}>
+        className={cn('z-(--z-menu) w-auto max-w-[min(20rem,calc(100vw-1rem))] px-3 py-2 text-xs leading-relaxed whitespace-pre-line [overflow-wrap:anywhere]', className)}>
         {body}
       </PopoverContent>
     </Popover>

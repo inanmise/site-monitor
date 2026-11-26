@@ -120,6 +120,7 @@ final class EmailSamples {
         loginCode();
         alertForward();
         oncallWeekly();
+        oncallRoutine();
         addHtml("smtp-test", "smtp", "[Site Monitor] SMTP test e-postası", smtp.buildTestHtml(smtpSettings), "ok");
         return List.copyOf(out);
     }
@@ -165,6 +166,50 @@ final class EmailSamples {
         var en = com.sitemonitor.service.mail.OnCallWeeklyNoticeMail.build(info, true);
         add("reminder-oncall-weekly-en", "reminder", com.sitemonitor.service.mail.OnCallWeeklyNoticeMail.subject(info.teamName(), from, true),
                 en.html(), en.text(), "ok");
+    }
+
+    // ── Nöbet rutini (2026-11-26) ───────────────────────────────────────────
+
+    /**
+     * Tamamlama (TR + EN): uzun takım / kişi adları, atlanan görev, bugün ve önceki günlerden sorun, gün notu, hafta
+     * özeti, geç + güncellendi bayrakları. Devir (TR): gün tablosu, haftalık / aylık görevler, açık sorunlar, devir notu.
+     */
+    private void oncallRoutine() {
+        String team = "Dijital Kanallar Mobil Bankacılık Uygulama Geliştirme (" + TR + ")";
+        String person = "Ayşegül Nur Karaosmanoğlu-Yıldırımtekin (Teknoloji Servis Yönetimi Bölüm Başkanı)";
+        java.time.LocalDate day = java.time.LocalDate.parse("2026-11-26");
+        var skipped = List.of(new com.sitemonitor.service.mail.OnCallRoutineMail.Skipped("Sabah kontrolleri",
+                "Toplu işlem kuyruklarının ve gece sonu raporlarının kontrolü", "Rapor sunucusu bakımda — 14:00'te tekrar bakılacak"));
+        var today = List.of(new com.sitemonitor.service.mail.OnCallRoutineMail.Problem("HIGH",
+                "Ödeme ağ geçidi sağlık ekranı", "2026-11-26", "Kart işlemlerinde zaman aşımı oranı %3 — ilgili ekip arandı"));
+        var older = List.of(new com.sitemonitor.service.mail.OnCallRoutineMail.Problem("LOW",
+                "Disk doluluk kontrolü", "2026-11-24", "Log diski %81 — temizlik talebi açıldı"));
+        var done = new com.sitemonitor.service.mail.OnCallRoutineMail.Completion(team, 7L, day, person,
+                java.time.Instant.parse("2026-11-26T07:42:00Z"), "Mehmet Demir", 12, 11, 1, 1, 2, 2, true, true, skipped,
+                today, older, "Gün sakin geçti; ödeme ağ geçidi takip ediliyor.", 3, 5, BASE);
+        var tr = com.sitemonitor.service.mail.OnCallRoutineMail.completion(done, false);
+        add("oncall-routine-done-tr", "reminder", com.sitemonitor.service.mail.OnCallRoutineMail.completionSubject(done, false),
+                tr.html(), tr.text(), "ok");
+        var en = com.sitemonitor.service.mail.OnCallRoutineMail.completion(done, true);
+        add("oncall-routine-done-en", "reminder", com.sitemonitor.service.mail.OnCallRoutineMail.completionSubject(done, true),
+                en.html(), en.text(), "ok");
+
+        java.time.LocalDate from = java.time.LocalDate.parse("2026-11-16");
+        java.time.LocalDate to = java.time.LocalDate.parse("2026-11-22");
+        var days = List.of(
+                new com.sitemonitor.service.mail.OnCallRoutineMail.HandoverDay(from, "COMPLETED", 12, 12, 0, 0, person),
+                new com.sitemonitor.service.mail.OnCallRoutineMail.HandoverDay(from.plusDays(1), "COMPLETED_PARTIAL", 11, 12, 1, 1, "Mehmet Demir"),
+                new com.sitemonitor.service.mail.OnCallRoutineMail.HandoverDay(from.plusDays(2), "MISSED", null, null, null, null, null),
+                new com.sitemonitor.service.mail.OnCallRoutineMail.HandoverDay(from.plusDays(5), "NOT_WORKDAY", null, null, null, null, null));
+        var items = List.of(new com.sitemonitor.service.mail.OnCallRoutineMail.PeriodItem("Haftalık yedek geri yükleme denemesi", "DONE"),
+                new com.sitemonitor.service.mail.OnCallRoutineMail.PeriodItem("Aylık erişim gözden geçirmesi", "MISSED"));
+        var ho = new com.sitemonitor.service.mail.OnCallRoutineMail.Handover(team, 7L, from, to, List.of(person, "Mehmet Demir"),
+                "Zeynep Kaya", 5, 3, 1, 4, 2, days, items, List.of(today.get(0), older.get(0)),
+                "Ödeme ağ geçidi zaman aşımı takibi sürüyor; Pazartesi sabahı ilgili ekiple görüşülecek.",
+                List.<String[]>of(new String[] {"2026-11-17", "Rapor sunucusu bakımda kaldı.", "Mehmet Demir"}), BASE);
+        var hoTr = com.sitemonitor.service.mail.OnCallRoutineMail.handover(ho, false);
+        add("oncall-routine-handover-tr", "reminder", com.sitemonitor.service.mail.OnCallRoutineMail.handoverSubject(team, from, to, false),
+                hoTr.html(), hoTr.text(), "ok");
     }
 
     // ── Alarm iletimi bilgi postası (2026-11-05) ────────────────────────────

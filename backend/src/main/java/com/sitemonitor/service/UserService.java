@@ -138,6 +138,18 @@ public class UserService {
     }
 
     /**
+     * Nöbet rutinleri (2026-11-26): kullanıcı silinince devralma satırları silinir (ad anlık görüntüleri kalır). Silme bu
+     * işlem ONAYLANDIKTAN sonra kendi işleminde koşar — hatası kullanıcı silmesini geri aldırmaz. Alan enjeksiyonu +
+     * null-güvenli: yapıcıyla kurulan birim testleri aynen çalışır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.oncallroutine.OnCallRoutineService onCallRoutines;
+
+    void setOnCallRoutines(com.sitemonitor.service.oncallroutine.OnCallRoutineService s) {
+        this.onCallRoutines = s;
+    }
+
+    /**
      * Pasifleştirme anında kullanıcının TÜM hatırlanan girişleri silinir (2026-10-02, kullanıcı kararı). Alan enjeksiyonu
      * + isteğe bağlı: yapıcıyla kurulan birim testleri aynen çalışır (yokken yalnız bu silme atlanır — interceptor pasif
      * hesabın çerezini zaten reddeder).
@@ -1728,6 +1740,7 @@ public class UserService {
         userRepo.deleteById(id);
         if (teamSources != null) teamSources.forgetUser(id);   // üyelik kaynak izleri öksüz kalmasın
         if (alertForwards != null) alertForwards.removeUser(id);   // alarm iletimlerinin seçilen üye listelerinden çıkar
+        if (onCallRoutines != null) onCallRoutines.deleteUser(id);   // nöbet rutini devralmaları (işlem sonrası, kendi işleminde)
         // Alıcı süzgeci işlem SONRASI boşaltılır: AdminController.deleteUser → forgetUserCaches (commit'ten sonra; işlem
         // içinde boşaltılsa yarışan bir yükleme commit öncesi durumu saklayabilirdi).
         return new DeleteImpact(leaders, managed, subs, deactivated);

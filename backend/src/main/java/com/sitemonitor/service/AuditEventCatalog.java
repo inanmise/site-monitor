@@ -252,6 +252,19 @@ public final class AuditEventCatalog {
             "ONCALL_OVERRIDE_ADD",        // nöbet yer değiştirmesi eklendi (2026-10-11)
             "ONCALL_OVERRIDE_DELETE",     // nöbet yer değiştirmesi silindi (2026-10-11)
             "ONCALL_SCHEDULE_SAVE",       // takım nöbet çizelgesi kaydedildi (2026-10-11)
+            // Nöbet rutinleri (2026-11-26) — kategori RAPOR (ONCALL_ → TAKIM kuralından ÖNCE). İşaret / not / sorun gibi
+            // gündelik değişiklikler denetime yazılmaz (alanın kendi geçmişi oncall_routine_events'e yazılır).
+            "ONCALL_ROUTINE_TEMPLATE_SAVE",       // rutin şablonu kaydedildi (sürüm + sayılar; başlık / adres YOK)
+            "ONCALL_ROUTINE_SETTINGS_SAVE",       // takım rutin ayarları (önce → sonra farkı)
+            "ONCALL_ROUTINE_DAY_COMPLETE",        // gün tamamlandı (sayılar, geç mi, sıra)
+            "ONCALL_ROUTINE_DAY_REOPEN",          // tamamlanmış gün yeniden açıldı
+            "ONCALL_ROUTINE_TAKEOVER",            // rutin sorumluluğu devralındı (alarm çizelgesi değişmez)
+            "ONCALL_ROUTINE_TAKEOVER_CLEAR",      // devralma kaldırıldı
+            "ONCALL_ROUTINE_HANDOVER_ACK",        // nöbet devri okundu olarak işaretlendi
+            "ONCALL_ROUTINE_PROBLEM_DELETE",      // sorun kaydı silindi
+            "ONCALL_ROUTINE_INCIDENT_LINK",       // sorun bir olay kaydına bağlandı / bağ kaldırıldı
+            "ONCALL_ROUTINE_EXPORT",              // rutin geçmişi dışa aktarıldı (aralık + satır sayıları)
+            "ONCALL_ROUTINE_ADMIN_SETTINGS_SAVE", // modül görünürlüğü / yönetici bildirim anahtarları (anahtar adları)
             "TEAM_ACCESS_GRANT_CREATE",   // takım erişim paylaşımı eklendi (2026-10-12)
             "TEAM_ACCESS_GRANT_DELETE",   // takım erişim paylaşımı kaldırıldı (2026-10-12)
             "TEAM_ACCESS_GRANT_UPDATE",   // takım erişim paylaşımı değişti (2026-10-12)
@@ -466,6 +479,7 @@ public final class AuditEventCatalog {
         // yönetimidir; gruplar/yapılandırma bildirim ENTEGRASYONUdur (NOTIFICATION_GROUP_* ile aynı yer).
         if (t.startsWith("NOC_MONITOR_")) return MONITOR;
         if (t.startsWith("NOC_CALL_LIST")) return TEAM;
+        if (t.startsWith("ONCALL_ROUTINE_")) return REPORT;         // nöbet rutinleri (2026-11-26) — ONCALL_'dan ÖNCE
         if (t.startsWith("ONCALL_")) return TEAM;                   // nöbet çizelgesi (2026-10-11) — takım düzeni
         // Alarm iletimi (2026-11-05) — erişim paylaşımı (TEAM_ACCESS_GRANT_*) ile aynı kova; ALERT_ (olay) kuralından ÖNCE
         if (t.startsWith("ALERT_FORWARD_")) return TEAM;

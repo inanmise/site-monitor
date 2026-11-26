@@ -22,6 +22,10 @@ const SMTP_KEYS = {
   QUIET_DIGEST: 'health.triggerQuietDigest',
   SYSTEM_MAINTENANCE: 'health.triggerSystemMaintenance',
   TEST: 'logtrig.TEST',
+  // Nöbet Rutinleri (2026-11-26): tamamlandı ve nöbet devri postaları takım adresine; hatırlatma yalnız push (posta yok)
+  ONCALL_ROUTINE_DONE: 'logtrig.ONCALL_ROUTINE_DONE',
+  ONCALL_ROUTINE_REMINDER: 'logtrig.ONCALL_ROUTINE_REMINDER',
+  ONCALL_ROUTINE_HANDOVER: 'logtrig.ONCALL_ROUTINE_HANDOVER',
 }
 
 /** Push (user_push_deliveries) tetikleyicileri. */
@@ -40,6 +44,10 @@ const PUSH_KEYS = {
   OVERFLOW_SUMMARY: 'userpush.trigger.OVERFLOW_SUMMARY',
   ESCALATION_STEP: 'userpush.trigger.ESCALATION_STEP',
   ACK_EXPIRED: 'userpush.trigger.ACK_EXPIRED',
+  // Nöbet Rutinleri (2026-11-26): tamamlandı (takım üyelerine), hatırlatma (YALNIZ nöbetçiye), nöbet devri (takım üyelerine)
+  ONCALL_ROUTINE_DONE: 'userpush.trigger.ONCALL_ROUTINE_DONE',
+  ONCALL_ROUTINE_REMINDER: 'userpush.trigger.ONCALL_ROUTINE_REMINDER',
+  ONCALL_ROUTINE_HANDOVER: 'userpush.trigger.ONCALL_ROUTINE_HANDOVER',
 }
 
 /** Her iki günlükte de aynı anlamdaki tetikleyiciler. */

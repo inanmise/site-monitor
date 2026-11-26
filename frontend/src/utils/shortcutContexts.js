@@ -31,3 +31,9 @@ export const TE_EDITOR_CONTEXT = 'te-editor'
 
 /** Olay ve Hata Geçmişi sayfasının bağlamı (2026-11-20, "Hızlı Giriş"): `N` yeni olay, `E` açık ayrıntıyı düzenle. */
 export const INCIDENT_HISTORY_CONTEXT = 'incident-history'
+
+/**
+ * Nöbet Rutinleri sayfasının bağlamı (2026-11-26): `J`/`K` görevler arası, `X` işaretle, `N` not, `P` sorun, `S` atla, `O`
+ * bağlantılar, `Shift+D` bölümü tamamla, `C` günü tamamla, `[`/`]` önceki / sonraki gün, `T` bugün. Sayfa kuruluyken kayıtlı.
+ */
+export const OR_PAGE_CONTEXT = 'or-page'

@@ -174,6 +174,74 @@ public class OnCallService {
         return out;
     }
 
+    // ── Nöbet rutinleri (2026-11-26) ─────────────────────────────────────────────────────────────
+
+    /**
+     * Takımın SAKLI çizelgesinin rotasyon yapılandırması — etkin olsun olmasın (satır yoksa boş). Nöbet rutinleri devir
+     * dönemini (haftalık rotasyon dilimi) ve "çizelge var mı / etkin mi" bilgisini bundan okur. Bellek YOK (tek PK okuması).
+     */
+    public java.util.Optional<OnCallRotation.Config> rotationConfig(Long teamId) {
+        if (teamId == null) return java.util.Optional.empty();
+        return schedules.findByTeamId(teamId).map(OnCallService::config);
+    }
+
+    /** {@link #rotationConfig} toplu (tek sorgu) — takım → yapılandırma; çizelgesi olmayan takım haritada yok. */
+    public Map<Long, OnCallRotation.Config> rotationConfigs(Collection<Long> teamIds) {
+        if (teamIds == null || teamIds.isEmpty()) return Map.of();
+        Map<Long, OnCallRotation.Config> out = new HashMap<>();
+        for (OnCallSchedule s : schedules.findByTeamIdIn(teamIds)) out.put(s.getTeamId(), config(s));
+        return out;
+    }
+
+    /**
+     * Her takım için verilen ANDAKİ nöbetçi (nöbet rutini "günün sorumlusu" — gün başlangıç saati). Kural
+     * {@code computeTargets(…, onlyNotify=false, …)} ile aynı: yalnız ETKİN çizelgeler, yer değiştirme önce (en son eklenen),
+     * yoksa rotasyon; pasif hesap {@code active:false} ile döner, silinmiş hesap haritada yer almaz. İki sorgu (çizelgeler +
+     * en erken andan sonra biten yer değiştirmeler) + kişi satırları; bellek YOK.
+     */
+    public Map<Long, OnCallPerson> slotsAt(Map<Long, Instant> teamToInstant) {
+        if (teamToInstant == null || teamToInstant.isEmpty()) return Map.of();
+        Map<Long, Instant> wanted = new LinkedHashMap<>();
+        for (Map.Entry<Long, Instant> e : teamToInstant.entrySet()) {
+            if (e.getKey() != null && e.getValue() != null) wanted.put(e.getKey(), e.getValue());
+        }
+        if (wanted.isEmpty()) return Map.of();
+        Map<Long, OnCallSchedule> byTeam = new HashMap<>();
+        for (OnCallSchedule s : schedules.findByTeamIdIn(wanted.keySet())) {
+            if (Boolean.TRUE.equals(s.getEnabled())) byTeam.put(s.getTeamId(), s);
+        }
+        if (byTeam.isEmpty()) return Map.of();
+        Instant earliest = null;
+        for (Long t : byTeam.keySet()) {
+            Instant at = wanted.get(t);
+            if (earliest == null || at.isBefore(earliest)) earliest = at;
+        }
+        Map<Long, List<OnCallRotation.Override>> ovr = new HashMap<>();
+        for (OnCallOverride o : overrides.findByTeamIdInAndEndsAtGreaterThan(byTeam.keySet(), ISO.format(earliest))) {
+            ovr.computeIfAbsent(o.getTeamId(), k -> new ArrayList<>()).add(toOverride(o));
+        }
+        Map<Long, OnCallRotation.Slot> slots = new LinkedHashMap<>();
+        Set<Long> userIds = new LinkedHashSet<>();
+        for (OnCallSchedule s : byTeam.values()) {
+            OnCallRotation.Slot slot = OnCallRotation.current(config(s), ovr.getOrDefault(s.getTeamId(), List.of()),
+                    wanted.get(s.getTeamId()));
+            if (slot.userId() == null) continue;
+            slots.put(s.getTeamId(), slot);
+            userIds.add(slot.userId());
+        }
+        if (slots.isEmpty()) return Map.of();
+        Map<Long, Person> byId = peopleById(userIds);
+        Map<Long, OnCallPerson> out = new LinkedHashMap<>();
+        for (Map.Entry<Long, OnCallRotation.Slot> e : slots.entrySet()) {
+            Person u = byId.get(e.getValue().userId());
+            if (u == null) continue;
+            out.put(e.getKey(), new OnCallPerson(e.getKey(), u.id(), u.username(), u.displayName(), u.email(),
+                    !Boolean.FALSE.equals(u.active()), e.getValue().override(),
+                    e.getValue().end() == null ? null : ISO.format(e.getValue().end())));
+        }
+        return out;
+    }
+
     // ── Ekran / yönetim ──────────────────────────────────────────────────────────────────────
 
     /** Çizelge görünümü: ayarlar, sıralı üyeler (ad), şu anki nöbetçi, yaklaşan dilimler, gelecekteki yer değiştirmeler. */

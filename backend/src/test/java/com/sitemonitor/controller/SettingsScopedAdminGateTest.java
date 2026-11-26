@@ -318,6 +318,30 @@ class SettingsScopedAdminGateTest {
     }
 
     @Test
+    @DisplayName("2026-11-26: nöbet rutinlerinin dört yönetici anahtarı katalogda, grup oncall-routine (kendi sayfası) ve GLOBAL_ONLY")
+    void oncallRoutineKeys_globalOnly() {
+        List<String> keys = List.of(
+                com.sitemonitor.service.oncallroutine.OnCallRoutineVisibility.KEY_TEAM_IDS,
+                com.sitemonitor.service.oncallroutine.OnCallRoutineVisibility.KEY_PUSH_REMINDERS,
+                com.sitemonitor.service.oncallroutine.OnCallRoutineVisibility.KEY_COMPLETION_NOTICE,
+                com.sitemonitor.service.oncallroutine.OnCallRoutineVisibility.KEY_HANDOVER_NOTICE);
+        for (String key : keys) {
+            AppSettingsCatalog.Setting s = AppSettingsCatalog.byKey(key);
+            assertThat(s).as("katalogda: " + key).isNotNull();
+            assertThat(s.group()).as(key).isEqualTo("oncall-routine");
+            assertThat(AppSettingsCatalog.isGlobalOnly(key)).as("GLOBAL_ONLY: " + key).isTrue();
+        }
+        assertThat(AppSettingsCatalog.byKey(keys.get(0)).type()).isEqualTo(AppSettingsCatalog.Type.CSV);
+        // kendi sayfası: Genel Ayarlar bu grubu kaydetmez
+        assertThat(GeneralSettingsController.OWN_PAGE_GROUPS).contains("oncall-routine");
+        // saklama günü retention sayfasında (yalnız global yönetici değil — saklama sayfasının kuralları)
+        AppSettingsCatalog.Setting ret = AppSettingsCatalog.byKey(
+                com.sitemonitor.service.oncallroutine.OnCallRoutineVisibility.KEY_RETENTION_DAYS);
+        assertThat(ret).isNotNull();
+        assertThat(ret.group()).isEqualTo("retention");
+    }
+
+    @Test
     @DisplayName("2026-10-31: veritabanı sorgu izlemesi kapasite / güvenlik sınırları, alarm aç/kapa, elle bekleme ve saatlik deneme sınırı GLOBAL_ONLY")
     void dbQueryLimits_globalOnly() {
         assertThat(AppSettingsCatalog.GLOBAL_ONLY).contains(

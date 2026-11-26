@@ -15,7 +15,7 @@ import {
   ScrollText, Logs, UserCheck, Fingerprint, FilePenLine,
   Settings2, Building2, HeartPulse, KeyRound, Database, MessageSquareWarning,
   LifeBuoy, Search, Users, Radar, CloudLightning, SignalHigh, ClipboardCheck, Presentation, FileWarning,
-  RadioTower, Earth, AppWindow, DatabaseZap
+  RadioTower, Earth, AppWindow, DatabaseZap, ListTodo
 } from 'lucide-react'
 import IssueReportModal from './IssueReportModal.jsx'
 import ModalShell from './ui/ModalShell.jsx'
@@ -26,6 +26,7 @@ import NavBrand from './nav/NavBrand.jsx'
 import NavMain, { NavLeafItem } from './nav/NavMain.jsx'
 import NavUser from './nav/NavUser.jsx'
 import { useOpenAlerts } from '../hooks/useOpenAlerts.js'
+import { useRoutineBadge } from './oncallroutine/useRoutineBadge.js'
 import { NAV_ITEM } from './nav/navStyles.js'
 // shadcn Sidebar (sidebar-07 "collapses to icons" deseni): marka + arama + bildirim / ana menü / kullanıcı
 import {
@@ -84,8 +85,12 @@ function writeOpenSubs(keys, known) {
 
 function Nav({ activeTab, onTabChange, username, teamName, myTeams = [], systemRole, globalAdmin, onLogout, onChangePassword, globalStatus = 'ok', loginInfo = null, profile = null, weeklyReportsVisible = false }) {
   // Kanal teknik hata raporu modülü görünürlüğü (2026-10-17, S6): sunucu kapsam bloğu kapalı derse sekme çizilmez; eski sunucu (null) → görünür
-  const { scope: permScope } = usePermissions()
+  const { scope: permScope, canView } = usePermissions()
   const t = useT()
+  // Nöbet Rutinleri (2026-11-26): modül görünürlüğü sunucunun kapsam bayrağıyla (eski sunucu bayrak göndermez → gizli) VE okuma
+  // izniyle. Rozet (bekleyen görev sayısı) yalnız sekme görünürken yoklanır; okunamazsa rozet yok (bilinmeyen 0 değildir).
+  const routinesVisible = permScope?.oncall_routines === true && canView('oncall_routines.read')
+  const routineBadge = useRoutineBadge(routinesVisible)
   const tour = useTour()   // ürün turu: kullanıcı menüsünden yeniden başlat + sm:nav-reveal (2026-09-13)
   // Palet kısayol ipucu (2026-11-26, H paketi): Mac / iOS'ta ⌘K — Kısayollar penceresiyle aynı platform kuralı
   const paletteKeyHint = useMemo(() => (isMacPlatform() ? '⌘K' : 'Ctrl K'), [])
@@ -170,6 +175,8 @@ function Nav({ activeTab, onTabChange, username, teamName, myTeams = [], systemR
         { id: 'executive',        Icon: Presentation,    labelKey: 'nav.executiveSummary', show: systemRole === 'ADMIN' || systemRole === 'AUDIT' },
         // Kanal teknik hata raporları (2026-10-13): takımın kanalları, şablonları ve aylık PDF raporu — herkes (kapsam sunucuda)
         { id: 'channelreports',   Icon: FileWarning,     labelKey: 'nav.channelReports',  show: permScope?.channel_reports !== false },
+        // Nöbet Rutinleri (2026-11-26): takımın nöbet kontrol listesi; rozet = nöbetçisi olduğum takımlarda bekleyen zorunlu görev
+        { id: 'oncallroutines',   Icon: ListTodo,        labelKey: 'nav.oncallRoutines',  show: routinesVisible, badge: routineBadge },
       ],
     },
     {

@@ -244,4 +244,43 @@ class OnCallServiceTest {
         assertThat(cur.active()).isTrue();
         verify(narrow, never()).findAllById(any());
     }
+
+    @Test
+    @DisplayName("2026-11-26 nöbet rutini: slotsAt = currentFor kuralı (verilen andaki nöbetçi, yer değiştirme önce); kapalı çizelge yok")
+    void slotsAtFollowsCurrentRule() {
+        schedule(1L, false, List.of(10L, 11L));
+        schedule(2L, true, List.of(20L));
+        Instant now = Instant.now();
+        Map<Long, OnCallService.OnCallPerson> nowSlots = svc.slotsAt(Map.of(1L, now, 2L, now));
+        Map<Long, OnCallService.OnCallPerson> cur = svc.currentFor(List.of(1L, 2L));
+        assertThat(nowSlots.keySet()).isEqualTo(cur.keySet());
+        assertThat(nowSlots.get(1L).userId()).isEqualTo(cur.get(1L).userId()).isEqualTo(10L);
+        // bir hafta sonra rotasyon ikinci kişide; takım başına ayrı an
+        assertThat(svc.slotsAt(Map.of(1L, now.plusSeconds(7 * 86_400L), 2L, now)).get(1L).userId()).isEqualTo(11L);
+
+        // yer değiştirme rotasyonun önündedir
+        OnCallOverride o = new OnCallOverride();
+        o.setId(5L);
+        o.setTeamId(1L);
+        o.setUserId(12L);
+        o.setStartsAt(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(java.time.ZoneOffset.UTC)
+                .format(now.minusSeconds(3600)));
+        o.setEndsAt(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").withZone(java.time.ZoneOffset.UTC)
+                .format(now.plusSeconds(3600)));
+        when(overrides.findByTeamIdInAndEndsAtGreaterThan(anyCollection(), anyString())).thenReturn(List.of(o));
+        OnCallService.OnCallPerson withOverride = svc.slotsAt(Map.of(1L, now)).get(1L);
+        assertThat(withOverride.userId()).isEqualTo(12L);
+        assertThat(withOverride.override()).isTrue();
+
+        // kapalı çizelge: slot yok ama yapılandırma okunur (rutin devir dönemi için)
+        svc.save(2L, false, "WEEKLY", rows.stream().filter(s -> s.getTeamId().equals(2L)).findFirst().orElseThrow().getAnchor(),
+                List.of(20L), true, "admin");
+        assertThat(svc.slotsAt(Map.of(2L, now))).isEmpty();
+        assertThat(svc.rotationConfig(2L)).isPresent();
+        assertThat(svc.rotationConfig(2L).orElseThrow().enabled()).isFalse();
+        assertThat(svc.rotationConfig(9L)).isEmpty();
+        assertThat(svc.rotationConfig(null)).isEmpty();
+        assertThat(svc.rotationConfigs(List.of(1L, 2L, 9L))).containsOnlyKeys(1L, 2L);
+        assertThat(svc.slotsAt(Map.of())).isEmpty();
+    }
 }

@@ -79,6 +79,8 @@ export const PUSH_TYPE_ALIASES = {
   alert_forward: 'alert_forward',
   // Haftalık nöbet bildirimi (2026-11-15): takım üyelerine giden push (tür ONCALL)
   oncall: 'oncall',
+  // Nöbet Rutinleri (2026-11-26): tamamlandı / hatırlatma / nöbet devri push'ları (tür ONCALL_ROUTINE)
+  oncall_routine: 'oncall_routine',
 }
 
 /**

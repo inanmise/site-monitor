@@ -37,6 +37,11 @@ import java.util.Map;
  * bağlantılarının form gönderimleri ({@code …/approve-link/confirm|reject}) tarayıcıda açık bir sayfadır: sınır aşımı
  * onlara JSON değil kısa bir HTML sayfasıyla anlatılır (arka uç inceleme 2026-11-15). Bu tek süzgeç {@code /api/login-help}
  * sınırının da TEK kaynağıdır (eski ayrı {@code WebConfig.loginHelpBodyLimitFilter} kaldırıldı).</p>
+ *
+ * <p>Oturumlu ama gövdesi küçük kalması gereken uçlar da buradan sınırlanır (2026-11-26, nöbet rutini inceleme #7): nöbet
+ * rutini şablonu {@code PUT /api/oncall-routines/teams/{id}/template} 512 KB — Jackson gövdeyi TAMAMEN ayrıştırmadan
+ * önce. Bu uçların sınır aşımı 413 değil, formun alanının altında gösterilen alan hatasıdır (400 {@code VALIDATION_FAILED},
+ * alan {@code template}); chunked gövde de sayılır ({@link BodyLimitExceededException#field()}).</p>
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 5)
@@ -64,6 +69,37 @@ public class PublicBodyLimitFilter extends OncePerRequestFilter {
             Map.entry("/api/login-help", LOGIN_HELP_BYTES),
             Map.entry("/api/client-error-report", CLIENT_ERROR_BYTES));
 
+    /** Nöbet rutini şablonu (oturumlu) — kanonik şablonun saklama sınırıyla aynı. */
+    static final long ONCALL_TEMPLATE_BYTES = com.sitemonitor.service.oncallroutine.OnCallRoutineTemplate.MAX_JSON_BYTES;
+    private static final String ONCALL_TEMPLATE_PREFIX = "/api/oncall-routines/teams/";
+    private static final String ONCALL_TEMPLATE_SUFFIX = "/template";
+
+    /** {@code /api/oncall-routines/teams/<1–18 rakam>/template} mı (düzenli ifade yok — doğrusal). */
+    static boolean oncallTemplatePath(String path) {
+        if (path == null || !path.startsWith(ONCALL_TEMPLATE_PREFIX) || !path.endsWith(ONCALL_TEMPLATE_SUFFIX)) return false;
+        int from = ONCALL_TEMPLATE_PREFIX.length();
+        int to = path.length() - ONCALL_TEMPLATE_SUFFIX.length();
+        if (to - from < 1 || to - from > 18) return false;
+        for (int i = from; i < to; i++) {
+            char c = path.charAt(i);
+            if (c < '0' || c > '9') return false;
+        }
+        return true;
+    }
+
+    /** Sınır aşımı alan hatası olarak anlatılan yolun alan adı; yoksa null (413). */
+    static String fieldFor(String path) {
+        return oncallTemplatePath(path) ? "template" : null;
+    }
+
+    /** Alan hatası metni (TR, EN) — {@code OnCallRoutineTemplate.checkSize} ile aynı. */
+    public static String[] fieldTexts(String field) {
+        long kb = ONCALL_TEMPLATE_BYTES / 1024;
+        return new String[] {
+                "Şablon çok büyük (en çok " + kb + " KB). Açıklamaları kısaltın ya da kullanılmayan görevleri silin.",
+                "The template is too large (at most " + kb + " KB). Shorten the descriptions or delete tasks you don't use."};
+    }
+
     /** Tarayıcı form gönderimi olan onay bağlantısı uçları — sınır aşımı HTML sayfasıyla yanıtlanır. */
     private static final java.util.Set<String> HTML_FORM_PATHS = java.util.Set.of(
             "/api/weekly-reports/approve-link/confirm",
@@ -80,7 +116,8 @@ public class PublicBodyLimitFilter extends OncePerRequestFilter {
     static long capFor(String path) {
         if (path == null) return -1;
         Long c = CAPS.get(path);
-        return c == null ? -1 : c;
+        if (c != null) return c;
+        return oncallTemplatePath(path) ? ONCALL_TEMPLATE_BYTES : -1;
     }
 
     @Override
@@ -111,8 +148,10 @@ public class PublicBodyLimitFilter extends OncePerRequestFilter {
         String path = RequestPathFirewallFilter.lookupPath(request);
         long cap = capFor(path);
         long declared = request.getContentLengthLong();
+        String field = fieldFor(path);
         if (cap >= 0 && declared > cap) {
             if (htmlFormPath(path)) tooLargeHtml(request, response);
+            else if (field != null) fieldTooLarge(request, response, field);
             else tooLarge(request, response, cap);
             return;
         }
@@ -123,7 +162,22 @@ public class PublicBodyLimitFilter extends OncePerRequestFilter {
             else lengthRequired(request, response);
             return;
         }
-        chain.doFilter(cap < 0 ? request : new Capped(request, cap), response);
+        chain.doFilter(cap < 0 ? request : new Capped(request, cap, field), response);
+    }
+
+    /** 400 alan hatası — {@code FieldValidationException} gövdesiyle aynı biçim ({@code fields} + {@code field}). */
+    static void fieldTooLarge(HttpServletRequest request, HttpServletResponse response, String field) throws IOException {
+        String[] t = fieldTexts(field);
+        String msg = Msg.t(request, t[0], t[1]);
+        response.setStatus(400);
+        response.setContentType("application/json");
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        response.setHeader("Cache-Control", "no-store");
+        String rid = CorrelationIdFilter.current();
+        String json = "{\"success\":false,\"code\":\"VALIDATION_FAILED\",\"error\":\"" + escape(msg) + "\""
+                + (rid == null ? "" : ",\"request_id\":\"" + escape(rid) + "\"")
+                + ",\"fields\":{\"" + escape(field) + "\":\"" + escape(msg) + "\"},\"field\":\"" + escape(field) + "\"}";
+        response.getOutputStream().write(json.getBytes(StandardCharsets.UTF_8));
     }
 
     /** 411 — uzunluğu bildirilmemiş, sunucunun kendisinin ayrıştırdığı (form / multipart) oturumsuz gövde. */
@@ -236,29 +290,44 @@ public class PublicBodyLimitFilter extends OncePerRequestFilter {
     /** Okunan bayt sınırı aştı — Jackson / Spring bunu okunamayan gövde olarak sarar ({@code GlobalExceptionHandler} → 413). */
     public static final class BodyLimitExceededException extends IOException {
         private final long limit;
+        private final String field;
 
         BodyLimitExceededException(long limit) {
+            this(limit, null);
+        }
+
+        BodyLimitExceededException(long limit, String field) {
             super("request body exceeds " + limit + " bytes");
             this.limit = limit;
+            this.field = field;
         }
 
         public long limit() { return limit; }
+
+        /** Sınır aşımı alan hatası olarak anlatılacaksa alan adı; yoksa null (413). */
+        public String field() { return field; }
     }
 
     /** Akışı sayan sarmalayıcı (Content-Length yok ya da yalan söylüyor). */
     static final class Capped extends HttpServletRequestWrapper {
         private final long cap;
+        private final String field;
         private ServletInputStream stream;
         private BufferedReader reader;
 
         Capped(HttpServletRequest request, long cap) {
+            this(request, cap, null);
+        }
+
+        Capped(HttpServletRequest request, long cap, String field) {
             super(request);
             this.cap = cap;
+            this.field = field;
         }
 
         @Override
         public ServletInputStream getInputStream() throws IOException {
-            if (stream == null) stream = new CountingStream(super.getInputStream(), cap);
+            if (stream == null) stream = new CountingStream(super.getInputStream(), cap, field);
             return stream;
         }
 
@@ -278,17 +347,23 @@ public class PublicBodyLimitFilter extends OncePerRequestFilter {
     static final class CountingStream extends ServletInputStream {
         private final ServletInputStream in;
         private final long cap;
+        private final String field;
         private long count;
 
         CountingStream(ServletInputStream in, long cap) {
+            this(in, cap, null);
+        }
+
+        CountingStream(ServletInputStream in, long cap, String field) {
             this.in = in;
             this.cap = cap;
+            this.field = field;
         }
 
         private void add(long n) throws BodyLimitExceededException {
             if (n <= 0) return;
             count += n;
-            if (count > cap) throw new BodyLimitExceededException(cap);
+            if (count > cap) throw new BodyLimitExceededException(cap, field);
         }
 
         @Override

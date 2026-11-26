@@ -1917,6 +1917,79 @@ export const api = {
 
   // ── Haftalık Raporlar ────────────────────────────────────────────────────
 
+  /**
+   * Nöbet Rutinleri (2026-11-26): takımın nöbet kontrol listesi — gün sayfası, işaretler, notlar, sorunlar, devir, şablon.
+   * Sözleşme: sunucu `/api/oncall-routines`. Hepsi `withStatus` (409 / 404 kodları `errorInfoOf(res)` ile okunur). Okumalar
+   * `opts.signal` alır (takım / gün değişince eski istek iptal). Bağlantı adresleri gövdelerde gider; kayıt günlüğüne yazılmaz.
+   */
+  oncallRoutines: (() => {
+    const base = '/oncall-routines'
+    const team = (id) => `${base}/teams/${encodeURIComponent(id)}`
+    const qs = (params) => {
+      const q = new URLSearchParams()
+      for (const [k, v] of Object.entries(params || {})) if (v != null && v !== '') q.set(k, String(v))
+      const s = q.toString()
+      return s ? `?${s}` : ''
+    }
+    const read = (path, opts = {}) => request(path, { withStatus: true, ...(opts.signal ? { signal: opts.signal } : {}) })
+    const write = (path, method, body) => request(path, {
+      method, withStatus: true, ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    })
+    return {
+      overview: (opts) => read(`${base}/overview`, opts),
+      me: (opts) => read(`${base}/me`, opts),
+      day: (teamId, date, opts) => read(`${team(teamId)}/day${qs({ date })}`, opts),
+      week: (teamId, week, opts) => read(`${team(teamId)}/week${qs({ week })}`, opts),
+      template: (teamId, opts) => read(`${team(teamId)}/template`, opts),
+      saveTemplate: (teamId, body) => write(`${team(teamId)}/template`, 'PUT', body),
+      templateVersions: (teamId, opts) => read(`${team(teamId)}/template/versions`, opts),
+      templateVersion: (teamId, v, opts) => read(`${team(teamId)}/template/versions/${encodeURIComponent(v)}`, opts),
+      sampleTemplate: (lang, opts) => read(`${base}/sample-template${qs({ lang })}`, opts),
+      saveSettings: (teamId, body) => write(`${team(teamId)}/settings`, 'PUT', body),
+      people: (teamId, opts) => read(`${team(teamId)}/people`, opts),
+      signals: (teamId, { fresh = false, signal } = {}) => read(`${team(teamId)}/signals${fresh ? '?fresh=1' : ''}`, { signal }),
+      setItemState: (teamId, body) => write(`${team(teamId)}/items/state`, 'POST', body),
+      bulkItemState: (teamId, body) => write(`${team(teamId)}/items/bulk-state`, 'POST', body),
+      saveItemNote: (teamId, body) => write(`${team(teamId)}/items/note`, 'PUT', body),
+      createProblem: (teamId, body) => write(`${team(teamId)}/problems`, 'POST', body),
+      updateProblem: (id, body) => write(`${base}/problems/${encodeURIComponent(id)}`, 'PATCH', body),
+      deleteProblem: (id) => write(`${base}/problems/${encodeURIComponent(id)}`, 'DELETE'),
+      // Görsel yükleme: `onProgress` verilirse XMLHttpRequest (gerçek yüzde), değilse fetch; `signal` iptal eder.
+      uploadProblemImage: async (id, file, { onProgress, signal } = {}) => {
+        const form = new FormData()
+        form.append('file', file)
+        const useXhr = typeof onProgress === 'function' && typeof XMLHttpRequest !== 'undefined'
+        const res = await request(`${base}/problems/${encodeURIComponent(id)}/images`, {
+          method: 'POST', body: form, withStatus: true,
+          ...(useXhr ? { transport: xhrTransport({ onProgress, signal }) } : signal ? { signal } : {}),
+        })
+        if (signal?.aborted && res && res.success !== true) return { success: false, status: 0, code: 'CANCELLED', cancelled: true }
+        return res
+      },
+      deleteProblemImage: (id, imageId) => write(`${base}/problems/${encodeURIComponent(id)}/images/${encodeURIComponent(imageId)}`, 'DELETE'),
+      problemImageUrl: (id, imageId) => `${BASE}${base}/problems/${encodeURIComponent(id)}/images/${encodeURIComponent(imageId)}`,
+      linkIncident: (id, body) => write(`${base}/problems/${encodeURIComponent(id)}/incident`, 'PUT', body),
+      problems: (teamId, { status = 'open', page = 0, size = 25, signal } = {}) =>
+        read(`${team(teamId)}/problems${qs({ status, page, size })}`, { signal }),
+      events: (teamId, { date, before, limit = 100, signal } = {}) =>
+        read(`${team(teamId)}/events${qs({ date, before, limit })}`, { signal }),
+      completeDay: (teamId, date, body) => write(`${team(teamId)}/days/${encodeURIComponent(date)}/complete`, 'POST', body),
+      reopenDay: (teamId, date, body) => write(`${team(teamId)}/days/${encodeURIComponent(date)}/reopen`, 'POST', body),
+      saveDayNote: (teamId, date, body) => write(`${team(teamId)}/days/${encodeURIComponent(date)}/note`, 'PUT', body),
+      saveHandoverNote: (teamId, periodKey, body) =>
+        write(`${team(teamId)}/handovers/${encodeURIComponent(periodKey)}/note`, 'PUT', body),
+      ackHandover: (teamId, periodKey) => write(`${team(teamId)}/handovers/${encodeURIComponent(periodKey)}/ack`, 'POST'),
+      assign: (teamId, body) => write(`${team(teamId)}/assignments`, 'POST', body),
+      clearAssignment: (teamId, scope, key) =>
+        write(`${team(teamId)}/assignments/${encodeURIComponent(scope)}/${encodeURIComponent(key)}`, 'DELETE'),
+      calendar: (teamId, { from, to, signal } = {}) => read(`${team(teamId)}/calendar${qs({ from, to })}`, { signal }),
+      stats: (teamId, { from, to, signal } = {}) => read(`${team(teamId)}/stats${qs({ from, to })}`, { signal }),
+      // Excel dışa aktarımının verisi (≤ 20 000 satır) — dışa aktarım uçlarının ortak süresi (EXPORT_FETCH_TIMEOUT_MS)
+      exportRows: (teamId, { from, to, signal } = {}) => request(`${team(teamId)}/export${qs({ from, to })}`, {
+        withStatus: true, timeoutMs: EXPORT_FETCH_TIMEOUT_MS, ...(signal ? { signal } : {}),
+      }),
+    }
+  })(),
   incidents: {
     // fields=summary (2026-11-20, "Hızlı Giriş"): liste satırları dört uzun markdown metni olmadan gelir (markdown_omitted)
     // 2026-11-26 ("Bul ve Raporla"): gelişmiş süzgeçler + sort; `opts` = { timeoutMs, signal }
@@ -2164,6 +2237,13 @@ export const api = {
   },
 
   admin: {
+    // Nöbet Rutinleri yönetimi (2026-11-26): modül görünürlüğü + bildirim anahtarları (yalnız global yönetici yazar) ve
+    // takımların rutin durumu. Ayarlar → Platform → Nöbet rutinleri.
+    oncallRoutines: {
+      settings: () => request('/admin/oncall-routines/settings', { withStatus: true }),
+      saveSettings: (body) => request('/admin/oncall-routines/settings', { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
+      overview: () => request('/admin/oncall-routines/overview', { withStatus: true }),
+    },
     // 7/24 İzleme Ekibi (NOC) yönetimi — YALNIZ global yönetici yazar; kapsamlı müdür okur (e-postalar 403/maskeli).
     noc: {
       getConfig:   () => request('/admin/noc/config'),

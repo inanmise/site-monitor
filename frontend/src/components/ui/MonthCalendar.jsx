@@ -22,10 +22,25 @@ import { cn } from '@/lib/utils'
  * Ekleyici seçenekler (2026-09-27, Sertifika Takvimi — varsayılanlarıyla eski davranış birebir aynı):
  *  • `onDayClick(key, events)`: verilirse olaylı günlerin tarih numarası gerçek bir düğme olur
  *    (`data-slot="month-calendar-day-open"`, adı "27 Eylül — 3 olay, günü aç") ve günü çağırana açar.
- *  • `dense`: TELEFONDA (sm altı) etiketli çipler yerine ton noktaları + adet çizilir; hücre 7 sütunda okunur kalır
- *    ve dokunma hedefi tüm hücredir. sm ve üstü çipli görünüm değişmez. (Karar: 390 px'te 7 sütunlu ızgara
- *    çiplerle okunmuyordu — hafta şeridi/ajanda yerine noktalı ızgara + gün paneli.)
+ *  • `dense`: DAR takvimde (aşağıdaki kural) etiketli çipler yerine gün düğmesinde ton noktaları + adet çizilir; hücre
+ *    7 sütunda okunur kalır ve dokunma hedefi tüm hücredir; geniş takvimde çipli görünüm. (Karar: 390 px'te 7 sütunlu
+ *    ızgara çiplerle okunmuyordu — hafta şeridi/ajanda yerine noktalı ızgara + gün paneli.)
  *  • `event.icon` (lucide bileşeni): çipin başında küçük simge (planlı yenileme, alan adı).
+ *
+ * Dokunmatik + ad kuralı (2026-11-26): dokunmatik cihazda (`pointer-coarse`) her etkileşimli öğe ≥ 40 px (aya atlama,
+ * "Bugün", gün düğmesi, olay çipleri); ince işaretçide masaüstü boyutları aynı kalır (`pointer-fine:sm:h-8` — çıplak
+ * `sm:h-8` 768 px dokunmatik tablette 32 px olurdu). Olay etiketi KESİLMEZ: sarar (`[overflow-wrap:anywhere]`), tam metin
+ * `title`'da da durur.
+ *
+ * Dar takvim (2026-11-26 inceleme #13, e2e ölçüsüyle karar): kural EKRANA ya da işaretçiye değil takvim KARTININ genişliğine
+ * bağlıdır (`@container/mcal`, eşik `@2xl` = 42rem ≈ 672 px; sütun ≈ 96 px). Altında çip ÇİZİLMEZ — sararak tam yazılan
+ * 60+ karakterlik alan / bakım adları dar sütunda günü yüzlerce piksel uzatıyordu (ölçü, e2e `month-calendar-touch.spec.js`:
+ * 390 dokunmatikte tek çiple kart 1463 / 1860 px; 768 dokunmatik tablette kart 416 px genişlikte, üç çiple 2315 / 2853 px).
+ * Dar takvimde olaylı her gün tek bir ≥ 40 px'lik hedef taşır (ton noktaları + adet, adı "27 Kasım — 3 olay";
+ * `data-slot="month-calendar-more-touch"`); dokununca / tıklayınca balon günün TÜM olaylarını tam adlarıyla, sararak listeler
+ * (`month-calendar-day-events`); `onClick` taşıyan olay balonda da düğmedir (balon kapanır, olay açılır). `dense` çağıranda
+ * aynı yerde gün düğmesi (`onDayClick`) noktaları taşır. Ad kırpılmaz, hiçbir olay erişilmez kalmaz. Geniş takvim (dizüstü)
+ * çipli görünümünü korur: günde en çok `maxPerDay` çip + "+N".
  *
  * Test kancaları: gün hücresi `data-slot="month-calendar-day"` (+ `data-today`, `data-tone` en kötü olay tonu,
  * `data-weekend`), gün numarası `data-slot="month-calendar-date"`, olay çipi `data-slot="month-calendar-event"`
@@ -60,6 +75,53 @@ const DOT_TONE = { ok: 'bg-green-600', info: 'bg-blue-600', warn: 'bg-amber-500'
 const CELL_TONE = {
   bad:  'bg-destructive/10 dark:bg-destructive/15',
   warn: 'bg-amber-500/10 dark:bg-amber-500/15',
+}
+
+/**
+ * Dar takvimde günün tek hedefi (≥ 40 px): ton noktaları (en çok 4) + adet; dokununca / tıklayınca balon günün TÜM
+ * olaylarını tam adlarıyla, sararak listeler. `onClick` taşıyan olay balonda da düğmedir: balon kapanır, olay açılır.
+ */
+function CompactDayEvents({ evs, label }) {
+  return (
+    <HintPopover interactive contentLabel={label} align="start" className="whitespace-normal p-1.5"
+      triggerClassName="w-full min-h-10 justify-start gap-1 rounded px-0.5 pointer-coarse:min-h-10"
+      content={({ close }) => (
+        <ul className="m-0 flex list-none flex-col gap-1 p-0" data-slot="month-calendar-day-events" aria-label={label}>
+          {evs.map((e, j) => {
+            const Icon = e.icon
+            const tone = EVENT_TONE[e.tone] || EVENT_TONE.ok
+            const body = (
+              <>
+                {Icon && <Icon aria-hidden="true" className="size-3.5 shrink-0" />}
+                <span className="min-w-0 [overflow-wrap:anywhere]" data-slot="month-calendar-day-event-label">{e.label}</span>
+              </>
+            )
+            return (
+              <li key={j} className="min-w-0">
+                {typeof e.onClick === 'function' ? (
+                  <Button type="button" variant="ghost" data-slot="month-calendar-day-event" data-tone={e.tone || 'ok'}
+                    onClick={() => { close(); e.onClick() }}
+                    className={cn('flex h-auto min-h-10 w-full min-w-0 items-center justify-start gap-1.5 rounded px-2 py-1.5 text-left text-xs font-semibold whitespace-normal', tone)}>
+                    {body}
+                  </Button>
+                ) : (
+                  <span data-slot="month-calendar-day-event" data-tone={e.tone || 'ok'}
+                    className={cn('flex min-w-0 items-center gap-1.5 rounded px-2 py-1.5 text-xs font-semibold', tone)}>
+                    {body}
+                  </span>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      )}>
+      <span className="flex flex-wrap items-center gap-0.5" aria-hidden="true">
+        {evs.slice(0, 4).map((e, j) => <span key={j} className={cn('size-1.5 rounded-full', DOT_TONE[e.tone] || DOT_TONE.ok)} />)}
+        <span className="ml-0.5 text-[.66em] leading-none font-bold text-foreground tabular-nums">{evs.length}</span>
+      </span>
+      <span className="sr-only">{label}</span>
+    </HintPopover>
+  )
 }
 
 export default function MonthCalendar({ events = [], initialMonth, maxPerDay = 3, ariaLabel, onDayClick, dense = false }) {
@@ -105,16 +167,16 @@ export default function MonthCalendar({ events = [], initialMonth, maxPerDay = 3
 
   return (
     <Card role="group" aria-label={ariaLabel || t('cal.aria')} data-slot="month-calendar"
-      className="mb-3 gap-2 bg-muted/40 px-2 py-2.5 shadow-none sm:px-3">
+      className="@container/mcal mb-3 gap-2 bg-muted/40 px-2 py-2.5 shadow-none sm:px-3">
       <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
         <Button type="button" variant="secondary" size="icon" onClick={() => setCursor(new Date(year, month - 1, 1))} aria-label={t('cal.prev')}><ChevronLeft /></Button>
         <NativeSelect size="sm" data-slot="month-calendar-jump" aria-label={t('cal.jump')} value={ym(cursor)} onChange={(e) => jump(e.target.value)}
-          className="h-9 min-w-0 border-transparent bg-transparent font-semibold shadow-none hover:bg-background sm:h-8">
+          className="h-9 min-w-0 border-transparent bg-transparent font-semibold shadow-none hover:bg-background pointer-coarse:h-10 pointer-fine:sm:h-8">
           {monthOptions.map((o) => <NativeSelectOption key={o.value} value={o.value}>{o.label}</NativeSelectOption>)}
         </NativeSelect>
         <Button type="button" variant="secondary" size="icon" onClick={() => setCursor(new Date(year, month + 1, 1))} aria-label={t('cal.next')}><ChevronRight /></Button>
         <small className="min-w-0 text-muted-foreground">{t('cal.count', monthEvents)}</small>
-        <Button type="button" variant="secondary" size="sm" className="ml-auto h-9 sm:h-8" onClick={() => { const n = new Date(); setCursor(new Date(n.getFullYear(), n.getMonth(), 1)) }}>{t('cal.today')}</Button>
+        <Button type="button" variant="secondary" size="sm" data-slot="month-calendar-today" className="ml-auto h-9 pointer-coarse:h-10 pointer-fine:sm:h-8" onClick={() => { const n = new Date(); setCursor(new Date(n.getFullYear(), n.getMonth(), 1)) }}>{t('cal.today')}</Button>
       </div>
       <div className="grid grid-cols-7 gap-0.5 sm:gap-[3px]">
         {dayNames.map((n) => (
@@ -132,33 +194,34 @@ export default function MonthCalendar({ events = [], initialMonth, maxPerDay = 3
           const dayLabel = d.toLocaleDateString(locale, { day: 'numeric', month: 'long' })
           return (
             <div key={k} data-slot="month-calendar-day" data-day={k} data-today={isToday || undefined} data-tone={worst || undefined} data-weekend={weekend || undefined}
-              className={cn('flex min-h-11 min-w-0 flex-col gap-0.5 rounded-md border bg-background px-1 py-[3px] sm:min-h-[68px]',
+              className={cn('flex min-h-11 min-w-0 flex-col gap-0.5 rounded-md border bg-background px-1 py-[3px] @2xl/mcal:min-h-[68px]',
                 dense && 'min-h-12',
                 weekend && !worst && 'bg-muted/50 dark:bg-muted/30', CELL_TONE[worst], isToday && 'border-primary ring-1 ring-primary ring-inset')}>
               {openable ? (
                 <Button type="button" variant="ghost" size="xs" data-slot="month-calendar-day-open"
                   aria-label={t('cal.dayOpen', dayLabel, evs.length)} title={t('cal.dayOpen', dayLabel, evs.length)}
                   onClick={() => onDayClick(k, evs)}
-                  className={cn('h-auto min-h-5 w-full justify-start gap-1 rounded px-0.5 py-0.5 font-[inherit] hover:bg-accent/70',
-                    dense && 'flex-1 flex-col items-start justify-start sm:flex-none sm:flex-row sm:items-center sm:justify-start')}>
+                  className={cn('h-auto min-h-5 w-full justify-start gap-1 rounded px-0.5 py-0.5 font-[inherit] hover:bg-accent/70 pointer-coarse:min-h-10',
+                    dense && 'flex-1 flex-col items-start justify-start @2xl/mcal:flex-none @2xl/mcal:flex-row @2xl/mcal:items-center @2xl/mcal:justify-start')}>
                   {dateEl}
                   {dense && (
-                    <span className="flex flex-wrap items-center gap-0.5 sm:hidden" aria-hidden="true">
+                    <span className="flex flex-wrap items-center gap-0.5 @2xl/mcal:hidden" aria-hidden="true">
                       {evs.slice(0, 4).map((e, j) => <span key={j} className={cn('size-1.5 rounded-full', DOT_TONE[e.tone] || DOT_TONE.ok)} />)}
                       <span className="ml-0.5 text-[.66em] leading-none font-bold text-foreground tabular-nums">{evs.length}</span>
                     </span>
                   )}
                 </Button>
               ) : dateEl}
-              <div className={cn('flex min-w-0 flex-col gap-0.5', dense && 'hidden sm:flex')}>
+              <div className="hidden min-w-0 flex-col gap-0.5 @2xl/mcal:flex">
                 {evs.slice(0, maxPerDay).map((e, j) => {
                   const Icon = e.icon
                   return (
                     <Button type="button" key={j} variant="ghost" data-slot="month-calendar-event" data-tone={e.tone || 'ok'}
                       title={e.title || e.label} onClick={e.onClick}
-                      className={cn('flex h-auto w-full min-w-0 items-center justify-start gap-1 rounded px-1 py-px text-left text-[.62em] font-semibold sm:px-[5px] sm:text-[.7em]', EVENT_TONE[e.tone] || EVENT_TONE.ok)}>
+                      className={cn('flex h-auto w-full min-w-0 items-center justify-start gap-1 rounded px-1 py-px text-left text-[.62em] font-semibold whitespace-normal sm:px-[5px] sm:text-[.7em] pointer-coarse:min-h-10',
+                        EVENT_TONE[e.tone] || EVENT_TONE.ok)}>
                       {Icon && <Icon aria-hidden="true" className="size-3 shrink-0" />}
-                      <span className="min-w-0 truncate">{e.label}</span>
+                      <span className="min-w-0 [overflow-wrap:anywhere]" data-slot="month-calendar-event-label">{e.label}</span>
                     </Button>
                   )
                 })}
@@ -169,6 +232,12 @@ export default function MonthCalendar({ events = [], initialMonth, maxPerDay = 3
                   </HintPopover>
                 )}
               </div>
+              {/* Dar takvim: çip yerine günün tek hedefi; balonda günün TÜM olayları (tıklanabilir olan düğme) */}
+              {(!dense || !canOpen) && evs.length > 0 && (
+                <span className="contents @2xl/mcal:hidden" data-slot="month-calendar-more-touch">
+                  <CompactDayEvents evs={evs} label={evs.length === 1 ? t('cal.dayEvents.one', dayLabel, 1) : t('cal.dayEvents', dayLabel, evs.length)} />
+                </span>
+              )}
             </div>
           )
         })}

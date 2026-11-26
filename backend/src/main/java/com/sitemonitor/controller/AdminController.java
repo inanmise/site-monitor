@@ -74,6 +74,10 @@ public class AdminController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.sitemonitor.service.oncall.OnCallService onCallService;
 
+    /** Nöbet rutinleri (2026-11-26) — takım silinince rutin satırları da silinir (kendi işleminde). Dilim testinde null. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.oncallroutine.OnCallRoutineService onCallRoutineService;
+
     /**
      * Hatırlanan girişler (2026-10-22, hata avı AUTH-1 / AUTH-10) — kullanıcı silinince ve yönetici parolayı sıfırlayınca
      * token'lar silinir. Alan enjeksiyonu + isteğe bağlı: {@code @RequiredArgsConstructor} imzası değişmez.
@@ -4124,6 +4128,7 @@ public class AdminController {
         }
         userService.deleteTeam(id);
         if (onCallService != null) onCallService.deleteForTeam(id);
+        if (onCallRoutineService != null) onCallRoutineService.deleteForTeam(id);   // kendi try'ı: hata = WARN, yetim kuralı temizler
         int grantsRemoved = teamAccessGrants != null ? teamAccessGrants.deleteForTeam(id) : 0;   // sahibi ya da alıcısı bu takım
         if (grantsRemoved > 0) auditService.recordAction("TEAM_ACCESS_GRANT_DELETE", session, request, "TEAM", id.toString(),
                 com.sitemonitor.service.AuditDetail.of("cascade", "team_delete", "count", grantsRemoved));

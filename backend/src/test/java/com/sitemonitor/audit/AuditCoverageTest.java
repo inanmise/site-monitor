@@ -141,6 +141,19 @@ class AuditCoverageTest {
         EXEMPT.put("AdUserController#detail",
                 "AD kullanıcı DETAYI / önizleme (2026-11-11): yalnız AD'de okuma + türetilen takım önizlemesi, hiçbir "
               + "kayıt değiştirmez. Çekme (USER_PROVISION_FROM_AD) denetlenir.");
+        // Nöbet rutinleri (2026-11-26): gündelik değişiklikler
+        String routine = "her değişiklik alanın kendi geçmişine (oncall_routine_events) kim / ne zaman ile yazılır ve "
+                + "sayfada gösterilir; denetim kaydına her tik gürültü olur. Günü tamamla / yeniden aç, şablon, ayar, "
+                + "devralma, devir onayı, sorun silme ve olay bağı denetlenir.";
+        EXEMPT.put("OnCallRoutineController#setItemState", "Nöbet rutini görev işareti: " + routine);
+        EXEMPT.put("OnCallRoutineController#bulkItemState", "Nöbet rutini toplu işaret (bölümü tamamla / geri al): " + routine);
+        EXEMPT.put("OnCallRoutineController#saveItemNote", "Nöbet rutini görev notu: " + routine);
+        EXEMPT.put("OnCallRoutineController#createProblem", "Nöbet rutini sorun kaydı açma: " + routine);
+        EXEMPT.put("OnCallRoutineController#updateProblem", "Nöbet rutini sorun güncelleme / çözme: " + routine);
+        EXEMPT.put("OnCallRoutineController#uploadProblemImage", "Nöbet rutini sorun görseli yükleme: " + routine);
+        EXEMPT.put("OnCallRoutineController#deleteProblemImage", "Nöbet rutini sorun görseli silme: " + routine);
+        EXEMPT.put("OnCallRoutineController#saveDayNote", "Nöbet rutini günün notu: " + routine);
+        EXEMPT.put("OnCallRoutineController#saveHandoverNote", "Nöbet rutini devir notu: " + routine);
     }
 
     /** Bir kaynak dosyadaki metot adı → gövde. */

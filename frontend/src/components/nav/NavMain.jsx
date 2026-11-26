@@ -53,14 +53,41 @@ export function NavLeafItem({ item, active, onSelect }) {
 }
 
 /**
+ * Sekmenin kendi sayı rozeti (2026-11-26, Nöbet Rutinleri): `item.badge = { count, level }` — sayı > 0 değilse ya da bilinmiyorsa
+ * (null) çizilmez. Seviye `critical` → kırmızı, diğerleri uyarı tonu.
+ */
+export function itemBadge(item) {
+  const b = item?.badge
+  const n = Number(b?.count)
+  if (!b || !Number.isFinite(n) || n <= 0) return null
+  return { count: Math.floor(n), level: b.level === 'critical' ? 'critical' : 'warning' }
+}
+
+/** Bölümün sekmelerindeki kendi rozetlerinin toplamı (kapalı akordeon / ikon kipi); yoksa null. */
+export function sectionItemBadge(section) {
+  let count = 0
+  let critical = false
+  for (const it of section?.items || []) {
+    const b = itemBadge(it)
+    if (!b) continue
+    count += b.count
+    if (b.level === 'critical') critical = true
+  }
+  return count > 0 ? { count, level: critical ? 'critical' : 'warning' } : null
+}
+
+/**
  * Alt sekme satırı (genişken). Aktif alarm rozeti (2026-09-30): satır düğmesinin KARDEŞİ (iç içe düğme yok), sağa yaslı; varsa
  * satır sağdan pay bırakır. Tıklama Alarm Geçmişi'ne (o türe süzülmüş) gider, üzerine gelince özet kartı açılır.
+ * Sekmenin kendi rozeti (Nöbet Rutinleri bekleyen görev sayısı, 2026-11-26) aynı yerde, ETKİLEŞİMSİZ bir kardeştir: tıklama
+ * altındaki satıra geçer (pointer-events-none), sayı ekran okuyucuya kendi etiketiyle söylenir.
  */
 function TabRow({ item, activeTab, onSelect, alertCounts, onGoAlerts }) {
   const t = useT()
   const { id, Icon, labelKey } = item
   const active = activeTab === id
   const summary = tabSummary(alertCounts, id)
+  const own = summary ? null : itemBadge(item)
   return (
     <SidebarMenuSubItem className="relative">
       <SidebarMenuSubButton
@@ -70,7 +97,7 @@ function TabRow({ item, activeTab, onSelect, alertCounts, onGoAlerts }) {
         aria-current={active ? 'page' : undefined}
         data-tour={`nav-tab-${id}`}
         onClick={() => onSelect(id)}
-        className={cn(NAV_SUB_ITEM, summary && 'pr-10')}
+        className={cn(NAV_SUB_ITEM, (summary || own) && 'pr-10')}
       >
         <Icon aria-hidden="true" />
         <span>{t(labelKey)}</span>
@@ -78,6 +105,12 @@ function TabRow({ item, activeTab, onSelect, alertCounts, onGoAlerts }) {
       {summary && (
         <span className="absolute top-1/2 right-1 -translate-y-1/2">
           <OpenAlertBadge id={id} label={t(labelKey)} summary={summary} onGo={(alertId) => onGoAlerts?.(id, alertId)} />
+        </span>
+      )}
+      {own && (
+        <span className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2" data-tab={id}>
+          <CountPill count={own.count} level={own.level} data-slot="nav-routine-count" role="img"
+            aria-label={t(own.count === 1 ? 'nav.oncallRoutinesPending.one' : 'nav.oncallRoutinesPending', own.count)} />
         </span>
       )}
     </SidebarMenuSubItem>
@@ -194,9 +227,11 @@ function SectionFlyout({ section, activeTab, onSelect, alertCounts }) {
               {t(c.caption)}
             </DropdownMenuLabel>
           )}
-          {c.items.map(({ id, Icon, labelKey }) => {
+          {c.items.map((it) => {
+            const { id, Icon, labelKey } = it
             const active = activeTab === id
             const summary = tabSummary(alertCounts, id)
+            const own = summary ? null : itemBadge(it)
             return (
               <DropdownMenuItem key={id} onSelect={() => onSelect(id)} aria-current={active ? 'page' : undefined}
                 data-active={active || undefined}
@@ -205,6 +240,8 @@ function SectionFlyout({ section, activeTab, onSelect, alertCounts }) {
                 <span className="min-w-0 flex-1 truncate">{t(labelKey)}</span>
                 {summary && <CountPill count={summary.count} level={topLevel(summary)} className="ml-2"
                   aria-label={t('nav.openAlerts', summary.count)} />}
+                {own && <CountPill count={own.count} level={own.level} className="ml-2" data-slot="nav-routine-count" role="img"
+                  aria-label={t(own.count === 1 ? 'nav.oncallRoutinesPending.one' : 'nav.oncallRoutinesPending', own.count)} />}
               </DropdownMenuItem>
             )
           })}
@@ -222,6 +259,9 @@ function NavSection({ section, activeTab, open, onToggle, onSelect, collapsed, a
   const label = t(labelKey)
   // Bölüm toplamı (2026-09-30): kapalı akordeonda / ikon kipinde alt sekmelerin aktif alarmları görünür kalsın.
   const total = sectionAlertTotal(section, alertCounts)
+  // Sekmelerin kendi rozetleri (Nöbet Rutinleri bekleyen görev): kapalı akordeonda ve ikon kipinde de görünsün — "bekleyen iş
+  // kaydırmadan görünür" ilkesi. Alarm toplamıyla KARIŞMAZ (ayrı rozet, ayrı etiket); ikon kipinde köşede alarm önceliklidir.
+  const own = sectionItemBadge(section)
   // Etkin sekmeyi içeren bölümün kutucuğu boyalı (açıkken çocuk zaten vurgulu; kapalıyken "buradasın" izi)
   const buttonClass = cn(NAV_ITEM, NAV_SECTION_OPEN,
     containsActive && '[&>svg:first-child]:bg-primary/15 [&>svg:first-child]:text-primary')
@@ -242,6 +282,10 @@ function NavSection({ section, activeTab, open, onToggle, onSelect, collapsed, a
                   <CountPill count={total.count} level={total.level} data-slot="nav-section-alert-count"
                     className="absolute -top-0.5 -right-0.5 h-4 min-w-4 px-1 text-[9px]" aria-label={t('nav.openAlerts', total.count)} />
                 )}
+                {!(total.count > 0) && own && (
+                  <CountPill count={own.count} level={own.level} data-slot="nav-section-routine-count" role="img"
+                    className="absolute -top-0.5 -right-0.5 h-4 min-w-4 px-1 text-[9px]" aria-label={t(own.count === 1 ? 'nav.oncallRoutinesPending.one' : 'nav.oncallRoutinesPending', own.count)} />
+                )}
               </SidebarMenuButton>
             </DropdownMenuTrigger>
             <SectionFlyout section={section} activeTab={activeTab} onSelect={onSelect} alertCounts={alertCounts} />
@@ -256,9 +300,13 @@ function NavSection({ section, activeTab, open, onToggle, onSelect, collapsed, a
                 <CountPill count={total.count} level={total.level} data-slot="nav-section-alert-count" className="ml-auto"
                   aria-label={t('nav.openAlerts', total.count)} />
               )}
+              {own && !open && (
+                <CountPill count={own.count} level={own.level} data-slot="nav-section-routine-count" role="img"
+                  className={total.count > 0 ? 'ml-1' : 'ml-auto'} aria-label={t(own.count === 1 ? 'nav.oncallRoutinesPending.one' : 'nav.oncallRoutinesPending', own.count)} />
+              )}
               <ChevronRight aria-hidden="true"
                 className={cn('size-4 text-sidebar-foreground/50 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90 motion-reduce:transition-none',
-                  total.count > 0 && !open ? 'ml-1' : 'ml-auto')} />
+                  (total.count > 0 || own) && !open ? 'ml-1' : 'ml-auto')} />
             </SidebarMenuButton>
           </CollapsibleTrigger>
         )}

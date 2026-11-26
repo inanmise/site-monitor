@@ -140,6 +140,13 @@ public final class PermissionCatalog {
         // PO onayı (2026-10-17, S6): izin GEREKLİ ama YETMEZ — uç ayrıca takımın aktif PO (kurum rolü) üyesi olmayı
         // ister. Varsayılan TEAM_ADMIN + USER + ADMIN; AUDIT asla (yazma).
         r("tech_error_reports.approve", "reports", EXECUTE, Set.of(EXECUTE)),
+        // Nöbet rutinleri (2026-11-26): takımın günlük / haftalık / aylık kontrol listesi. read = sayfayı görmek; work =
+        // işaret, not, sorun, günü tamamla / yeniden aç, devralma, devir notu / onayı; manage = şablon ve takım ayarları.
+        // İzin GEREKLİ ama YETMEZ: uç ayrıca takımın üyesi ya da yöneticisi olmayı ister (paylaşım ve 7/24 açmaz).
+        // Varsayılan TEAM_ADMIN ve USER üçü, AUDIT yalnız okur, ADMIN hepsi.
+        r("oncall_routines.read",   "reports", VIEW),
+        r("oncall_routines.work",   "reports", EDIT),
+        r("oncall_routines.manage", "reports", EDIT),
 
         // ── Olay & Hata Geçmişi (SRE incident ledger) — kendi grubu (reports'tan ayrı) ──
         r("incidents.view",   "incidents", VIEW),
@@ -271,6 +278,7 @@ public final class PermissionCatalog {
             "weekly_reports.read", "weekly_reports.crud", "weekly_reports.approve",
             "tech_error_reports.read", "tech_error_reports.crud",   // kanal teknik hata raporu (2026-10-13)
             "tech_error_reports.approve",                              // PO onayı (2026-10-17; uç PO rolünü ayrıca doğrular)
+            "oncall_routines.read", "oncall_routines.work", "oncall_routines.manage",   // nöbet rutinleri (2026-11-26)
             "incidents.view", "incidents.manage", "incidents.delete",
             "maintenance.view", "maintenance.manage", "maintenance.delete",
             "diagnostics.history",
@@ -347,6 +355,8 @@ public final class PermissionCatalog {
             // hazırlar ve takım adresine gönderir (uç ÜYELİK doğrular); kanal silmesi yönetici kapsamında kalır.
             "tech_error_reports.read", "tech_error_reports.crud",
             "tech_error_reports.approve",                              // PO onayı (2026-10-17; uç PO rolünü ayrıca doğrular)
+            // Nöbet rutinleri (2026-11-26, kullanıcı kararı): üyeler rutini işaretler VE şablonu düzenler (uç ÜYELİK doğrular)
+            "oncall_routines.read", "oncall_routines.work", "oncall_routines.manage",
             // Olay geçmişi: USER kendi takımı için olay girer/düzenler (incidents.manage);
             // silme yetkisi (incidents.delete) yalnız TEAM_ADMIN/ADMIN'de
             "incidents.view", "incidents.manage",

@@ -84,7 +84,13 @@ describe('manuel sertifika ayıklayıcısı — tembel parça kapısı', () => {
     const GAPS_EXPORT = 'components/gaps/gapsExport.js'
     // 2026-11-26: Olay ve Hata Geçmişi dışa aktarımı — IncidentHistoryPage Excel yazıcısını YALNIZ tıklamada import() ile alır
     const INCIDENT_HISTORY_EXPORT = 'components/incidenthistory/IncidentHistoryPage.jsx'
-    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT, CHANNEL_EXPORT, RESOURCE_SCAN_EXPORT, ACTIVITY_EXPORT, STATS_EXPORT, INCIDENTS_EXPORT, SQL_EXPORT, PAGESPEED_REPORT, GAPS_EXPORT, INCIDENT_HISTORY_EXPORT].sort())
+    // 2026-11-26: Nöbet Rutinleri istatistik dışa aktarımı (Excel / CSV) — RoutineStats onu YALNIZ tıklamada import() ile alır (aşağıda)
+    const ROUTINE_EXPORT = 'components/oncallroutine/routineExport.js'
+    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT, CHANNEL_EXPORT, RESOURCE_SCAN_EXPORT, ACTIVITY_EXPORT, STATS_EXPORT, INCIDENTS_EXPORT, SQL_EXPORT, PAGESPEED_REPORT, GAPS_EXPORT, INCIDENT_HISTORY_EXPORT, ROUTINE_EXPORT].sort())
+    expect(FILES.filter(({ src }) => staticImports(src).some((s) => /routineExport(\.js)?$/.test(s))).map((x) => x.rel),
+      'nöbet rutini dışa aktarımı statik içe aktarılmaz').toEqual([])
+    expect(FILES.filter(({ src }) => /import\(\s*'\.\/routineExport\.js'\s*\)/.test(src)).map((x) => x.rel))
+      .toEqual(['components/oncallroutine/RoutineStats.jsx'])
     expect(FILES.filter(({ src }) => staticImports(src).some((s) => /gapsExport(\.js)?$/.test(s))).map((x) => x.rel),
       'eksikler dışa aktarımı statik içe aktarılmaz').toEqual([])
     expect(FILES.filter(({ src }) => /import\(\s*'\.\/gapsExport\.js'\s*\)/.test(src)).map((x) => x.rel))

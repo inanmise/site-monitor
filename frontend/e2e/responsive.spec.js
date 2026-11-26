@@ -11,6 +11,7 @@
 // böylece liste gerçeği yansıtır; listeye yeni kayıt eklemek kural dışıdır (önce taşmayı düzelt).
 import { test, expect } from '@playwright/test'
 import { mockApi, MONITORS } from './support/monitorMocks.js'
+import { mockOncallRoutinesMinimal } from './support/oncallRoutineMocks.js'
 import { pathDiffers } from '../src/test/helpers/httpDiagnoseFixtures.js'
 import { failedChecks, kwPathDiffers } from '../src/test/helpers/keywordDiagnoseFixtures.js'
 
@@ -31,7 +32,7 @@ async function settleUi(page, ms = 600) {
 /** App.jsx VALID_TABS ile aynı (sertifika, izleme, yönetim sekmelerinin HEPSİ). */
 const TABS = [
   'dashboard', 'mydash', 'all', 'domains', 'manualcerts', 'forecast', 'renewal', 'renewal-guide',
-  'warnings', 'incidents', 'maintenance', 'alerthistory', 'noc', 'stats', 'weakalgo', 'dataquality', 'weeklyreports', 'incident-history', 'executive', 'channelreports',
+  'warnings', 'incidents', 'maintenance', 'alerthistory', 'noc', 'stats', 'weakalgo', 'dataquality', 'weeklyreports', 'incident-history', 'executive', 'channelreports', 'oncallroutines',
   'health', 'uptime', 'monitoring', 'status', 'storms', 'http', 'domain', 'port', 'dns', 'keyword', 'ping', 'page', 'pagespeed', 'scripted', 'dbquery',
   'activity', 'myactivity', 'system', 'monitorchanges',
   'admin', 'permissions', 'sqlplayground', 'login-issues', 'help', 'settings',
@@ -96,6 +97,7 @@ for (const vp of VIEWPORTS) {
       test(`${tab}`, async ({ page }) => {
         await page.setViewportSize({ width: vp.width, height: vp.height })
         await mockApi(page)
+        if (tab === 'oncallroutines') await mockOncallRoutinesMinimal(page)
         await page.goto(`/?tab=${tab}`)
         await page.locator('.app-main').waitFor({ timeout: 20_000 })
         // Tembel yüklenen sekmeler + ilk veri çizimi

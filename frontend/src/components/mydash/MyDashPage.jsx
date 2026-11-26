@@ -14,7 +14,7 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { Button } from '@/components/shadcn/button'
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/components/shadcn/item'
 import {
-  CHANNEL_REPORTS, MAX_WIDGETS, NOC_CONSOLE, NOC_PRESET, STAT_PRESET, addWidget, addableTypes, catalogEntry, effectiveLayout, moveWidget, moveWidgetTo,
+  CHANNEL_REPORTS, MAX_WIDGETS, NOC_CONSOLE, NOC_PRESET, ONCALL_ROUTINES, STAT_PRESET, addWidget, addableTypes, catalogEntry, effectiveLayout, moveWidget, moveWidgetTo,
   presetLayout, removeWidget, resizeWidget, setWidgetStyle, toDoc, typeVisible, visibleWidgets,
 } from './myDashModel.js'
 import { WIDGETS } from './widgets.jsx'
@@ -41,9 +41,14 @@ export default function MyDashPage({ nocConsole = false }) {
   // Kanal teknik hata raporu modülü (R14 inceleme): menü girişiyle aynı kural — yalnız açık `false` kapalı; scope yok (eski
   // sunucu) = sunulur
   const channelReportsOk = scope?.channel_reports !== false
-  const canView = useCallback((p) => (p === NOC_CONSOLE ? consoleOk : p === CHANNEL_REPORTS ? channelReportsOk : canViewPerm(p)),
+  // Nöbet Rutinleri modülü (2026-11-26): yalnız açık `true` açıktır — eski sunucu alanı göndermez → kutu sunulmaz
+  const oncallRoutinesOk = scope?.oncall_routines === true
+  const canView = useCallback((p) => (p === NOC_CONSOLE ? consoleOk
+    : p === CHANNEL_REPORTS ? channelReportsOk
+    : p === ONCALL_ROUTINES ? oncallRoutinesOk
+    : canViewPerm(p)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [perms, consoleOk, channelReportsOk])
+    [perms, consoleOk, channelReportsOk, oncallRoutinesOk])
   const { showConfirm } = useDialog()
   const coarse = useCoarsePointer()
   const [refreshKey, setRefreshKey] = useState(0)

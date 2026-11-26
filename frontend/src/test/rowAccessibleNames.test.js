@@ -60,6 +60,10 @@ const NON_INTERACTIVE = new Set(['div', 'span', 'li', 'tr', 'th', 'td', 'section
  * kancası gereksiz. Cırcır YALNIZ küçülür.
  */
 const EXEMPT_CLICK = new Map([
+  ['components/oncallroutine/RoutineHeatmap.jsx:<div>',
+    'Nöbet rutini geçmiş ısı haritası — WAI-ARIA grid deseni, olay yetkisi kapsayıcıda: hücreler role="gridcell" ' +
+    've gezici tabIndex taşır (ızgara tek Tab durağı); ok tuşları / Home / End / Enter / Boşluk kapsayıcının ' +
+    'onKeyDown\'ında, tıklama da aynı kapsayıcıda hücreye çözülür. Kapsayıcının kendisi odak almaz (odak hücrede).'],
   ['components/ui/Toast.jsx:<div>',
     'Sonner bildirim listesinin olay-yetkisi sarmalayıcısı (display: contents, kendisi kutu değil): ' +
     'gövdeye tıklamak yalnız erken kapatma kısayolu, bildirim kendiliğinden kayboluyor. Klavyeyle ' +

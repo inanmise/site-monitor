@@ -12,6 +12,7 @@
  *   - `sm.sql.tabs` — SQL Playground sekmeleri ve taslak sorguları + parametre değerleri (2026-11-13)
  *   - `sm.te.seqfill` — kanal raporu görsellerinde "Sıralı doldur" tercihi (2026-11-20, C2)
  *   - `sm.ih.draft.<new|id>` — olay kaydı formunun kaydedilmemiş taslağı (2026-11-20, "Sağlam Kayıt")
+ *   - `sm.or.<…>` — Nöbet Rutinleri: görev / gün / devir notu taslakları ve sayfa tercihleri (2026-11-26)
  *
  * Kural: anahtarlar kullanıcıya göre ayrılır ({@link personalKey}: `<taban>:<kullanıcı>`) ve çıkışta (elle ya da
  * boşta kalma) hepsi silinir ({@link clearPersonalStorage}). Sahip `sm.storage.owner`'da tutulur: oturum düşüp
@@ -19,7 +20,7 @@
  * (oturum-kesintisi yedeği tam da bunun için) korunur ({@link claimPersonalStorage}). Kardeş desen: `inbox-seen:<kullanıcı>`.
  */
 export const OWNER_KEY = 'sm.storage.owner'
-export const PERSONAL_PREFIXES = ['sm.palette.recent', 'sm.dexp.recent', 'wr.draft.', 'sm.te.draft.', 'sm.te.tpl.', 'sm.te.open.', 'sm.te.seqfill', 'sm.activity.', 'sm.sql.tabs', 'sm.noc.noAsk', 'sm.gaps.state', 'sm.gaps.session', 'sm.ih.draft.']
+export const PERSONAL_PREFIXES = ['sm.palette.recent', 'sm.dexp.recent', 'wr.draft.', 'sm.te.draft.', 'sm.te.tpl.', 'sm.te.open.', 'sm.te.seqfill', 'sm.activity.', 'sm.sql.tabs', 'sm.noc.noAsk', 'sm.gaps.state', 'sm.gaps.session', 'sm.ih.draft.', 'sm.or.']
 
 function store() {
   try { return globalThis.localStorage || null } catch { return null }

@@ -80,6 +80,23 @@ class TeamAdminAlertForwardTest {
     }
 
     @Test
+    @DisplayName("2026-11-26 nöbet rutini: etki bölümü bilgi olarak döner, boş takımın silinmesini engellemez; okunamazsa / servis yokken bölüm yok")
+    void impactCarriesOncallRoutine() {
+        com.sitemonitor.service.oncallroutine.OnCallRoutineService routines =
+                org.mockito.Mockito.mock(com.sitemonitor.service.oncallroutine.OnCallRoutineService.class);
+        service.setOncallRoutines(routines);
+        Map<String, Object> info = Map.of("configured", true, "tasks_active", 12, "days", 40, "open_problems", 3);
+        when(routines.impact(7L)).thenReturn(info);
+        Map<String, Object> impact = service.impact(7L);
+        assertThat(impact.get("oncall_routine")).isEqualTo(info);
+        assertThat(impact.get("empty")).as("rutin silmeyi engellemez").isEqualTo(true);
+        when(routines.impact(7L)).thenThrow(new RuntimeException("db"));
+        assertThat(service.impact(7L)).doesNotContainKey("oncall_routine").containsEntry("empty", true);
+        service.setOncallRoutines(null);
+        assertThat(service.impact(7L)).doesNotContainKey("oncall_routine");
+    }
+
+    @Test
     @DisplayName("etki: iletim sayılamazsa bölüm yok, önizleme yine döner; servis yokken bölüm yok")
     void impactReadFailure() {
         service.setAlertForwards(alertForwards);

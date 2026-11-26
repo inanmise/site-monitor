@@ -128,6 +128,15 @@ public class TeamAdminService {
     void setAlertForwards(com.sitemonitor.service.forward.AlertForwardService s) { this.alertForwards = s; }
 
     /**
+     * Nöbet rutinleri (2026-11-26): etki önizlemesinde BİLGİ (engel değil) — rutin takımla birlikte silinir, taşınmaz
+     * (takıma özgü kontrol listesi). Alan enjeksiyonu: yokken bölüm atlanır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.oncallroutine.OnCallRoutineService oncallRoutines;
+
+    void setOncallRoutines(com.sitemonitor.service.oncallroutine.OnCallRoutineService s) { this.oncallRoutines = s; }
+
+    /**
      * Takım adresi yalnız pasif hesaplara mı ait (2026-11-13 hata taraması, kapsam panosu): gönderim süzgeci böyle adresi
      * düşürür — takım adresi "var" diye ulaşım yeşil görünmesin. Alan enjeksiyonu: yokken alan {@code null} (bilinmiyor).
      */
@@ -306,6 +315,14 @@ public class TeamAdminService {
         exec.put("settings", count("SELECT COUNT(*) FROM executive_summary_team_settings WHERE team_id = ?", teamId) > 0);
         exec.put("reports", count("SELECT COUNT(*) FROM executive_summary_team_reports WHERE team_id = ?", teamId));
         out.put("executive_summary", exec);
+        // Nöbet rutini (2026-11-26): BİLGİ (engel değil) — takımla birlikte silinir.
+        if (oncallRoutines != null) {
+            try {
+                out.put("oncall_routine", oncallRoutines.impact(teamId));
+            } catch (RuntimeException e) {
+                org.slf4j.LoggerFactory.getLogger(TeamAdminService.class).warn("Takımın nöbet rutini sayılamadı: {}", e.toString());
+            }
+        }
         // Alarm iletimi (2026-11-05): BİLGİ (engel değil) — takımla birlikte silinir (sahibi olduğu + ona gelen).
         if (alertForwards != null) {
             try {

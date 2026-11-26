@@ -1,9 +1,44 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-26T06:35:47Z",
+  "generatedAt": "2026-11-26T10:26:57Z",
   "repo": "inanmise/site-monitor",
-  "count": 876,
+  "count": 877,
   "releases": [
+    {
+      "version": "20.228.0",
+      "tag": "v20.228.0",
+      "releasedAt": "2026-11-26T10:26:49Z",
+      "commit": "2dd6445217329f58dda76d36cab4c8f25d17e161",
+      "prevVersion": "20.227.1",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 0,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "2dd64452",
+          "subject": "nöbet rutini sorun görselleri bileşeni için test (kapsam %37 → %100)"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "84a4d713",
+          "subject": "nöbet rutinleri — takım bazlı nöbetçi kontrol listesi (günlük / haftalık / aylık görevler, devir, sorunlar, hatırlatma, istatistik)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.227.1",
       "tag": "v20.227.1",

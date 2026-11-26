@@ -1,0 +1,77 @@
+<meta charset="utf-8">
+<h1>Nöbet Rutini</h1>
+<p>Bu sayfa nöbetçinin her gün yaptığı kontrolleri listeler.</p>
+<table><tbody><tr><td>Sürüm notu</td><td>Bu tablo içe aktarılmaz.</td></tr></tbody></table>
+<img src="https://wiki.example.internal/images/diagram.png" alt="">
+<script>window.__wikiImportScriptRan = true</script>
+<h2>Gün başlangıcı</h2>
+<ul>
+  <li><input type="checkbox" disabled> Cluster Monitoring
+    <ul>
+      <li><a href="https://grafana.example.internal/d/cluster-overview">Grafana küme genel bakış</a></li>
+      <li><a href="https://grafana.example.internal/d/node-resources">Grafana düğüm kaynakları</a></li>
+      <li><a href="https://prometheus.example.internal/alerts">Prometheus uyarıları</a></li>
+      <li><a href="https://alertmanager.example.internal/#/alerts">Alertmanager</a></li>
+      <li><a href="https://console.example.internal/k8s/cluster/projects">console.example.internal/k8s/cluster/projects</a></li>
+      <li><a href="https://capacity.example.internal/dashboard">Kapasite panosu</a></li>
+    </ul>
+  </li>
+  <li><input type="checkbox" disabled> OCP Watcher Errors Metrics
+    <ul><li><a href="https://grafana.example.internal/d/ocp-watcher">OCP Watcher</a></li></ul>
+  </li>
+  <li><input type="checkbox" disabled> Servislerdeki teknik/business ve maplenmemiş hata artışlarının incelenmesi ve anomali tespiti
+    <ul>
+      <li><a href="https://kibana.example.internal/app/dashboards#/view/tech-errors">Teknik hata panosu</a></li>
+      <li><a href="https://kibana.example.internal/app/dashboards#/view/business-errors">Business hata panosu</a></li>
+      <li><a href="https://kibana.example.internal/app/dashboards#/view/unmapped">Maplenmemiş hatalar</a></li>
+      <li><a href="https://anomaly.example.internal/report">Anomali raporu</a></li>
+    </ul>
+  </li>
+  <li><input type="checkbox" disabled> Açık olay ve problem kayıtlarının kontrol edilmesi ve kapatılması
+    <ul>
+      <li><a href="https://itsm.example.internal/incidents?state=open">Olay kayıtları</a></li>
+      <li><a href="https://itsm.example.internal/problems?state=open">Problem kayıtları</a></li>
+      <li>İlgili kayıtların mail takibi</li>
+    </ul>
+  </li>
+  <li><input type="checkbox" disabled> Batch işlerinin gece çalışma sonuçlarının kontrolü</li>
+  <li><input type="checkbox" disabled> Yedekleme raporunun kontrol edilmesi</li>
+  <li><input type="checkbox" disabled> Long running'e düşen servislerin elastic üzerinden kontrolleri
+    <ul><li><a href="https://kibana.example.internal/app/discover#/long-running">Long running servisler</a></li></ul>
+  </li>
+  <li><input type="checkbox" disabled> SiteMonitor üzerinden alertlerin ve monitorlerin kontrol edilmesi
+    <ul>
+      <li><a href="https://sitemonitor.example.internal/?tab=alerthistory">SiteMonitor alarmlar</a></li>
+      <li><a href="https://sitemonitor.example.internal/?tab=monitoring">SiteMonitor izlemeler</a></li>
+    </ul>
+  </li>
+</ul>
+<p><strong>Gün içi</strong></p>
+<ul>
+  <li>Gün içinde gelen alarmların takibi ve ilgili ekiplere iletilmesi</li>
+  <li>Değişiklik takviminin kontrol edilmesi</li>
+</ul>
+<h3>Düzenli Gelen Mail İçerik kontrolleri</h3>
+<ul>
+  <li>Günlük batch raporu maili</li>
+  <li>Kapasite raporu maili
+    <ul><li><a href="mailto:raporlar@example.internal">Rapor arşivi</a></li></ul>
+  </li>
+  <li>Sertifika süresi uyarı maili</li>
+  <li>Lisans kullanım raporu maili</li>
+  <li>Yedekleme sonucu maili</li>
+  <li>Güvenlik tarama sonucu maili</li>
+  <li>Erişim talepleri özeti maili</li>
+</ul>
+<h3>Haftalık periyotta</h3>
+<ol>
+  <li>Kapasite trendlerinin gözden geçirilmesi (Her Cuma)</li>
+  <li>Sertifika envanterinin gözden geçirilmesi</li>
+  <li>Açık aksiyonların takibi — Pazartesi</li>
+</ol>
+<h3>Aylık Geçiş</h3>
+<ul>
+  <li>Nöbet devir raporunun hazırlanması
+    <ul><li><a href="https://wiki.example.internal/oncall/handover-template">Devir şablonu</a></li></ul>
+  </li>
+</ul>

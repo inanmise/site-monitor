@@ -104,6 +104,27 @@ class PermissionCatalogTest {
     }
 
     @Test
+    @DisplayName("2026-11-26: oncall_routines — TEAM_ADMIN / USER / ADMIN üçü; AUDIT yalnız okur; 7/24 operatörüne açılmaz")
+    void oncallRoutinesDefaults() {
+        assertThat(PermissionCatalog.ALL.stream().filter(r -> r.key.startsWith("oncall_routines.")).map(r -> r.key))
+                .containsExactly("oncall_routines.read", "oncall_routines.work", "oncall_routines.manage");
+        assertThat(PermissionCatalog.ALL.stream().filter(r -> r.key.startsWith("oncall_routines.")).map(r -> r.group))
+                .containsOnly("reports");
+        for (String role : new String[]{"ADMIN", "TEAM_ADMIN", "USER"}) {
+            Map<String, Map<String, Boolean>> m = PermissionCatalog.defaultsFor(role);
+            assertThat(m.get("oncall_routines.read").get("view")).as(role + "/read").isTrue();
+            assertThat(m.get("oncall_routines.work").get("edit")).as(role + "/work").isTrue();
+            assertThat(m.get("oncall_routines.manage").get("edit")).as(role + "/manage").isTrue();
+        }
+        Map<String, Map<String, Boolean>> audit = PermissionCatalog.defaultsFor("AUDIT");
+        assertThat(audit.get("oncall_routines.read").get("view")).isTrue();
+        assertThat(audit.get("oncall_routines.work").get("edit")).isFalse();
+        assertThat(audit.get("oncall_routines.manage").get("edit")).isFalse();
+        assertThat(PermissionCatalog.NOC_OPERATOR_GRANTS).noneMatch(g -> g.startsWith("oncall_routines"));
+        assertThat(PermissionCatalog.AUDIT_WRITE_GRANTS).noneMatch(g -> g.startsWith("oncall_routines"));
+    }
+
+    @Test
     @DisplayName("defaultsFor: bilinmeyen rol → boş map (fail-safe), null rol → NPE değil boş davranış")
     void unknownRoleEmpty() {
         assertThat(PermissionCatalog.defaultsFor("WHATEVER")).isEmpty();
