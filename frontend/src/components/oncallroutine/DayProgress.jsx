@@ -31,7 +31,7 @@ function DayProgressImpl({ sheet, progress, onComplete, onReopen, canComplete, c
   const completed = state === 'done' || state === 'partial'
   return (
     <Card data-slot="or-progress" data-state={state} className="gap-3 rounded-xl px-4 py-4">
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-4">
         <div className="relative shrink-0">
           <CircularGauge value={state === 'unknown' ? 0 : (pct ?? 0)} size={76} stroke={7}
             color={state === 'open' && pct === 100 ? GAUGE_COLOR.open : GAUGE_COLOR[state]}
@@ -41,7 +41,7 @@ function DayProgressImpl({ sheet, progress, onComplete, onReopen, canComplete, c
             {pct != null && <span className="mt-0.5 text-[10px] leading-none text-muted-foreground tabular-nums">{t('or.prog.pct', pct)}</span>}
           </span>
         </div>
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <div className="flex min-w-[9rem] flex-1 basis-0 flex-col gap-1.5">
           <DayStatusBadge status={sheet?.workday ? (day.status || 'NONE') : 'NOT_WORKDAY'} />
           <p className="m-0 text-sm font-medium" data-slot="or-progress-text">
             {Number.isFinite(required) && required > 0
