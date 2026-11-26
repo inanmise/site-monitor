@@ -33,6 +33,16 @@ describe('adminHealthModel — buildHealthSignals', () => {
     expect(buildHealthSignals({ warnings: [] }, 0).map(s => s.code)).toEqual([])   // gap 0 → kutucuk yok
   })
 
+  // H paketi (2026-11-26, yönetim B8): yönetici uyarısını SUNUCU `counts.global_admins` ile verir (AD kaynaklı takım kapsamlı
+  // ADMIN = müdür sayılmaz; okunamazsa uyarı YOK). İstemci sayaçlardan uyarı TÜRETMEZ — yalnız sunucunun warnings listesi.
+  it('yönetici uyarısı yalnız sunucu uyarısından: çok ADMIN ama tek global → SINGLE_ADMIN; global_admins null → uyarı yok', () => {
+    const one = buildHealthSignals({ counts: { admins: 7, global_admins: 1 }, warnings: [{ code: 'SINGLE_ADMIN', count: 1 }] }, null)
+    expect(one.map(s => s.code)).toEqual(['SINGLE_ADMIN'])
+    // Sayaçlar ne derse desin uyarı listesi boşsa kutucuk yok (admins 0 / global_admins null = bilinmiyor)
+    expect(buildHealthSignals({ counts: { admins: 0, global_admins: null }, warnings: [] }, null)).toEqual([])
+    expect(buildHealthSignals({ counts: { admins: 5, global_admins: 0 }, warnings: [] }, null)).toEqual([])
+  })
+
   it('NO_ADMIN (count 0) gösterilir ve SINGLE_ADMIN yerine geçer', () => {
     const sigs = buildHealthSignals({ warnings: [{ code: 'NO_ADMIN', count: 0 }, { code: 'SINGLE_ADMIN', count: 1 }] }, null)
     expect(sigs[0]).toMatchObject({ code: 'NO_ADMIN', severe: true })

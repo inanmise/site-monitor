@@ -351,7 +351,8 @@ export default function RenewalAdvice({ onSelectDomain, canPlanRow }) {
         <RenewalPlanModal row={planRow} onClose={() => setPlanRow(null)}
           onSaved={(data) => { planStampsRef.current[planRow.domain] = Date.now(); setPlans((p) => ({ ...p, [planRow.domain]: data || { renewal_planned_at: planRow.renewal_planned_at } })); setPlanRow(null) }}
           // Kaldırma KAYDEDİLİR (null) — anahtar silinseydi planOf satırın bayat sunucu planına düşer, rozet geri gelirdi (UIM-16)
-          onCleared={() => { planStampsRef.current[planRow.domain] = Date.now(); setPlans((p) => ({ ...p, [planRow.domain]: null })); setPlanRow(null); load() }} />
+          // `changed: false` (H paketi 2026-11-26): plan arada değişmiş — sunucunun bildirdiği GÜNCEL plan yazılır (null değil)
+          onCleared={(data) => { planStampsRef.current[planRow.domain] = Date.now(); setPlans((p) => ({ ...p, [planRow.domain]: data?.changed === false && data?.renewal_planned_at ? data : null })); setPlanRow(null); load() }} />
       )}
     </div>
   )

@@ -209,8 +209,10 @@
             "failureDetail": null,
             "failureReason": null,
             "id": null,
+            "manual": null,
             "monitorId": 1,
             "packetLoss": 0,
+            "recheck": null,
             "rttMs": 20,
             "up": true
           }
@@ -256,8 +258,10 @@
             "failureDetail": null,
             "failureReason": null,
             "id": null,
+            "manual": null,
             "monitorId": 2,
             "packetLoss": 0,
+            "recheck": null,
             "rttMs": 11,
             "up": true
           }
@@ -303,8 +307,10 @@
             "failureDetail": null,
             "failureReason": null,
             "id": null,
+            "manual": null,
             "monitorId": 3,
             "packetLoss": 100,
+            "recheck": null,
             "rttMs": null,
             "up": false
           }
@@ -350,8 +356,10 @@
             "failureDetail": null,
             "failureReason": null,
             "id": null,
+            "manual": null,
             "monitorId": 4,
             "packetLoss": null,
+            "recheck": null,
             "rttMs": null,
             "up": false
           }
@@ -397,8 +405,10 @@
             "failureDetail": null,
             "failureReason": null,
             "id": null,
+            "manual": null,
             "monitorId": 5,
             "packetLoss": 25,
+            "recheck": null,
             "rttMs": 30,
             "up": true
           }

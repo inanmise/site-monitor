@@ -42,4 +42,15 @@ public class PortCheck {
     /** Kompakt JSON ayrıntı (evre, hedef, yol, zaman aşımı, çözümlenen IP'ler, vekil reddi …), ≤ 4000 karakter. */
     @Column(name = "failure_detail", columnDefinition = "TEXT")
     private String failureDetail;
+
+    // ── Köken (H paketi 2026-11-26, rapor B2): yalnız TRUE yazılır, NULL = planlı tarama / dağıtık iş ya da eski satır.
+    // İkisi de erişilebilirliğe (özet kovaları, kart SLA) GİRMEZ — AvailabilityRows.
+
+    /** Elle "Şimdi kontrol et" satırı. */
+    @Column(name = "manual")
+    private Boolean manual;
+
+    /** Teyit / kurtarma zincirinin yeniden kontrolü. */
+    @Column(name = "recheck")
+    private Boolean recheck;
 }

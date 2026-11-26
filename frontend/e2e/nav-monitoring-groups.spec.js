@@ -2,7 +2,8 @@
 // ayrı ayrı akordeon gibi açılsın, izlemelere altından erişilsin; shadcn ile mweb responsive").
 //
 // Gerçek tarayıcıda, API mock'lu: dokunmatik telefon (390, çekmece), dokunmatik tablet (768) ve masaüstü (1280). Ölçülenler:
-//   - dört alt grup kapalı başlar, birbirinden bağımsız açılır, sekmeler altından açılır ve gezinir;
+//   - dört alt grup kapalı başlar; TEKLİ akordeon (2026-11-26): biri açılınca öteki kapanır (tıklama, klavye, etkin sekme);
+//     sekmeler altından açılır ve gezinir;
 //   - kapalı grubun başlığında alt sekmelerin alarm toplamı (Erişilebilirlik 2, İçerik 3);
 //   - kenar çubuğunda yatay taşma yok, grup ve sekme adları kırpılmaz (İngilizce uzun ad sarar);
 //   - dokunmatikte grup başlığı ve sekme satırı en az 40 px.
@@ -57,7 +58,7 @@ for (const vp of VIEWPORTS) {
     test.describe(`İzleme alt grupları — ${vp.name} ${vp.width} (${lang})`, () => {
       test.use({ viewport: { width: vp.width, height: vp.height }, hasTouch: vp.touch, isMobile: vp.touch })
 
-      test('kapalı başlar, bağımsız açılır, toplam rozet, gezinir; taşma / kırpma yok, dokunma hedefi 40 px', async ({ page }) => {
+      test('kapalı başlar, tekli açılır (B açılınca A kapanır), toplam rozet, gezinir; taşma / kırpma yok, dokunma hedefi 40 px', async ({ page }) => {
         await page.addInitScript((l) => {
           localStorage.setItem('site-monitor-lang', l)
           localStorage.removeItem('nav-subsection-open')
@@ -85,36 +86,52 @@ for (const vp of VIEWPORTS) {
         await expect(trigger('nav.secContent').locator('[data-slot="nav-subgroup-alert-count"]')).toHaveText('3')
         await expect(sidebar.locator('[data-tour="nav-tab-http"]')).toBeHidden()
 
+        // TEKLİ akordeon (2026-11-26): A açılır; B açılınca A kapanır ve toplamını yeniden gösterir
         await trigger('nav.secAvailability').click()
-        await trigger('nav.secContent').click()
-        await trigger('nav.secData').click()
         await settle(page)
         await expect(trigger('nav.secAvailability')).toHaveAttribute('aria-expanded', 'true')
+        for (const id of ['http', 'ping', 'port']) await expect(sidebar.locator(`[data-tour="nav-tab-${id}"]`)).toBeVisible()
+        await trigger('nav.secContent').click()
+        await settle(page)
         await expect(trigger('nav.secContent')).toHaveAttribute('aria-expanded', 'true')
+        await expect(trigger('nav.secAvailability')).toHaveAttribute('aria-expanded', 'false')
         await expect(trigger('nav.secDomainDns')).toHaveAttribute('aria-expanded', 'false')
-        await expect(trigger('nav.secAvailability').locator('[data-slot="nav-subgroup-alert-count"]')).toHaveCount(0)
-        for (const id of ['http', 'ping', 'port', 'keyword', 'page', 'pagespeed', 'scripted', 'dbquery']) {
+        await expect(trigger('nav.secData')).toHaveAttribute('aria-expanded', 'false')
+        await expect(trigger('nav.secContent').locator('[data-slot="nav-subgroup-alert-count"]')).toHaveCount(0)
+        await expect(trigger('nav.secAvailability').locator('[data-slot="nav-subgroup-alert-count"]')).toHaveText('2')
+        for (const id of ['keyword', 'page', 'pagespeed', 'scripted']) {
           await expect(sidebar.locator(`[data-tour="nav-tab-${id}"]`)).toBeVisible()
         }
-        await expect(sidebar.locator('[data-tour="nav-tab-dns"]')).toBeHidden()
+        for (const id of ['http', 'dns', 'dbquery']) await expect(sidebar.locator(`[data-tour="nav-tab-${id}"]`)).toBeHidden()
+        expect(await page.evaluate(() => JSON.parse(localStorage.getItem('nav-subsection-open')))).toEqual(['nav.secContent'])
 
         const m = await page.evaluate(auditSidebar)
         expect(m.overflow, 'kenar çubuğundan taşan öğe').toEqual([])
         expect(m.clipped, 'kırpılan ad').toEqual([])
         expect(m.small, 'dokunma hedefi 40 px altında').toEqual([])
 
-        // Klavye: grup başlığı Enter ile kapanır
+        // Klavye: Veri grubu Enter ile açılır (İçerik kapanır), yeniden Enter ile kapanır — hiçbiri açık kalmaz
         await trigger('nav.secData').focus()
         await page.keyboard.press('Enter')
+        await expect(trigger('nav.secData')).toHaveAttribute('aria-expanded', 'true')
+        await expect(trigger('nav.secContent')).toHaveAttribute('aria-expanded', 'false')
+        await page.keyboard.press('Enter')
         await expect(trigger('nav.secData')).toHaveAttribute('aria-expanded', 'false')
+        for (const k of GROUPS) await expect(trigger(k)).toHaveAttribute('aria-expanded', 'false')
 
         // Gezinme: sekme satırı ilgili sayfayı açar; telefonda çekmece kapanır
+        await trigger('nav.secContent').click()
+        await settle(page)
         await sidebar.locator('[data-tour="nav-tab-keyword"]').click()
         await expect(page).toHaveURL(/tab=keyword/)
         if (vp.width < 768) await expect(page.locator('[data-mobile="true"][data-slot="sidebar"]')).toBeHidden()
         if (vp.width >= 768) {
           await expect(sidebar.locator('[data-tour="nav-tab-keyword"]')).toHaveAttribute('aria-current', 'page')
           await expect(trigger('nav.secContent')).toHaveAttribute('data-contains-active', 'true')
+          // Etkin sekmenin grubu açıkken başka grup açılınca etkin grup da kapanır (tekli kural her yerde)
+          await trigger('nav.secDomainDns').click()
+          await expect(trigger('nav.secDomainDns')).toHaveAttribute('aria-expanded', 'true')
+          await expect(trigger('nav.secContent')).toHaveAttribute('aria-expanded', 'false')
         }
       })
     })
@@ -123,8 +140,11 @@ for (const vp of VIEWPORTS) {
 
 test.describe('İzleme alt grupları — etkin sekmenin grubu açılır (laptop)', () => {
   test.use({ viewport: { width: 1280, height: 800 } })
-  test('?tab=dns açılınca İzleme bölümü ve Alan Adı ve DNS grubu açık, diğerleri kapalı', async ({ page }) => {
-    await page.addInitScript(() => { localStorage.removeItem('nav-subsection-open'); localStorage.removeItem('nav-section-open') })
+  test('?tab=dns açılınca İzleme bölümü ve Alan Adı ve DNS grubu açık; saklı başka açık grup (Erişilebilirlik) kapanır', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('nav-subsection-open', JSON.stringify(['nav.secAvailability']))
+      localStorage.removeItem('nav-section-open')
+    })
     await mockApi(page)
     await page.goto('/?tab=dns')
     const dns = page.locator('[data-slot="sidebar"] [data-tour="nav-tab-dns"]')
@@ -132,5 +152,7 @@ test.describe('İzleme alt grupları — etkin sekmenin grubu açılır (laptop)
     await expect(dns).toHaveAttribute('aria-current', 'page')
     await expect(page.locator('[data-nav-subgroup-trigger="nav.secDomainDns"]')).toHaveAttribute('aria-expanded', 'true')
     await expect(page.locator('[data-nav-subgroup-trigger="nav.secAvailability"]')).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.locator('[data-nav-subgroup-trigger="nav.secContent"]')).toHaveAttribute('aria-expanded', 'false')
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('nav-subsection-open')))).toEqual(['nav.secDomainDns'])
   })
 })

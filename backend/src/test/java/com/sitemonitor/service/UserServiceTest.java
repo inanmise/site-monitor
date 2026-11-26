@@ -1064,6 +1064,39 @@ class UserServiceTest {
     }
 
     @Test
+    @DisplayName("H paketi B3: yer tutucu (REPLACE_ME / boş / change-me…) parolayla kurulan yönetici ilk girişte parola değiştirmek zorunda")
+    void ensureBootstrapped_placeholderPassword_mustChange() {
+        for (String pw : List.of("REPLACE_ME", " replace_me ", "", "REPLACE_WITH_STRONG_PASSWORD", "change-me-strong-password", "CHANGEME")) {
+            org.mockito.Mockito.clearInvocations(userRepo);
+            when(userRepo.count()).thenReturn(0L);
+            when(teamRepo.findByName("General")).thenReturn(Optional.empty());
+
+            service.ensureBootstrapped("admin", pw);
+
+            org.mockito.ArgumentCaptor<AppUser> cap = org.mockito.ArgumentCaptor.forClass(AppUser.class);
+            verify(userRepo, atLeastOnce()).save(cap.capture());
+            assertThat(cap.getAllValues().get(0).getMustChangePassword()).as("parola: '" + pw + "'").isTrue();
+        }
+    }
+
+    @Test
+    @DisplayName("H paketi B3: gerçek parola (yerel geliştirme 'password' dahil) bayrak koymaz")
+    void ensureBootstrapped_realPassword_noFlag() {
+        for (String pw : List.of("adminpass", "password", "Replace_Me_2026!")) {
+            org.mockito.Mockito.clearInvocations(userRepo);
+            when(userRepo.count()).thenReturn(0L);
+            when(teamRepo.findByName("General")).thenReturn(Optional.empty());
+
+            service.ensureBootstrapped("admin", pw);
+
+            org.mockito.ArgumentCaptor<AppUser> cap = org.mockito.ArgumentCaptor.forClass(AppUser.class);
+            verify(userRepo, atLeastOnce()).save(cap.capture());
+            assertThat(cap.getAllValues().get(0).getMustChangePassword()).as("parola: '" + pw + "'").isNotEqualTo(Boolean.TRUE);
+        }
+        assertThat(UserService.isPlaceholderPassword(null)).isTrue();
+    }
+
+    @Test
     @DisplayName("ensureBootstrapped: users exist → does nothing")
     void ensureBootstrapped_usersExist_doesNothing() {
         when(userRepo.count()).thenReturn(1L);

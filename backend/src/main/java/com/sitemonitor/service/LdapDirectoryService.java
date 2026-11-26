@@ -331,12 +331,7 @@ public class LdapDirectoryService {
         Map<String, Object> attrs;
         String filter = buildUserFilter(s, username.trim(), null);
         try (LdapConn conn = open(s)) {
-            SearchControls controls = new SearchControls();
-            controls.setSearchScope(SearchControls.SUBTREE_SCOPE);
-            controls.setCountLimit(2);
-            controls.setTimeLimit(READ_TIMEOUT_MS);
-            controls.setReturningAttributes(null);
-            SearchResult first = firstResult(conn.ctx.search(s.getBaseDn(), filter, controls));
+            SearchResult first = loginEntry(conn, s, filter, READ_TIMEOUT_MS, null);
             if (first == null) return Optional.empty(); // not in directory
             userDn = first.getNameInNamespace();
             attrs = readAttributes(first.getAttributes());
@@ -406,6 +401,85 @@ public class LdapDirectoryService {
         } catch (Exception e) {
             throw new DirectoryUnavailableException(rootMessage(e), e);
         }
+    }
+
+    /**
+     * AD hesap durumu aramasının varlık sonucu (H paketi B4). Belirsizlik yok (bağımsız inceleme, 2026-11-26): parola girişi
+     * aynı aramanın İLK kaydıyla doğrular ({@link #loginEntry}); hesap durumu da o kaydın durumudur.
+     */
+    public enum AccountPresence { FOUND, NOT_FOUND }
+
+    /** AD hesap durumu: varlık + ham {@code userAccountControl} değeri (AD dışı dizinde {@code null}). */
+    public record AccountLookup(AccountPresence presence, String userAccountControl) {
+        /** {@code userAccountControl} içinde ACCOUNTDISABLE (0x2) biti var mı; değer yok / okunamaz → {@code false}. */
+        public boolean disabled() {
+            return accountDisabled(userAccountControl);
+        }
+    }
+
+    /** AD {@code userAccountControl} ACCOUNTDISABLE biti. */
+    static final long UAC_ACCOUNTDISABLE = 0x2L;
+    /** Hesap durumu araması sunucu süre sınırı (ms) — çağıran ayrıca kendi bekleme sınırını uygular. */
+    static final int ACCOUNT_STATE_TIME_LIMIT_MS = 4000;
+
+    /** Ondalık {@code userAccountControl} değerinde ACCOUNTDISABLE biti; boş / sayı değil → {@code false} (bilinmiyor ≠ devre dışı). */
+    public static boolean accountDisabled(String userAccountControl) {
+        if (userAccountControl == null) return false;
+        String t = userAccountControl.strip();
+        if (t.isEmpty() || t.length() > 20) return false;
+        try {
+            return (Long.parseLong(t) & UAC_ACCOUNTDISABLE) != 0;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    /**
+     * SALT OKUNUR hesap durumu araması (H paketi B4, 2026-11-26): beni-hatırla / kodla girişte AD hesabının hâlâ var ve etkin
+     * olduğunu sormak için. Parola girişinin ({@link #authenticate}) AYNI aramasını yapar ({@link #loginEntry}: giriş filtresi,
+     * alt ağaç, İLK kayıt — bağımsız inceleme aynı gün: eskiden 2+ kayıt "belirsiz" sayılıyordu; parola girişi çalışan hesap 24 sa
+     * sonra beni-hatırla / kodla girişte reddediliyordu), YALNIZ {@code userAccountControl} okunur; kayıt yok → {@code NOT_FOUND}.
+     * Bağlantı / bind / okuma hatası ve eksik yapılandırma {@link DirectoryUnavailableException} fırlatır ("bilinmiyor" — "yok"
+     * değil). Hiçbir şey yazmaz.
+     */
+    public AccountLookup lookupAccountState(String username) {
+        if (username == null || username.isBlank()) return new AccountLookup(AccountPresence.NOT_FOUND, null);
+        LdapSettings s = settingsService.getOrDefaults();
+        if (s.getHost() == null || s.getHost().isBlank()
+                || s.getBaseDn() == null || s.getBaseDn().isBlank()) {
+            throw new DirectoryUnavailableException("LDAP host / base DN yapılandırılmamış", null);
+        }
+        try (LdapConn conn = open(s)) {
+            return accountLookupOf(loginEntry(conn, s, buildUserFilter(s, username.trim(), null),
+                    ACCOUNT_STATE_TIME_LIMIT_MS, new String[] {"userAccountControl"}));
+        } catch (DirectoryUnavailableException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new DirectoryUnavailableException(rootMessage(e), e);
+        }
+    }
+
+    /**
+     * Giriş kaydı araması — parola girişi ve hesap durumu için TEK kural: giriş filtresi, alt ağaç, en çok 2 kayıt istenir,
+     * İLK kayıt kullanılır ({@link #firstResult}). {@code attrs} = döndürülecek öznitelikler ({@code null} = hepsi).
+     */
+    private SearchResult loginEntry(LdapConn conn, LdapSettings s, String filter, int timeLimitMs, String[] attrs)
+            throws NamingException {
+        SearchControls controls = new SearchControls();
+        controls.setSearchScope(SearchControls.SUBTREE_SCOPE);
+        controls.setCountLimit(2);
+        controls.setTimeLimit(timeLimitMs);
+        controls.setReturningAttributes(attrs);
+        return firstResult(conn.ctx.search(s.getBaseDn(), filter, controls));
+    }
+
+    /** Giriş kaydından hesap durumu (saf; birim testi için ayrı): kayıt yok → {@code NOT_FOUND}. */
+    static AccountLookup accountLookupOf(SearchResult entry) throws NamingException {
+        if (entry == null) return new AccountLookup(AccountPresence.NOT_FOUND, null);
+        javax.naming.directory.Attribute uac = entry.getAttributes() == null
+                ? null : entry.getAttributes().get("userAccountControl");
+        Object v = uac == null ? null : uac.get();
+        return new AccountLookup(AccountPresence.FOUND, v == null ? null : String.valueOf(v));
     }
 
     private Optional<Map<String, Object>> searchUnique(LdapSettings s, String filter, String what) {
@@ -902,7 +976,8 @@ public class LdapDirectoryService {
         return new ArrayList<>();
     }
 
-    private SearchResult firstResult(NamingEnumeration<SearchResult> results) throws NamingException {
+    /** İlk kayıt; referans (referral) öncesi gerçek kayıt yoksa {@code null} = bulunamadı. Birim testi için paket içi. */
+    static SearchResult firstResult(NamingEnumeration<SearchResult> results) throws NamingException {
         try {
             if (results.hasMore()) return results.next();
         } catch (PartialResultException ignored) {

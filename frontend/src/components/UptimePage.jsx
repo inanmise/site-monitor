@@ -3,7 +3,9 @@ import { api, formatDate } from '../api/client'
 import { useT } from '../i18n/index.jsx'
 import { useVisibleInterval } from '../hooks/useVisibleInterval'
 import { usePagination } from '../hooks/usePagination.js'
-import { useUrlQuerySync, readUrlParam, readUrlInt } from '../hooks/useUrlQuerySync.js'
+import { useUrlQuerySync, readUrlParam, readUrlInt, readSearchParam } from '../hooks/useUrlQuerySync.js'
+import { useMonitorDeepLink } from '../hooks/useMonitorDeepLink.js'
+import { useToast } from './ui/Toast.jsx'
 import CopyLinkButton from './ui/CopyLinkButton.jsx'
 import { domainDeepLink } from '../utils/monitorDeepLink.js'
 import PaginationBar from './ui/PaginationBar.jsx'
@@ -53,6 +55,16 @@ function writeStoredScope(v) { try { localStorage.setItem(SCOPE_KEY, v) } catch 
 
 function todayStartDate() { const d = new Date(); d.setHours(0, 0, 0, 0); return d }
 
+/**
+ * Durum İzleme satırının derin bağlantı kimliği: ÖNCE `inventory_id` (e-postadaki `monitor=` envanter kimliğidir — sunucu
+ * satıra onu koyar), yoksa `id`; ikisi de yoksa null (eski sunucu → bilinmiyor, sessiz). İnceleme bulgusu 5: eskiden önce
+ * `id` okunuyordu; satır başka bir `id` taşırsa e-posta bağlantısı yanlış satırı ya da "bulunamadı"yı gösterirdi.
+ */
+function uptimeIdOf(item) {
+  const v = item?.inventory_id ?? item?.id
+  return v == null || v === '' ? null : v
+}
+
 // `systemRole` artık okunmuyor (2026-10-05): Tanıla rol değil `diagnostics.run` iznine bağlı; çağıranlar prop'u geçmeye devam edebilir.
 export default function UptimePage() {
   const t = useT()
@@ -66,7 +78,7 @@ export default function UptimePage() {
   const [loading, setLoading] = useState(true)
   const [filterStatus, setFilterStatus] = useState(() => readUrlParam('stat', 'all'))
   const [sortKey, setSortKey]           = useState(() => readUrlParam('sort', 'default'))
-  const [search, setSearch]             = useState(() => readUrlParam('q', ''))
+  const [search, setSearch]             = useState(readSearchParam)   // q, yoksa eski e-postaların domain'i (H paketi 2026-11-26)
   const [teamFilter, setTeamFilter]     = useState(() => readUrlParam('team', 'all'))
   // Grup / etiket filtresi (2026-09-18): izleme sayfalarıyla aynı sözleşme ('all' / '__none__' / değer).
   const [groupFilter, setGroupFilter]   = useState(() => readUrlParam('group', 'all'))
@@ -138,6 +150,16 @@ export default function UptimePage() {
   }
 
   function closeModal() { setSelected(null); setDiag(null) }
+
+  // E-posta / bildirim derin bağlantısı (H paketi 2026-11-26): `?tab=uptime&monitor=<envanter kimliği>` satırın detayını
+  // açar (erişilebilirlik alarm e-postası). Satır kimliği `inventory_id` (yoksa `id` — uptimeIdOf); sunucu satırlara kimlik
+  // koymuyorsa (eski sürüm) "bulunamadı" denmez — bilinmeyen ≠ yok. `mal=open` ile gelse de pencere görünür (initialAlarmTab).
+  const toast = useToast()
+  useMonitorDeepLink(items, openModal, {
+    loaded: !loading && !loadError,
+    idOf: uptimeIdOf,
+    onNotFound: () => { if (items.some((x) => uptimeIdOf(x) != null)) toast.error(t('deepLink.notFound')) },
+  })
 
   function applyDateRange(from, to) {
     setDateFrom(from)
@@ -224,6 +246,8 @@ export default function UptimePage() {
     group: groupFilter !== 'all' ? groupFilter : null,
     tag: tagFilter !== 'all' ? tagFilter : null,
     scope: scope === SCOPE_ALL ? SCOPE_ALL : null,   // "Tüm takımlar" paylaşılan bağlantıda da taşınır
+    monitor: selected ? (uptimeIdOf(selected) ?? null) : null,   // açık detay paylaşılabilir; kapanınca silinir
+    domain: null,   // eski e-posta parametresi aramaya alındı (q) — adresten silinir
     page: pager.page > 1 ? pager.page : null,
     ps: (pager.pageSize !== 50 || pager.page > 1) ? pager.pageSize : null,
   })

@@ -2056,7 +2056,7 @@ public class EmailTemplateBuilder {
     }
 
     /**
-     * Uyarı bağlantısının sorgu dizesi: {@code ?tab=<sekme>[&domain=<alan>][&open=cert]}. Yalnız SERTİFİKA alarmında
+     * Uyarı bağlantısının sorgu dizesi (geçerli kural aşağıdaki 3 argümanlı sürümde). Yalnız SERTİFİKA alarmında
      * ({@link EscalationService#CERT_ALERT_TYPES}) {@code open=cert} Pano'da süzmekle kalmaz, alanın SERTİFİKA
      * PENCERESİNİ açar (frontend {@code hooks/useCertDeepLink.js}; tek seferlik) — 2026-09-28.
      *
@@ -2067,23 +2067,70 @@ public class EmailTemplateBuilder {
      */
     static String alertQuery(String alertType, String domain) { return alertQuery(alertType, domain, null); }
 
+    /**
+     * 2026-11-26 (H paketi, deneyim 1–2): izleme sayfaları {@code domain=} parametresini OKUMAZ — bağlantı sayfayı açıyor ama
+     * izlemeyi göstermiyordu. Kural: sertifika ailesi ({@code tabFor} = "dashboard") bugünkü gibi ({@code domain} +
+     * sertifika türünde {@code open=cert}); diğer türlerde bağlamda izleme kimliği varsa {@code &monitor=<id>} (sayfa
+     * ayrıntıyı açar), yoksa sayfanın arama kutusunun okuduğu {@code &q=<hedef>} (izleme listesi hedefe süzülür).
+     * Erişilebilirlik (ACCESSIBILITY) Durum İzleme sekmesine ({@code tab=uptime}) gider; kimlik = ENVANTER kimliği
+     * ({@code inventory_id} bağlam anahtarı — Durum İzleme satırları envanter kayıtlarıdır), yoksa {@code q=<host>}.
+     * {@code q} değeri URL'de sorgu / parça / kullanıcı bilgisi taşımaz ({@link #searchTarget}) — gizli değer e-postaya düşmez.
+     */
     static String alertQuery(String alertType, String domain, Map<String, Object> ctx) {
-        if (alertType != null && alertType.startsWith("HTTP_")) {
-            Long id = monitorIdOf(ctx);
-            return "/?tab=http" + (id != null ? "&monitor=" + id : "");
-        }
-        if (isDbQuery(alertType)) {   // veritabanı sorgusu: izlemenin kendisi (alan adı yok — anahtar izleme adıdır)
-            Long id = monitorIdOf(ctx);
-            return "/?tab=dbquery" + (id != null ? "&monitor=" + id : "");
-        }
         String tab = tabFor(alertType);
-        if (domain == null) return "/?tab=" + tab;
-        boolean certAlert = alertType != null && EscalationService.CERT_ALERT_TYPES.contains(alertType);
-        return "/?tab=" + tab + "&domain=" + urlenc(domain) + (certAlert ? "&open=cert" : "");
+        if ("dashboard".equals(tab)) {   // sertifika ailesi: bugünkü bağlantı (Sertifika Panosu kartı + pencere)
+            if (domain == null) return "/?tab=dashboard";
+            boolean certAlert = alertType != null && EscalationService.CERT_ALERT_TYPES.contains(alertType);
+            return "/?tab=dashboard&domain=" + urlenc(domain) + (certAlert ? "&open=cert" : "");
+        }
+        boolean accessibility = "ACCESSIBILITY".equals(alertType);
+        if (accessibility) tab = "uptime";
+        // Bağlantı alarmı ÜRETEN izlemenin sayfasını açar — bağlamdaki monitor_id o türün kimliğidir (RecheckRefs.monitorType =
+        // SchedulerService.isStillMonitored eşlemesi). Bağımsız inceleme (H paketi): HTTP izlemesinin alan adı süresi turu
+        // DOMAIN_EXPIRY üretir; içerik Alan Adı şablonuyla gider ama kimlik HTTP izlemesinindir — ?tab=domain&monitor=<HTTP
+        // kimliği> yanlış izlemeyi / "bulunamadı"yı açıyordu. Sekme kimliğin türüdür; kimliksiz arama da o sekmede (hedef URL).
+        String owner = com.sitemonitor.service.evalstate.RecheckRefs.monitorType(alertType);
+        if (owner != null) tab = owner;
+        Long id = accessibility ? idOf(ctx, "inventory_id") : monitorIdOf(ctx);
+        if (id != null) return "/?tab=" + tab + "&monitor=" + id;
+        String q = searchTarget(domain);
+        return "/?tab=" + tab + (q != null ? "&q=" + urlenc(q) : "");
     }
 
+    /**
+     * Arama kutusuna yazılacak hedef: düz hedef (host, alan adı, izleme adı) olduğu gibi; URL ise yalnız şema + ana bilgisayar
+     * + yol (sorgu dizesi, parça ve kullanıcı bilgisi atılır — izleme listesinin araması URL'nin alt dizesiyle eşleşir).
+     * Kullanıcı bilgisi {@link SecretMask#userinfoEnd} kuralıyla atılır (parolası ham {@code /} içeren adres de). Doğrusal
+     * tarama, en çok {@value #SEARCH_TARGET_MAX} karakter; boş → null.
+     */
+    static String searchTarget(String target) {
+        if (target == null) return null;
+        String t = target.trim();
+        if (t.isEmpty()) return null;
+        int sch = t.indexOf("://");
+        StringBuilder out = new StringBuilder(Math.min(t.length(), SEARCH_TARGET_MAX));
+        if (sch > 0 && sch <= 16) {
+            out.append(t, 0, sch + 3);
+            for (int i = SecretMask.userinfoEnd(t, sch + 3); i < t.length() && out.length() < SEARCH_TARGET_MAX; i++) {
+                char c = t.charAt(i);
+                if (c == '?' || c == '#') break;
+                out.append(c == '\n' || c == '\r' || c == '\t' ? ' ' : c);
+            }
+        } else {
+            out.append(t, 0, Math.min(t.length(), SEARCH_TARGET_MAX));
+        }
+        String s = out.toString().trim();
+        return s.isEmpty() ? null : s;
+    }
+
+    static final int SEARCH_TARGET_MAX = 300;
+
     private static Long monitorIdOf(Map<String, Object> ctx) {
-        Object v = ctx == null ? null : ctx.get("monitor_id");
+        return idOf(ctx, "monitor_id");
+    }
+
+    private static Long idOf(Map<String, Object> ctx, String key) {
+        Object v = ctx == null ? null : ctx.get(key);
         if (v instanceof Number n) return n.longValue();
         if (v != null) {
             String t = String.valueOf(v).trim();

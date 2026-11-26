@@ -27,6 +27,7 @@ vi.mock('../components/admin/AlertHistory.jsx', () => ({
 
 import { api } from '../api/client'
 import { MonitorPageBody, MonitorViewSwitch, useMonitorAlarmsView } from '../components/monitoring/alarms/MonitorAlarms.jsx'
+import { initialAlarmTab } from '../components/monitoring/alarms/monitorAlarmsModel.js'
 
 const SUMMARY = {
   success: true,
@@ -225,6 +226,25 @@ describe('useMonitorAlarmsView — sayfa içi gezinme kararı', () => {
     expect(result.current.active).toBe(false)
     act(() => { handled = result.current.nav({ alert_type: 'HTTP_DOWN', domain: 'https://x' }) })
     expect(handled).toBe(false)
+  })
+
+  it('H paketi: adres izleme isterse (monitor=) mal=open olsa da açılışta İzlemeler, mal adresten silinir', async () => {
+    window.history.replaceState({}, '', '/?tab=uptime&mal=open&monitor=901')
+    const { result } = renderHook(() => useMonitorAlarmsView('uptime'))
+    expect(result.current.active).toBe(false)
+    await waitFor(() => expect(new URL(window.location.href).searchParams.get('mal')).toBeNull())
+    expect(new URL(window.location.href).searchParams.get('monitor')).toBe('901')
+    // monitor= yokken mal=open bugünkü gibi Alarmlar
+    window.history.replaceState({}, '', '/?tab=uptime&mal=open')
+    const again = renderHook(() => useMonitorAlarmsView('uptime'))
+    expect(again.result.current.active).toBe(true)
+  })
+
+  it('initialAlarmTab: boş / boşluk monitor yok sayılır; geçersiz mal null', () => {
+    expect(initialAlarmTab('open', null)).toBe('open')
+    expect(initialAlarmTab('open', '   ')).toBe('open')
+    expect(initialAlarmTab('closed', '12')).toBeNull()
+    expect(initialAlarmTab('bogus', null)).toBeNull()
   })
 
   it('enabled:false URL\'e yazmaz (App\'teki pano başka sekmenin anahtarını ezmez)', async () => {

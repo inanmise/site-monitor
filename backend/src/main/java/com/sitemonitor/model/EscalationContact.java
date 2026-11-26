@@ -36,6 +36,26 @@ public class EscalationContact {
     @Transient
     private Boolean userActive;
 
+    /**
+     * Bağlı kullanıcı SİLİNMİŞ ({@code user_id} dolu ama kullanıcı satırı yok) — yalnız kişi listesi uçlarında doldurulur,
+     * SAKLANMAZ (2026-11-26, H paketi B1). Eski veri için de doğru: silme kararından önce silinmiş kullanıcıya bağlı kalmış
+     * kişiler de görünür. null = bağsız ya da bilinmiyor.
+     */
+    @Transient
+    private Boolean userDeleted;
+
+    /**
+     * Kişi neden pasif (2026-11-26, H paketi B1): {@link #DEACTIVATED_USER_DELETED} = bağlı kullanıcı silindi, kişi aynı
+     * işlemde hedefli koşullu UPDATE ile pasife alındı ({@code EscalationContactRepository.deactivateForDeletedUser}).
+     * null = bilinmiyor / elle. Kullanıcı bağı değişince (başka kullanıcıya bağlama ya da bağı kaldırma) temizlenir;
+     * kişi elle yeniden etkinleştirilse de bağ silinmiş kullanıcıda kaldıkça değer korunur (alıcı süzgeci onu yine düşürür).
+     */
+    @Column(name = "deactivated_reason", length = 40)
+    private String deactivatedReason;
+
+    /** {@link #deactivatedReason} değeri: bağlı kullanıcı silindi. Kalıcı ad (arayüz rozeti bu değeri okur). */
+    public static final String DEACTIVATED_USER_DELETED = "USER_DELETED";
+
     private String name;
 
     private String email;

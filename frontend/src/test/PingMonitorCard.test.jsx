@@ -164,6 +164,27 @@ describe('PingMonitorCard', () => {
     expect(pending.container.querySelector('[data-slot="card-footer"]').textContent).toMatch(/Not checked yet|Henüz kontrol edilmedi/)
   })
 
+  it('H paketi 2026-11-26: N/A + yalnız ölçülemeyen satırlar (sunucu SLA n=0, up_pct null) → erişilebilirlik gri "—" + neden; yeşil / kırmızı YOK', () => {
+    const sla = { n: 0, fail: 0, up_pct: null, bad_hours: 0, windows: [] }
+    const na = renderCard({ status: 'na', rtt_ms: null, packet_loss: null, error: 'ICMP bu ortamda kullanılamıyor' },
+      { sla, slaTarget: 99.9, slaDays: 30, spark: { n: 0, fail: 0, up_pct: null, buckets: [], last: [] } })
+    const line = na.container.querySelector('[data-slot="availability-unknown"]')
+    expect(line).not.toBeNull()
+    expect(line).toHaveAttribute('data-verdict', 'unknown')
+    expect(line.querySelector('[data-slot="availability-pct"]').textContent).toBe('—')
+    expect(line.textContent).toMatch(/ICMP/)
+    expect(line.className).toMatch(/text-muted-foreground/)
+    expect(line.innerHTML).not.toMatch(/text-success|text-destructive/)
+    // Tıklanacak dönem verisi yok: düğme / Popover yok; 0 % ya da ✓ / ↓ yazılmaz
+    expect(na.container.querySelector('[data-slot="availability-trigger"]')).toBeNull()
+    expect(na.container.textContent).not.toMatch(/0[.,]00|✓|↓/)
+    na.unmount()
+    // Ölçülebilen (çalışan) izleme n=0 → bugünkü gibi hiç çizilmez (yeni izleme, nedeni yok)
+    const up = renderCard({}, { sla, slaTarget: 99.9, slaDays: 30 })
+    expect(up.container.querySelector('[data-slot="availability-unknown"]')).toBeNull()
+    expect(up.container.querySelector('[data-slot="monitor-spark"]')).toBeNull()
+  })
+
   it('duraklatılmış: kesik/soluk kart + alt çubukta "Paused" + Sürdür; alarm: seviye rozeti + tüm kart dış çizgisi; bakım rozeti', async () => {
     const onResume = vi.fn()
     const paused = renderCard({ active: false }, {

@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { api } from '../api/client'
 import {
   isSyncedLocalKey, isSyncableValue, readLocalSnapshot, planHydration, cleanServerLocal, MAX_LOCAL_VALUE,
-  normalizeFavorites, favKey, toggleFavorite as toggleFav, viewsFor as viewsOf, upsertView, renameView as renameV,
+  normalizeFavorites, favKey, toggleFavorite as toggleFav, renameFavorite as renameFav, viewsFor as viewsOf, upsertView, renameView as renameV,
   deleteView as deleteV,
 } from './userPrefsModel.js'
 
@@ -380,6 +380,17 @@ export function useUserPrefsController(user, { debounceMs = 1000, canMigrate = n
       setTop('favorites', r.list.length ? r.list : null)
       return r
     },
+    /**
+     * Favorinin saklı adını güncel adla eşitler (H paketi 2026-11-26) — yalnız AD DEĞİŞİNCE yazar (aynıysa PUT yok).
+     * → yazdıysa true.
+     */
+    renameFavorite: (fav) => {
+      if (!ready) return false
+      const r = renameFav(prefsRef.current.favorites, fav)
+      if (!r.changed) return false
+      setTop('favorites', r.list)
+      return true
+    },
     landingTab: typeof state.prefs.landingTab === 'string' ? state.prefs.landingTab : null,
     setLandingTab: (v) => setTop('landingTab', v || null),
     /** "Panom" yerleşimi (2026-10-11): {v:1, widgets:[{id,type,size}]} ya da null (varsayılan). */
@@ -420,7 +431,7 @@ export function useUserPrefsController(user, { debounceMs = 1000, canMigrate = n
 
 const NOOP = Object.freeze({
   ready: false, status: 'idle', prefs: {}, hydratedKeys: [], favorites: [],
-  isFavorite: () => false, toggleFavorite: () => null, landingTab: null, setLandingTab: () => false,
+  isFavorite: () => false, toggleFavorite: () => null, renameFavorite: () => false, landingTab: null, setLandingTab: () => false,
   dashboard: null, setDashboard: () => false,
   viewsFor: () => [], saveView: () => null, renameView: () => null, deleteView: () => null, flush: () => null,
 })

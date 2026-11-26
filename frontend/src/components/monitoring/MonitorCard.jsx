@@ -189,7 +189,7 @@ export function MonitorCardTop({ end, className, children }) {
   // Favori yıldızı (2026-10-02, öneri 23): dokuz kart `noc` bağlamıyla türünü, kimliğini ve satır adını zaten veriyor —
   // yıldız buradan tek yerde çizilir (kart dosyası elle koymaz). Tercihler hazır değilse FavoriteToggle hiç çizilmez.
   const favorite = noc?.monitor?.id != null
-    ? <FavoriteToggle type={String(noc.type || '').toLowerCase()} id={noc.monitor.id} name={noc.rowLabel ?? noc.monitor.name} />
+    ? <FavoriteToggle type={String(noc.type || '').toLowerCase()} id={noc.monitor.id} monitor={noc.monitor} name={noc.rowLabel} />
     : null
   return (
     <div className={cn('mb-2.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1', className)}>

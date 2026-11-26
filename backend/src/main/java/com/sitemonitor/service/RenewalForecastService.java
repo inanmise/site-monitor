@@ -164,10 +164,13 @@ public class RenewalForecastService {
             m.put("renewal_planned_at", i != null ? i.getRenewalPlannedAt() : null);
             m.put("renewal_planned_by", i != null ? i.getRenewalPlannedByName() : null);
             m.put("renewal_planned_note", i != null ? i.getRenewalPlannedNote() : null);
-            // Plan durumu: planned → yeni sertifika (not_before) plan tarihinden sonra görüldüyse done (plan yerine geldi)
+            // Plan durumu (H paketi 2026-11-26, sertifika B5): TEK kural CertRenewalPlanService.isDone — plan tabanından farklı ve
+            // daha uzun geçerli sertifika görüldüyse done (erken yenileme dahil); tabansız eski planda verilme günü ≥ plan günü.
             String planned = i != null ? i.getRenewalPlannedAt() : null;
-            String nb = localDay(d.getNotBefore(), ZONE);
-            m.put("renewal_plan_state", planned == null ? "none" : (nb != null && nb.compareTo(planned) >= 0 ? "done" : "planned"));
+            boolean done = planned != null && CertRenewalPlanService.isDone(planned, i.getRenewalPlannedRecordedAt(),
+                    i.getRenewalPlannedFingerprint(), i.getRenewalPlannedNotAfter(), d.getFingerprint(), d.getNotBefore(),
+                    d.getNotAfter());
+            m.put("renewal_plan_state", planned == null ? "none" : (done ? "done" : "planned"));
             certs.add(m);
             if (d.getCheckedAt() != null && (dataAsOf == null || d.getCheckedAt().compareTo(dataAsOf) > 0)) dataAsOf = d.getCheckedAt();
         }
@@ -255,7 +258,7 @@ public class RenewalForecastService {
         return out;
     }
 
-    private static Instant parseUtc(String ts) {
+    static Instant parseUtc(String ts) {   // paket içi: CertRenewalPlanService.isDone aynı ayrıştırıcıyı kullanır (H paketi)
         if (ts == null || ts.isBlank()) return null;
         try {
             String s = ts.trim();

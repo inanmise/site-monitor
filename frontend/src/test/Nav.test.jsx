@@ -129,6 +129,20 @@ describe('Nav', () => {
     expect(screen.getByText(/alice/)).toBeInTheDocument()
   })
 
+  it('on Mac the palette hint is ⌘K, not Ctrl K (same rule as the shortcuts sheet; H paketi 2026-11-26)', () => {
+    const own = Object.getOwnPropertyDescriptor(window.navigator, 'platform')
+    Object.defineProperty(window.navigator, 'platform', { value: 'MacIntel', configurable: true })
+    try {
+      const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
+      const search = container.querySelector('[data-tour="nav-search"]')
+      expect(within(search).getByText('\u2318K')).toBeInTheDocument()
+      expect(within(search).queryByText('Ctrl K')).toBeNull()
+    } finally {
+      if (own) Object.defineProperty(window.navigator, 'platform', own)
+      else delete window.navigator.platform
+    }
+  })
+
   it('the search box is a BUTTON (not a text field) that opens the command palette; Ctrl K is shown', async () => {
     const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
     const search = container.querySelector('[data-tour="nav-search"]')
@@ -330,7 +344,7 @@ describe('Nav — çok takımlı kullanıcı', () => {
   })
 })
 
-describe('Nav — İzleme alt grupları akordeon (2026-11-05)', () => {
+describe('Nav — İzleme alt grupları akordeon (2026-11-05; tekli 2026-11-26)', () => {
   const GROUPS = ['nav.secAvailability', 'nav.secDomainDns', 'nav.secContent', 'nav.secData']
   const subTrigger = (container, key) => container.querySelector(`[data-nav-subgroup-trigger="${key}"]`)
   const subList = (container, key) => container.querySelector(`[data-nav-subgroup="${key}"] [data-slot="nav-subgroup-list"]`)
@@ -354,28 +368,31 @@ describe('Nav — İzleme alt grupları akordeon (2026-11-05)', () => {
     triggers.forEach((b) => { expect(b.tagName).toBe('BUTTON'); expect(b.closest('[data-sidebar="menu-sub"]')).not.toBeNull() })
   })
 
-  it('kapalı başlar; tıklanınca açılır (aria-expanded), gruplar BAĞIMSIZ açılır ve seçim tarayıcıda kalır', () => {
+  it('kapalı başlar; tıklanınca açılır (aria-expanded); TEKLİ: B açılınca A kapanır, seçim tarayıcıda kalır', () => {
     const { container, unmount } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
     for (const k of GROUPS) {
       expect(subTrigger(container, k)).toHaveAttribute('aria-expanded', 'false')
       expect(subList(container, k).parentElement).toHaveAttribute('hidden')   // kapalı: erişilebilirlik ağacı dışında
     }
     fireEvent.click(subTrigger(container, 'nav.secAvailability'))
-    fireEvent.click(subTrigger(container, 'nav.secContent'))
     expect(subTrigger(container, 'nav.secAvailability')).toHaveAttribute('aria-expanded', 'true')
-    expect(subTrigger(container, 'nav.secContent')).toHaveAttribute('aria-expanded', 'true')
-    expect(subTrigger(container, 'nav.secDomainDns')).toHaveAttribute('aria-expanded', 'false')
     expect(subList(container, 'nav.secAvailability').parentElement).not.toHaveAttribute('hidden')
-    expect(JSON.parse(localStorage.getItem('nav-subsection-open'))).toEqual(['nav.secAvailability', 'nav.secContent'])
+    fireEvent.click(subTrigger(container, 'nav.secContent'))
+    expect(subTrigger(container, 'nav.secContent')).toHaveAttribute('aria-expanded', 'true')
+    expect(subTrigger(container, 'nav.secAvailability')).toHaveAttribute('aria-expanded', 'false')   // öteki KAPANDI
+    expect(subList(container, 'nav.secAvailability').parentElement).toHaveAttribute('hidden')
+    expect(subTrigger(container, 'nav.secDomainDns')).toHaveAttribute('aria-expanded', 'false')
+    expect(JSON.parse(localStorage.getItem('nav-subsection-open'))).toEqual(['nav.secContent'])
     unmount()
     const again = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
     expect(subTrigger(again.container, 'nav.secContent')).toHaveAttribute('aria-expanded', 'true')
-    fireEvent.click(subTrigger(again.container, 'nav.secContent'))
-    expect(subTrigger(again.container, 'nav.secContent')).toHaveAttribute('aria-expanded', 'false')
-    expect(JSON.parse(localStorage.getItem('nav-subsection-open'))).toEqual(['nav.secAvailability'])
+    expect(subTrigger(again.container, 'nav.secAvailability')).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(subTrigger(again.container, 'nav.secContent'))   // açık gruba tıklamak onu kapatır, hiçbiri açık kalmaz
+    for (const k of GROUPS) expect(subTrigger(again.container, k)).toHaveAttribute('aria-expanded', 'false')
+    expect(localStorage.getItem('nav-subsection-open')).toBeNull()
   })
 
-  it('etkin sekmenin alt grubu kendiliğinden açılır ve vurgulanır; diğerleri olduğu gibi kalır', () => {
+  it('etkin sekmenin alt grubu kendiliğinden açılır ve vurgulanır; öteki açık grup KAPANIR (tekli)', () => {
     const { container, rerender } = render(withSidebar(<Nav {...DEFAULT_PROPS} activeTab="keyword" />))
     expect(sectionTrigger(container, 'monitoring')).toHaveAttribute('aria-expanded', 'true')
     expect(subTrigger(container, 'nav.secContent')).toHaveAttribute('aria-expanded', 'true')
@@ -384,7 +401,19 @@ describe('Nav — İzleme alt grupları akordeon (2026-11-05)', () => {
     expect(tabButton(container, 'keyword')).toHaveAttribute('aria-current', 'page')
     rerender(withSidebar(<Nav {...DEFAULT_PROPS} activeTab="dns" />))
     expect(subTrigger(container, 'nav.secDomainDns')).toHaveAttribute('aria-expanded', 'true')
-    expect(subTrigger(container, 'nav.secContent')).toHaveAttribute('aria-expanded', 'true')   // kullanıcı kapatmadıkça açık kalır
+    expect(subTrigger(container, 'nav.secContent')).toHaveAttribute('aria-expanded', 'false')   // tekli: yeni sekmenin grubu açılınca kapanır
+    expect(JSON.parse(localStorage.getItem('nav-subsection-open'))).toEqual(['nav.secDomainDns'])
+    // Alt grubu olmayan sekmeye geçmek açık grubu KAPATMAZ (İzleme Panosu)
+    rerender(withSidebar(<Nav {...DEFAULT_PROPS} activeTab="monitoring" />))
+    expect(subTrigger(container, 'nav.secDomainDns')).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('etkin sekmenin grubu, saklı başka açık grubu kapatır', () => {
+    localStorage.setItem('nav-subsection-open', JSON.stringify(['nav.secAvailability']))
+    const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} activeTab="dbquery" />))
+    expect(subTrigger(container, 'nav.secData')).toHaveAttribute('aria-expanded', 'true')
+    expect(subTrigger(container, 'nav.secAvailability')).toHaveAttribute('aria-expanded', 'false')
+    expect(JSON.parse(localStorage.getItem('nav-subsection-open'))).toEqual(['nav.secData'])
   })
 
   it('sekmeye tıklamak onTabChange çağırır; grup başlığına tıklamak gezinmez', () => {
@@ -397,11 +426,16 @@ describe('Nav — İzleme alt grupları akordeon (2026-11-05)', () => {
     expect(onTabChange).toHaveBeenCalledWith('domain')
   })
 
-  it('tur bir sekmeyi göstermek isteyince bölümü ve alt grubunu açar (sm:nav-reveal)', () => {
+  it('tur bir sekmeyi göstermek isteyince bölümü ve alt grubunu açar, öteki açık grubu kapatır (sm:nav-reveal)', () => {
     const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
+    fireEvent.click(subTrigger(container, 'nav.secContent'))
     expect(subTrigger(container, 'nav.secData')).toHaveAttribute('aria-expanded', 'false')
     act(() => { window.dispatchEvent(new CustomEvent('sm:nav-reveal', { detail: { tab: 'dbquery' } })) })
     expect(sectionTrigger(container, 'monitoring')).toHaveAttribute('aria-expanded', 'true')
+    expect(subTrigger(container, 'nav.secData')).toHaveAttribute('aria-expanded', 'true')
+    expect(subTrigger(container, 'nav.secContent')).toHaveAttribute('aria-expanded', 'false')
+    // Alt grubu olmayan hedef açık grubu değiştirmez
+    act(() => { window.dispatchEvent(new CustomEvent('sm:nav-reveal', { detail: { tab: 'monitoring' } })) })
     expect(subTrigger(container, 'nav.secData')).toHaveAttribute('aria-expanded', 'true')
   })
 
@@ -411,16 +445,18 @@ describe('Nav — İzleme alt grupları akordeon (2026-11-05)', () => {
     for (const k of GROUPS) expect(subTrigger(container, k)).toHaveAttribute('aria-expanded', 'false')
   })
 
-  it('bilinmeyen / tekrarlanan saklı anahtarlar budanır: 16\'lık tavanı dolduran çöp yeni grubun açık kalmasını engellemez (hata avı 2026-11-06)', () => {
+  it('bilinmeyen / tekrarlanan saklı anahtarlar budanır; eski çok anahtarlı diziden YALNIZ ilk bilinen grup açılır (hata avı 2026-11-06; tekli 2026-11-26)', () => {
     const junk = Array.from({ length: 20 }, (_, i) => `nav.eskiGrup${i}`)
-    localStorage.setItem('nav-subsection-open', JSON.stringify([...junk, 'nav.secData', 'nav.secData', 42]))
+    localStorage.setItem('nav-subsection-open', JSON.stringify([...junk, 'nav.secData', 'nav.secData', 'nav.secContent', 42]))
     const { container } = render(withSidebar(<Nav {...DEFAULT_PROPS} />))
-    // Bilinen grup (çöpün arkasında olsa da) açık okunur; tekrar tek sayılır
+    // Bilinen ilk grup (çöpün arkasında olsa da) açık okunur; ikinci bilinen grup açılmaz
     expect(subTrigger(container, 'nav.secData')).toHaveAttribute('aria-expanded', 'true')
+    expect(subTrigger(container, 'nav.secContent')).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(subTrigger(container, 'nav.secAvailability'))
     expect(subTrigger(container, 'nav.secAvailability')).toHaveAttribute('aria-expanded', 'true')
-    // Saklı değerde yalnız bilinen, tekil anahtarlar kalır — yeni açılan grup DÜŞMEDİ
-    expect(JSON.parse(localStorage.getItem('nav-subsection-open'))).toEqual(['nav.secData', 'nav.secAvailability'])
+    expect(subTrigger(container, 'nav.secData')).toHaveAttribute('aria-expanded', 'false')
+    // Saklı değerde yalnız yeni açılan tek grup kalır
+    expect(JSON.parse(localStorage.getItem('nav-subsection-open'))).toEqual(['nav.secAvailability'])
   })
 
   it('İzleme grubunun dokuz sekmesinin hiçbiri kaybolmaz', () => {

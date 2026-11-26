@@ -24,6 +24,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /** Vade takvimi uçları (2026-09-12): tek gövde + ortam etiketi; plan yaz/sil kapsam + denetim. */
 @WebMvcTest(ForecastController.class)
+@org.springframework.context.annotation.Import(CertRenewalPlanService.class)
 class ForecastControllerTest {
 
     @Autowired MockMvc mvc;
@@ -39,6 +40,8 @@ class ForecastControllerTest {
     @MockitoBean MonitorHistoryService monitorHistory;
     @MockitoBean CertificateService certificateService;
     @MockitoBean BuildInfo buildInfo;
+    @MockitoBean com.sitemonitor.repository.LatestCheckRepository latestRepo;
+    @MockitoBean ActivityLogService activityLog;
 
     private static MockHttpSession session(String role, Long team, boolean manage) {
         MockHttpSession s = new MockHttpSession();
@@ -77,11 +80,17 @@ class ForecastControllerTest {
     }
 
     @Test
-    @DisplayName("POST plan: tarih doğrulanır, kayıt yazılır, geçmiş + CERT_RENEWAL_PLANNED denetimi; DELETE temizler")
+    @DisplayName("POST plan: tarih doğrulanır, HEDEFLİ yazılır (taban = sunulan sertifika), geçmiş + aktivite + denetim; DELETE koşullu temizler")
     void planAndUnplan() throws Exception {
         CertificateInventory inv = new CertificateInventory(); inv.setId(3L); inv.setDomain("a.example.com"); inv.setTeamId(5L);
         when(inventoryRepo.findByDomain("a.example.com")).thenReturn(Optional.of(inv));
-        when(inventoryRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        com.sitemonitor.model.LatestCheck lc = new com.sitemonitor.model.LatestCheck();
+        lc.setDomain("a.example.com"); lc.setFingerprint("AA:BB"); lc.setNotAfter("2026-12-01T00:00:00");
+        when(latestRepo.findById("a.example.com")).thenReturn(Optional.of(lc));
+        when(inventoryRepo.writeRenewalPlan(eq(3L), eq("2026-10-01"), eq("u1"), eq("User One"), eq("vendor ticket 42"),
+                eq("AA:BB"), eq("2026-12-01T00:00:00"), anyString())).thenReturn(1);
+        when(inventoryRepo.clearRenewalPlanIfUnchanged(eq(3L), eq("2026-10-01"), eq("vendor ticket 42"), eq("AA:BB"),
+                anyString(), eq("u1"), eq("User One"))).thenReturn(1);
 
         mvc.perform(post("/api/forecast/a.example.com/plan").session(session("TEAM_ADMIN", 5L, true)).contentType("application/json")
                         .content("{\"date\":\"2026-10-01\",\"note\":\"vendor ticket 42\"}"))
@@ -91,18 +100,77 @@ class ForecastControllerTest {
         verify(auditService).recordAction(eq("CERT_RENEWAL_PLANNED"), any(jakarta.servlet.http.HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class),
                 eq("CERTIFICATE"), eq("a.example.com"), contains("2026-10-01"));
         verify(monitorHistory).record(eq(MonitorHistoryService.INVENTORY), eq(3L), eq("a.example.com"), eq(5L), eq(MonitorHistoryService.UPDATE), anyMap(), anyMap(), eq("renewal-plan"), any());
+        verify(activityLog).recordLifecycle(eq(ActivityLogService.CERT), eq(3L), eq("a.example.com"), eq("a.example.com"), eq(5L),
+                eq("RENEWAL_PLANNED"), eq("u1"), contains("2026-10-01"));
 
         mvc.perform(post("/api/forecast/a.example.com/plan").session(session("TEAM_ADMIN", 5L, true)).contentType("application/json")
                         .content("{\"date\":\"next week\"}"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("date"));
 
         mvc.perform(delete("/api/forecast/a.example.com/plan").session(session("TEAM_ADMIN", 5L, true)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.renewal_planned_at").isEmpty());
+                .andExpect(jsonPath("$.data.renewal_planned_at").isEmpty())
+                .andExpect(jsonPath("$.data.changed").value(true));
         verify(auditService).recordAction(eq("CERT_RENEWAL_PLAN_CLEARED"), any(jakarta.servlet.http.HttpSession.class), any(jakarta.servlet.http.HttpServletRequest.class),
                 eq("CERTIFICATE"), eq("a.example.com"), anyString());
-        // ADMIN-4 (2026-10-22): plan yaz / sil "son güncelleyen" künyesini basar (updated_at "şimdi" olurken updated_by eskide kalıyordu)
-        verify(monitorHistory, times(2)).stampUpdated(same(inv), any(jakarta.servlet.http.HttpSession.class));
+        verify(activityLog).recordLifecycle(eq(ActivityLogService.CERT), eq(3L), eq("a.example.com"), eq("a.example.com"), eq(5L),
+                eq("RENEWAL_PLAN_CLEARED"), eq("u1"), anyString());
+        // B7 (H paketi 2026-11-26): varlığın bütünü ASLA kaydedilmez (eşzamanlı envanter düzenlemesini geri yazıyordu)
+        verify(inventoryRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("POST plan (B4): gerçek takvim günü değilse 400 alan date; 500 karakteri aşan not 400 alan note — hiçbir şey yazılmaz")
+    void planValidation_impossibleDateAndLongNote() throws Exception {
+        CertificateInventory inv = new CertificateInventory(); inv.setId(3L); inv.setDomain("a.example.com"); inv.setTeamId(5L);
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(Optional.of(inv));
+        mvc.perform(post("/api/forecast/a.example.com/plan").session(session("TEAM_ADMIN", 5L, true)).contentType("application/json")
+                        .content("{\"date\":\"2026-02-31\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.field").value("date"));
+        String longNote = "x".repeat(501);
+        mvc.perform(post("/api/forecast/a.example.com/plan").session(session("TEAM_ADMIN", 5L, true)).contentType("application/json")
+                        .content("{\"date\":\"2026-10-01\",\"note\":\"" + longNote + "\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.field").value("note"));
+        // Tam 500 karakter kabul edilir (sınır dahil).
+        when(inventoryRepo.writeRenewalPlan(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(1);
+        mvc.perform(post("/api/forecast/a.example.com/plan").session(session("TEAM_ADMIN", 5L, true)).contentType("application/json")
+                        .content("{\"date\":\"2026-10-01\",\"note\":\"" + "y".repeat(500) + "\"}"))
+                .andExpect(status().isOk());
+        verify(inventoryRepo, times(1)).writeRenewalPlan(any(), any(), any(), any(), any(), any(), any(), any());
+        verify(inventoryRepo, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("DELETE plan (B7): plan arada değiştiyse koşullu yazım 0 satır → denetim / geçmiş yok, changed=false")
+    void unplan_changedMeanwhile_writesNothing() throws Exception {
+        CertificateInventory inv = new CertificateInventory(); inv.setId(3L); inv.setDomain("a.example.com"); inv.setTeamId(5L);
+        inv.setRenewalPlannedAt("2026-10-01");
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(Optional.of(inv));
+        when(inventoryRepo.clearRenewalPlanIfUnchanged(any(), any(), any(), any(), any(), any(), any())).thenReturn(0);
+        mvc.perform(delete("/api/forecast/a.example.com/plan").session(session("TEAM_ADMIN", 5L, true)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.changed").value(false));
+        verify(auditService, never()).recordAction(eq("CERT_RENEWAL_PLAN_CLEARED"), nullable(jakarta.servlet.http.HttpSession.class),
+                nullable(jakarta.servlet.http.HttpServletRequest.class), anyString(), anyString(), nullable(String.class));
+        verify(monitorHistory, never()).record(anyString(), any(), any(), any(), anyString(), any(), any(), any(), any());
+        verify(certificateService, never()).evictAllCaches();
+    }
+
+    @Test
+    @DisplayName("POST plan: kayıt arada silindiyse hedefli yazım 0 satır → 404")
+    void plan_deletedMeanwhile_404() throws Exception {
+        CertificateInventory inv = new CertificateInventory(); inv.setId(3L); inv.setDomain("a.example.com"); inv.setTeamId(5L);
+        when(inventoryRepo.findByDomain("a.example.com")).thenReturn(Optional.of(inv));
+        when(inventoryRepo.writeRenewalPlan(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(0);
+        mvc.perform(post("/api/forecast/a.example.com/plan").session(session("TEAM_ADMIN", 5L, true)).contentType("application/json")
+                        .content("{\"date\":\"2026-10-01\"}"))
+                .andExpect(status().isNotFound());
+        verify(auditService, never()).recordAction(eq("CERT_RENEWAL_PLANNED"), nullable(jakarta.servlet.http.HttpSession.class),
+                nullable(jakarta.servlet.http.HttpServletRequest.class), anyString(), anyString(), nullable(String.class));
     }
 
     @Test

@@ -25,6 +25,9 @@ import { markDeleted, unmarkDeleted } from '../../utils/recentlyDeleted.js'
 import { announceInventoryRenamed } from '../../utils/inventoryEvent.js'
 import { deleteConfirmMessage } from '../../utils/deleteInventory.js'
 import { isManualCert, trackingKeyError } from '../manualcert/manualCertModel.js'
+import { FP_RAW_MAX, expectedFingerprintPatch, fingerprintChanged, fingerprintProblem, ugTeamPatch } from './expectedFingerprint.js'
+import TeamBadge from '../ui/TeamBadge.jsx'
+import { focusFormError, serverFieldErrors } from '../../utils/formErrors.js'
 import { usePermissions } from '../../contexts/PermissionsProvider.jsx'
 import { INVENTORY_ROUTING_DEFAULTS, isGrantTeam, isRoutingLockedRow, withRoutingDefaults } from '../../hooks/useMonitorTeamPick.js'
 import ModalShell from '../ui/ModalShell.jsx'
@@ -104,8 +107,15 @@ export function domainLooksInvalid(v) {
   return !!s && (/\s/.test(s) || s.includes('://') || s.includes('/'))
 }
 
-/** Alan-bazlı doğrulama: { domain?, team_id?, group_name?, tags? } — ilk hata alt çubuktaki özet bantta da görünür. */
-function fieldErrors(form, t, manual = false) {
+/** Sunucunun alan hatası gelen ve formda ALAN olarak çizilen anahtarlar (H paketi 2026-11-26) — diğerleri tost olarak kalır. */
+const SERVER_FIELD_KEYS = new Set(['expected_fingerprint'])
+
+/**
+ * Alan-bazlı doğrulama: { domain?, team_id?, group_name?, tags?, expected_fingerprint? } — ilk hata alt çubuktaki özet
+ * bantta da görünür. Beklenen parmak izi YALNIZ değiştiyse denetlenir (`storedFp` = kayıttaki değer): eski kaydın biçimi
+ * bozuk değeri başka bir alanın düzenlenmesini engellemez (sunucu da değişmeyen değeri yeniden doğrulamaz).
+ */
+function fieldErrors(form, t, manual = false, storedFp = '') {
   const e = {}
   if (manual) {
     // Manuel kayıt: anahtar bir host adı değil, takip adıdır — sunucudaki takip adı kuralı (2026-10-07: düzenlenebilir)
@@ -117,6 +127,9 @@ function fieldErrors(form, t, manual = false) {
   // Grup + etiket zorunlu (2026-09-18): envanter kaydı da bir izleme — dokuz türle aynı kural.
   if (!form.group_name?.trim()) e.group_name = t('inv.groupRequired')
   if (!form.tags?.trim()) e.tags = t('inv.tagsRequired')
+  if (!manual && fingerprintChanged(form.expected_fingerprint, storedFp) && fingerprintProblem(form.expected_fingerprint)) {
+    e.expected_fingerprint = t('inv.fpInvalid')
+  }
   return e
 }
 
@@ -311,6 +324,11 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
     if (errors[field]) setErrors(prev => { const n = { ...prev }; delete n[field]; return n })
   }
 
+  // UG takımının adı (salt okunur satır): kayıttaki ad, yoksa takım listesinden; ikisi de yoksa "adı okunamayan takım".
+  const ugTeamName = record?.ug_team_id != null
+    ? (record.ug_team_name || teams.find(x => String(x.id) === String(record.ug_team_id))?.name || null)
+    : null
+
   // Mükerrer bandının "aktar" hedefi: formda seçili ekip (düzenlemede kaydın ekibi). Liste dışıysa kayıttaki ad.
   const targetTeam = useMemo(() => {
     if (!form.team_id) return null
@@ -322,9 +340,12 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
   const busyLabel = saving ? t('inv.saving') : firstRun ? t('inv.saveRunning')
     : testing ? t('inv.testing') : running ? t('inv.running') : null
 
+  // Beklenen parmak izinin karşılaştırma tabanı: düzenlemede kayıttaki değer, ekle / kopyala'da boş (kopya bu alanı taşımaz)
+  const storedFp = mode === 'edit' ? (record?.expected_fingerprint ?? '') : ''
+
   /** Kaydet öncesi: alan hatalarını işaretler, ilk hatayı döner (yoksa null). */
   function validate() {
-    const e = fieldErrors(form, t, manual)
+    const e = fieldErrors(form, t, manual, storedFp)
     setErrors(e)
     return Object.values(e)[0] ?? null
   }
@@ -470,7 +491,10 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
         noc_group_ids:      nocGroupIdsBody(form.noc_group_ids),
         group_name:         form.group_name?.trim() || null,
         tags:               form.tags?.trim() || null,   // formda alan yoktu → düzenleme etiketleri SİLİYORDU (2026-09-18)
-        ug_team_id:         null,   // tek takım modeli — UG ayrımı kaldırıldı
+        // UG takımı formda DEĞİŞMEZ (H paketi 2026-11-26, sertifika B6): düzenlemede saklı değer + `ug_team_id_unchanged`
+        // gider (yeni sunucu yok sayar, sürüm geçişinde eski pod aynısını yazar — UG korunur). Eski form her kayıtta null
+        // gönderiyordu → içe aktarmayla atanmış UG takımı sıradan bir düzenlemeyle sessizce düşüyordu. Oluşturmada yok.
+        ...ugTeamPatch(record?.ug_team_id, { edit: mode === 'edit' }),
         external_vendor:    form.external_vendor,
         action_required:    form.action_required,
         openshift:          form.openshift,
@@ -495,9 +519,10 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
         platform:           form.platform || null,
         platform_detail:    form.platform_detail?.trim() || null,
         change_description: form.change_description || null,
-        // DİKKAT: payload'ın tek camelCase çifti (entity Jackson adlarıyla eşleşsin diye).
-        // snake_case'e "düzeltilirse" iki alan sessizce null gider.
-        expected_fingerprint: form.expected_fingerprint || null,
+        // Beklenen parmak izi (H paketi 2026-11-26, sertifika B2): DEĞİŞTİYSE boş → null temizler, dolu → normalize (büyük
+        // harf, ayraçsız); düzenlemede DEĞİŞMEDİYSE saklı ham değer + `expected_fingerprint_unchanged` (sürüm geçişinde eski
+        // pod anahtar yoksa siliyordu). Manuel kayıtta ağ alanı — hiç gitmez.
+        ...(manual ? {} : expectedFingerprintPatch(form.expected_fingerprint, storedFp, { edit: mode === 'edit' })),
         expected_subject:    form.expected_subject || null,
         tier:               form.tier ? Number(form.tier) : null,
       }
@@ -550,8 +575,14 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
         setErrors(prev => ({ ...prev, domain: dup }))
         setMsg(dup)
       } else {
-        // Diğer sunucu hataları → tek bildirim (toast); modal AÇIK kalır.
-        toast.error(res?.error || t('inv.saveError'))
+        // Formda alanı olan sunucu alan hatası (400 VALIDATION_FAILED + field — beklenen parmak izi) ALANIN ALTINDA; diğer
+        // sunucu hataları → tek bildirim (toast). Modal AÇIK kalır.
+        const fe = serverFieldErrors(res, (name) => (SERVER_FIELD_KEYS.has(name) ? name : null))
+        if (fe) {
+          setErrors(prev => ({ ...prev, ...fe }))
+          setMsg(Object.values(fe)[0])
+          focusFormError(fe)
+        } else toast.error(res?.error || t('inv.saveError'))
       }
     } finally {
       setSaving(false)
@@ -712,6 +743,20 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
             )}
           </FormField>
 
+          {/* UG takımı (H paketi 2026-11-26, sertifika B6): bu form UG'yi DEĞİŞTİRMEZ ve göndermez (sunucu saklananı korur);
+              varsa salt okunur satır olarak görünür ki kullanıcı ortak takımın varlığını bilsin. */}
+          {mode === 'edit' && record?.ug_team_id != null && (
+            <div data-slot="inv-form-ug" className="flex min-w-0 flex-col gap-1 text-sm sm:col-span-2">
+              <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="font-semibold">{t('inv.formUgLine')}</span>
+                {ugTeamName
+                  ? <TeamBadge teamId={record.ug_team_id} teamName={ugTeamName} static wrap />
+                  : <span data-slot="inv-form-ug-unnamed" className="text-muted-foreground">{t('inv.formUgUnnamed')}</span>}
+              </span>
+              <span className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{t('inv.formUgReadonly')}</span>
+            </div>
+          )}
+
           <FormField label={t('inv.formPurchasedBy')}>
             {({ id }) => <Input id={id} value={form.purchased_by} onChange={e => f('purchased_by', e.target.value)} />}
           </FormField>
@@ -817,6 +862,32 @@ export default function InventoryFormModal({ mode = 'add', record = null, teams:
                 <span data-slot="inv-proxy-state" className={cn('text-sm font-semibold', form.use_proxy ? 'text-primary' : 'text-muted-foreground')}>
                   {form.use_proxy ? t('mon.proxy.on') : t('mon.proxy.off')}
                 </span>
+              </div>
+            )}
+          </FormField>
+
+          {/* Beklenen parmak izi (H paketi 2026-11-26, sertifika B2): görünür, düzenlenebilir, temizlenebilir. Yalnız değişince
+              gönderilir; biçim (SHA-256, 64 onaltılık) yalnız değişen değerde denetlenir. Dağıtım tamamlanınca sunucu temizler. */}
+          <FormField name="expected_fingerprint" full label={t('inv.formFP')} hint={t('inv.formFPHint')}
+            error={errors.expected_fingerprint}>
+            {({ id, describedBy, invalid }) => (
+              <div className="flex min-w-0 items-start gap-2">
+                <Input id={id} aria-describedby={describedBy} aria-invalid={invalid} value={form.expected_fingerprint ?? ''}
+                  onChange={e => f('expected_fingerprint', e.target.value)} placeholder={t('inv.formFPPh')}
+                  maxLength={FP_RAW_MAX} autoComplete="off" spellCheck={false} disabled={!fieldsEnabled}
+                  data-slot="inv-form-fp" className="min-w-0 flex-1 font-mono text-xs"
+                  onBlur={() => {
+                    if (fingerprintChanged(form.expected_fingerprint, storedFp) && fingerprintProblem(form.expected_fingerprint)) {
+                      setErrors(prev => ({ ...prev, expected_fingerprint: t('inv.fpInvalid') }))
+                    }
+                  }} />
+                {!!String(form.expected_fingerprint ?? '').trim() && fieldsEnabled && (
+                  <Button type="button" variant="outline" size="sm" data-slot="inv-form-fp-clear"
+                    className="shrink-0 pointer-coarse:h-10" aria-label={t('inv.formFPClearAria')}
+                    onClick={() => f('expected_fingerprint', '')}>
+                    {t('inv.formFPClear')}
+                  </Button>
+                )}
               </div>
             )}
           </FormField>

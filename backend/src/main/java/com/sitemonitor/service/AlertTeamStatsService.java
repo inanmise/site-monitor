@@ -22,9 +22,10 @@ import java.util.function.Predicate;
  * Alarm Geçmişi takım kırılımı (2026-09-16, kullanıcı isteği): "hangi takımın kaç alarmı var,
  * kaçı açık, kaçı kapandı, son hafta/ay kaç tane açıldı?".
  *
- * <p><b>Alarmın takımı iki kaynaktan gelir.</b> İzleme alarmlarında satırın kendi {@code team_id}'si;
- * sertifika alarmlarında satırda takım YOKTUR, alan adı envanterden çözülür (SY takımı). İkisi de
- * sayılmazsa tablo eksik çıkar — envanter türevli alarmlar sessizce kaybolurdu.
+ * <p><b>Alarmın takımları.</b> Satırın kendi {@code team_id} damgası + alan adının envanterdeki SY ve UG takımı
+ * (2026-10-22, ALERTS-3 / DATA-5 — Alarm Geçmişi'nin {@code teamId} süzgeciyle aynı küme). Alarm her sahibinin
+ * satırında sayılır, toplamlarda BİR kez. Envanter sayılmazsa tablo eksik çıkar — envanter türevli alarmlar sessizce
+ * kaybolurdu.
  *
  * <p>Kapsam: çağıran global görüntüleyici değilse yalnız görebildiği takımlar sayılır; takımı
  * çözülemeyen alarmlar "atanmamış" satırında toplanır (yalnız global görüntüleyiciye).

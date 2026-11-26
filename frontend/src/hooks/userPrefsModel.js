@@ -189,6 +189,34 @@ export function toggleFavorite(list, { type, id, name }) {
   return { list: [...cur, label ? { type, id: n, name: label } : { type, id: n }], on: true, full: false }
 }
 
+/**
+ * Favori izlemenin SAKLI adını günceller (H paketi 2026-11-26, deneyim 5): izleme yeniden adlandırılınca palet eski adı
+ * gösteriyor ve eski adla arıyordu. Favori değilse, ad boşsa ya da ad aynıysa değişiklik yok (`changed: false`, aynı dizi).
+ * → { list, changed }
+ */
+export function renameFavorite(list, { type, id, name }) {
+  const cur = normalizeFavorites(list)
+  const n = Number(id)
+  const label = typeof name === 'string' && name.trim() ? name.trim().slice(0, 300) : null
+  if (!label) return { list: cur, changed: false }
+  const i = cur.findIndex((f) => f.type === type && f.id === n)
+  if (i < 0 || cur[i].name === label) return { list: cur, changed: false }
+  const next = cur.slice()
+  next[i] = { type, id: n, name: label }
+  return { list: next, changed: true }
+}
+
+/**
+ * Favorinin görünen adı — TEK kaynak (H paketi inceleme bulgusu 4): izlemenin kendi `name`'i, yoksa çağıranın yedeği
+ * (URL / host / alan adı). Kart da detay başlığı da bunu kullanır: kart eskiden satır etiketini (URL / host) saklıyordu →
+ * palet adı değil adresi gösteriyor, yeniden adlandırma ad alanı olan türlerde hiç görünmüyordu.
+ */
+export function favoriteDisplayName(monitor, fallback) {
+  const own = typeof monitor?.name === 'string' ? monitor.name.trim() : ''
+  if (own) return own
+  return typeof fallback === 'string' && fallback.trim() ? fallback.trim() : ''
+}
+
 // ── Kayıtlı görünümler ──────────────────────────────────────────────────────────────────────────
 
 export function viewsFor(savedViews, listKey) {

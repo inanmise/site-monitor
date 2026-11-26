@@ -84,4 +84,30 @@ public interface EscalationContactRepository extends JpaRepository<EscalationCon
     int bulkMoveTeam(@org.springframework.data.repository.query.Param("id") Long id,
                      @org.springframework.data.repository.query.Param("fromKey") Long fromKey,
                      @org.springframework.data.repository.query.Param("toTeam") Long toTeam);
+
+    // ── Kullanıcı silinince bağlı kişiler (2026-11-26, H paketi B1) ─────────────────────────────
+
+    /**
+     * Silinen kullanıcıya bağlı kişiyi pasife alır ve nedenini yazar. Hedefli + koşullu: yalnız {@code active} ve
+     * {@code deactivated_reason} kolonları yazılır (ad / e-posta / webhook / gecikme ezilmez) ve kişi hâlâ O kullanıcıya
+     * bağlıysa (bu arada başka kullanıcıya bağlanan ya da bağı kaldırılan kişiye yazılmaz — 0 satır). Kullanıcı bağı
+     * ({@code user_id}) KORUNUR: arayüz ve alıcı süzgeci "silinmiş kullanıcıya bağlı" bilgisini oradan okur.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true, flushAutomatically = true)
+    @org.springframework.data.jpa.repository.Query("UPDATE EscalationContact c SET c.active = false, c.deactivatedReason = :reason "
+            + "WHERE c.id = :id AND c.userId = :userId")
+    int deactivateForDeletedUser(@org.springframework.data.repository.query.Param("id") Long id,
+                                 @org.springframework.data.repository.query.Param("userId") Long userId,
+                                 @org.springframework.data.repository.query.Param("reason") String reason);
+
+    /**
+     * {@code user_id}'si dolu ama kullanıcı satırı OLMAYAN kişilerin kullanıcı kimlikleri (2026-11-26, H paketi B1) — eski
+     * veriye karşı alıcı süzgeci ({@code InactiveRecipientGuard}) bunları pasif kullanıcı sayar. Tek hafif sorgu; kişi
+     * kaydı DÖNMEZ (alıcı çözümünde kullanılmaz — {@code EscalationContactScopeTest} kapısı "findBy" önekli okumaları
+     * sayar, bu ad bilinçli olarak o desenin dışındadır).
+     */
+    @org.springframework.data.jpa.repository.Query("SELECT DISTINCT c.userId FROM EscalationContact c WHERE c.userId IS NOT NULL "
+            + "AND NOT EXISTS (SELECT u.id FROM AppUser u WHERE u.id = c.userId)")
+    List<Long> findDanglingUserIds();
 }

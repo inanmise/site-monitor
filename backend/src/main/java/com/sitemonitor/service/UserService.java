@@ -1,6 +1,7 @@
 package com.sitemonitor.service;
 
 import com.sitemonitor.model.AppUser;
+import com.sitemonitor.model.EscalationContact;
 import com.sitemonitor.model.LdapFieldLocks;
 import com.sitemonitor.model.PasswordHistory;
 import com.sitemonitor.model.Team;
@@ -890,6 +891,10 @@ public class UserService {
         admin.setActive(true);
         admin.setCreatedAt(now);
         admin.setUpdatedAt(now);
+        // H paketi B3 (2026-11-26): Helm yer tutucusu (REPLACE_ME vb.) ya da boş parola ile kurulan yönetici ilk girişte
+        // parolasını değiştirmek zorunda — yer tutucu parolayla tam yetkili hesap açık kalmasın.
+        boolean placeholder = isPlaceholderPassword(rawPassword);
+        if (placeholder) admin.setMustChangePassword(true);
         AppUser savedAdmin = userRepo.save(admin);
 
         // Set admin as the leader of the General team
@@ -898,6 +903,41 @@ public class UserService {
 
         log.info("Bootstrap: created team '{}' (id={}) and admin user '{}'",
                 team.getName(), team.getId(), adminUsername);
+        if (placeholder) {
+            log.warn("Bootstrap: yönetici '{}' yer tutucu / boş parolayla kuruldu — ilk girişte parola değişikliği zorunlu",
+                    adminUsername);
+        }
+    }
+
+    /**
+     * Önyükleme yöneticisi için "yer tutucu" parolalar (H paketi B3): boş, Helm {@code values.yaml} / k8s örnek Secret /
+     * {@code .env.example} değerleri. Karşılaştırma kırpılmış, harf duyarsız, {@code -} = {@code _}. Yerel geliştirme
+     * varsayılanı {@code password} BİLEREK dışarıda (yerel kurulum ve testler ilk girişte kilitlenmesin).
+     */
+    static final java.util.Set<String> PLACEHOLDER_PASSWORDS = java.util.Set.of(
+            "REPLACE_ME", "REPLACEME", "REPLACE_WITH_STRONG_PASSWORD", "CHANGE_ME", "CHANGEME",
+            "CHANGE_ME_STRONG_PASSWORD");
+
+    public static boolean isPlaceholderPassword(String raw) {
+        if (raw == null) return true;
+        String k = raw.strip().toUpperCase(java.util.Locale.ROOT).replace('-', '_');
+        return k.isEmpty() || PLACEHOLDER_PASSWORDS.contains(k);
+    }
+
+    /** Yer tutucu parola listesi (tek seferlik açılış denetimi BCrypt ile karşılaştırır). */
+    static java.util.List<String> placeholderPasswordsForCheck() {
+        return java.util.List.of("REPLACE_ME", "REPLACE_WITH_STRONG_PASSWORD", "CHANGE_ME", "CHANGEME",
+                "change-me-strong-password", "");
+    }
+
+    /** BCrypt eşleşmesi (tek seferlik açılış denetimi için); hash boş / bozuksa {@code false}. */
+    static boolean passwordMatches(String raw, String hash) {
+        if (hash == null || hash.isBlank()) return false;
+        try {
+            return PASSWORD_ENCODER.matches(raw == null ? "" : raw, hash);
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     // ── Team CRUD ─────────────────────────────────────────────────────────────
@@ -1620,11 +1660,43 @@ public class UserService {
         return tempPwd;
     }
 
-    /** Silme sırasında temizlenen bağlar — denetim kaydına yazılır (2026-09-29, A1-D3). */
-    public record DeleteImpact(int leaderOfTeams, int managerOfTeams, int subordinates) {}
+    /**
+     * Silme sırasında temizlenen bağlar — {@code USER_DELETE} denetim kaydının ayrıntısına yazılır (2026-09-29, A1-D3;
+     * 2026-11-26 H paketi B5: eskiden denetime hiç yazılmıyordu). {@code deactivatedContacts} = kullanıcıya bağlı olduğu için
+     * pasife alınan eskalasyon kişileri (H paketi B1).
+     */
+    public record DeleteImpact(int leaderOfTeams, int managerOfTeams, int subordinates,
+                               List<DeactivatedContact> deactivatedContacts) {
+        public DeleteImpact(int leaderOfTeams, int managerOfTeams, int subordinates) {
+            this(leaderOfTeams, managerOfTeams, subordinates, List.of());
+        }
+        public DeleteImpact {
+            deactivatedContacts = deactivatedContacts == null ? List.of() : List.copyOf(deactivatedContacts);
+        }
+    }
+
+    /** Silinen kullanıcı yüzünden pasife alınan kişi — denetim için (ad, takım, önceki etkinlik). */
+    public record DeactivatedContact(Long id, String name, Long teamId, boolean wasActive) {}
 
     @Transactional
     public DeleteImpact deleteUser(Long id) {
+        // Eskalasyon kişileri (H paketi B1, 2026-11-26): kullanıcıya bağlı kişiler AYNI işlemde pasife alınır ve nedeni
+        // ('USER_DELETED') yazılır. Eskiden kişi etkin kalıyor, kullanıcının eski adresine alarm gitmeye devam ediyordu
+        // (pasif kullanıcı süzgeci yalnız VAR OLAN pasif kullanıcıyı tanır). Önce okunur (denetim adları), sonra kişi başına
+        // hedefli KOŞULLU UPDATE: bu arada başka kullanıcıya bağlanan kişiye yazılmaz. Kullanıcı satırı silinmeden ÖNCE —
+        // kişi listesi bağı (user_id) korur, arayüz "Kullanıcı silindi" rozetini oradan gösterir.
+        List<DeactivatedContact> deactivated = new ArrayList<>();
+        if (id != null) {
+            List<EscalationContact> linked = contactRepo.findByUserId(id);
+            if (linked != null) {
+                for (EscalationContact c : linked) {
+                    if (c == null || c.getId() == null) continue;
+                    int n = contactRepo.deactivateForDeletedUser(c.getId(), id, EscalationContact.DEACTIVATED_USER_DELETED);
+                    if (n > 0) deactivated.add(new DeactivatedContact(c.getId(), c.getName(), c.getTeamId(),
+                            !Boolean.FALSE.equals(c.getActive())));
+                }
+            }
+        }
         // Bu kullanıcı bir takımın lideriyse, silmeden önce o takım(lar)ın liderliğini boşalt.
         // Aksi halde leaderId dangling (silinmiş id) kalır → UI "lider atanmadı" gösterir ama
         // yeni eklenen PO otomatik lider atanmaz (syncPoLeadership null kontrolü geçemez).
@@ -1656,7 +1728,9 @@ public class UserService {
         userRepo.deleteById(id);
         if (teamSources != null) teamSources.forgetUser(id);   // üyelik kaynak izleri öksüz kalmasın
         if (alertForwards != null) alertForwards.removeUser(id);   // alarm iletimlerinin seçilen üye listelerinden çıkar
-        return new DeleteImpact(leaders, managed, subs);
+        // Alıcı süzgeci işlem SONRASI boşaltılır: AdminController.deleteUser → forgetUserCaches (commit'ten sonra; işlem
+        // içinde boşaltılsa yarışan bir yükleme commit öncesi durumu saklayabilirdi).
+        return new DeleteImpact(leaders, managed, subs, deactivated);
     }
 
     // ── Progressive lockout ───────────────────────────────────────────────────

@@ -1,7 +1,8 @@
+import { useEffect } from 'react'
 import { Star, StarOff } from 'lucide-react'
 import { useT } from '../../i18n/index.jsx'
 import { useUserPrefs } from '../../hooks/useUserPrefs.js'
-import { MAX_FAVORITES, MONITOR_TYPES } from '../../hooks/userPrefsModel.js'
+import { MAX_FAVORITES, MONITOR_TYPES, favoriteDisplayName } from '../../hooks/userPrefsModel.js'
 import { useToast } from '../ui/Toast.jsx'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
@@ -19,19 +20,34 @@ import { cn } from '@/lib/utils'
  * yalnız tercih bağlamını okur (sağlayıcısız ağaçta da güvenli); düğme — Toast/i18n kancalarıyla — yalnız hazırken bağlanır.
  * Varsayılan kart sırası (utils/monitorSort.js) favoriden ETKİLENMEZ: favori bir süzgeç/kısayoldur.
  *
+ * <p>Ad (H paketi inceleme bulgusu 4): TEK kaynak {@link favoriteDisplayName} — izlemenin kendi `name` alanı, yoksa `name`
+ * prop'u (kartta satır etiketi, başlıkta adres). Kart da başlık da aynı adı saklar (eskiden kart URL / host saklıyordu →
+ * palet adı değil adresi gösteriyordu, ad alanı olan türlerde yeniden adlandırma hiç görünmüyordu).
+ *
+ * <p>Ad eşitleme (H paketi 2026-11-26): KART (`size="card"`, güncel listeden çizilir) favorinin saklı adı güncel addan farklıysa
+ * onu günceller — palet favoriyi kimlikle açar, adı buradan gösterir. Yalnız kart eşitler (başlığın `noc.monitor`'u açılış
+ * anının kopyası olabilir; iki kaynak birbirini ezip her açılışta yazım yapmasın); ad aynıysa yazım YOK.
+ *
  * Test kancası: `data-slot="favorite-toggle"` (+ `data-on`).
  */
-export default function FavoriteToggle({ type, id, name, size = 'card', className }) {
+export default function FavoriteToggle({ type, id, monitor = null, name, size = 'card', className }) {
   const prefs = useUserPrefs()
   if (!prefs.ready || !MONITOR_TYPES.includes(type) || id == null || id === '') return null
-  return <FavoriteButton prefs={prefs} type={type} id={id} name={name} size={size} className={className} />
+  return <FavoriteButton prefs={prefs} type={type} id={id} name={favoriteDisplayName(monitor, name)} size={size} className={className} />
 }
 
 function FavoriteButton({ prefs, type, id, name, size, className }) {
   const t = useT()
   const toast = useToast()
-  const label = String(name || '').trim() || `#${id}`
+  const current = String(name || '').trim()
+  const label = current || `#${id}`
   const on = prefs.isFavorite(type, id)
+  const stored = on ? (prefs.favorites.find((f) => f.type === type && f.id === Number(id))?.name ?? null) : null
+  const renameFavorite = prefs.renameFavorite
+  useEffect(() => {
+    if (size !== 'card' || !on || !current || stored === current.slice(0, 300)) return
+    renameFavorite?.({ type, id: Number(id), name: current })
+  }, [size, on, current, stored, type, id, renameFavorite])
   const text = on ? t('fav.remove', label) : t('fav.add', label)
   const onClick = (e) => {
     e.stopPropagation()

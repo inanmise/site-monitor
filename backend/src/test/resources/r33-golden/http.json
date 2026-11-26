@@ -196,8 +196,10 @@
             "errorDetail": null,
             "httpStatus": 200,
             "id": null,
+            "manual": null,
             "monitorId": 1,
             "ok": true,
+            "recheck": null,
             "responseMs": 200
           }
         }
@@ -242,8 +244,10 @@
             "errorDetail": null,
             "httpStatus": 200,
             "id": null,
+            "manual": null,
             "monitorId": 2,
             "ok": true,
+            "recheck": null,
             "responseMs": 4000
           }
         }
@@ -288,8 +292,10 @@
             "errorDetail": null,
             "httpStatus": 503,
             "id": null,
+            "manual": null,
             "monitorId": 3,
             "ok": false,
+            "recheck": null,
             "responseMs": 80
           }
         }
@@ -335,8 +341,10 @@
             "errorDetail": null,
             "httpStatus": null,
             "id": null,
+            "manual": null,
             "monitorId": 4,
             "ok": false,
+            "recheck": null,
             "responseMs": null
           }
         }
@@ -381,8 +389,10 @@
             "errorDetail": null,
             "httpStatus": 200,
             "id": null,
+            "manual": null,
             "monitorId": 5,
             "ok": false,
+            "recheck": null,
             "responseMs": 60
           }
         }

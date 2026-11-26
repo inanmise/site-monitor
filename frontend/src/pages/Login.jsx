@@ -536,8 +536,12 @@ export default function Login({ onLogin, sessionExpired = false, accountInactive
                     size="icon-sm"
                     className="lp-eye pointer-coarse:after:absolute pointer-coarse:after:-inset-1 pointer-coarse:after:content-['']"
                     onClick={() => setShowPass(p => !p)}
-                    tabIndex={-1}
-                    aria-label={showPass ? t('login.hidePass') : t('login.showPass')}
+                    /* Klavyeyle erişilebilir aç / kapa düğmesi (H paketi 2026-11-26): sekme sırasında (tabIndex yok), sabit
+                       ad + aria-pressed (WAI toggle deseni); ipucu metni durumu söyler. */
+                    aria-label={t('login.showPass')}
+                    aria-pressed={showPass}
+                    aria-controls="lp-pass"
+                    title={showPass ? t('login.hidePass') : t('login.showPass')}
                   >
                     {showPass ? <EyeOff /> : <Eye />}
                   </Button>

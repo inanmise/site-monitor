@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   LOCAL_PREF_KEYS, isSyncedLocalKey, readLocalSnapshot, planHydration, normalizeFavorites, toggleFavorite, isFavorite,
   MAX_FAVORITES, upsertView, renameView, deleteView, viewsFor, MAX_VIEWS_PER_LIST, pickParams, sameParams,
-  resolveLandingTab, VIEW_SPECS, MONITOR_TYPES, isSyncableValue, cleanServerLocal,
+  resolveLandingTab, VIEW_SPECS, MONITOR_TYPES, isSyncableValue, cleanServerLocal, renameFavorite, favoriteDisplayName,
 } from '../hooks/userPrefsModel.js'
 import { PAGE_STATE_PARAMS, PAGE_STATE_PREFIXES } from '../hooks/useUrlQuerySync.js'
 
@@ -154,5 +154,31 @@ describe('userPrefsModel — açılış sekmesi', () => {
     expect(resolveLandingTab('<x>', allowed)).toBeNull()
     expect(resolveLandingTab(null, allowed)).toBeNull()
     expect(resolveLandingTab(5, allowed)).toBeNull()
+  })
+})
+
+describe('renameFavorite (H paketi 2026-11-26)', () => {
+  const LIST = [{ type: 'http', id: 5, name: 'Eski' }, { type: 'ping', id: 3 }]
+  it('favorinin adını günceller (kırpar, 300 karakter); sıra korunur', () => {
+    const r = renameFavorite(LIST, { type: 'http', id: '5', name: '  Yeni ad  ' })
+    expect(r.changed).toBe(true)
+    expect(r.list).toEqual([{ type: 'http', id: 5, name: 'Yeni ad' }, { type: 'ping', id: 3 }])
+    expect(renameFavorite(LIST, { type: 'ping', id: 3, name: 'x'.repeat(400) }).list[1].name).toHaveLength(300)
+  })
+  it('aynı ad, boş ad ya da favori olmayan izleme → değişiklik yok', () => {
+    expect(renameFavorite(LIST, { type: 'http', id: 5, name: 'Eski' }).changed).toBe(false)
+    expect(renameFavorite(LIST, { type: 'http', id: 5, name: '   ' }).changed).toBe(false)
+    expect(renameFavorite(LIST, { type: 'dns', id: 5, name: 'Yeni' }).changed).toBe(false)
+    expect(renameFavorite(null, { type: 'http', id: 5, name: 'Yeni' })).toEqual({ list: [], changed: false })
+  })
+})
+
+describe('favoriteDisplayName (H paketi inceleme bulgusu 4)', () => {
+  it('izlemenin kendi adı önce; boş / yalnız boşluk / yoksa yedek; ikisi de yoksa boş', () => {
+    expect(favoriteDisplayName({ name: '  Kurumsal site ' }, 'https://www.example.com/')).toBe('Kurumsal site')
+    expect(favoriteDisplayName({ name: '   ' }, '10.0.0.1')).toBe('10.0.0.1')
+    expect(favoriteDisplayName({}, ' api.example.com ')).toBe('api.example.com')
+    expect(favoriteDisplayName(null, undefined)).toBe('')
+    expect(favoriteDisplayName({ name: 42 }, 'x')).toBe('x')
   })
 })

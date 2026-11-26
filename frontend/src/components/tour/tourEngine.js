@@ -103,7 +103,25 @@ export function shouldOfferPageTour(pageId, tourState, pageTours) {
   return !seen.includes(pageId)
 }
 
-/** Başlangıç listesi ilerlemesi. items: [{key}], checklist: {key: bool} */
+/**
+ * Kullanıcıya GÖSTERİLECEK başlangıç maddeleri (H paketi 2026-11-26, deneyim 3): yapamayacağı madde listede kalıp
+ * listeyi hiç bitirtmiyordu.
+ *  - `report` yalnız Haftalık Raporlar modülü kullanıcının takımında açıksa (`weeklyReportsVisible === true`);
+ *  - `card` takımın sertifikası OLMADIĞI KESİNSE (`hasCertificates === false`) gizlenir; bilinmiyorsa (null — liste
+ *    yüklenmedi / okunamadı) gösterilir (bugünkü davranış, "bilinmeyen ≠ yok").
+ * Girdi değişmezse AYNI dizi döner (çağıran ezberlemeye gerek duymaz).
+ */
+export function visibleChecklistItems(items, { weeklyReportsVisible = false, hasCertificates = null } = {}) {
+  const list = Array.isArray(items) ? items : []
+  const out = list.filter((i) => {
+    if (i.key === 'report') return weeklyReportsVisible === true
+    if (i.key === 'card') return hasCertificates !== false
+    return true
+  })
+  return out.length === list.length ? list : out
+}
+
+/** Başlangıç listesi ilerlemesi (yalnız GÖSTERİLEN maddeler sayılır). items: [{key}], checklist: {key: bool} */
 export function checklistProgress(items, checklist) {
   const done = (items || []).filter((i) => checklist?.[i.key] === true).length
   const total = (items || []).length

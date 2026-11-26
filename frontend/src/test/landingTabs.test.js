@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { LANDING_TAB_ORDER, landingTabOptions } from '../utils/landingTabs.js'
+import { LANDING_TAB_ORDER, LANDING_SCOPE_WAIT_MS, landingTabOptions, channelReportsVisibility } from '../utils/landingTabs.js'
 
 /**
  * Açılış sekmesi seçenekleri (öneri 23) ↔ App.jsx VALID_TABS. Seçicide olup App'in tanımadığı bir kimlik sessizce Pano'ya
@@ -36,6 +36,37 @@ describe('açılış sekmesi seçenekleri', () => {
     expect(scoped).toContain('weeklyreports')
     expect(scoped).not.toContain('sqlplayground')
     expect(landingTabOptions({ systemRole: 'ADMIN', globalAdmin: true }).map((o) => o.id)).toContain('sqlplayground')
+  })
+
+  it('H paketi 2026-11-26: Yönetici Özeti kapsamlı yönetici (ADMIN, global değil) için de var; USER / TEAM_ADMIN için yok', () => {
+    const ids = (o) => landingTabOptions(o).map((x) => x.id)
+    expect(ids({ systemRole: 'ADMIN', globalAdmin: false })).toContain('executive')
+    expect(ids({ systemRole: 'AUDIT', globalAdmin: false })).toContain('executive')
+    expect(ids({ systemRole: 'ADMIN', globalAdmin: true })).toContain('executive')
+    expect(ids({ systemRole: 'USER', globalAdmin: false })).not.toContain('executive')
+    expect(ids({ systemRole: 'TEAM_ADMIN', globalAdmin: false })).not.toContain('executive')
+  })
+
+  it('H paketi 2026-11-26: Kanal raporları menü kuralıyla — false gizler, null / verilmedi (bilinmiyor) gösterir', () => {
+    const ids = (o) => landingTabOptions({ systemRole: 'USER', ...o }).map((x) => x.id)
+    expect(ids({ channelReportsVisible: false })).not.toContain('channelreports')
+    expect(ids({ channelReportsVisible: true })).toContain('channelreports')
+    expect(ids({ channelReportsVisible: null })).toContain('channelreports')
+    expect(ids({})).toContain('channelreports')
+  })
+
+  it('açılış kararının izin beklemesi sınırlı: 5 sn (inceleme bulgusu 6)', () => {
+    expect(LANDING_SCOPE_WAIT_MS).toBe(5000)
+  })
+
+  it('channelReportsVisibility: okunmadan ve okuma başarısızsa null (bilinmiyor); okununca menü kuralı', () => {
+    expect(channelReportsVisibility(null, false, false)).toBeNull()
+    expect(channelReportsVisibility({ channel_reports: false }, false, false)).toBeNull()
+    expect(channelReportsVisibility({ channel_reports: false }, true, false)).toBe(false)
+    expect(channelReportsVisibility({ channel_reports: true }, true, false)).toBe(true)
+    expect(channelReportsVisibility(null, true, false)).toBe(true)        // eski sunucu: kapsam yok → görünür
+    expect(channelReportsVisibility(null, false, true)).toBeNull()        // okuma başarısız: bilinmiyor (≤ 5 sn sonra Pano)
+    expect(channelReportsVisibility({ channel_reports: true }, true, true)).toBe(true)   // önceki anlık görüntü korunur
   })
 
   it('her seçeneğin kenar çubuğu etiket anahtarı var', () => {

@@ -86,7 +86,13 @@ public class CertificateService {
         // Elle yüklenen sertifika (2026-10-06): "sunucuda gerçekten bu mu" sorusu ağsız cevaplanamaz → UNKNOWN
         // (MISMATCH alarmı üretmez). Ağ sonucu bu işareti taşımaz — dal ağ kayıtları için hiç girilmez.
         boolean manualSource = Boolean.TRUE.equals(result.get("manual"));
-        String deploymentStatus = manualSource ? "UNKNOWN" : determineDeploymentStatus(domain, servedFingerprint);
+        // Envanter kaydı BİR KEZ okunur (H paketi 2026-11-26): dağıtım kararı, plan kapanışı ve aktivite aynı satırı kullanır
+        // (eskiden dağıtım kararı ve aktivite iki ayrı findByDomain yapıyordu).
+        CertificateInventory inv = domain == null ? null : inventoryRepo.findByDomain(domain).orElse(null);
+        DeploymentDecision deployment = manualSource ? DeploymentDecision.of("UNKNOWN")
+                : decideDeployment(inv, domain, servedFingerprint, (String) result.get("not_before"),
+                        (String) result.get("not_after"));
+        String deploymentStatus = deployment.status();
         result.put("deployment_status", deploymentStatus);
 
         // Serialize chain details
@@ -205,12 +211,187 @@ public class CertificateService {
         // Birleşik aktivite akışı (best-effort). teamId envanterden türetilir (manuel /check "manual" run_id taşır).
         // monitor_id = envanter kimliği (2026-11-05, aktivite zenginleştirmesi A): TLS_GRADE_DROPPED satırlarıyla tutarlı;
         // ayrıntı sayfası, zaman çizelgesi ve ilgili satırlar sertifika satırını kaydına bağlar. Ek sorgu yok (aynı okuma).
-        CertificateInventory inv = inventoryRepo.findByDomain(domain).orElse(null);
         Long teamId = inv != null ? inv.getTeamId() : null;
         // "Sağlığı yenile" (health-refresh) de kullanıcının elle kontrolüdür (2026-11-05) — akışta MANUAL_CHECK + kullanıcı.
         boolean manual = "manual".equals(result.get("run_id")) || "health-refresh".equals(result.get("run_id"));
         activityLog.recordCheck(ActivityLogService.CERT, inv != null ? inv.getId() : null, domain, domain,
                 teamId, manual, manual ? null : "scheduler", result, ActivityLogService.refs(historyRow));
+
+        // Dağıtım tamamlandı / beklenen parmak izi eskidi (H paketi, sertifika B2): beklenen parmak izi HEDEFLİ, KOŞULLU
+        // temizlenir + değişiklik geçmişi + aktivite. Hata taramayı kırmaz.
+        if (inv != null && deployment.clearSeen() != null) {
+            clearExpectedFingerprint(inv, deployment.clearSeen(), deployment.stale(), servedFingerprint);
+        }
+        // Yenileme planı (sertifika B5): plan tabanından farklı ve daha uzun geçerli sertifika görüldüyse plan kendiliğinden
+        // kapanır (koşullu yazım + geçmiş + aktivite). Servis yoksa (elle kurulan birim testleri) bugünkü davranış.
+        if (inv != null && renewalPlans != null && inv.getRenewalPlannedAt() != null && servedFingerprint != null) {
+            renewalPlans.onCheckResult(inv, servedFingerprint, (String) result.get("not_before"), (String) result.get("not_after"));
+        }
+    }
+
+    /**
+     * Dağıtım hükmü + beklenen parmak izinin temizlenip temizlenmeyeceği (H paketi 2026-11-26, sertifika B2).
+     *
+     * @param status    {@code OK} / {@code INCOMPLETE} / {@code UNKNOWN}
+     * @param clearSeen temizlenecekse okunan (saklı) beklenen parmak izi; aksi null
+     * @param stale     temizleme nedeni: true = beklenen sertifika daha yenisiyle değiştirilmiş (takılı kalmış eski
+     *                  beklenen), false = dağıtım tamamlandı (sunulan = beklenen)
+     */
+    record DeploymentDecision(String status, String clearSeen, boolean stale) {
+        static DeploymentDecision of(String status) { return new DeploymentDecision(status, null, false); }
+    }
+
+    /**
+     * Dağıtım kararı (H paketi 2026-11-26, sertifika B2). Satır = tek uç (alan adı + port); "tüm uçlar OK" satır başına okunur.
+     * <ul>
+     *   <li>Sunulan parmak izi yok → UNKNOWN; envanter yok / beklenen boş → OK (bugünkü gibi).</li>
+     *   <li>Sunulan = beklenen (büyük/küçük harf, iki nokta ve boşluk yok sayılır) → OK ve beklenen TEMİZLENİR (dağıtım
+     *       tamamlandı; eskiden alan sonsuza dek dolu kalıyor, sertifika yenilenince sahte MISMATCH açıyordu).</li>
+     *   <li>Sunulan ≠ beklenen: beklenen sertifikanın bu uçta daha önce GÖRÜLDÜĞÜNE dair kanıt varsa ve sunulan sertifika
+     *       ondan SONRA verildiyse (not_before &gt; beklenenin ilk görülmesi; beklenenin bitişi biliniyorsa sunulan daha uzun
+     *       geçerli olmalı) beklenen eskimiştir → OK + temizle. Kanıt: kontrol geçmişindeki ilk görülme (indeksli tek satır),
+     *       yoksa latest_checks pini (beklenen hâlâ pinliyse pinlenme anı; beklenen ÖNCEKİ pin ve sunulan yeni pin ise güven
+     *       kapısından geçmiş yenileme). Kanıt yoksa TEMKİNLİ: INCOMPLETE (bugünkü gibi).</li>
+     * </ul>
+     */
+    DeploymentDecision decideDeployment(CertificateInventory inv, String domain, String servedFingerprint,
+                                        String servedNotBefore, String servedNotAfter) {
+        if (servedFingerprint == null) return DeploymentDecision.of("UNKNOWN");
+        String expected = inv == null ? null : inv.getExpectedFingerprint();
+        if (expected == null || expected.isBlank()) return DeploymentDecision.of("OK");
+        String want = normalizeFingerprint(expected);
+        String served = normalizeFingerprint(servedFingerprint);
+        if (served.equals(want)) return new DeploymentDecision("OK", expected, false);
+        try {
+            if (expectedSuperseded(domain, want, servedFingerprint, servedNotBefore, servedNotAfter)) {
+                return new DeploymentDecision("OK", expected, true);
+            }
+        } catch (Exception e) {
+            log.debug("Beklenen parmak izi kanıtı okunamadı ({}): {}", domain, e.getMessage());
+        }
+        return DeploymentDecision.of("INCOMPLETE");
+    }
+
+    /** Beklenen sertifika bu uçta görülmüş ve sunulan ondan sonra verilmiş mi (bkz. {@link #decideDeployment}). */
+    private boolean expectedSuperseded(String domain, String want, String servedFingerprint,
+                                       String servedNotBefore, String servedNotAfter) {
+        Instant servedIssued = RenewalForecastService.parseUtc(servedNotBefore);
+        if (servedIssued == null || domain == null) return false;
+        // 1) Kontrol geçmişindeki ilk görülme — (domain, checked_at) indeksinde sıralı, ilk eşleşmede durur. Bağımsız inceleme:
+        //    tarama son FIRST_SIGHTING_WINDOW_DAYS günle sınırlı ve "hiç görülmedi" cevabı alan adı × parmak izi başına bir
+        //    süre bellekte tutulur (beklenen parmak izi hiç sunulmamışsa her kontrol aynı boş taramayı yapmasın). Olumsuz
+        //    cevap zararsız biçimde bayatlar: beklenen sertifika sunulduğu an sunulan = beklenen dalı (bu sorgudan önce) karar verir.
+        String sightingKey = domain + "|" + want;
+        List<Object[]> first;
+        if (sightingNeverSeen(sightingKey)) {
+            first = List.of();
+        } else {
+            String from = ISO.format(Instant.now().minus(FIRST_SIGHTING_WINDOW_DAYS, java.time.temporal.ChronoUnit.DAYS));
+            first = checkRepo.firstSightingOf(domain, fingerprintVariants(want), from);
+            if (first == null || first.isEmpty() || first.get(0) == null) rememberNeverSeen(sightingKey);
+        }
+        if (first != null && !first.isEmpty() && first.get(0) != null) {
+            Object[] row = first.get(0);
+            Instant seen = RenewalForecastService.parseUtc(row[0] == null ? null : row[0].toString());
+            if (seen == null || !servedIssued.isAfter(seen)) return false;
+            Instant expectedEnds = RenewalForecastService.parseUtc(row.length > 1 && row[1] != null ? row[1].toString() : null);
+            Instant servedEnds = RenewalForecastService.parseUtc(servedNotAfter);
+            return expectedEnds == null || (servedEnds != null && servedEnds.isAfter(expectedEnds));
+        }
+        // 2) Geçmiş budanmışsa (saklama süresi) pin kanıtı.
+        LatestCheck latest = latestRepo.findById(domain).orElse(null);
+        if (latest == null) return false;
+        String pinned = latest.getPinnedFingerprint() == null ? null : normalizeFingerprint(latest.getPinnedFingerprint());
+        String previous = latest.getPreviousFingerprint() == null ? null : normalizeFingerprint(latest.getPreviousFingerprint());
+        if (want.equals(pinned)) {
+            Instant pinnedAt = RenewalForecastService.parseUtc(latest.getPinnedAt());
+            return pinnedAt != null && servedIssued.isAfter(pinnedAt);
+        }
+        // Beklenen ÖNCEKİ pin, sunulan şimdiki pin: güven kapısından geçmiş bir yenileme beklenenin yerini almış.
+        return want.equals(previous) && pinned != null && pinned.equals(normalizeFingerprint(servedFingerprint));
+    }
+
+    /** İlk görülme taramasının penceresi (gün): sertifika ömrü en çok 398 gün — daha eski ilk görülme kanıt sayılmaz. */
+    static final int FIRST_SIGHTING_WINDOW_DAYS = 400;
+    /** "Bu uçta hiç görülmedi" cevabının bellekte tutulma süresi (pod başına). */
+    static final long NEVER_SEEN_TTL_MS = 6L * 60 * 60 * 1000;
+    private static final int NEVER_SEEN_MAX = 5000;
+    private final Map<String, Long> neverSeen = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Test edilebilir saat (ms). */
+    java.util.function.LongSupplier neverSeenClock = System::currentTimeMillis;
+
+    private boolean sightingNeverSeen(String key) {
+        Long at = neverSeen.get(key);
+        if (at == null) return false;
+        if (neverSeenClock.getAsLong() - at < NEVER_SEEN_TTL_MS) return true;
+        neverSeen.remove(key, at);
+        return false;
+    }
+
+    private void rememberNeverSeen(String key) {
+        long now = neverSeenClock.getAsLong();
+        if (neverSeen.size() >= NEVER_SEEN_MAX) {
+            neverSeen.entrySet().removeIf(e -> now - e.getValue() >= NEVER_SEEN_TTL_MS);
+            if (neverSeen.size() >= NEVER_SEEN_MAX) neverSeen.clear();
+        }
+        neverSeen.put(key, now);
+    }
+
+    /** Parmak izi karşılaştırma biçimi: büyük harf, iki nokta / boşluk / tire yok (SHA-256 onaltılık). */
+    public static String normalizeFingerprint(String fp) {
+        if (fp == null) return "";
+        StringBuilder sb = new StringBuilder(fp.length());
+        for (int i = 0; i < fp.length() && sb.length() < 256; i++) {
+            char c = fp.charAt(i);
+            if (c == ':' || c == ' ' || c == '-' || c == '\t') continue;
+            sb.append(Character.toUpperCase(c));
+        }
+        return sb.toString();
+    }
+
+    /** Geçmiş satırlarında aranacak yazımlar (kontrol hattı büyük harf + ayraçsız yazar; eski / elle yazımlar için küçük harf). */
+    private static List<String> fingerprintVariants(String normalized) {
+        String lower = normalized.toLowerCase(Locale.ROOT);
+        return lower.equals(normalized) ? List.of(normalized) : List.of(normalized, lower);
+    }
+
+    private void clearExpectedFingerprint(CertificateInventory inv, String seen, boolean stale, String served) {
+        try {
+            if (inventoryRepo.clearExpectedFingerprintIfUnchanged(inv.getId(), seen) == 0) return;
+            inv.setExpectedFingerprint(null);
+            Map<String, Object> before = new LinkedHashMap<>();
+            before.put("expectedFingerprint", seen);
+            Map<String, Object> after = new LinkedHashMap<>();
+            after.put("expectedFingerprint", null);
+            String note = stale
+                    ? "beklenen sertifika daha yenisiyle değiştirilmiş, beklenen parmak izi temizlendi"
+                    : "dağıtım tamamlandı, beklenen parmak izi temizlendi";
+            if (monitorHistory != null) {
+                monitorHistory.record(MonitorHistoryService.INVENTORY, inv.getId(), inv.getDomain(), inv.getTeamId(),
+                        MonitorHistoryService.UPDATE, before, after, note, null);
+            }
+            activityLog.recordLifecycle(ActivityLogService.CERT, inv.getId(), inv.getDomain(), inv.getDomain(), inv.getTeamId(),
+                    ActivityLogService.ACTION_CONFIG_CHANGED, "scheduler", note);
+            log.info("Beklenen parmak izi temizlendi: {} ({}; sunulan {})", inv.getDomain(), stale ? "eskimiş" : "dağıtım tamamlandı",
+                    served);
+        } catch (Exception e) {
+            log.warn("Beklenen parmak izi temizlenemedi: {} — {}", inv.getDomain(), e.getMessage());
+        }
+    }
+
+    /** Değişiklik geçmişi (H paketi): yoksa (elle kurulan birim testleri) beklenen parmak izi temizliği yine yazılır, geçmiş yazılmaz. */
+    private MonitorHistoryService monitorHistory;
+    /** Yenileme planı kapanışı (H paketi, sertifika B5); yoksa plan kendiliğinden kapanmaz (bugünkü davranış). */
+    private CertRenewalPlanService renewalPlans;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setMonitorHistory(@org.springframework.context.annotation.Lazy MonitorHistoryService monitorHistory) {
+        this.monitorHistory = monitorHistory;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setRenewalPlans(@org.springframework.context.annotation.Lazy CertRenewalPlanService renewalPlans) {
+        this.renewalPlans = renewalPlans;
     }
 
     /** Kontrol geçmişi satırının API biçimi — sertifika penceresinin kart geçmişiyle ({@link #getHistory}) aynı eşleyici. */
@@ -286,18 +467,6 @@ public class CertificateService {
         latest.setPinnedFingerprint(servedFingerprint);
         latest.setPinnedAt(now);
         latest.setFingerprintChangedAt(now);
-    }
-
-    private String determineDeploymentStatus(String domain, String servedFingerprint) {
-        if (servedFingerprint == null) return "UNKNOWN";
-        return inventoryRepo.findByDomain(domain)
-                .map(inv -> {
-                    if (inv.getExpectedFingerprint() == null || inv.getExpectedFingerprint().isBlank())
-                        return "OK";
-                    return servedFingerprint.equalsIgnoreCase(inv.getExpectedFingerprint())
-                            ? "OK" : "INCOMPLETE";
-                })
-                .orElse("OK");
     }
 
     /**
@@ -960,7 +1129,9 @@ public class CertificateService {
         for (CertificateInventory inv : inventoryRepo.findByActiveTrueOrderByDomainAsc()) {
             if (inv.getDomain() != null) active.putIfAbsent(inv.getDomain(), inv);
         }
-        return latestRepo.findByWarningTrueOrStatus("error").stream()
+        List<LatestCheck> rows = new ArrayList<>(latestRepo.findByWarningTrueOrStatus("error"));
+        rows.addAll(tierWarningCandidates(active));
+        return rows.stream()
                 .filter(c -> active.containsKey(c.getDomain()))
                 .sorted(Comparator.comparingInt(c -> c.getDaysRemaining() == null ? 0 : c.getDaysRemaining()))
                 .map(c -> {
@@ -969,6 +1140,34 @@ public class CertificateService {
                     return dto;
                 })
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Global {@code warning} bayrağı kalkık olmayan ama TIER uyarı eşiğinin içindeki satırlar (H paketi 2026-11-26,
+     * sertifika B1): tier uyarı eşiği global eşikten büyükse (ör. T1 uyarı 60) 40 günlük sertifika kartta "Yüksek" iken
+     * Uyarılar listesinde yoktu. Alarm (EscalationService EXPIRY) aynı kuralı kullanır. Hiçbir tier eşiği global eşiği
+     * aşmıyorsa sorgu YOK (eşikler eşitken liste birebir aynı).
+     */
+    private List<LatestCheck> tierWarningCandidates(Map<String, CertificateInventory> active) {
+        try {
+            ThresholdResolution th = thresholdResolution();
+            int global = warningDays > 0 ? warningDays : 30;
+            int maxWarn = th.warningDays(null);
+            for (AlertThreshold t : th.overrides().values()) {
+                if (t != null && t.getWarningDays() != null) maxWarn = Math.max(maxWarn, t.getWarningDays());
+            }
+            if (maxWarn <= global) return List.of();
+            List<LatestCheck> out = new ArrayList<>();
+            for (LatestCheck c : latestRepo.findTierWarningCandidates(maxWarn)) {
+                CertificateInventory inv = c.getDomain() == null ? null : active.get(c.getDomain());
+                if (inv == null) continue;
+                if (th.levelFor(inv.getTier(), c.getDaysRemaining()) != null) out.add(c);
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("Uyarılar listesinin tier adayları okunamadı — yalnız global eşik: {}", e.getMessage());
+            return List.of();
+        }
     }
 
     public List<CertificateDto> getWarningsForTeams(java.util.Collection<Long> teamIds) {

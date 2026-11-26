@@ -191,4 +191,73 @@ public interface CertificateInventoryRepository extends JpaRepository<Certificat
     @Query("SELECT i.notificationGroupId, COUNT(i) FROM CertificateInventory i WHERE i.notificationGroupId IS NOT NULL GROUP BY i.notificationGroupId")
     java.util.List<Object[]> countByNotificationGroup();
 
+    // ── H paketi (2026-11-26): HEDEFLİ yazımlar — okunan varlığın bütünü kaydedilmez ──────────────────────────────────
+
+    /**
+     * Sertifika yenileme planı koy / güncelle (sertifika B5 / B7): YALNIZ plan kolonları + plan TABANI (plan anında sunulan
+     * sertifikanın parmak izi + bitişi) + "son güncelleyen" künyesi. Silinmiş (eski çöp) satıra yazılmaz. Dönüş: satır sayısı.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE CertificateInventory c SET c.renewalPlannedAt = :at, c.renewalPlannedBy = :by, c.renewalPlannedByName = :byName, "
+         + "c.renewalPlannedNote = :note, c.renewalPlannedFingerprint = :baseFp, c.renewalPlannedNotAfter = :baseNotAfter, "
+         + "c.renewalPlannedRecordedAt = :updatedAt, "
+         + "c.updatedAt = :updatedAt, c.updatedBy = :by, c.updatedByName = :byName "
+         + "WHERE c.id = :id AND c.deletedAt IS NULL")
+    int writeRenewalPlan(@Param("id") Long id, @Param("at") String at, @Param("by") String by, @Param("byName") String byName,
+                         @Param("note") String note, @Param("baseFp") String baseFp, @Param("baseNotAfter") String baseNotAfter,
+                         @Param("updatedAt") String updatedAt);
+
+    /**
+     * Planı KOŞULLU kaldır (kullanıcı): okunan plan hâlâ yerindeyse (tarih + not + taban parmak izi; boş = {@code ""}).
+     * 0 satır = arada değişti — çağıran iz yazmaz. "Son güncelleyen" künyesi yazılır.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE CertificateInventory c SET c.renewalPlannedAt = NULL, c.renewalPlannedBy = NULL, c.renewalPlannedByName = NULL, "
+         + "c.renewalPlannedNote = NULL, c.renewalPlannedFingerprint = NULL, c.renewalPlannedNotAfter = NULL, "
+         + "c.renewalPlannedRecordedAt = NULL, "
+         + "c.updatedAt = :updatedAt, c.updatedBy = :by, c.updatedByName = :byName "
+         + "WHERE c.id = :id AND c.renewalPlannedAt = :seenAt AND COALESCE(c.renewalPlannedNote, '') = :seenNote "
+         + "AND COALESCE(c.renewalPlannedFingerprint, '') = :seenFp")
+    int clearRenewalPlanIfUnchanged(@Param("id") Long id, @Param("seenAt") String seenAt, @Param("seenNote") String seenNote,
+                                    @Param("seenFp") String seenFp, @Param("updatedAt") String updatedAt,
+                                    @Param("by") String by, @Param("byName") String byName);
+
+    /**
+     * Planı KOŞULLU kapat (sistem — yenileme kontrolde görüldü): yalnız plan kolonları; künye ve {@code updated_at}'e
+     * DOKUNULMAZ (kullanıcı düzenlemesi değildir; kim / ne zaman değişiklik geçmişinde "Sistem" olarak durur).
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE CertificateInventory c SET c.renewalPlannedAt = NULL, c.renewalPlannedBy = NULL, c.renewalPlannedByName = NULL, "
+         + "c.renewalPlannedNote = NULL, c.renewalPlannedFingerprint = NULL, c.renewalPlannedNotAfter = NULL, "
+         + "c.renewalPlannedRecordedAt = NULL "
+         + "WHERE c.id = :id AND c.renewalPlannedAt = :seenAt AND COALESCE(c.renewalPlannedNote, '') = :seenNote "
+         + "AND COALESCE(c.renewalPlannedFingerprint, '') = :seenFp")
+    int closeRenewalPlanIfUnchanged(@Param("id") Long id, @Param("seenAt") String seenAt, @Param("seenNote") String seenNote,
+                                    @Param("seenFp") String seenFp);
+
+    /**
+     * Tabansız YENİ plana (bağımsız inceleme, H paketi) ilk görülen sertifikayı taban olarak KOŞULLU yaz: plan hâlâ aynı
+     * (tarih + not), tabanı hâlâ boş ve plan bu sürümle yazılmış ({@code renewal_planned_recorded_at} dolu). Künyeye /
+     * {@code updated_at}'e dokunulmaz. 0 satır = arada değişti ya da başka yol tabanı yazdı.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE CertificateInventory c SET c.renewalPlannedFingerprint = :baseFp, c.renewalPlannedNotAfter = :baseNotAfter "
+         + "WHERE c.id = :id AND c.renewalPlannedAt = :seenAt AND COALESCE(c.renewalPlannedNote, '') = :seenNote "
+         + "AND c.renewalPlannedFingerprint IS NULL AND c.renewalPlannedRecordedAt IS NOT NULL")
+    int adoptRenewalPlanBase(@Param("id") Long id, @Param("seenAt") String seenAt, @Param("seenNote") String seenNote,
+                             @Param("baseFp") String baseFp, @Param("baseNotAfter") String baseNotAfter);
+
+    /**
+     * Beklenen parmak izini KOŞULLU temizle (sertifika B2): dağıtım tamamlandı (sunulan = beklenen) ya da beklenen sertifika
+     * daha yenisiyle değiştirildi. Yalnız okunan değer hâlâ yerindeyse (arada formdan yeni bir beklenen girildiyse dokunulmaz).
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE CertificateInventory c SET c.expectedFingerprint = NULL WHERE c.id = :id AND c.expectedFingerprint = :seen")
+    int clearExpectedFingerprintIfUnchanged(@Param("id") Long id, @Param("seen") String seen);
+
 }

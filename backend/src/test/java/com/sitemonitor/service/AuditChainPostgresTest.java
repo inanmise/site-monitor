@@ -320,4 +320,86 @@ class AuditChainPostgresTest {
             jdbc.execute("ANALYZE audit_log");
         }
     }
+
+    // ── Bağımsız inceleme (H paketi, 2026-11-26): doğrulama sayfasının planı ─────────────────────────────────────
+
+    /** Genel plan: {@code EXPLAIN (GENERIC_PLAN)} parametreli sorguyu yalnız basit sorgu kipinde kabul eder (ayrı oturum). */
+    private static List<com.fasterxml.jackson.databind.JsonNode> genericPlanNodes(String schema, String sql) throws Exception {
+        PostgresIt.Config cfg = PostgresIt.config();
+        String url = cfg.url() + (cfg.url().contains("?") ? "&" : "?") + "preferQueryMode=simple";
+        try (java.sql.Connection c = java.sql.DriverManager.getConnection(url, cfg.user(), cfg.password());
+             java.sql.Statement st = c.createStatement()) {
+            st.execute("SET search_path TO " + schema);
+            String json;
+            try (java.sql.ResultSet rs = st.executeQuery("EXPLAIN (GENERIC_PLAN, FORMAT JSON) " + sql)) {
+                rs.next();
+                json = rs.getString(1);
+            }
+            com.fasterxml.jackson.databind.JsonNode root = new com.fasterxml.jackson.databind.ObjectMapper().readTree(json).get(0).get("Plan");
+            List<com.fasterxml.jackson.databind.JsonNode> out = new ArrayList<>();
+            java.util.ArrayDeque<com.fasterxml.jackson.databind.JsonNode> todo = new java.util.ArrayDeque<>(List.of(root));
+            while (!todo.isEmpty() && out.size() < 200) {
+                com.fasterxml.jackson.databind.JsonNode n = todo.pop();
+                out.add(n);
+                for (com.fasterxml.jackson.databind.JsonNode ch : n.path("Plans")) todo.push(ch);
+            }
+            return out;
+        }
+    }
+
+    private static void assertIndexOrdered(String what, List<com.fasterxml.jackson.databind.JsonNode> plan) {
+        assertThat(nodeTypes(plan)).as("%s — sıralama yok, tablo taranmaz: %s", what, nodeTypes(plan))
+                .doesNotContain("Sort", "Incremental Sort", "Seq Scan", "Parallel Seq Scan", "Gather Merge");
+        assertThat(plan).as("%s — idx_audit_seq ileri taranır", what).anySatisfy(n -> {
+            assertThat(n.path("Node Type").asText()).isEqualTo("Index Scan");
+            assertThat(n.path("Scan Direction").asText()).isEqualTo("Forward");
+            assertThat(n.path("Index Name").asText()).isEqualTo("idx_audit_seq");
+        });
+    }
+
+    @Test
+    @DisplayName("PostgreSQL planı (bağımsız inceleme): istatistik 'hepsi seq 1' derken doğrulama sayfası özel ve genel planda idx_audit_seq'i ileri tarar — Sort / Seq Scan yok")
+    void verifyPagePlan_degenerateStatistics_indexScanNoSort() throws Exception {
+        JdbcTemplate jdbc = jdbc();
+        String tag = "it-vplan-" + UUID.randomUUID().toString().substring(0, 8);
+        String schema = jdbc.queryForObject("SELECT current_schema()", String.class);
+        String sql = AuditLogRepository.class.getMethod("findChainPageFrom", Long.class)
+                .getAnnotation(org.springframework.data.jpa.repository.Query.class).value();
+        assertThat(sql).contains(":seq").doesNotContain(", id").doesNotContain(",id");
+        try {
+            // Prod ölçeğine yakın: 200 000 seq-1 satır (sayfa sınırı 1001 bunun küçük bir oranı — prod'da daha da küçük)
+            jdbc.update("INSERT INTO audit_log (seq, prev_hash, row_hash, event_type, event_time, actor, outcome, resource_id)"
+                    + " SELECT 1, 'GENESIS', md5(g::text), 'IT_PLAN', '2026-08-01T00:00:00', 'it', 'SUCCESS', ?"
+                    + " FROM generate_series(1, 200000) g", tag);
+            jdbc.execute("ALTER TABLE audit_log ALTER COLUMN seq SET (n_distinct = 1)");
+            jdbc.execute("ANALYZE audit_log");
+
+            // Özel plan: sayfa başı = bozuk dönemin seq'i (1) ve büyük bir seq
+            assertIndexOrdered("özel plan seq >= 1", planNodes(jdbc, sql.replace(":seq", "1")));
+            assertIndexOrdered("özel plan seq >= 500000", planNodes(jdbc, sql.replace(":seq", "500000")));
+            // Genel plan (pgjdbc 5 çalıştırmadan sonra sunucuda hazırlar)
+            assertIndexOrdered("genel plan", genericPlanNodes(schema, sql.replace(":seq", "$1")));
+
+            // Kapının duyarlılığı: eşitlik kırıcılı ESKİ biçim aynı istatistikte SIRALAR — gerileme görülür
+            String old = "SELECT * FROM audit_log WHERE seq >= 1 AND (seq > 1 OR id > -9223372036854775808)"
+                    + " ORDER BY seq ASC, id ASC LIMIT 1000";
+            assertThat(nodeTypes(planNodes(jdbc, old))).as("eşitlik kırıcılı biçim").containsAnyOf("Sort", "Incremental Sort");
+        } finally {
+            jdbc.update("DELETE FROM audit_log WHERE resource_id = ?", tag);
+            jdbc.execute("ALTER TABLE audit_log ALTER COLUMN seq RESET (n_distinct)");
+            jdbc.execute("ANALYZE audit_log");
+        }
+    }
+
+    @Test
+    @DisplayName("PostgreSQL: doğrulama sayfası gerçek veritabanında (yerel SQL) çalışır — seq sırası, sınır, varlık eşlemesi")
+    void verifyPageQuery_runsOnPostgres() {
+        AuditLogRepository repo = PostgresIt.app().bean(AuditLogRepository.class);
+        List<AuditLog> rows = repo.findChainPageFrom(Long.MIN_VALUE);
+        assertThat(rows.size()).isLessThanOrEqualTo(AuditLogRepository.CHAIN_PAGE_FETCH);
+        for (int i = 1; i < rows.size(); i++) {
+            assertThat(rows.get(i).getSeq()).isGreaterThanOrEqualTo(rows.get(i - 1).getSeq());
+        }
+        assertThat(rows).allSatisfy(r -> assertThat(r.getSeq()).isNotNull());
+    }
 }

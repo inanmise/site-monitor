@@ -539,4 +539,111 @@ class MaintenanceControllerTest {
         mvc.perform(delete("/api/monitoring/maintenance/2").session(op)).andExpect(status().isForbidden());
         org.mockito.Mockito.verify(repo, org.mockito.Mockito.never()).deleteById(anyLong());
     }
+
+    // ── H paketi (2026-11-26, izleme 2): hemen başlat + duraklat / sürdür değişiklik geçmişine yazılır; hedefli yazım ──
+
+    @Test
+    @DisplayName("H paketi: /quick değişiklik geçmişine OLUŞTURMA satırı yazar (create ile aynı)")
+    void quick_writesChangeHistory() throws Exception {
+        when(repo.save(any(MaintenanceWindow.class))).thenAnswer(inv -> { MaintenanceWindow w = inv.getArgument(0); w.setId(3L); return w; });
+        mvc.perform(post("/api/monitoring/maintenance/quick").session(session())
+                        .contentType("application/json").content("{\"minutes\":30,\"allMonitors\":true,\"name\":\"Acil\"}"))
+                .andExpect(status().isOk());
+        verify(monitorHistory).record(eq(com.sitemonitor.service.MonitorHistoryService.MAINTENANCE), eq(3L), eq("Acil"), any(),
+                eq(com.sitemonitor.service.MonitorHistoryService.CREATE), isNull(), anyMap(), any(), any());
+    }
+
+    @Test
+    @DisplayName("H paketi: duraklat = hedefli koşullu UPDATE (bütün varlık kaydedilmez) + denetim + geçmiş (active true → false)")
+    void pause_targetedWrite_auditAndHistory() throws Exception {
+        MaintenanceWindow w = win();
+        MaintenanceWindow after = win();
+        after.setActive(false);
+        when(repo.findById(1L)).thenReturn(Optional.of(w), Optional.of(after));
+        when(repo.setActiveIfChanged(eq(1L), eq(false), anyString())).thenReturn(1);
+        mvc.perform(post("/api/monitoring/maintenance/1/pause").session(session()))
+                .andExpect(status().isOk());
+        verify(repo, never()).save(any());
+        verify(repo).setActiveIfChanged(eq(1L), eq(false), anyString());
+        verify(auditService).recordAction(eq("MAINTENANCE_PAUSE"), nullable(jakarta.servlet.http.HttpSession.class),
+                nullable(jakarta.servlet.http.HttpServletRequest.class), eq("MAINTENANCE_WINDOW"), eq("1"), anyString());
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> before = mapCaptor();
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> afterMap = mapCaptor();
+        verify(monitorHistory).record(eq(com.sitemonitor.service.MonitorHistoryService.MAINTENANCE), eq(1L), eq("DB bakımı"), any(),
+                eq(com.sitemonitor.service.MonitorHistoryService.UPDATE), before.capture(), afterMap.capture(), eq("Duraklatıldı"), any());
+        org.assertj.core.api.Assertions.assertThat(before.getValue()).containsEntry("active", true);
+        org.assertj.core.api.Assertions.assertThat(afterMap.getValue()).containsEntry("active", false)
+                .containsEntry("name", "DB bakımı");
+        verify(maintenanceService).refresh();
+    }
+
+    @Test
+    @DisplayName("H paketi: zaten duraklatılmış pencereyi duraklatmak hiçbir şey yazmaz (0 satır → denetim / geçmiş yok)")
+    void pause_alreadyPaused_writesNothing() throws Exception {
+        MaintenanceWindow w = win();
+        w.setActive(false);
+        when(repo.findById(1L)).thenReturn(Optional.of(w));
+        when(repo.setActiveIfChanged(eq(1L), eq(false), anyString())).thenReturn(0);
+        mvc.perform(post("/api/monitoring/maintenance/1/pause").session(session()))
+                .andExpect(status().isOk());
+        verify(repo, never()).save(any());
+        verify(auditService, never()).recordAction(anyString(), nullable(jakarta.servlet.http.HttpSession.class),
+                nullable(jakarta.servlet.http.HttpServletRequest.class), anyString(), anyString(), nullable(String.class));
+        verify(monitorHistory, never()).record(anyString(), anyLong(), any(), any(), anyString(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("H paketi: sürdürme hedefli yazar ve 'Sürdürüldü' geçmiş satırı bırakır; arada silinen pencere 404")
+    void resume_historyAndDeletedMeanwhile() throws Exception {
+        MaintenanceWindow paused = win();
+        paused.setActive(false);
+        when(repo.findById(1L)).thenReturn(Optional.of(paused), Optional.of(win()));
+        when(repo.setActiveIfChanged(eq(1L), eq(true), anyString())).thenReturn(1);
+        mvc.perform(post("/api/monitoring/maintenance/1/resume").session(session()))
+                .andExpect(status().isOk());
+        verify(monitorHistory).record(eq(com.sitemonitor.service.MonitorHistoryService.MAINTENANCE), eq(1L), any(), any(),
+                eq(com.sitemonitor.service.MonitorHistoryService.UPDATE), anyMap(), anyMap(), eq("Sürdürüldü"), any());
+
+        // Arada silindi: güncelleme 0 satır, yeniden okuma boş → 404, iz yok
+        reset(monitorHistory);
+        when(repo.findById(2L)).thenReturn(Optional.of(paused), Optional.empty());
+        when(repo.setActiveIfChanged(eq(2L), eq(true), anyString())).thenReturn(0);
+        mvc.perform(post("/api/monitoring/maintenance/2/resume").session(session()))
+                .andExpect(status().isNotFound());
+        verify(monitorHistory, never()).record(anyString(), anyLong(), any(), any(), anyString(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Bağımsız inceleme: okunan varlık ESKİ (başka sekme arada duraklattı) ama koşullu UPDATE 1 satır değiştirdi → "
+            + "geçmiş 'önce' = !sonra (true → true yazılmaz)")
+    void resume_staleRead_historyBeforeIsNotAfter() throws Exception {
+        // Okuma 'active = true' döndü (eski), ama bu arada başka sekme duraklatmıştı → sürdürme gerçekten false → true çevirir
+        MaintenanceWindow staleActive = win();
+        staleActive.setActive(true);
+        when(repo.findById(1L)).thenReturn(Optional.of(staleActive), Optional.of(win()));
+        when(repo.setActiveIfChanged(eq(1L), eq(true), anyString())).thenReturn(1);
+        mvc.perform(post("/api/monitoring/maintenance/1/resume").session(session()))
+                .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> before = mapCaptor();
+        org.mockito.ArgumentCaptor<java.util.Map<String, Object>> afterMap = mapCaptor();
+        verify(monitorHistory).record(eq(com.sitemonitor.service.MonitorHistoryService.MAINTENANCE), eq(1L), any(), any(),
+                eq(com.sitemonitor.service.MonitorHistoryService.UPDATE), before.capture(), afterMap.capture(), eq("Sürdürüldü"), any());
+        org.assertj.core.api.Assertions.assertThat(before.getValue()).containsEntry("active", false);
+        org.assertj.core.api.Assertions.assertThat(afterMap.getValue()).containsEntry("active", true);
+
+        // Aynı eski okuma, ama UPDATE 0 satır (durum zaten istenen) → geçmiş / denetim yok
+        reset(monitorHistory, auditService);
+        when(repo.findById(1L)).thenReturn(Optional.of(staleActive), Optional.of(win()));
+        when(repo.setActiveIfChanged(eq(1L), eq(true), anyString())).thenReturn(0);
+        mvc.perform(post("/api/monitoring/maintenance/1/resume").session(session()))
+                .andExpect(status().isOk());
+        verify(monitorHistory, never()).record(anyString(), anyLong(), any(), any(), anyString(), any(), any(), any(), any());
+        verify(auditService, never()).recordAction(anyString(), nullable(jakarta.servlet.http.HttpSession.class),
+                nullable(jakarta.servlet.http.HttpServletRequest.class), anyString(), anyString(), nullable(String.class));
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static org.mockito.ArgumentCaptor<java.util.Map<String, Object>> mapCaptor() {
+        return (org.mockito.ArgumentCaptor) org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+    }
 }

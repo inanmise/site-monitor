@@ -284,14 +284,19 @@ public class ExecutiveSummaryService {
         return months(null);
     }
 
-    /** Seçilebilir aylar: bu ay + son 12 ay; kapsamın gönderim durumuyla (tek sorgu). */
+    /**
+     * Seçilebilir aylar: bu ay + son {@value #MAX_MONTHS_BACK} ay (2026-11-26, H paketi rapor B6 — sunucunun kabul ettiği
+     * aralığın TAMAMI; liste eskiden 12 ayda bitiyordu, 13–24 ay önceki gönderilmiş özetler yalnız URL ile açılabiliyordu);
+     * kapsamın gönderim durumuyla (tek sorgu).
+     */
     public List<Map<String, Object>> months(Long teamId) {
         Map<String, ExecutiveReportRow> sent = new HashMap<>();
         try {
+            PageRequest page = PageRequest.of(0, MAX_MONTHS_BACK + 1);
             List<? extends ExecutiveReportRow> rows = teamId == null
-                    ? reportRepo.findAllByOrderByReportYearDescReportMonthDesc(PageRequest.of(0, 24))
+                    ? reportRepo.findAllByOrderByReportYearDescReportMonthDesc(page)
                     : teamReportRepo == null ? List.<ExecutiveSummaryTeamReport>of()
-                    : teamReportRepo.findByTeamIdOrderByReportYearDescReportMonthDesc(teamId, PageRequest.of(0, 24));
+                    : teamReportRepo.findByTeamIdOrderByReportYearDescReportMonthDesc(teamId, page);
             for (ExecutiveReportRow r : rows) {
                 if (r.getReportYear() != null && r.getReportMonth() != null) {
                     sent.put(YearMonth.of(r.getReportYear(), r.getReportMonth()).toString(), r);
@@ -302,7 +307,7 @@ public class ExecutiveSummaryService {
         }
         YearMonth cur = currentMonth();
         List<Map<String, Object>> out = new ArrayList<>();
-        for (int i = 0; i <= 12; i++) {
+        for (int i = 0; i <= MAX_MONTHS_BACK; i++) {
             YearMonth m = cur.minusMonths(i);
             Map<String, Object> o = new LinkedHashMap<>();
             o.put("month", m.toString());

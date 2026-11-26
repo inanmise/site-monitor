@@ -27,7 +27,8 @@ import { OpenAlertBadge, CountPill, tabSummary, topLevel } from './NavAlertBadge
  *
  * İzleme alt grupları (2026-11-05): `section` taşıyan sekme bir ALT GRUP başlatır (Erişilebilirlik, Alan Adı ve DNS, İçerik ve
  * Deneyim, Veri ve iş kuralları). Genişken her alt grup kendi akordeonudur — ikon, ad, kapalıyken alt sekmelerin alarm toplamı
- * ve dönen ok; birbirinden bağımsız açılır (açık küme Nav.jsx'te). İkon kipinde yana açılan menü grupları başlıklarla gösterir.
+ * ve dönen ok; TEKLİ akordeon (2026-11-26): aynı anda yalnız biri açık, biri açılınca öteki kapanır (durum Nav.jsx'te).
+ * İkon kipinde yana açılan menü grupları başlıklarla gösterir.
  */
 
 /** Tek (çocuksuz) gezinme öğesi — Pano, Yardım. */

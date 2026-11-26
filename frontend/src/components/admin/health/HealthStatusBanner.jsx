@@ -42,6 +42,8 @@ const REASON_TEXT = {
   cleanup: (t) => t('health.reasonCleanup'),
   watchdog: (t, [label]) => t('wd.reason', label),
   watchdogStale: (t) => t('wd.reasonStale'),
+  auditFallback: (t, [n]) => t('health.reasonAuditFallback', n),
+  auditFallbackUnknown: (t) => t('health.reasonAuditFallbackUnknown'),
 }
 export function reasonText(r, t) {
   const f = REASON_TEXT[r.code]

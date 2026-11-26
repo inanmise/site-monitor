@@ -565,13 +565,34 @@ public class EscalationService {
         // D-1 (2026-09-29): sertifika alarm bildirimleri KAPALIYSA kapanış da SESSİZ (e-posta/webhook/7-24 yok; push
         // simetrisi resolveOpenAlertsSilently'de korunur). Kesinti şüphesinde (bildirimler açık) normal çözüm yolu.
         boolean silent = !appSettings.getBoolean("site.monitor.expiry.alert-enabled", true);
+        // EXPIRY tier eşiğiyle üretilir (H paketi, sertifika B1) — processResults ile AYNI karar; yoksa tier penceresinde
+        // açılmış bir EXPIRY alarmı bu yolda "artık üretilmiyor" sayılıp kapanırdı. Tek eşik okuması + açık alarmı olan
+        // alan adlarının envanteri tek toplu sorgu.
+        ThresholdResolution thresholds = ThresholdResolution.load(thresholdRepo, defaultThreshold());
+        Map<String, Integer> tierByDomain = new HashMap<>();
+        boolean tiersUnknown = false;
+        try {
+            for (com.sitemonitor.model.CertificateInventory inv : inventoryRepo.findByDomainIn(new ArrayList<>(withOpenCert))) {
+                if (inv.getDomain() != null && inv.getTier() != null) tierByDomain.putIfAbsent(inv.getDomain(), inv.getTier());
+            }
+        } catch (RuntimeException e) {
+            // Tier okunamadı: EXPIRY "artık üretilmiyor" diye KAPATILMAZ (bilinmeyen karar vermez); diğer türler bugünkü gibi.
+            tiersUnknown = true;
+            log.warn("Sertifika kapanış uzlaştırması: envanter tier'ı okunamadı — EXPIRY kapanışı bu tur atlandı: {}", e.getMessage());
+        }
         int n = 0;
         for (Map<String, Object> result : results) {
             String domain = (String) result.get("domain");
             if (domain == null || "error".equals(result.get("status")) || !withOpenCert.contains(domain)) continue;
             try {
                 Set<String> stale = new LinkedHashSet<>(CERT_ALERT_TYPES);
-                stale.removeAll(determineAlertTypes(result));
+                AlertThreshold tierThr = thresholds.forTier(tierByDomain.get(domain));
+                List<String> produced = determineAlertTypes(result, tierThr);
+                stale.removeAll(produced);
+                if (tiersUnknown) stale.remove("EXPIRY");
+                if (stale.contains("EXPIRY") && keepExpiryWhileDefectMuted(domain, produced, result, tierThr)) {
+                    stale.remove("EXPIRY");
+                }
                 if (stale.isEmpty()) continue;
                 closeStaleCertTypes(domain, stale, result, silent, t -> openCertKeys.contains(domain + "|" + t));
                 n++;
@@ -614,7 +635,10 @@ public class EscalationService {
 
         for (Map<String, Object> result : results) {
             String domain = (String) result.get("domain");
-            List<String> alertTypes = determineAlertTypes(result);
+            // EXPIRY eşiği tier'ı da sayar (H paketi 2026-11-26, sertifika B1) — envanter satırı tur başında toplu okundu.
+            com.sitemonitor.model.CertificateInventory tierInv = domain == null ? null : invByDomain.get(domain);
+            AlertThreshold tierThr = thresholds.forTier(tierInv != null ? tierInv.getTier() : null);
+            List<String> alertTypes = determineAlertTypes(result, tierThr);
 
             // Bu turda ÜRETİLMEYEN cert tipleri kapanır — SADECE cert tipleri; açık bir
             // ACCESSIBILITY alarmı uptime sweep'inin sorumluluğundadır. Eskiden bu kapanış yalnız
@@ -622,6 +646,12 @@ public class EscalationService {
             // olay asılı kalıyordu.
             Set<String> stale = new LinkedHashSet<>(CERT_ALERT_TYPES);
             stale.removeAll(alertTypes);
+            // Bakımda dışlayıcı kusur (REVOKED / MISMATCH / CHAIN_BROKEN) bastırılırken süre penceresindeki açık EXPIRY
+            // "artık üretilmiyor" diye KAPANMAZ (bağımsız inceleme, H paketi) — yoksa yalancı bir "çözüldü" postası gider ve
+            // EXPIRY pencere bitince yeni bir alarm olarak yeniden açılırdı.
+            if (stale.contains("EXPIRY") && keepExpiryWhileDefectMuted(domain, alertTypes, result, tierThr)) {
+                stale.remove("EXPIRY");
+            }
             // status=error (timeout/ağ) HİÇBİR şeyi doğrulamamıştır: determineAlertTypes yalnız [EXPIRY]
             // döndüğünden açık REVOKED/MISMATCH/CHAIN_BROKEN/HOSTNAME_MISMATCH/UNTRUSTED_CA "stale"
             // sayılıp "✅ sorun giderildi" maili+push'uyla kapanıyor, bir sonraki temiz turda INITIAL
@@ -644,6 +674,26 @@ public class EscalationService {
 
                 Long domainTeamId = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getTeamId).orElse(null);
                 Long ugTeamId     = inventoryOpt.map(com.sitemonitor.model.CertificateInventory::getUgTeamId).orElse(null);
+
+                // H paketi (2026-11-26, izleme 1): bakım penceresindeki alan adında sertifika KUSUR alarmı (zincir, ad, güven,
+                // iptal, dağıtım, erişilemedi) AÇILMAZ, tırmanmaz, hatırlatılmaz — izleme türlerinin bakım kuralı
+                // (processConfirmedOutage) ile aynı; karar bir notification_logs SKIPPED satırı bırakır. Süre (EXPIRY, hatasız
+                // sonuç) BASTIRILMAZ: bakım bitişe yaklaşan sertifikayı gizlememeli. Kapanış yukarıda bugünkü gibi.
+                AlertEvent openForMute = openAlertByKey.get(domain + "|" + alertType);
+                // Bağımsız inceleme (H paketi): hata sonucunun EXPIRY'si yalnız YENİ açılışta bastırılır — zaten AÇIK bir
+                // EXPIRY alarmı (pencereden önce açılmış ya da pencerede gerçek süre alarmı olarak açılmış) hatırlatılmaya /
+                // tırmanmaya bugünkü gibi devam eder (hata turunda süre alarmının ertelenmesi aşağıdaki "doğrulanmamış tur" kuralı).
+                if (certMaintenanceMutes(alertType, result) && !openExpiryKeepsNotifying(alertType, openForMute)
+                        && underMaintenanceSafe(domain)) {
+                    AlertEvent open = openForMute;
+                    // Açık alarmda iz YALNIZ bir bildirim gerçekten sırası gelmişken yazılır (tırmanma, yarıda kalmış ilk
+                    // bildirim ya da hatırlatma aralığı dolmuş) — "gönderilmedi" satırı gönderilecek bir şey yokken yazılmaz.
+                    if (open == null || certMaintenanceNotificationDue(open, alertType, alertLevel, reAlertIv)) {
+                        traceCertMaintenance(open, domain, alertType, domainTeamId, ugTeamId,
+                                buildMessage(domain, alertType, alertLevel, toInt(result.get("days_remaining"))));
+                    }
+                    continue;
+                }
 
                 Integer daysRemaining = toInt(result.get("days_remaining"));
                 String message = buildMessage(domain, alertType, alertLevel, daysRemaining)
@@ -1729,6 +1779,17 @@ public class EscalationService {
             Integer effectiveDays = freshDays != null ? freshDays : event.getDaysRemaining();
             String  freshMessage  = buildMessage(event.getDomain(), event.getAlertType(),
                                                  event.getAlertLevel(), effectiveDays);
+            // H paketi (2026-11-26, izleme 1): bakımdaki alan adının sertifika KUSUR alarmı telafide de hatırlatılmaz
+            // (processResults ile aynı kural; süre alarmı hatasız sonuçta bastırılmaz).
+            com.sitemonitor.model.LatestCheck latestRow = latestByDomain.get(event.getDomain());
+            Map<String, Object> statusOnly = new HashMap<>();
+            if (latestRow != null) statusOnly.put("status", latestRow.getStatus());
+            if (certMaintenanceMutes(event.getAlertType(), statusOnly)
+                    && !openExpiryKeepsNotifying(event.getAlertType(), event)     // açık EXPIRY susmaz (yalnız yeni açılış)
+                    && underMaintenanceSafe(event.getDomain())) {
+                traceCertMaintenance(event, event.getDomain(), event.getAlertType(), domainTeamId, ugTeamId, freshMessage);
+                continue;
+            }
             // ÇOK POD (2026-10-21, R1 / MP-03): damga GÖNDERİMDEN ÖNCE sahiplenilir. Telafi açılan her pod'da ve sertifika
             // süpürmesinden FARKLI bir kilitle koşar; süpürme bu alarmı tur başında yükleyip telafi damgalamadan önce
             // gönderebiliyordu (iki DAILY_REALERT). Kaybeden yol göndermez.
@@ -3412,6 +3473,18 @@ public class EscalationService {
      * doğruysa İKİSİ birden döner.
      */
     private List<String> determineAlertTypes(Map<String, Object> result) {
+        return determineAlertTypes(result, null);
+    }
+
+    /**
+     * @param tierThreshold alan adının tier eşiği (envanterin tier'ı; satırı yoksa varsayılan). H paketi (2026-11-26,
+     *                      sertifika B1): EXPIRY eşiği = max(global {@code site.monitor.warning-days} — sonucun
+     *                      {@code warning} bayrağı —, tier uyarı günü). Eskiden yalnız global bayrak sayılıyordu: tier uyarı
+     *                      eşiği 60 olan sertifika kartta / istatistikte / eşik önizlemesinde 40. günde "Yüksek" iken alarm
+     *                      ancak 30. günde açılıyordu. Seviye zaten tier eşiğinden ({@link #determineAlertLevel}); null =
+     *                      bugünkü (yalnız global bayrak) kural.
+     */
+    private List<String> determineAlertTypes(Map<String, Object> result, AlertThreshold tierThreshold) {
         String revocationStatus = (String) result.get("revocation_status");
         String deploymentStatus = (String) result.get("deployment_status");
         String chainStatus = (String) result.get("chain_status");
@@ -3425,8 +3498,19 @@ public class EscalationService {
         List<String> types = new ArrayList<>(2);
         String security = securityAlertType(result);
         if (security != null) types.add(security);
-        if (Boolean.TRUE.equals(warning) || "error".equals(status)) types.add("EXPIRY");
+        if (Boolean.TRUE.equals(warning) || "error".equals(status) || withinTierWarning(result, tierThreshold)) {
+            types.add("EXPIRY");
+        }
         return types;
+    }
+
+    /** Kalan gün tier uyarı eşiğinin içinde mi (H paketi, sertifika B1). Eşik / gün yoksa false (bugünkü kural). */
+    private boolean withinTierWarning(Map<String, Object> result, AlertThreshold tierThreshold) {
+        if (tierThreshold == null) return false;
+        Integer days = toInt(result.get("days_remaining"));
+        if (days == null) return false;
+        int warn = tierThreshold.getWarningDays() != null ? tierThreshold.getWarningDays() : 30;
+        return days <= warn;
     }
 
     /**
@@ -5344,6 +5428,104 @@ public class EscalationService {
     /** Push tetiğine giden bağlam işareti (ctx kopyasında; çağıranın haritası değişmez). */
     public static final String CTX_QUIET_DEFERRED = "quiet_deferred";
 
+    /** Sertifika kusur alarmı bakım penceresinde bastırıldı (H paketi 2026-11-26, izleme 1) — notification_logs durumu. */
+    static final String STATUS_CERT_MAINTENANCE_OPEN =
+            "SKIPPED: bakım penceresi — sertifika kusur alarmı açılmadı (pencere bitince hâlâ sürüyorsa açılır)";
+    static final String STATUS_CERT_MAINTENANCE_OPEN_ALERT =
+            "SKIPPED: bakım penceresi — açık sertifika alarmının bildirimi (tırmanma / hatırlatma) gönderilmedi";
+    /** Aynı alan adı × tür için iz en çok bu aralıkta bir kez yazılır (saatlik / bayat taramalar satır yığmasın). */
+    static final long CERT_MAINTENANCE_TRACE_EVERY_MS = 6L * 60 * 60 * 1000;
+    private static final int CERT_MAINTENANCE_TRACE_MAX = 5000;
+    private final Map<String, Long> certMaintenanceTraced = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Bakımda bastırılan sertifika türü mü (H paketi, izleme 1): KUSUR türleri (CHAIN_BROKEN, REVOKED, MISMATCH,
+     * HOSTNAME_MISMATCH, UNTRUSTED_CA) ve "erişilemedi" (hata sonucunun EXPIRY türü). Hatasız sonucun EXPIRY'si (süre
+     * bitişi yaklaşıyor) bastırılmaz.
+     */
+    static boolean certMaintenanceMutes(String alertType, Map<String, Object> result) {
+        if (alertType == null || !CERT_ALERT_TYPES.contains(alertType)) return false;
+        if (!"EXPIRY".equals(alertType)) return true;
+        return result != null && "error".equals(result.get("status"));
+    }
+
+    /**
+     * Açık EXPIRY alarmı bakımda susturulmaz (bağımsız inceleme, H paketi): "erişilemedi" (hata sonucunun EXPIRY'si) bastırması
+     * yalnız YENİ açılışı hedefler. Alarm zaten açıksa — pencereden önce açılmış olsun ya da pencerede gerçek süre alarmı olarak
+     * açılmış olsun — hatırlatma / tırmanma bugünkü kurallarla sürer.
+     */
+    static boolean openExpiryKeepsNotifying(String alertType, AlertEvent open) {
+        return "EXPIRY".equals(alertType) && open != null;
+    }
+
+    /** {@link #determineAlertTypes} içinde TEK BAŞINA dönen (EXPIRY'yi dışlayan) kusur türleri. */
+    private static final Set<String> EXCLUSIVE_CERT_DEFECTS = Set.of("REVOKED", "MISMATCH", "CHAIN_BROKEN");
+
+    /**
+     * Bağımsız inceleme (H paketi 2026-11-26): dışlayıcı kusur türü (REVOKED / MISMATCH / CHAIN_BROKEN) bakım penceresinde
+     * bastırılırken, sertifika hâlâ süre penceresindeyse (global uyarı bayrağı, tier uyarı günü ya da hata sonucu) açık EXPIRY
+     * "bu turda üretilmiyor" sayılıp kapatılmaz. Dışlama kuralı ("kusur varken süre ayrıca alarm olmaz") kusur alarmı AÇILABİLDİĞİ
+     * için anlamlıdır; kusur bastırılınca EXPIRY'yi kapatmak yalancı bir "çözüldü" postası ve pencere bitince yeni bir EXPIRY
+     * alarmı demekti. Bakım dışında bugünkü kural (EXPIRY kapanır, kusur açılır). HOSTNAME_MISMATCH / UNTRUSTED_CA dışlayıcı
+     * değildir (EXPIRY listede kalır) — bu kurala gerek yok.
+     */
+    private boolean keepExpiryWhileDefectMuted(String domain, List<String> produced, Map<String, Object> result,
+                                               AlertThreshold tierThreshold) {
+        if (produced == null || produced.size() != 1 || !EXCLUSIVE_CERT_DEFECTS.contains(produced.get(0))) return false;
+        boolean inWindow = Boolean.TRUE.equals(result.get("warning")) || "error".equals(result.get("status"))
+                || withinTierWarning(result, tierThreshold);
+        if (!inWindow) return false;
+        return certMaintenanceMutes(produced.get(0), result) && underMaintenanceSafe(domain);
+    }
+
+    /**
+     * Bakımda bastırılan açık kusur alarmının bu turda bildirimi SIRASI GELMİŞ miydi (H paketi, inceleme 2026-11-26): seviye
+     * yükseliyor, ilk bildirim yarıda kalmış ya da hatırlatma aralığı dolmuş. Değilse bakım izi yazılmaz (bakım olmasa da
+     * hiçbir şey gönderilmeyecekti).
+     */
+    private boolean certMaintenanceNotificationDue(AlertEvent open, String alertType, String alertLevel, int reAlertIv) {
+        if (levelValue(alertLevel) > levelValue(open.getAlertLevel())) return true;
+        String nowIso = now();
+        if (initialNotificationMissing(open, nowIso)) return true;
+        String last = open.getLastReAlertAt() != null ? open.getLastReAlertAt() : open.getCreatedAt();
+        return last == null || reAlertDueFor(alertType, last, nowIso, reAlertIv);
+    }
+
+    /** Bakım okuması düşerse eski davranış (bastırma yok): bilinmeyen durum alarmı gizlemez. */
+    private boolean underMaintenanceSafe(String domain) {
+        if (domain == null || maintenanceService == null) return false;
+        try {
+            return maintenanceService.isUnderMaintenance(domain);
+        } catch (RuntimeException e) {
+            log.warn("Bakım durumu okunamadı ({}): {} — sertifika alarmı normal kurallarla değerlendirilir", domain, e.getMessage());
+            return false;
+        }
+    }
+
+    /** Bakımda bastırma kararının izi — alan adı × tür için {@value #CERT_MAINTENANCE_TRACE_EVERY_MS} ms'de en çok bir satır. */
+    private void traceCertMaintenance(AlertEvent open, String domain, String alertType, Long syTeamId, Long ugTeamId,
+                                      String message) {
+        long nowMs = System.currentTimeMillis();
+        String key = domain + "|" + alertType;
+        Long last = certMaintenanceTraced.get(key);
+        if (last != null && nowMs - last < CERT_MAINTENANCE_TRACE_EVERY_MS) return;
+        if (certMaintenanceTraced.size() >= CERT_MAINTENANCE_TRACE_MAX) {
+            certMaintenanceTraced.entrySet().removeIf(en -> nowMs - en.getValue() >= CERT_MAINTENANCE_TRACE_EVERY_MS);
+            if (certMaintenanceTraced.size() >= CERT_MAINTENANCE_TRACE_MAX) certMaintenanceTraced.clear();
+        }
+        certMaintenanceTraced.put(key, nowMs);
+        log.info("🔧 Bakım penceresi — sertifika alarmı bastırıldı: {} [{}]{}", domain, alertType,
+                open != null ? " (açık olay #" + open.getId() + ")" : "");
+        try {
+            saveLog(open != null ? open.getId() : 0L, ownerTeamNames(syTeamId, ugTeamId), "", "",
+                    message == null ? "" : message,
+                    open != null ? STATUS_CERT_MAINTENANCE_OPEN_ALERT : STATUS_CERT_MAINTENANCE_OPEN, "SKIPPED",
+                    open != null ? "DAILY_REALERT" : "INITIAL");
+        } catch (Exception e) {
+            log.warn("Bakım bastırma izi yazılamadı ({} [{}]): {}", domain, alertType, e.getMessage());
+        }
+    }
+
     /**
      * Fırtına devrinin izi (2026-09-30): olayın bildirim günlüğüne {@code STORM} tetikli, {@code SKIPPED: fırtına #N}
      * durumlu bir satır. Bu satır "e-posta gönderilmedi"nin nedenidir; alarm penceresinin zaman çizelgesi ve Bildirimler
@@ -5934,7 +6116,10 @@ public class EscalationService {
                                  "rules_summary", "change_summary", "changed_lines", "baseline_taken_at",
                                  // Sayfa Hızı postası (2026-11-14, madde 1): eşik → ölçülen tablosu, süre kırılımı, kısmi ölçüm ve
                                  // en ağır kaynaklar (heavy_rows sweep'te zaten hesaplanıyordu ama hiç çizilmiyordu; URL sorgusu maskeli).
-                                 "ps_thresholds", "ps_phases", "ps_partial", "heavy_rows", "heavy_total");
+                                 "ps_thresholds", "ps_phases", "ps_partial", "heavy_rows", "heavy_total",
+                                 // H paketi (2026-11-26, deneyim 1–2): erişilebilirlik alarmının ENVANTER kimliği — çözüm /
+                                 // yeniden gönderim postasının "Site Monitor'de Görüntüle" bağlantısı Durum İzleme satırını açar.
+                                 "inventory_id");
 
     private String snapshotContext(Map<String, Object> ctx) {
         if (ctx == null) return null;

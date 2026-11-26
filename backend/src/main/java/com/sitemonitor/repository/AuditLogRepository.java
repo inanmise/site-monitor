@@ -63,8 +63,29 @@ public interface AuditLogRepository extends Repository<AuditLog, Long> {
     /** En düşük seq'li KALAN zincirli satır — yeniden başlatma yoksa doğrulamanın çapası (saklama silmesinden sonra da). */
     Optional<AuditLog> findTopBySeqIsNotNullOrderBySeqAsc();
 
-    /** Doğrulanan bölüm: {@code seq >= from}, seq sırasıyla sayfalı ({@code idx_audit_seq} ileri taranır). */
+    /**
+     * Doğrulanan bölüm: {@code seq >= from}, seq sırasıyla sayfalı ({@code idx_audit_seq} ileri taranır). ESKİ (OFSET)
+     * yol — H paketi B2'den beri yalnız kıyas testi kullanır; doğrulama {@link #findChainPageFrom} ile anahtar-küme sayfalar.
+     */
     List<AuditLog> findBySeqGreaterThanEqualOrderBySeqAsc(Long seq, Pageable pageable);
+
+    /** Doğrulama sayfasının satır sınırı: {@code 1000} yeni satır + önceki sayfanın son satırı (örtüşme). */
+    int CHAIN_PAGE_FETCH = 1001;
+
+    /**
+     * Doğrulama sayfası — ANAHTAR-KÜME (H paketi B2, 2026-11-26; bağımsız inceleme aynı gün): {@code seq >= :seq} olan en
+     * çok {@value #CHAIN_PAGE_FETCH} zincirli satır, YALNIZ {@code seq} sırasıyla. OFSET sayfalama
+     * ({@link #findBySeqGreaterThanEqualOrderBySeqAsc}) her sayfada baştan o kadar satırı okuyup atıyordu. Eşitlik kırıcı
+     * ({@code , id}) YOK (uç sorgusundaki inceleme F1 tuzağı): {@code idx_audit_seq(seq)} onu taşımaz; bozuk zincirin
+     * istatistiği ("hepsi seq 1") ile planlayıcı her sayfada tüm aralığı okuyup sıralardı. Sınır SABİT (parametre değil) —
+     * genel planda da küçük bir oran: dizin ileri taranır, sıralama yok (kapı {@code AuditChainPostgresTest.verifyPagePlan_*}).
+     * Aynı seq'li iki satır meşru zincirde olmaz; doğrulayıcı her sayfayı bir önceki sayfanın son satırıyla örtüştürür
+     * (o satırı kimliğiyle atlar) ve aynı seq'i ikinci kez görünce zinciri o seq'te kırık sayar — sayfa sınırındaki bir
+     * çatal da atlanmaz.
+     */
+    @Query(value = "SELECT * FROM audit_log WHERE seq >= :seq ORDER BY seq ASC LIMIT " + CHAIN_PAGE_FETCH,
+            nativeQuery = true)
+    List<AuditLog> findChainPageFrom(@Param("seq") Long seq);
 
     /** Doğrulanan bölümün DIŞINDA kalan zincirli satır sayısı ({@code seq < from}; seq'siz eski satırlar sayılmaz). */
     long countBySeqLessThan(Long seq);

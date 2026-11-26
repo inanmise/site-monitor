@@ -5,6 +5,7 @@ import StatusBlock from './StatusBlock.jsx'
 import { EmailLine, PersonAvatar } from './TeamMemberCards.jsx'
 import { OrgRoleBadge } from '../admin/ToneBadge.jsx'
 import { groupContactsByLevel } from './teamMembersModel.js'
+import { contactUserDeleted } from '../admin/contactsCoverageModel.js'
 import { Badge } from '@/components/shadcn/badge'
 import { Button } from '@/components/shadcn/button'
 import { cn } from '@/lib/utils'
@@ -43,7 +44,9 @@ function EscalationGroup({ group, t, seedFor }) {
           const name = c.name || c.email || '—'
           // Bağlı hesap pasif (2026-10-02): kişi BİLDİRİM ALMAZ (sunucu InactiveRecipientGuard) — üye listesindeki gibi belirgin
           // "Pasif" rozeti + soluk ad/avatar. Bayrak yoksa (bağsız kişi / eski yanıt) kişi aktif sayılır.
-          const inactive = c.user_active === false
+          // Bağlı kullanıcı SİLİNDİ (H paketi 2026-11-26): kişi pasif ve alarm almaz — kendi rozeti ve açıklaması
+          const deleted = contactUserDeleted(c)
+          const inactive = deleted || c.user_active === false
           return (
             <li key={c.id ?? c.email} data-slot="team-escalation-card" data-level={group.level}
               data-inactive={inactive ? 'true' : undefined}
@@ -54,13 +57,15 @@ function EscalationGroup({ group, t, seedFor }) {
                   <span data-slot="team-escalation-name"
                     className={cn('min-w-0 font-medium break-words', inactive && 'text-muted-foreground')}>{name}</span>
                   {inactive && (
-                    <Badge variant="destructive" data-slot="team-escalation-inactive" title={t('team.contactInactiveTip')}>
-                      <UserX aria-hidden="true" /> {t('team.memberInactive')}
+                    <Badge variant="destructive" data-slot={deleted ? 'team-escalation-deleted' : 'team-escalation-inactive'}
+                      title={deleted ? t('ec.userDeletedTip') : t('team.contactInactiveTip')}
+                      className="h-auto max-w-full overflow-visible rounded-md text-left whitespace-normal">
+                      <UserX aria-hidden="true" /> {deleted ? t('ec.userDeleted') : t('team.memberInactive')}
                     </Badge>
                   )}
                   {c.role && <OrgRoleBadge role={c.role}>{t('usr.orgRoleVal.' + c.role)}</OrgRoleBadge>}
                 </div>
-                {inactive && <p className="m-0 text-xs text-destructive">{t('team.contactInactiveTip')}</p>}
+                {inactive && <p className="m-0 text-xs text-destructive">{deleted ? t('ec.userDeletedTip') : t('team.contactInactiveTip')}</p>}
                 <EmailLine email={c.email} personName={name} t={t} />
               </div>
             </li>

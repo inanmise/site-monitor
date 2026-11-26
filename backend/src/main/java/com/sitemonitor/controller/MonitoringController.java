@@ -2222,6 +2222,9 @@ public class MonitoringController {
 
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("domain", domain);
+            // H paketi (2026-11-26, deneyim 1–2): alarm e-postasının ?tab=uptime&monitor=<envanter id> bağlantısı kartı bu
+            // kimlikle açar (ek sorgu yok — satır zaten envanterden).
+            item.put("inventory_id", inv.getId());
             item.put("port",   inv.getPort());
             item.put("team_id", inv.getTeamId());
             item.put("team_name", teamMap.get(domain));
@@ -2915,6 +2918,7 @@ public class MonitoringController {
             // Hata teşhisi (2026-10-05) — zamanlanmış turla AYNI kopyalama (SchedulerService.recheckPort)
             check.setFailureReason(com.sitemonitor.service.failure.CheckFailure.reasonOf(r));
             check.setFailureDetail(com.sitemonitor.service.failure.CheckFailure.detailOf(r));
+            check.setManual(Boolean.TRUE);   // H paketi (2026-11-26, rapor B2): elle tetik erişilebilirliğe girmez
             PortCheck savedCheck = portCheckRepo.save(check);
             // Aktivite (2026-11-05, aktivite zenginleştirmesi): elle kontrol akışa MANUAL_CHECK + oturumdaki kullanıcı +
             // istek kimliği olarak düşer (eskiden hiç yazılmıyordu). Yalnız satır — alarm kararına dokunmaz.
@@ -3928,6 +3932,7 @@ public class MonitoringController {
             Map<String, Object> r = keywordChecker.check(keywordSpecFor(m));
             boolean ok = com.sitemonitor.service.SchedulerService.keywordOk(m, r);
             KeywordResult res = com.sitemonitor.service.keyword.KeywordResultMapper.build(m, r, ok, ISO.format(Instant.now()));
+            res.setManual(Boolean.TRUE);   // H paketi (2026-11-26, rapor B2): elle tetik erişilebilirliğe girmez
             KeywordResult savedRes = keywordResultRepo.save(res);
             Map<String, Object> activityResult = new LinkedHashMap<>(r);
             activityResult.put("ok", ok);   // zamanlanmış turla aynı: aktivite özeti için sağlıklı-mı bayrağı
@@ -5311,6 +5316,7 @@ public class MonitoringController {
             res.setError((String) r.get("error"));
             res.setErrorDetail(r.get("error_detail") instanceof String d ? d : null);
             res.setCheckedAt(ISO.format(Instant.now()));
+            res.setManual(Boolean.TRUE);   // H paketi (2026-11-26, rapor B2): elle tetik erişilebilirliğe girmez
             HttpCheck savedRes = httpCheckRepo.save(res);
             activityLog.recordCheck(ActivityLogService.HTTP, m.getId(), m.getName(), m.getUrl(), m.getTeamId(), true,
                     actor(session), r, ActivityLogService.refs(savedRes != null ? savedRes : res));
@@ -11720,6 +11726,7 @@ public class MonitoringController {
             // Hata teşhisi (2026-10-05) — zamanlanmış turla AYNI kopyalama (SchedulerService.recheckPing)
             check.setFailureReason(com.sitemonitor.service.failure.CheckFailure.reasonOf(r));
             check.setFailureDetail(com.sitemonitor.service.failure.CheckFailure.detailOf(r));
+            check.setManual(Boolean.TRUE);   // H paketi (2026-11-26, rapor B2): elle tetik erişilebilirliğe girmez
             PingCheck savedCheck = pingCheckRepo.save(check);
             activityLog.recordCheck(ActivityLogService.PING, m.getId(), m.getName(), m.getHost(), m.getTeamId(), true,
                     actor(session), r, ActivityLogService.refs(savedCheck != null ? savedCheck : check));

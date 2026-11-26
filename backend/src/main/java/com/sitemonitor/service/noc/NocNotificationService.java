@@ -869,10 +869,12 @@ public class NocNotificationService {
     static String monitorUrl(String base, NocType type, NocMonitorDirectory.Row row, String alertType) {
         if (base == null || base.isEmpty() || row == null) return null;
         if (type == NocType.SSL) {
-            String tab = EscalationService.TYPE_ACCESSIBILITY.equals(alertType) ? "status" : type.tab;
+            // Erişilebilirlik (2026-11-26, H paketi deneyim 1–2): Durum Sayfası "domain=" okumaz — Durum İzleme sekmesinde
+            // envanter satırının kendisi açılır (satır kimliği = envanter kimliği; alarm e-postasıyla aynı hedef).
+            if (EscalationService.TYPE_ACCESSIBILITY.equals(alertType)) return base + "/?tab=uptime&monitor=" + row.id();
             // Sertifika uyarısı: open=cert → Pano'da alanın sertifika penceresi açılır (7/24 Kapsamı satırıyla aynı hedef).
-            return base + "/?tab=" + tab + "&domain=" + URLEncoder.encode(row.name(), StandardCharsets.UTF_8)
-                    + ("dashboard".equals(tab) ? "&open=cert" : "");
+            return base + "/?tab=" + type.tab + "&domain=" + URLEncoder.encode(row.name(), StandardCharsets.UTF_8)
+                    + ("dashboard".equals(type.tab) ? "&open=cert" : "");
         }
         return base + "/?tab=" + type.tab + "&monitor=" + row.id();
     }

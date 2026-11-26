@@ -347,6 +347,25 @@ class MonitoringControllerTest {
     }
 
     @Test
+    @DisplayName("H paketi: uptimeOverview her satırda inventory_id taşır (alarm postasındaki ?tab=uptime&monitor=<id> kartı açar); ek sorgu yok")
+    void uptimeOverview_rowsCarryInventoryId() throws Exception {
+        CertificateInventory a = inv("a.com");
+        a.setId(41L);
+        CertificateInventory b = inv("b.com");
+        b.setId(42L);
+        when(latestCheckRepo.findAllByOrderByDomainAsc()).thenReturn(List.of(lc("a.com", "valid")));
+        when(inventoryRepo.findByActiveTrueOrderByDomainAsc()).thenReturn(List.of(a, b));
+
+        mvc.perform(get("/api/monitoring/uptime/overview").session(session("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].domain").value("a.com"))
+                .andExpect(jsonPath("$.data[0].inventory_id").value(41))
+                .andExpect(jsonPath("$.data[1].domain").value("b.com"))          // kontrolsüz satır (erken dal) da taşır
+                .andExpect(jsonPath("$.data[1].inventory_id").value(42));
+        org.mockito.Mockito.verify(inventoryRepo, org.mockito.Mockito.never()).findById(any());
+    }
+
+    @Test
     @DisplayName("POST /dns/test: çözümler ama KAYIT OLUŞTURMAZ; response_ms eşiği aşınca slow=true")
     void testDns_runsWithoutSaving() throws Exception {
         when(dnsChecker.check(eq("x.com"), eq("A"))).thenReturn(

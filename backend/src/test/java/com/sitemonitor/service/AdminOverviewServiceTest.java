@@ -85,6 +85,45 @@ class AdminOverviewServiceTest {
         AlertThreshold d = new AlertThreshold(); d.setActive(true);
         AlertThreshold t1 = new AlertThreshold(); t1.setActive(true); t1.setTier(1);
         when(thresholdRepo.findAll()).thenReturn(List.of(d, t1));
+        when(userRepo.countActiveGlobalAdmins()).thenReturn(1L);   // u1: yerel ADMIN = global
+    }
+
+    @Test
+    @DisplayName("H paketi B8: 'tek / hiç yönetici' yalnız GLOBAL yöneticileri sayar — bir global + iki kapsamlı müdür → SINGLE_ADMIN")
+    @SuppressWarnings("unchecked")
+    void singleAdmin_countsOnlyGlobalAdmins() {
+        String recent = ISO.format(Instant.now().minus(1, ChronoUnit.DAYS));
+        users(List.of(user(1, "ADMIN", null, recent, false), user(2, "ADMIN", 7L, recent, false),
+                user(3, "ADMIN", 9L, recent, false)));
+        when(userRepo.countActiveGlobalAdmins()).thenReturn(1L);   // 2 ve 3 AD müdürü (kapsamlı)
+        Map<String, Object> r = service.overview(null);
+        Map<String, Object> c = (Map<String, Object>) r.get("counts");
+        assertThat(c).containsEntry("admins", 3).containsEntry("global_admins", 1L);
+        List<Map<String, Object>> w = (List<Map<String, Object>>) r.get("warnings");
+        assertThat(w).extracting(m -> m.get("code")).contains("SINGLE_ADMIN").doesNotContain("NO_ADMIN");
+
+        when(userRepo.countActiveGlobalAdmins()).thenReturn(0L);   // yalnız müdürler kaldı
+        w = (List<Map<String, Object>>) service.overview(null).get("warnings");
+        assertThat(w).extracting(m -> m.get("code")).contains("NO_ADMIN").doesNotContain("SINGLE_ADMIN");
+
+        when(userRepo.countActiveGlobalAdmins()).thenReturn(2L);
+        w = (List<Map<String, Object>>) service.overview(null).get("warnings");
+        assertThat(w).extracting(m -> m.get("code")).doesNotContain("SINGLE_ADMIN", "NO_ADMIN");
+    }
+
+    @Test
+    @DisplayName("H paketi B8: global yönetici sayısı okunamazsa bilinmiyor — uyarı yok, sayaç null (yanlış 'yönetici yok' denmez)")
+    @SuppressWarnings("unchecked")
+    void globalAdminCountUnreadable_noWarning() {
+        when(userRepo.countActiveGlobalAdmins()).thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db"));
+        Map<String, Object> r = service.overview(null);
+        assertThat((Map<String, Object>) r.get("counts")).containsEntry("global_admins", null);
+        List<Map<String, Object>> w = (List<Map<String, Object>>) r.get("warnings");
+        assertThat(w).extracting(m -> m.get("code")).doesNotContain("SINGLE_ADMIN", "NO_ADMIN");
+        // Kapsamlı görünüm sorguyu hiç koşmaz
+        org.mockito.Mockito.clearInvocations(userRepo);
+        service.overview(List.of(7L));
+        org.mockito.Mockito.verify(userRepo, org.mockito.Mockito.never()).countActiveGlobalAdmins();
     }
 
     @Test

@@ -250,8 +250,9 @@ export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, sy
   }, [active, remote, users, isAdmin, needle])
 
   const showRecents = !needle && recents.length > 0
-  // Favori izlemeler (2026-10-02, öneri 23): boş sorguda en üstte; seçilince türün sayfasına o izlemenin adıyla aranmış
-  // olarak gider (İzleme Panosu satırının "aç"ı ile aynı). Adı bilinmeyen (eski kayıt) favori derin bağlantıyla açılır.
+  // Favori izlemeler (2026-10-02, öneri 23): boş sorguda en üstte. Seçilince izleme KİMLİKLE açılır (H paketi 2026-11-26:
+  // ada göre arama yeniden adlandırılan izlemede boş liste veriyordu) — türün sayfası `monitor=<id>` derin bağlantısıyla
+  // detayı açar. Gösterilen ad, kartın güncel adla eşitlediği saklı ad (FavoriteToggle); yoksa "<tür> #<id>".
   const prefs = useUserPrefs()
   const favItems = useMemo(() => prefs.favorites.map((f) => ({
     ...f, label: f.name || t('palette.favUnnamed', t(MONITOR_LABEL_KEY[f.type] || 'nav.http'), f.id),
@@ -278,7 +279,7 @@ export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, sy
 
   const goFavorite = useCallback((f) => {
     setOpen(false)
-    navigateTo(f.type, f.name ? { q: f.name } : { monitor: String(f.id) })
+    navigateTo(f.type, { monitor: String(f.id) })
   }, [])
 
   const clearRecents = useCallback(() => { writeRecents([]); setRecents([]) }, [])
@@ -399,7 +400,7 @@ export default function CommandPalette({ tabs = [], onTabChange, globalAdmin, sy
               {loading && <Spinner className="shrink-0 text-muted-foreground" />}
               {isMobile ? (
                 <DialogClose asChild>
-                  <Button type="button" variant="ghost" size="sm" className="shrink-0">{t('app.cancel')}</Button>
+                  <Button type="button" variant="ghost" size="sm" className="shrink-0 pointer-coarse:h-10">{t('app.cancel')}</Button>
                 </DialogClose>
               ) : (
                 <Kbd className="shrink-0">Esc</Kbd>

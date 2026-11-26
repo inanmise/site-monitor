@@ -55,6 +55,15 @@ export function readUrlParam(key, fallback = null) {
   }
 }
 
+/**
+ * İzleme sayfalarının arama kutusunun ilk değeri (H paketi 2026-11-26, deneyim 1–2): `q`, yoksa ESKİ alarm e-postalarının
+ * `domain` parametresi (`?tab=<tür>&domain=<hedef>` — sayfalar `domain` okumuyordu, bağlantı süzülmemiş listeye
+ * açılıyordu). Sayfanın URL senkronu `domain`'i siler (`domain: null`) ve değeri `q` olarak yazar.
+ */
+export function readSearchParam() {
+  return readUrlParam('q', null) ?? readUrlParam('domain', '')
+}
+
 /** Mount'ta URL'den POZİTİF tamsayı okur; eksik/bozuk (abc, -5, 0) → fallback. */
 export function readUrlInt(key, fallback = null) {
   const raw = readUrlParam(key, null)

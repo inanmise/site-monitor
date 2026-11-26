@@ -134,6 +134,16 @@ public class AuthController {
     void setLoginOtp(com.sitemonitor.service.otp.LoginOtpService s) { this.loginOtp = s; }
 
     /**
+     * AD hesap durumu (H paketi B4, 2026-11-26) — İSTEĞE BAĞLI: {@code @WebMvcTest} dilimlerinde yok → kodla girişte AD'ye
+     * sorulmaz, parola bind'ı damga yazmaz (bugünkü davranış birebir).
+     */
+    @Autowired(required = false)
+    private com.sitemonitor.service.AdAccountStatusService adAccountStatus;
+
+    /** Test kancası. */
+    void setAdAccountStatus(com.sitemonitor.service.AdAccountStatusService s) { this.adAccountStatus = s; }
+
+    /**
      * Kullanıcı adı ön eki kuralı (2026-10-21, kullanıcı isteği: "yalnız N ile başlayan kullanıcıya login izni") —
      * İSTEĞE BAĞLI: {@code @WebMvcTest} dilimlerinde yok → kural hiç uygulanmaz (bugünkü davranış birebir).
      */
@@ -736,6 +746,18 @@ public class AuthController {
             // Global yöneticiye kodla giriş istek ile doğrulama arasında kapatıldı — genel "süresi doldu" yanıtı.
             loginOtp.block(v.challenge());
             return ResponseEntity.status(401).body(com.sitemonitor.service.otp.LoginOtpService.expiredBody());
+        }
+        // AD HESAP DURUMU (H paketi B4, 2026-11-26): kod DOĞRU, ama AD hesabı devre dışı / dizinde yoksa ya da AD'ye
+        // ulaşılamıyor ve hesap son 24 saatte AD ile doğrulanmadıysa giriş reddedilir (403 AD_ACCOUNT_DISABLED /
+        // AD_UNVERIFIED). Yerel hesaplar sorulmaz. Kilit sayacına girmez (BLOCKED). Kod isteği ucu DEĞİŞMEDİ (aynı 200 gövde).
+        if (adAccountStatus != null) {
+            var ad = adAccountStatus.checkForLogin(user);
+            if (!ad.allowed()) {
+                loginOtp.block(v.challenge());
+                auditService.recordAdAccountRefused(user.getUsername(), user.getId(), user.getTeamId(), user.getSystemRole(),
+                        clientIp, request.getHeader("User-Agent"), method.name(), ad.code());
+                return ResponseEntity.status(403).body(com.sitemonitor.service.AdAccountStatusService.refusalBody(ad.code()));
+            }
         }
         if (userService.hasLiveSession(user) && !forceLogin) {
             // Onay penceresi: istek TÜKETİLMEZ (kullanıcı onaylayınca aynı kod + forceLogin ile gelir).
@@ -1462,6 +1484,9 @@ public class AuthController {
             AppUser provisioned = ldapProvisioning.provisionFromAd(uname, u.dn(), u.attributes());
             // Savunma: provizyon pasif bir satır döndürdüyse (yukarıdaki kapı bunu önler) yine oturum kurulmaz.
             if (provisioned != null && !Boolean.TRUE.equals(provisioned.getActive())) return new LdapAttempt(null, provisioned);
+            // H paketi B4: AD bind'ı başarılı = AD hesabı etkin ve doğrulandı → ad_verified_at (hedefli, hata yutulur). Beni-hatırla
+            // / kodla giriş AD'ye ulaşamazsa bu damga 24 saat geçerlidir.
+            if (provisioned != null && adAccountStatus != null) adAccountStatus.markVerified(provisioned.getId());
             return new LdapAttempt(provisioned, null);
         } catch (Exception e) {
             log.warn("LDAP login error for '{}': {}", username, e.getMessage());

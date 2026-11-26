@@ -113,10 +113,23 @@ public class AdminOverviewService {
             }
         }
 
+        // GLOBAL yöneticiler (H paketi B8, 2026-11-26): "tek / hiç yönetici" uyarısı yalnız bunları sayar. Kapsamlı müdür (AD
+        // ADMIN — viewTeamIds dolu, UserService.computeViewTeamIds) de ADMIN rolündedir ama kapsamı dışını yönetemez; tek
+        // global yönetici + birkaç müdür olan kurulumda uyarı eskiden hiç çıkmıyordu. Okunamazsa bilinmiyor → uyarı YOK.
+        Long globalAdmins = null;
+        if (unrestricted) {
+            try {
+                globalAdmins = userRepo.countActiveGlobalAdmins();
+            } catch (RuntimeException e) {
+                globalAdmins = null;
+            }
+        }
+
         Map<String, Object> out = new LinkedHashMap<>();
         Map<String, Object> counts = new LinkedHashMap<>();
         counts.put("teams", teams); counts.put("teams_active", teamsActive);
         counts.put("users", users); counts.put("users_active", usersActive); counts.put("admins", admins);
+        if (unrestricted) counts.put("global_admins", globalAdmins);
         counts.put("contacts", contacts); counts.put("contacts_webhook", contactsWebhook);
         counts.put("groups", groups);
         if (unrestricted) {
@@ -136,8 +149,8 @@ public class AdminOverviewService {
         if (locked > 0) warnings.add(warn("USER_LOCKED", locked, "users"));
         if (never > 0) warnings.add(warn("USER_NEVER_LOGGED_IN", never, "users"));
         if (dormant > 0) warnings.add(warn("USER_DORMANT", dormant, "users"));
-        if (unrestricted && admins == 1) warnings.add(warn("SINGLE_ADMIN", 1, "users"));
-        if (unrestricted && admins == 0) warnings.add(warn("NO_ADMIN", 0, "users"));
+        if (unrestricted && globalAdmins != null && globalAdmins == 1L) warnings.add(warn("SINGLE_ADMIN", 1, "users"));
+        if (unrestricted && globalAdmins != null && globalAdmins == 0L) warnings.add(warn("NO_ADMIN", 0, "users"));
         out.put("warnings", warnings);
         out.put("dormant_days", DORMANT_DAYS);
         return out;

@@ -304,7 +304,10 @@ public final class PostgresIt implements ExecutionCondition, BeforeAllCallback {
                 // paylaşılan şemada DDL yapmasın.
                 "--site.monitor.index-maintenance.redundant-drop.initial-delay-ms=86400000",
                 "--site.monitor.index-maintenance.bloat-cron=-",
-                "--site.monitor.index-maintenance.leftover-sweep.delay-ms=86400000"));
+                "--site.monitor.index-maintenance.leftover-sweep.delay-ms=86400000",
+                // Erişilebilirlik özeti yeniden hesabı (H paketi 2026-11-26): AvailabilityRollupRecomputePostgresTest işi
+                // kendisi koşar — uygulamanın 15 dk sonraki turu paylaşılan özet tablolarını testin ortasında silip yazmasın.
+                "--site.monitor.availability-rollup-recompute.initial-delay-ms=86400000"));
         return a.toArray(String[]::new);
     }
 

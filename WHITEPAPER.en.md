@@ -113,6 +113,8 @@ A certificate that has not expired can still be broken. Site Monitor validates t
 
 If you record the fingerprint or subject you expect on an inventory entry, every scan checks the served certificate against it. This catches the classic failure where a renewal is issued but never actually deployed to one node behind a load balancer.
 
+Once the server starts serving the expected certificate, the deployment counts as complete and the expected fingerprint clears itself; the entry's change history shows a "deployment completed" note. The field also clears when the expected certificate was served for a while and was then replaced by a newer one, so an outdated expectation never raises a false mismatch alert. A check sees only one of the nodes behind a name: if several nodes sit behind a load balancer, verify each node separately.
+
 ### 3.4 Per-Domain Proxy Routing
 
 Some targets sit behind a WAF that refuses traffic from the monitoring pod. Rather than routing everything through a corporate proxy — which would break the checks that work perfectly well today — you flip a single switch on the inventory entry for that one domain.
@@ -120,6 +122,8 @@ Some targets sit behind a WAF that refuses traffic from the monitoring pod. Rath
 ### 3.5 Criticality Tiers
 
 Every inventory entry carries a tier from 1 to 4: customer-facing production, internal production, UAT and pre-production, and development or sandbox. The tier drives sort order, the criticality badge on the card, and which contacts get pulled into an escalation.
+
+The alert for a certificate that is about to expire opens on the **earlier** of two days: the general warning day and the warning day of the entry's tier; its level comes from the tier's rule. The Warnings list, the certificate card and the threshold preview use the same rule. For entries whose tier asks for a longer warning period than the general setting, the alert can therefore open earlier than the general setting alone would suggest.
 
 ### 3.6 Beyond Certificates
 
@@ -577,7 +581,7 @@ Site Monitor delivers over email and, optionally, a chat webhook. Every attempt 
 
 Alert emails are built to survive corporate mail clients, which is a harder constraint than it sounds — Outlook on the desktop renders with the Word engine and ignores a good deal of modern CSS. The templates therefore use table-based layouts, solid colours and inline images referenced by content ID, so they render the same whether or not remote content is blocked.
 
-Every alert email carries the domain, the level, the type, the days remaining, the detail table and a direct link to the relevant screen. Resolution emails come with the "back to green" branding, the total outage duration in a compact form, and a clear start-to-recovery window.
+Every alert email carries the domain, the level, the type, the days remaining, the detail table and a direct link to the relevant screen. The **Site Monitor'de Görüntüle** ("View in Site Monitor") link opens the page of the monitor that produced the alert and shows that monitor's detail (a domain expiry alert raised by an HTTP monitor, for example, goes to the HTTP page). When the monitor is not known, the page opens with the target typed into its search box. Accessibility alerts go to the Status Monitoring page, certificate alerts to the certificate window on the Certificate dashboard. If the monitor has been deleted since, the page says "monitor not found". Links in older emails keep working. Resolution emails come with the "back to green" branding, the total outage duration in a compact form, and a clear start-to-recovery window.
 
 Alert and resolution emails both include a short **"why did I get this?"** block naming the team the notification is registered against. It is there for trust: a recipient who can see why a message reached them is far less likely to treat it as phishing.
 
@@ -819,6 +823,10 @@ When you define a window you give it a name and description and pick its targets
 
 While a window is active its effect is absolute: no alert is raised for the target monitors and nothing is sent on any channel — not the first alert, not the daily reminder, not even a DNS change. Existing alerts that recover inside the window close silently, with no resolution email either. Checks made during maintenance are excluded from the uptime percentage, so planned downtime does not penalise your availability figures. The active target set is held in memory and refreshed roughly every 30 seconds, and on every change, so the lookup in the sweep path costs nothing.
 
+Certificates follow this rule: on a domain under maintenance, certificate **defect** alerts (broken chain, name mismatch, untrusted or revoked certificate, check error) are not raised, escalated or repeated; every notification that is not sent shows up in the notification log with the reason "maintenance window". The **expiring** alert, however, still opens during maintenance — maintenance never hides a certificate that is running out. When the window ends and the defect is still there, the alert opens under the normal rules; alerts that recover still close as before.
+
+The quick actions on the Maintenance tab — a window opened with **Start maintenance now**, pausing a window and resuming it — are written to the window's change history too, with who did it and when.
+
 When should you use one? If you have a database maintenance slot every Sunday between 02:00 and 04:00, define a weekly window: the relevant monitors stay quiet for that period, and at 04:01 normal alerting resumes exactly where it left off.
 
 ---
@@ -834,6 +842,10 @@ Authentication is session-based: HTTP sessions are managed by Spring Session and
 With directory authentication enabled, sign-in binds to Active Directory, and on the first successful sign-in the user is provisioned automatically along with their organisational role, manager relationship and team. The local bootstrap administrator account always works, as an emergency route in, and the directory and mail settings are reachable only from that account. The bind password is stored encrypted.
 
 "Remember me" gives a persistent seven-day session: a signed token is held in the database and refreshed on every sign-in.
+
+**Automatic and code sign-in for directory accounts.** For LDAP / AD accounts, an automatic "Remember me" sign-in and a one-time-code sign-in (after the correct code) also ask Active Directory for the account's state. If the account has been disabled in AD or no longer exists in the directory, the sign-in is refused and the "Remember me" record is deleted. If AD cannot be reached at that moment, the sign-in goes ahead when the account was confirmed active in AD within the last 24 hours; otherwise the user is asked to sign in with username and password. Such refusals are written to the audit log and to the person's My Activity / device history with their own reason ("disabled in AD", "could not be verified in AD") and do not count towards the lockout. Local accounts are not affected.
+
+**The initial administrator password.** If the installation's administrator account was left with the sample password or an empty one, it is forced to change its password on first sign-in; the same rule applies to existing installations where that password was never changed.
 
 **Username prefix.** A person can have two accounts in the organisation (for example a staff ID starting with N and a second account starting with MP). On **Settings → Security → Sign-in methods → Username prefix** a global administrator can allow only usernames that start with given prefixes (for example `N`) to sign in; the rule applies to password, LDAP, one-time code and "Remember me" alike, and case doesn't matter. An account that doesn't match is refused after its password is verified, with a message naming the allowed prefixes; a wrong password gets the same generic error for every name. For code sign-in the answer is always the same and no code is sent; an account that doesn't match can't decide through e-mail approval links either. When the rule is turned on, open sessions of non-matching accounts end within seconds with a 10-second notice. Accounts on the exempt list (for example a service account) and the installation admin account can always sign in. Before saving, the **Impact preview** shows how many active users would be kept out and who they are; a value that would lock out your own account isn't saved. While the rule is on, the sign-in page reminds users of the allowed prefix below the username field.
 
@@ -1051,7 +1063,9 @@ The interface is a single-page application, so switching tabs never reloads the 
 
 **Language, theme and identity.** Click your name at the foot of the sidebar to open the user menu. From there you can see your last sign-in, change your password (6–64 characters, no leading or trailing space), and switch the language (English or Turkish) and the theme (light or dark); both are remembered in your browser. If you have permission, **Settings** is there too, with **Report a Problem** just below it, available from every screen. **Sign out** ends the session in this browser even without a connection: if the server can't confirm it, a note says so and the server session is closed as soon as the connection is back (at the latest before the next sign-in). Signing out in another tab, or signing in as another user there, is noticed by the open tabs at once (2026-10-22).
 
-**Monitoring menu.** The monitor types sit in four groups; each group opens and closes on its own in the menu, and you reach the monitors under the group you open. The groups you open are remembered in your browser, the group of the page you are on opens by itself, and a closed group's heading shows the open alarm count of the monitors under it. The groups: **Availability** (HTTP / Website, Ping, Port — is it up?), **Domains and DNS** (DNS, Domain Expiry — is the address right and still valid?), **Content and experience** (Keyword, Page Integrity, Page Speed, Synthetic — is the page correct, complete and quick?) and **Data and business rules** (Database query monitoring — is the result in the database what you expect?).
+**Monitoring menu.** The monitor types sit in four groups, and you reach the monitors under the group you open. Only one group is open at a time: opening a group closes the previous one. The group of the page you are on opens by itself (so does the group the product tour is pointing at), the last group you opened is remembered in your browser, and a closed group's heading keeps showing the open alarm count of the monitors under it. The groups: **Availability** (HTTP / Website, Ping, Port — is it up?), **Domains and DNS** (DNS, Domain Expiry — is the address right and still valid?), **Content and experience** (Keyword, Page Integrity, Page Speed, Synthetic — is the page correct, complete and quick?) and **Data and business rules** (Database query monitoring — is the result in the database what you expect?).
+
+**Navigation.** When you switch to another tab, the page opens at its top; changing a filter on the same tab and the browser's back / forward buttons keep your position. In the command palette (Ctrl K, ⌘K on a Mac — the search hint in the sidebar says which) the monitors you starred open the right monitor even after they were renamed and show their current name; a starred monitor that has been deleted says "not found". In the notifications box (the bell), row actions are always visible on touch screens, and long titles and team names wrap onto the next line. The **Start page** choice in My Activity lists only the pages you can see in the menu; if the saved start page is one you can no longer see, the app opens on the Certificate dashboard.
 
 Each monitoring page carries two built-in help surfaces: a box at the top of the page explaining what that monitor type does and where its data comes from, and a guide button beside the form showing how to fill the fields in, with examples.
 
@@ -1113,6 +1127,8 @@ The table below gives each screen's address-bar key and its visibility rule. Kno
 | Permanent lock | A message is shown; an administrator must release it |
 | Report a Problem | A locked-out user can leave a report with a screenshot (see §14.23) |
 | Signing in with a session elsewhere | A conflict and a confirmation dialogue; accept and the older session is dropped |
+| Show password | The eye button beside the password field works with the mouse and with the keyboard (Tab, then Enter / Space) |
+| Code sign-in refused by AD | If, after the correct code, the account is disabled in AD or AD could not confirm it, the form says why; the code is not resent and you go back to the password sign-in (see §12.1) |
 
 ### 14.4 Certificate dashboard
 
@@ -1158,6 +1174,8 @@ A table rather than cards: domain, issuer, subject, expiry date, days remaining,
 
 Generates prioritised, plain-language recommendations for each certificate: critical (act now), warning (plan the renewal) and informational (keep an eye on it). It is the weekly agenda for whoever coordinates renewals.
 
+**Renewal plan.** When you enter a renewal plan for a certificate, the date must be a day that really exists in the calendar (31 February, for example, is refused) and the note is at most 500 characters; nothing is cut off silently, the error shows under the field. The plan closes by itself when a certificate is seen that is **different from, and valid longer than,** the one in place when you entered the plan; the change history and the activity log record it as "renewal detected". If the same certificate was installed again, or the check has not yet seen the new one, the plan stays open. If someone else changed the plan while you were removing it, nothing is changed; the window tells you so and shows the current plan. The certificate card and the Expiry Forecast use the same rule and the same Istanbul day.
+
 ### 14.10 Renewal Guide
 
 Brings your organisation's resources, CA portals and platform notes for renewing certificates together in one place. Most certificates are bought from a commercial certificate authority (CA), so the resources are the heart of the page; generating a key by hand sits folded away at the bottom. From top to bottom:
@@ -1185,6 +1203,8 @@ Adding a domain means filling in a five-part form:
 - Descriptions: a general description and a process note.
 - Advanced: the expected SHA-256 fingerprint and the expected subject, used for deployment compliance checking.
 
+The expected fingerprint field is shown on the edit form too: you can change it, or empty it to clear it. It must be 64 hexadecimal characters; colons, spaces and dashes are allowed and removed for you. An invalid value shows its error under the field. If you save without touching the field, the stored value is kept as it is — the server clears it by itself once the deployment is complete (see §3.3). The entry's UG team appears on the form as a read-only line; the UG team is set by CSV import, and Transfer changes only the owning (SY) team. Saving the form never changes the UG team.
+
 Deletion is permanent and cannot be undone: the confirmation names the records and what goes with them, and the card leaves the list as soon as you confirm. Transfer moves a certificate to another team. Rename a domain and its entire history moves atomically with it (see §3.9).
 
 ### 14.13 Weak Algorithm Report
@@ -1198,6 +1218,8 @@ Lists certificates using insecure algorithms such as SHA-1 signatures or 1024-bi
 The top of the page carries an explanation box for that monitor type and a statistics strip — total, healthy, failing, paused — where clicking a card filters the list to that state. Below it sits a paginated monitor list you can narrow by status, group, team and free text. Top right you will find **+ New Monitor** and a **Guide** button for that type.
 
 In HTTP / Website, Port, Ping, DNS, Keyword, Page Integrity, Page Speed and Synthetic monitoring, each monitor card shows the last 24 hours' response-time trend and the last five checks, with a 30-day availability line at the bottom (for example `30 d: 99.95% · target 99.9% ✓`). The **1 day · 7 days · 15 days · 30 days** labels on the right of that line tell you whether anything failed in each period: a clean period is green, a period with failures carries a ⚠ icon in amber, and one whose availability fell below the target carries a ⚠ icon in red; a period with no checks at all is greyed out. Hover over a label to see that period's number of checks, failures and availability, followed by every hourly slot in which something failed and how many failures it saw (for example `23/09 17:00–18:00 — 5 failures`); the six most recent slots are listed and any others are counted underneath. On a Port card the monitored endpoint sits just under the host name: the `:port` in large type, a protocol badge coloured by check type (TCP, TLS, HTTP, Banner, UDP), the path being checked for the HTTP type and, for well-known ports, the service name (for example 5432 → PostgreSQL). A Ping card shows, in the same place, a coloured **ICMP** badge (**ICMPv6** for IPv6), the IP version if one was chosen (IPv4 or IPv6) and the number of packets sent per check.
+
+**What availability counts.** Availability figures (the card's 30-day line, the period labels, the last five checks and the weekly availability report) count only scheduled checks: a manual **Check now**, the rechecks an alert makes to confirm an outage or a recovery, and ping checks that ICMP could not measure are left out. Some monitors' figures may therefore rise compared with the previous release. The card's state is still read from the latest check. A ping monitor that has only unmeasurable checks shows a grey "—" with the reason instead of a figure; it never shows 0%.
 
 **Port monitoring through the proxy.** The **Corporate proxy** field on the Port form is **Direct** by default, so existing monitors keep their route. Choose **Always via proxy** or **Same as inventory** and TCP, TLS, HTTP and Banner checks run through the corporate proxy `CONNECT` tunnel; the result then shows the target is reachable *from the proxy network*, and the response time includes the proxy hop. Proxies only open tunnels to the ports they allow, so the form always lists the **ports that can be checked through the proxy** (443 and 8443 by default; see Settings → Monitoring → *Ports the proxy allows CONNECT to*). With the proxy selected, the form warns you if the port is not on that list or if the type is **UDP**: UDP cannot go through an HTTP proxy and always runs directly. If the proxy refuses a tunnel, the check fails with **"proxy refused the tunnel"** (with the allowed ports in the message) rather than reporting the port as closed.
 
@@ -1278,6 +1300,8 @@ Your own record: the actions you have taken and the sign-ins recorded against yo
 
 The security and compliance trail, open to global administrators and auditors only. It shows the timestamp, the actor, the client address with its geographic location, the event type, the affected resource, the outcome and the before-and-after diff, alongside any anomaly flags. Records are append-only and hash-chained.
 
+**Chain verification.** The verification result on the screen tells you whether the chain is intact. On a very large log, if the scan reaches its time limit the result is "Verification incomplete": that does not mean the chain is broken — it says how many records were verified in that pass, and you can verify again later. If another verification is running at that moment, the screen asks you to try again in a few seconds. Neither of these is shown as green ("intact") or red ("broken").
+
 ### 14.23 Issue Reports
 
 Where reports submitted through **Report a Problem** land, including those left by users who could not sign in. Each report carries the description, screenshots, the browser and the client address. Reports can be acknowledged and resolved, and a daily digest can be emailed.
@@ -1289,7 +1313,7 @@ Where reports submitted through **Report a Problem** land, including those left 
 The everyday administration screen, divided into sub-tabs:
 
 - Alert thresholds — the day boundaries for warning, high and critical, and the reminder interval (administrators only).
-- Escalation contacts — who receives alerts for which team, from which level, with an optional webhook.
+- Escalation contacts — who receives alerts for which team, from which level, with an optional webhook. If the user a contact is linked to is **deleted**, the contact record is not deleted: it is made inactive and shows a **User deleted** badge in the list; it receives no notifications and is not counted as active in the team's coverage and gap checks. You can link the record to another user and activate it again. The audit record of a user deletion also lists the deleted person's leader and manager roles, their direct reports and how many escalation contacts were made inactive. The "single administrator / no administrator" warning on the admin overview counts global administrators only; team-scoped administrator accounts that come from AD do not count.
 - Team management — teams, their leaders, their email addresses and their reporting switches. A team that still has domains, monitors, people, notification groups, technical error report channels / templates or live or upcoming maintenance windows can't be deleted: the delete dialog lists them and **Move** takes them all (channels with their reports and history) to another team; the team's executive summary settings and send history are deleted with the team (2026-10-22). To remove a leader, pick "— Select Leader —" in the edit form and save.
 - User management — accounts, roles, team memberships, password resets and lock releases.
 
@@ -1321,6 +1345,8 @@ The application-wide configuration screen, reachable only by the bootstrap admin
 
 The operational dashboard for the platform itself: heartbeat history, mail delivery statistics, database metrics, scan staleness and the scheduler lock. It also carries the database analytics — the busiest and slowest queries, table sizes and connection counts — and the user and session view with sign-in trends, top users and sources, an anomaly breakdown and a weekly activity heat map. Administrators can force-release a stuck scheduler lock and terminate another user's session from here.
 
+**Audit fallback file.** Audit records that cannot be written to the database at that moment wait in the pod's fallback file; the system row shows how many are waiting, with that pod's name, and they appear as a warning in the overall status band (if the number cannot be read it says "unknown" — never clean). Once the database is writable again, each pod moves its own fallback records into the audit log by itself; a line that cannot be moved is held for manual review.
+
 **Metrics** (the "Open metrics" card at the top of the page): Site Monitor's own measurements, per pod. Every pod writes one sample per minute and samples are kept for 7 days (Settings → General, "System metrics retention"). At the top a summary of the current values (live pods, highest CPU and memory, database pool, task queue, last hour's HTTP requests and ERROR log lines), below it the pod list (live; silent = a pod that went quiet without a shutdown marker, a warning; stopped = a pod that shut down cleanly in a rollout or scale-down, not a warning; last sample, uptime; live pods come first, among pods in the same state the most recently started one is on top and stopped pods are last — the pod picker follows the same order) and the charts: CPU, heap, threads, GC pause; requests per minute, error rate, response time; database connections and waiting requests; task pool, queue and overflow; log lines and cache hit rate. The range is 1 hour / 6 hours / 24 hours / 7 days and the pod picker shows a single pod; the choice is written to the address bar so you can share the link. A value that cannot be read shows as "—" and never counts as green; a slice with no sample from a pod stays a gap in the chart.
 
 ### 14.28 SQL Playground
@@ -1347,7 +1373,7 @@ A user signing in for the **first time** sees a welcome card shortly after the d
 
 **Page tours:** some pages carry their own short tour (All Certificates: filters, status menu, columns, presets, CSV, row selection, row menu; HTTP monitoring: how it works, new monitor, how to fill in, cards). The first time you land on such a page a chip appears in the bottom-right corner: "Want a quick look around this page?". Close it and it will not return for that page.
 
-**Getting-started list:** at the top of the dashboard a small six-item list guides a new user (finish the tour, open a card, browse All Certificates, look at a monitoring page, see the weekly reports, open the help guide). Items tick themselves off as you visit the pages; the list disappears once complete or when you hide it with ✕.
+**Getting-started list:** at the top of the dashboard a small six-item list guides a new user (finish the tour, open a card, browse All Certificates, look at a monitoring page, see the weekly reports, open the help guide). Items tick themselves off as you visit the pages; the list disappears once complete or when you hide it with ✕. Items that don't apply to you are left out: "see the weekly reports" appears only when weekly reports are on for your team, and "open a card" only when your team has a certificate; the counter counts the visible items only. The buttons of the list, the page-tour chip and the welcome card are sized for comfortable tapping on touch screens.
 
 **Finding the tour again:** user menu → **Product tour**; the "?" help drawer in the bottom-right corner offers **Product tour** and, where one exists, **Tour this page**; the button on the Help page; the command palette (Ctrl K) command "Start the product tour". Even after "Don't show again" you can open the tour this way whenever you like.
 
@@ -1441,7 +1467,7 @@ For a critical alert: acknowledge it straight away, start the renewal immediatel
 
 1. Deploy the new certificate to the server or platform.
 2. Site Monitor detects it on the next hourly sweep.
-3. If you have recorded an expected fingerprint in the inventory, deployment compliance is verified too.
+3. If you have recorded an expected fingerprint in the inventory, deployment compliance is verified too; once the server starts serving the new certificate, the field clears itself. If several nodes sit behind a load balancer, verify each node separately.
 4. Mark the relevant alert resolved on the **Alert History** screen; the resolution notice is sent automatically.
 
 ### 15.4 Setting Up a Team

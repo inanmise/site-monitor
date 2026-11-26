@@ -113,6 +113,9 @@ export function reasonText(row, t) {
   if (code === 'USERNAME_PREFIX') return t('myact.reason.usernamePrefix')
   if (code === 'LDAP_LOGIN_DISABLED') return t('myact.reason.ldapDisabled')
   if (code === 'ACCOUNT_LOCKED') return t('myact.reason.accountLocked')
+  // AD hesap durumu (H paketi 2026-11-26): beni-hatırla / kodla giriş, AD'de devre dışı ya da AD doğrulanamadı
+  if (code === 'AD_ACCOUNT_DISABLED') return t('myact.reason.adDisabled')
+  if (code === 'AD_UNVERIFIED') return t('myact.reason.adUnverified')
   if (row?.event_type === EV.SIGN_IN_FAILED && row?.outcome === 'BLOCKED') {
     return isRateLimitedRow(row) ? t('myact.reason.rateLimited') : null
   }

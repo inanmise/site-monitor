@@ -65,6 +65,12 @@ export default function SystemSection({ t, health, metrics, metricsPod, metricsE
                 </dd>
               </>
             )}
+            {/* Denetim izi yedek dosyası (H paketi 2026-11-26, yönetim B7): DB'ye yazılamayıp YANITLAYAN pod'un dosyasında bekleyen
+                kayıt — sayı o pod'undur (küme toplamı değil), pod adıyla. -1 = sayılamadı (bilinmiyor ≠ temiz). Eski sunucu alanı
+                göndermez → satır yok. */}
+            {typeof health?.audit_fallback_pending === 'number' && (
+              <AuditFallbackRow t={t} pending={health.audit_fallback_pending} pod={health.audit_fallback_pending_pod || servedPod} />
+            )}
           </KvList>
         </SysCard>
 
@@ -106,5 +112,32 @@ export default function SystemSection({ t, health, metrics, metricsPod, metricsE
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * Denetim izi yedek dosyası satırı (H paketi 2026-11-26): bekleyen sayı + hangi pod'un dosyası. Bekleyen varsa uyarı tonu
+ * (pod DB okunabilir olunca kendiliğinden geri aktarır; `.failed` dosyaları elle incelenir), sayılamadıysa uyarı tonu
+ * "sayılamadı" — asla yeşil "temiz". Sıfır = düz metin.
+ */
+function AuditFallbackRow({ t, pending, pod }) {
+  const unknown = pending < 0
+  return (
+    <>
+      <dt>{t('health.auditFallback')}</dt>
+      <dd data-slot="audit-fallback" data-pending={unknown ? 'unknown' : String(pending)}
+        className="flex flex-wrap items-center gap-1.5">
+        {unknown || pending > 0 ? (
+          <ToneBadge tone="warning" className="h-auto overflow-visible rounded-md font-semibold whitespace-normal">
+            {unknown ? t('health.auditFallbackUnknown') : t('health.auditFallbackPending', pending)}
+          </ToneBadge>
+        ) : <span>{t('health.auditFallbackNone')}</span>}
+        {pod && (
+          <span data-slot="audit-fallback-pod" className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
+            {t('health.auditFallbackPod', pod)}
+          </span>
+        )}
+      </dd>
+    </>
   )
 }

@@ -14,11 +14,12 @@ import { LEVEL_TONE, fmtDuration, itemTime, kindMeta, relativeTime, toMs } from 
  * ipucunda) · tek satır özet (tür · alt tür · izleme) · takım + zaman çizgisi ("başladı … · 3 sa 12 dk açık").
  *
  * "Stretched button" deseni: satırın kendisi tek bir shadcn Button (tıkla → hedefe git + okundu); eylemler
- * KARDEŞ öğedir (düğme içinde düğme yok). Masaüstünde eylem kümesi hover/odakla belirir (sağ üstte, göreli
- * zamanın üstüne biner); telefonda tek KebabMenu her zaman görünür (dokunmatikte hover yok — RESPONSIVE.md).
+ * KARDEŞ öğedir (düğme içinde düğme yok). Masaüstünde (fare) eylem kümesi hover/odakla belirir (sağ üstte, göreli
+ * zamanın üstüne biner); telefonda VE dokunmatik tablette (`touch`, 768 px — H paketi 2026-11-26) tek KebabMenu her
+ * zaman görünür, 40 px (dokunmatikte hover yok — RESPONSIVE.md). Başlık, özet ve zaman çizgisi KESİLMEZ — sarar.
  * Test/tur kancası: `data-inbox-row={kind}` (v1'den beri), `data-inbox-open` (ana düğme), `data-unread`, `data-dismissed`.
  */
-export default function InboxRow({ it, unread, dismissed = false, history = false, mobile = false, tick = 0,
+export default function InboxRow({ it, unread, dismissed = false, history = false, mobile = false, touch = false, tick = 0,
   onOpen, onOpenMonitor, onMarkRead, onDismiss }) {
   const t = useT()
   const locale = useDateLocale()
@@ -72,8 +73,8 @@ export default function InboxRow({ it, unread, dismissed = false, history = fals
           <Icon className="size-4" />
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="flex min-w-0 items-center gap-2">
-            <span className={cn('min-w-0 flex-1 truncate text-sm leading-5', unread ? 'font-semibold' : 'font-medium text-foreground/90')}>{it.title}</span>
+          <span className="flex min-w-0 items-start gap-2">
+            <span data-slot="inbox-row-title" className={cn('min-w-0 flex-1 text-sm leading-5 [overflow-wrap:anywhere]', unread ? 'font-semibold' : 'font-medium text-foreground/90')}>{it.title}</span>
             {!mobile && levelBadge}
             {rel && (
               <SimpleTooltip content={formatDateSec(at)}>
@@ -81,21 +82,22 @@ export default function InboxRow({ it, unread, dismissed = false, history = fals
               </SimpleTooltip>
             )}
           </span>
-          <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground">
             {mobile && levelBadge}
-            <span className="min-w-0 truncate">{summary}</span>
+            <span data-slot="inbox-row-summary" className="min-w-0 flex-1 [overflow-wrap:anywhere]">{summary}</span>
           </span>
           {(it.team_name || timeline) && (
             <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-              {it.team_name && <TeamBadge static teamId={it.team_id} teamName={it.team_name} size={11} className="text-[11px]" />}
-              {timeline && <span className="min-w-0 truncate">{timeline}</span>}
+              {/* Takım adı KESİLMEZ (H paketi 2026-11-26): uzun AD takım adı sarar — `wrap` yoksa rozet içi ad truncate'ti */}
+              {it.team_name && <TeamBadge static wrap teamId={it.team_id} teamName={it.team_name} size={11} className="max-w-full text-[11px]" />}
+              {timeline && <span data-slot="inbox-row-time" className="min-w-0 [overflow-wrap:anywhere]">{timeline}</span>}
             </span>
           )}
         </span>
         {unread && <span aria-hidden="true" className="mt-2 size-2 shrink-0 rounded-full bg-primary" />}
         {unread && <span className="sr-only">{t('inbox.unreadMark')}</span>}
       </Button>
-      {actions.length > 0 && (mobile ? (
+      {actions.length > 0 && (mobile || touch ? (
         <div data-slot="inbox-row-actions" className="flex shrink-0 items-center self-center">
           <KebabMenu label={t('inbox.rowActions')} rowLabel={it.title}
             items={actions.map(({ icon: AIcon, label, onClick }) => ({ label, icon: <AIcon aria-hidden="true" />, onClick }))} />
