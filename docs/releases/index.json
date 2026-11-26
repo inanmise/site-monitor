@@ -1,9 +1,51 @@
 {
   "schema": 1,
-  "generatedAt": "2026-11-25T22:09:59Z",
+  "generatedAt": "2026-11-26T04:27:45Z",
   "repo": "inanmise/site-monitor",
-  "count": 874,
+  "count": 875,
   "releases": [
+    {
+      "version": "20.227.0",
+      "tag": "v20.227.0",
+      "releasedAt": "2026-11-26T04:27:33Z",
+      "commit": "b7abbbad95a3a76fd45fdad0b031f69f872c6933",
+      "prevVersion": "20.226.0",
+      "bump": "minor",
+      "breaking": false,
+      "counts": {
+        "feat": 1,
+        "fix": 1,
+        "perf": 0,
+        "refactor": 0,
+        "docs": 0,
+        "other": 1
+      },
+      "changes": [
+        {
+          "type": "test",
+          "scope": null,
+          "breaking": false,
+          "sha": "b7abbbad",
+          "subject": "olay geçmişi dışa aktarım e2e'si menüyü kapanış canlandırması bitmeden yeniden açmaz"
+        },
+        {
+          "type": "fix",
+          "scope": null,
+          "breaking": false,
+          "sha": "fbd1e76d",
+          "subject": "seçenek yöneticisinin meşgul bayrağı finally içinde temizlenir"
+        },
+        {
+          "type": "feat",
+          "scope": null,
+          "breaking": false,
+          "sha": "a21dfd3d",
+          "subject": "olay ve hata geçmişi — bulma, döküm ve rapor (gelişmiş süzgeçler, süzgeci izleyen döküm, özet ve yazdırma, CSV / Excel dışa aktarım, seçenek yöneticisi, palette olay kaydı)"
+        }
+      ],
+      "truncated": false,
+      "omitted": 0
+    },
     {
       "version": "20.226.0",
       "tag": "v20.226.0",
