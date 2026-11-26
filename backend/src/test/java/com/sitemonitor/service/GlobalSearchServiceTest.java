@@ -134,4 +134,51 @@ class GlobalSearchServiceTest {
                     assertThat(h.params()).containsEntry("team", "Takım A");
                 });
     }
+
+    // ── Olay kaydı vuruşları (2026-11-26, "Bul ve Raporla") ─────────────────────────────────────────────────────────────
+
+    private void incidentTable() {
+        jdbc.update("DROP TABLE IF EXISTS incident_records");
+        jdbc.update("CREATE TABLE incident_records(id BIGINT, title VARCHAR(300), severity VARCHAR(20), status VARCHAR(20),"
+                + " service VARCHAR(500), team_id BIGINT, team_name VARCHAR(100), tags VARCHAR(500), error_code VARCHAR(100),"
+                + " function_code VARCHAR(100), channel_code VARCHAR(100), created_by_team_id BIGINT, occurred_at VARCHAR(30),"
+                + " description VARCHAR(500))");
+        jdbc.update("INSERT INTO incident_records VALUES"
+                + " (1, 'Shop ödeme kesintisi', 'HIGH', 'OPEN', 'odeme.example.com', 1, 'Takım A', NULL, NULL, NULL, NULL, NULL, '2026-11-10T10:00:00', NULL),"
+                + " (2, 'Shop DNS', 'LOW', 'RESOLVED', NULL, 2, 'Takım B', NULL, NULL, NULL, NULL, NULL, '2026-11-11T10:00:00', NULL),"
+                + " (3, 'Başka olay', 'LOW', 'OPEN', NULL, 2, 'Takım B', NULL, 'SHOP-1', NULL, NULL, 1, '2026-11-09T10:00:00', NULL),"
+                + " (4, 'Uzun metin', 'LOW', 'OPEN', NULL, 1, 'Takım A', NULL, NULL, NULL, NULL, NULL, '2026-11-08T10:00:00', 'shop yalnız açıklamada')");
+    }
+
+    private static List<String> incidentIds(List<GlobalSearchService.Hit> hits) {
+        return hits.stream().filter(h -> "incident".equals(h.kind())).map(GlobalSearchService.Hit::id).toList();
+    }
+
+    @Test
+    @DisplayName("olay vuruşu: kısa alanlar (başlık, alan, kodlar) + takım YA DA giren takım kapsamı SQL'de; açıklama aranmaz; izin yoksa (null) olay yok")
+    void incidentHits() {
+        incidentTable();
+        List<GlobalSearchService.Hit> scoped = svc.search("shop", t -> true, new GlobalSearchService.IncidentScope(List.of(1L)));
+        assertThat(incidentIds(scoped)).containsExactly("1", "3");   // 2 yabancı; 4 yalnız açıklamada
+        GlobalSearchService.Hit h = scoped.stream().filter(x -> "incident".equals(x.kind()) && "1".equals(x.id())).findFirst().orElseThrow();
+        assertThat(h.tab()).isEqualTo("incident-history");
+        assertThat(h.params()).containsEntry("incident", "1");
+        assertThat(h.sub()).isEqualTo("#1 · odeme.example.com");
+        assertThat(h.teamName()).isEqualTo("Takım A");
+        assertThat(incidentIds(svc.search("shop", t -> true, new GlobalSearchService.IncidentScope(null)))).containsExactly("2", "1", "3");
+        assertThat(incidentIds(svc.search("shop", t -> true, new GlobalSearchService.IncidentScope(List.of())))).isEmpty();
+        assertThat(incidentIds(svc.search("shop", t -> true, null))).isEmpty();
+        assertThat(incidentIds(svc.search("shop", t -> true))).isEmpty();
+    }
+
+    @Test
+    @DisplayName("olay kimliği: #2 ve tek haneli 4 (en kısa arama sınırının altında) kaydı bulur; kapsam dışı kimlik bulunmaz")
+    void incidentById() {
+        incidentTable();
+        assertThat(incidentIds(svc.search("#2", t -> true, new GlobalSearchService.IncidentScope(null)))).containsExactly("2");
+        assertThat(incidentIds(svc.search("4", t -> true, new GlobalSearchService.IncidentScope(null)))).containsExactly("4");
+        assertThat(incidentIds(svc.search("#2", t -> true, new GlobalSearchService.IncidentScope(List.of(1L))))).isEmpty();
+        assertThat(GlobalSearchService.idOf("#12")).isEqualTo(12L);
+        assertThat(GlobalSearchService.idOf("12x")).isNull();
+    }
 }

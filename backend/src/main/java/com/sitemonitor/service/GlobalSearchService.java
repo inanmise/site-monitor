@@ -95,6 +95,78 @@ public class GlobalSearchService {
     }
 
     public List<Hit> search(String q, Predicate<Long> canViewTeam) {
+        return search(q, canViewTeam, null);
+    }
+
+    /** Olay kaydı aramasında en çok sonuç (2026-11-26, "Bul ve Raporla"). */
+    static final int MAX_INCIDENTS = 6;
+
+    /**
+     * Olay kaydı arama kapsamı (2026-11-26): {@code teams} null = tüm takımların kayıtları (global görüntüleyici / 7/24
+     * operatörü), dolu = kaydın takımı ya da giren takımı bu kümede — {@code IncidentController.canReadIncident} ile aynı
+     * kural, LIMIT'ten ÖNCE SQL'de. Boş küme = hiçbiri. Çağıran {@code incidents.view} iznini ayrıca denetler; izin yoksa
+     * bu nesne verilmez (olay araması yapılmaz).
+     */
+    public record IncidentScope(List<Long> teams) { }
+
+    /**
+     * {@link #search(String, Predicate)} + olay kayıtları ({@code incidents} null = olay araması yok). Olay vuruşu yalnız kısa
+     * alanlara bakar (başlık, alan, etiket, üç kod) + kimlik ({@code #123} / {@code 123}); markdown metinleri aranmaz (palet
+     * her tuşta sorar). Vuruş {@code incident-history} sekmesini {@code incident=<id>} ile açar.
+     */
+    public List<Hit> search(String q, Predicate<Long> canViewTeam, IncidentScope incidents) {
+        List<Hit> out = new ArrayList<>(searchBase(q, canViewTeam));
+        if (incidents != null) {
+            String needle = q == null ? "" : q.trim().toLowerCase(Locale.ROOT);
+            if (needle.length() >= MIN_QUERY || idOf(needle) != null) out.addAll(searchIncidents(needle, incidents));
+        }
+        return out;
+    }
+
+    /** {@code #123} / {@code 123} → kimlik (en çok 18 hane); başka metin → null. */
+    static Long idOf(String needle) {
+        if (needle == null) return null;
+        String s = needle.startsWith("#") ? needle.substring(1).trim() : needle;
+        if (s.isEmpty() || s.length() > 18) return null;
+        for (int k = 0; k < s.length(); k++) if (s.charAt(k) < '0' || s.charAt(k) > '9') return null;
+        return Long.valueOf(s);
+    }
+
+    private List<Hit> searchIncidents(String needle, IncidentScope incidents) {
+        List<Hit> out = new ArrayList<>();
+        List<Long> teams = incidents.teams();
+        if (teams != null && teams.isEmpty()) return out;
+        try {
+            Long id = idOf(needle);
+            String like = "%" + needle.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%";
+            List<Object> args = new ArrayList<>(List.of(like, like, like, like, like, like));
+            String idSql = "";
+            if (id != null) { idSql = " OR id = ?"; args.add(id); }
+            String scopeSql = "";
+            if (teams != null) {
+                String marks = String.join(",", java.util.Collections.nCopies(teams.size(), "?"));
+                scopeSql = " AND (team_id IN (" + marks + ") OR created_by_team_id IN (" + marks + "))";
+                args.addAll(teams);
+                args.addAll(teams);
+            }
+            jdbc.query("SELECT id, title, severity, status, service, team_id, team_name FROM incident_records WHERE ("
+                    + "LOWER(title) LIKE ? ESCAPE '!' OR LOWER(COALESCE(service,'')) LIKE ? ESCAPE '!' "
+                    + "OR LOWER(COALESCE(tags,'')) LIKE ? ESCAPE '!' OR LOWER(COALESCE(error_code,'')) LIKE ? ESCAPE '!' "
+                    + "OR LOWER(COALESCE(function_code,'')) LIKE ? ESCAPE '!' OR LOWER(COALESCE(channel_code,'')) LIKE ? ESCAPE '!'"
+                    + idSql + ")" + scopeSql + " ORDER BY occurred_at DESC, id DESC LIMIT " + MAX_INCIDENTS, rs -> {
+                long rid = rs.getLong("id");
+                long tid = rs.getLong("team_id"); Long teamId = rs.wasNull() ? null : tid;
+                String title = rs.getString("title");
+                String service = rs.getString("service");
+                String sub = "#" + rid + (service != null && !service.isBlank() ? " · " + service : "");
+                out.add(new Hit("incident", String.valueOf(rid), title, sub, teamId, "incident-history",
+                        Map.of("incident", String.valueOf(rid)), rs.getString("team_name"), null, null, null));
+            }, args.toArray());
+        } catch (Exception e) { log.debug("palet: olay kaydı araması düştü: {}", e.toString()); }
+        return out;
+    }
+
+    private List<Hit> searchBase(String q, Predicate<Long> canViewTeam) {
         String needle = q == null ? "" : q.trim().toLowerCase(Locale.ROOT);
         if (needle.length() < MIN_QUERY) return List.of();
         String like = "%" + needle.replace("%", "\\%").replace("_", "\\_") + "%";

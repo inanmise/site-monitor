@@ -3068,6 +3068,17 @@ body[data-sticky-bar] [data-tour="help-fab"] { bottom: calc(88px + env(safe-area
   [data-tour="help-fab"] { display: none !important; }
 }
 
+/* Olay kaydı yazdırma görünümü (2026-11-26, "Bul ve Raporla"): ekranda gizli; yazdırırken body[data-ih-print] yalnız onu gösterir.
+   :has() YOK — body özniteliği (IncidentReportActions yazar / siler). */
+.ih-print-root { display: none; }
+@media print {
+  /* Ayrıntı penceresinin kaydırma kilidi (body overflow:hidden) yazdırmayı tek sayfaya kesmesin */
+  body[data-ih-print] { overflow: visible !important; height: auto !important; }
+  body[data-ih-print] > *:not(.ih-print-root) { display: none !important; }
+  body[data-ih-print] > .ih-print-root { display: block !important; color: #000; background: #fff; padding: 0; }
+  body[data-ih-print] .ih-print-root table, body[data-ih-print] .ih-print-root th, body[data-ih-print] .ih-print-root td { border-color: #999 !important; }
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
    Tüm Sertifikalar tablosu (2026-09-13 zenginleştirme) — ct-* ailesi
    ══════════════════════════════════════════════════════════════════════════ */

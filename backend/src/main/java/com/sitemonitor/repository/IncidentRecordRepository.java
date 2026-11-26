@@ -1,7 +1,6 @@
 package com.sitemonitor.repository;
 
 import com.sitemonitor.model.IncidentRecord;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -10,7 +9,7 @@ import org.springframework.data.repository.query.Param;
 import java.util.Collection;
 import java.util.List;
 
-public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, Long> {
+public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, Long>, IncidentRecordQueries {
 
     /**
      * Olay satırını çağıranın işlemi boyunca KİLİTLER (2026-11-20): aynı kayda görsel yüklemeleri sıraya girer — toplam
@@ -19,44 +18,12 @@ public interface IncidentRecordRepository extends JpaRepository<IncidentRecord, 
     @Query(value = "SELECT id FROM incident_records WHERE id = :id FOR UPDATE", nativeQuery = true)
     List<Long> lockRow(@Param("id") Long id);
 
-    /**
-     * Filtreli + sayfalı arama. Tüm filtreler opsiyonel (:p IS NULL OR ...).
-     * q: serviste önceden lower-case (Locale.ROOT) + %..% sarılmış anahtar kelime (title/service/rca/description'da arar).
-     * q / service / channel'daki {@code %}, {@code _} ve {@code !} serviste {@code !} ile KAÇIRILIR ({@code ESCAPE '!'};
-     * 2026-11-20 "Sağlam Kayıt": "%" araması eskiden HER kaydı, "a_b" araması "a-b"yi de buluyordu).
-     * Tarihler ISO-String → sıralanabilir, >= / <= güvenli.
-     */
-    @Query("""
-            SELECT i FROM IncidentRecord i
-             WHERE (:q IS NULL OR LOWER(i.title) LIKE :q ESCAPE '!' OR LOWER(i.service) LIKE :q ESCAPE '!'
-                                OR LOWER(i.rcaSummary) LIKE :q ESCAPE '!' OR LOWER(i.description) LIKE :q ESCAPE '!')
-               AND (:severity IS NULL OR i.severity = :severity)
-               AND (:category IS NULL OR i.category = :category)
-               AND (:status   IS NULL OR i.status   = :status)
-               AND (:service  IS NULL OR LOWER(i.service) LIKE :service ESCAPE '!')
-               AND (:channel  IS NULL OR LOWER(i.channel) LIKE :channel ESCAPE '!')
-               AND (:since    IS NULL OR i.occurredAt >= :since)
-               AND (:until    IS NULL OR i.occurredAt <= :until)
-               AND (:teamId   IS NULL OR i.teamId = :teamId)
-               AND (:slaBreached IS NULL OR i.slaBreached = :slaBreached)
-               AND (:open IS NULL OR (:open = TRUE AND i.status <> 'RESOLVED')
-                                  OR (:open = FALSE AND i.status = 'RESOLVED'))
-               AND (:scoped = FALSE OR i.teamId IN :scope OR i.createdByTeamId IN :scope)
-            """)
-    Page<IncidentRecord> findFiltered(@Param("q") String q,
-                                      @Param("severity") String severity,
-                                      @Param("category") String category,
-                                      @Param("status") String status,
-                                      @Param("service") String service,
-                                      @Param("channel") String channel,
-                                      @Param("since") String since,
-                                      @Param("until") String until,
-                                      @Param("teamId") Long teamId,
-                                      @Param("slaBreached") Boolean slaBreached,
-                                      @Param("open") Boolean open,
-                                      @Param("scoped") boolean scoped,
-                                      @Param("scope") List<Long> scope,
-                                      Pageable pageable);
+    // Birden çok satırın kilidi (seçenek yeniden adlandırma, sınırlı bekleme): IncidentRecordQueries#lockRows.
+
+    // Süzgeçli liste / sayım / izdüşüm (2026-11-26, "Bul ve Raporla"): IncidentRecordQueries (IncidentRecordQueriesImpl) —
+    // sorgu yalnız VERİLEN koşullarla kurulur. Eski sabit @Query findFiltered(...13 parametre...) bununla değişti; arama artık
+    // başlık / alan / kök neden / açıklama dışında çözüm, iş etkisi, etiket, üç kod, etkilenen uygulama / sistem / servis,
+    // sorun türü ve kimlikte ("#123") de bakar.
 
     /** Aralıktaki olayların occurredAt (UTC ISO) değerleri — günlük trend YEREL gün (Europe/Istanbul)
      *  gruplaması serviste yapılır; UTC SUBSTRING gece-yarısı kayıtlarını bir önceki güne kaydırırdı. */

@@ -374,16 +374,17 @@ function incidentsQuery(params = {}) {
  * (`downloadBlob` — Safari / iPad). 401 oturum yolu, 429 bekleme önerisi, JSON olmayan / ağ hatası çevrilmiş metinle;
  * tarayıcı indirmeyi başlatamadıysa `DOWNLOAD_FAILED`. `X-Export-Truncated` → `truncated`.
  */
-async function downloadIncidentsCsv(qs, timeoutMs = EXPORT_FETCH_TIMEOUT_MS) {
+async function downloadIncidentsCsv(qs, timeoutMs = EXPORT_FETCH_TIMEOUT_MS, path = '/monitoring/incidents/export', fallbackPrefix = 'olaylar') {
   // Süre sınırı (2026-11-15): istek VE gövde tek son tarihle ({@link timedFetch}); süre dolunca "zaman aşımı" yükü
+  // path / fallbackPrefix (2026-11-26, "Bul ve Raporla"): Olay ve Hata Geçmişi listesi (`/incidents/export`) aynı yolu kullanır
   let res
   try {
-    res = await timedFetch(`${BASE}/monitoring/incidents/export${qs}`, { credentials: 'include', headers: { 'X-Lang': uiLang() } }, timeoutMs)
+    res = await timedFetch(`${BASE}${path}${qs}`, { credentials: 'include', headers: { 'X-Lang': uiLang() } }, timeoutMs)
   } catch (e) {
     return isAbortish(e) ? noResponsePayload('timeout') : networkFailurePayload()
   }
   try {
-    return await finishIncidentsCsv(res)
+    return await finishIncidentsCsv(res, path, fallbackPrefix)
   } catch (e) {
     return isAbortish(e) ? noResponsePayload('timeout') : networkFailurePayload()
   } finally {
@@ -391,9 +392,27 @@ async function downloadIncidentsCsv(qs, timeoutMs = EXPORT_FETCH_TIMEOUT_MS) {
   }
 }
 
-async function finishIncidentsCsv(res) {
+/**
+ * Olay ve Hata Geçmişi sorgu dizesi (2026-11-26, "Bul ve Raporla"): liste / dışa aktarım / eğilim aynı süzgeç anahtarlarını
+ * paylaşır. Yalnız tanınan, boş olmayan anahtarlar — eklenmeyen süzgeç sunucuda koşul eklemez (bugünkü sonuç).
+ */
+export const INCIDENT_HISTORY_QUERY_KEYS = ['q', 'severity', 'category', 'status', 'service', 'channel', 'since', 'until',
+  'team_id', 'service_exact', 'channel_exact', 'problem_type', 'error_code', 'tag', 'created_by', 'postmortem', 'sort',
+  'page', 'size', 'fields', 'format', 'view']
+function incidentHistoryQuery(params = {}) {
+  const q = new URLSearchParams()
+  for (const k of INCIDENT_HISTORY_QUERY_KEYS) {
+    if (params[k] != null && params[k] !== '') q.set(k, params[k])
+  }
+  if (params.slaBreached != null) q.set('sla_breached', params.slaBreached)
+  if (params.open != null) q.set('open', params.open)
+  const qs = q.toString()
+  return qs ? `?${qs}` : ''
+}
+
+async function finishIncidentsCsv(res, path = '/monitoring/incidents/export', fallbackPrefix = 'olaylar') {
   if (!res.ok) {
-    recordFailure('/monitoring/incidents/export', res.status)
+    recordFailure(path, res.status)
     if (res.status === 401) pingSessionPath()
     const body = await errorBodyOf(res)
     if (!body || typeof body !== 'object' || Array.isArray(body)) return nonJsonErrorPayload(res.status, res)
@@ -409,11 +428,12 @@ async function finishIncidentsCsv(res) {
   const plain = /filename="?([^";]+)"?/.exec(disp)
   const p = (n) => String(n).padStart(2, '0')
   const d = new Date()
-  const name = plain ? plain[1] : `olaylar-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}.csv`
+  const name = plain ? plain[1] : `${fallbackPrefix}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}.csv`
   const truncated = String(headerOf(res, 'X-Export-Truncated') || '').toLowerCase() === 'true'
+  const textTruncated = String(headerOf(res, 'X-Export-Text-Truncated') || '').toLowerCase() === 'true'
   const maxRows = Number(headerOf(res, 'X-Export-Max-Rows'))
   if (!downloadBlob(name, blob)) return { success: false, status: 0, code: 'DOWNLOAD_FAILED', error: null }
-  return { success: true, name, truncated, maxRows: Number.isFinite(maxRows) && maxRows > 0 ? maxRows : null }
+  return { success: true, name, truncated, textTruncated, maxRows: Number.isFinite(maxRows) && maxRows > 0 ? maxRows : null }
 }
 
 /**
@@ -1898,17 +1918,24 @@ export const api = {
   // ── Haftalık Raporlar ────────────────────────────────────────────────────
 
   incidents: {
-    list: (params = {}) => {
-      const q = new URLSearchParams()
-      // fields=summary (2026-11-20, "Hızlı Giriş"): liste satırları dört uzun markdown metni olmadan gelir (markdown_omitted)
-      for (const k of ['q', 'severity', 'category', 'status', 'service', 'channel', 'since', 'until', 'team_id', 'page', 'size', 'fields']) {
-        if (params[k] != null && params[k] !== '') q.set(k, params[k])
-      }
-      if (params.slaBreached != null) q.set('sla_breached', params.slaBreached)
-      if (params.open != null) q.set('open', params.open)
-      const qs = q.toString()
-      return request(`/incidents${qs ? '?' + qs : ''}`)
-    },
+    // fields=summary (2026-11-20, "Hızlı Giriş"): liste satırları dört uzun markdown metni olmadan gelir (markdown_omitted)
+    // 2026-11-26 ("Bul ve Raporla"): gelişmiş süzgeçler + sort; `opts` = { timeoutMs, signal }
+    list: (params = {}, opts) => request(`/incidents${incidentHistoryQuery({ ...params, format: undefined })}`, opts),
+    /** Dışa aktarım (2026-11-26): JSON satırları (istemci Excel'i kurar) — liste süzgeçleriyle aynı, en çok 10 000 satır. */
+    exportJson: (params = {}) => request(`/incidents/export${incidentHistoryQuery({ ...params, page: undefined, size: undefined, fields: undefined, format: 'json' })}`,
+      { timeoutMs: EXPORT_FETCH_TIMEOUT_MS, withStatus: true }),
+    /** Dışa aktarım CSV — sunucunun dosyası indirilir ({ success, name, truncated, textTruncated }). */
+    exportCsv: (params = {}) => downloadIncidentsCsv(
+      incidentHistoryQuery({ ...params, page: undefined, size: undefined, fields: undefined, format: 'csv' }),
+      EXPORT_FETCH_TIMEOUT_MS, '/incidents/export', 'olay-gecmisi'),
+    /** Süzgeçte seçilebilecek takımlar (2026-11-26) — okuma kapsamı; satırda `can_manage_options`. Eski sunucu → 400 / 404. */
+    teams: () => request('/incidents/teams', { withStatus: true, timeoutMs: 20_000 }),
+    /** Seçenek kullanımı (2026-11-26): takımın kayıtlarında bir türün değerleri ve kaç kayıtta geçtikleri. */
+    optionUsage: (type, teamId, opts) => request(
+      `/incidents/options/usage?type=${encodeURIComponent(type)}&team_id=${encodeURIComponent(teamId)}`,
+      { withStatus: true, ...(opts || {}) }),
+    /** Seçenek yeniden adlandır / birleştir (2026-11-26): body { type, team_id, from: [..], to }. */
+    renameOptions: (body) => request('/incidents/options', { method: 'PUT', body: JSON.stringify(body), withStatus: true }),
     /**
      * Tek kayıt. `opts` (2026-11-20, "Sağlam Kayıt"): `{ timeoutMs, signal }` — ayrıntı / düzenleme penceresi kaydı açılınca
      * taze hâlini sınırlı süre ve iptal edilebilir okur. HTTP durumu `errorInfoOf(res).status` ile okunur (404 = silinmiş).
@@ -1921,12 +1948,24 @@ export const api = {
       request('/incidents/options', { method: 'POST', body: JSON.stringify({ type, value }) }),
     deleteOption: (type, value) =>
       request(`/incidents/options?type=${encodeURIComponent(type)}&value=${encodeURIComponent(value)}`, { method: 'DELETE' }),
-    trends: (since, until) => {
+    /**
+     * Eğilimler. Eski çağrı `trends(since, until)` aynen; 2026-11-26 ("Bul ve Raporla"): ilk bağımsız değişken nesneyse liste
+     * süzgeçleri (`incidentHistoryQuery`) gider — süzgeçsiz sayılar bugünküyle aynı. `opts` = { timeoutMs, signal, view }.
+     * `view: 'daily'` (nesnede ya da iki tarihli çağrının `opts`'unda — inceleme 2026-11-26): yalnız günlük seri; eski sunucu
+     * yok sayar (tam yanıt).
+     */
+    trends: (since, until, opts) => {
+      if (since && typeof since === 'object') {
+        const p = { ...since, page: undefined, size: undefined, fields: undefined, format: undefined, sort: undefined }
+        return request(`/incidents/trends${incidentHistoryQuery(p)}`, until && typeof until === 'object' ? until : undefined)
+      }
       const q = new URLSearchParams()
       if (since) q.set('since', since)
       if (until) q.set('until', until)
+      const { view, ...reqOpts } = opts || {}
+      if (view) q.set('view', view)
       const qs = q.toString()
-      return request(`/incidents/trends${qs ? '?' + qs : ''}`)
+      return request(`/incidents/trends${qs ? '?' + qs : ''}`, opts ? reqOpts : undefined)
     },
     create: (payload) => request('/incidents', { method: 'POST', body: JSON.stringify(payload) }),
     update: (id, payload) => request(`/incidents/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),

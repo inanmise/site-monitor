@@ -27,15 +27,20 @@ import HistoryToolbar from './HistoryToolbar.jsx'
 import HistoryList, { HistorySkeleton } from './HistoryList.jsx'
 import HistoryTrendChart from './HistoryTrendChart.jsx'
 import HistoryDetailSheet from './HistoryDetailSheet.jsx'
+import HistoryBreakdown from './HistoryBreakdown.jsx'
+import OptionsManagerDialog from './OptionsManagerDialog.jsx'
 import IncidentFormModal, { FRESH_TIMEOUT_MS } from './IncidentFormModal.jsx'
-import { errorInfoOf } from '../../utils/errorMessages.js'
+import { errorInfoOf, clientFailure } from '../../utils/errorMessages.js'
+import { importWithDeadline } from '../../utils/importWithDeadline.js'
+import { downloadBlob } from '../../utils/csvExport.js'
+import { historySheet, historyExportName } from './historyExport.js'
 import SegmentedControl from '../ui/SegmentedControl.jsx'
 import PostmortemModal from './postmortem/PostmortemModal.jsx'
 import ActionItemsView from './postmortem/ActionItemsView.jsx'
 import {
   EMPTY_FORM, DETAIL_KEY, LEGACY_DETAIL_KEY, FILTER_DEFAULTS, filtersFromUrl, filtersToUrl, initialDetailId, serverParams,
   localDayToUtcIso, activeFilters, patchFilters, isCardActive, applyCardFilter, toggleDayFilter, dailySeries, trendWindow,
-  changedKeys, olderRecord, MARKDOWN_KEYS,
+  changedKeys, olderRecord, MARKDOWN_KEYS, SORT_KEY, DEFAULT_SORT, sortFromUrl, trendParams, advancedCount,
 } from './incidentHistoryModel.js'
 import {
   quickInitial, nowMinuteIso, duplicateForm, mergeFull, keepMarkdown, markdownOmitted, pageKeyEligible,
@@ -53,6 +58,20 @@ const COMPACT_BREAKPOINT = 1024
  *  yalnız formda — ilk form açılışında okunur ("Hızlı Giriş", 2026-11-20: sayfa açılışında 5 yerine 1 istek). */
 const OPTION_TYPES = Object.freeze(['CHANNEL', 'DOMAIN', 'ERROR_CODE', 'FUNCTION_CODE', 'CHANNEL_CODE'])
 const FORM_OPTION_TYPES = Object.freeze(['DOMAIN', 'ERROR_CODE', 'FUNCTION_CODE', 'CHANNEL_CODE'])
+
+/** xlsxWriter yalnız Excel istenince yüklenir (açılış parçasına girmez — lazyChunks kapısı). */
+const loadXlsxWriter = () => importWithDeadline(() => import('../../utils/xlsxWriter.js'))
+
+/**
+ * Eski pod (uç yok): 404 / 405, ya da `/{id}` (Long) eşlemesine düşen istek → 400 `INVALID_PARAMETER`. Bu yanıt "bu sürümde
+ * yok" sayılır, sunucu hatası değil (Olaylar sayfasıyla aynı kural).
+ */
+function isOldServerAnswer(res) {
+  const info = errorInfoOf(res)
+  const status = Number(res?.status ?? info?.status)
+  const code = res?.code ?? info?.code
+  return status === 404 || status === 405 || (status === 400 && code === 'INVALID_PARAMETER')
+}
 
 /** Görünüm alanı `COMPACT_BREAKPOINT`'in altında mı (yapı farkı — useIsMobile deseni: innerWidth + matchMedia değişimi). */
 function useCompactLayout() {
@@ -110,14 +129,24 @@ export default function IncidentHistoryPage() {
   const effFilters = useMemo(() => ({ ...filters, q: qTerm }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [filters.severity, filters.category, filters.status, filters.channel, filters.team_id, filters.since, filters.until,
-      filters.slaBreached, filters.open, filters._preset, qTerm])
+      filters.slaBreached, filters.open, filters._preset, qTerm,
+      filters.service, filters.problem_type, filters.error_code, filters.tag, filters.mine, filters.postmortem,
+      filters.channel_exact])
   const params = useMemo(() => serverParams(effFilters), [effFilters])
+  // Sıralama (2026-11-26, "Bul ve Raporla") — süzgeç değildir ("Temizle" korur); varsayılan adrese yazılmaz, sunucuya gitmez
+  const [sort, setSort] = useState(() => sortFromUrl(readUrlParam))
+  const sortParam = sort === DEFAULT_SORT ? undefined : sort
+  // Eğilim (özet + döküm) süzgeçleri: liste süzgeçleri eksi kartların kendi boyutları; günlük trend tarihsiz (kendi penceresi)
+  const trendQ = useMemo(() => trendParams(effFilters), [effFilters])
+  const dailyQ = useMemo(() => trendParams(effFilters, { withDates: false }), [effFilters])
+  const trendKey = JSON.stringify(trendQ.params)
+  const dailyKey = JSON.stringify(dailyQ.params)
 
   // Sayfalama standardı: süzgeç DEĞERİ değişince sayfa 1 (mount'ta değil — `?page=3` derin bağlantısı korunur).
-  const sp = useServerPagination({ listKey: 'incident-history', preset: 'page', resetDeps: [params],
+  const sp = useServerPagination({ listKey: 'incident-history', preset: 'page', resetDeps: [params, sort],
     url: { pageKey: 'page', sizeKey: 'ps' }, apiBase: 0 })
   const { apiPage, pageSize: size } = sp
-  const requestKey = JSON.stringify([params, apiPage, size])
+  const requestKey = JSON.stringify([params, sortParam ?? null, apiPage, size])
 
   // ── Liste durumu (stale-while-revalidate) ──
   const [rows, setRows] = useState([])
@@ -135,6 +164,11 @@ export default function IncidentHistoryPage() {
   // kalıyordu. Artık "—" + "özet okunamadı"; başka aralığın verisi temizlenir (aynı aralığın tazelemesi düşerse eski kalır).
   const [trendsFailed, setTrendsFailed] = useState(false)
   const trendsKeyRef = useRef(null)
+  // Sunucu eğilimde süzgeçleri uyguluyor mu (inceleme 2026-11-26): yanıt kökünde `ext_filters: true` yoksa (eski pod) ve
+  // tarih dışında süzgeç varsa sayılar süzülmemiştir — başlık soluk not yazar (liste süzülü olabilir)
+  const [trendsUnfiltered, setTrendsUnfiltered] = useState(false)
+  // Döküm takım satırından seçilen, süzgeç seçicisinde olmayan takımlar (paylaşımla görünen / listede olmayan): kimlik → ad
+  const [pickedTeams, setPickedTeams] = useState({})
   const [trendDays, setTrendDays] = useState(30)
   const [trendDaily, setTrendDaily] = useState([])
   const trendDailySeq = useRef(0)
@@ -147,6 +181,13 @@ export default function IncidentHistoryPage() {
   const [teams, setTeams] = useState([])
   // Takım listesi okundu mu (okunmadıysa / okunamadıysa çoğaltma kaynak takımı korur — bilinmeyen ret değildir)
   const [teamsKnown, setTeamsKnown] = useState(false)
+  // Süzgeç takımları (2026-11-26): olay kayıtlarını OKUYABİLDİĞİ takımlar (`/incidents/teams`; satırda `can_manage_options`).
+  // Eski sunucu / okunamadı → formun takım listesi kullanılır (bugünkü davranış). Form ve aktarım bugünkü listeyi kullanır.
+  const [filterTeams, setFilterTeams] = useState(null)
+  // Gelişmiş süzgeçler kullanıldı ama sunucu bu sürümü bilmiyor (yanıtta `ext_filters` yok) → uyarı
+  const [extUnsupported, setExtUnsupported] = useState(false)
+  const [exporting, setExporting] = useState(null)     // null | 'csv' | 'xlsx'
+  const [optionsOpen, setOptionsOpen] = useState(false)
 
   // ── Seçim, ayrıntı, form ──
   const [selected, setSelected] = useState(() => new Set())
@@ -159,7 +200,8 @@ export default function IncidentHistoryPage() {
   const [view, setView] = useState(() => (readUrlParam('ih_view') === 'actions' ? 'actions' : 'incidents'))
   const [pmFor, setPmFor] = useState(null)
 
-  useUrlQuerySync({ ...filtersToUrl({ ...filters, q: qTerm }), [DETAIL_KEY]: detailId, ih_view: view === 'actions' ? 'actions' : null })
+  useUrlQuerySync({ ...filtersToUrl({ ...filters, q: qTerm }), [DETAIL_KEY]: detailId, ih_view: view === 'actions' ? 'actions' : null,
+    [SORT_KEY]: sortParam ?? null })
 
   const load = useCallback(async () => {
     if (!allowView) return
@@ -169,11 +211,13 @@ export default function IncidentHistoryPage() {
     try {
       // fields=summary (2026-11-20, "Hızlı Giriş"): liste satırları dört uzun markdown metni OLMADAN gelir
       // (`markdown_omitted`); ayrıntı / düzenleme tam kaydı kendisi okur. Eski sunucu parametreyi yok sayar → tam satır.
-      const res = await api.incidents.list({ ...params, page: apiPage, size, fields: 'summary' })
+      const res = await api.incidents.list({ ...params, ...(sortParam ? { sort: sortParam } : {}), page: apiPage, size, fields: 'summary' })
       if (seq !== loadSeq.current) return   // bayat yanıt — daha yeni bir istek yolda
       if (res?.success) {
         // Aynı sürümdeki tam satırın markdown'ı korunur (kaydettikten sonraki yenileme ayrıntıyı "yükleniyor"a düşürmez)
         setRows((prev) => keepMarkdown(prev, Array.isArray(res.data) ? res.data : [])); sp.bind(res); setError(null); setEverLoaded(true)
+        // Gelişmiş süzgeç / sıralama kullanıldı ama yanıt bu sürümün işaretini taşımıyor (eski pod) → liste süzülmemiş olabilir
+        setExtUnsupported((advancedCount(effFilters) > 0 || !!effFilters.channel_exact || !!sortParam) && res.ext_filters !== true)
       } else {
         setError(res?.error || tRef.current('inc.loadError'))
       }
@@ -187,35 +231,47 @@ export default function IncidentHistoryPage() {
   }, [requestKey, allowView]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Özet (KPI + döküm kartları) — tablo süzgecinin TARİH aralığına bağlı; yalnız en son isteğin yanıtı uygulanır.
+  // 2026-11-26 ("Bul ve Raporla"): listenin süzgeçleriyle (kartların kendi boyutları hariç). Tarih dışında süzgeç yoksa istek
+  // bugünkü biçimde (iki tarih) gider — sayılar aynı.
   const loadTrends = useCallback(async () => {
     if (!allowView) return
     const my = ++trendsSeq.current
-    const key = `${filters.since || ''}|${filters.until || ''}`
+    const key = trendKey
     const fail = () => {
       if (trendsKeyRef.current !== key) { setTrends(null); trendsKeyRef.current = null }
       setTrendsFailed(true)
     }
     try {
-      const res = await api.incidents.trends(localDayToUtcIso(filters.since, false), localDayToUtcIso(filters.until, true))
+      const q = trendQ.params
+      const res = trendQ.extra ? await api.incidents.trends(q) : await api.incidents.trends(q.since, q.until)
       if (my !== trendsSeq.current) return
-      if (res?.success) { setTrends(res.data); trendsKeyRef.current = key; setTrendsFailed(false) } else fail()
+      if (res?.success) {
+        setTrends(res.data); trendsKeyRef.current = key; setTrendsFailed(false)
+        setTrendsUnfiltered(trendQ.extra && res.ext_filters !== true)
+      } else fail()
     } catch {
       // liste yine çizilir; özet "okunamadı" der
       if (my === trendsSeq.current) fail()
     }
-  }, [filters.since, filters.until, allowView])
+  }, [trendKey, allowView]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Günlük trend: son trendDays gün, tablo süzgecinden BAĞIMSIZ (bugünle biten kayan pencere).
+  // Günlük trend: son trendDays gün, tablonun TARİH süzgecinden BAĞIMSIZ (bugünle biten kayan pencere); öteki süzgeçlere göre.
+  // `view=daily` (inceleme 2026-11-26): sunucu yalnız günlük seriyi hesaplar (özet / kırılım / MTTD / müşteri toplamı yok);
+  // eski sunucu parametreyi yok sayar, tam yanıtın `daily`'si okunur (aynı sonuç).
   const loadTrendDaily = useCallback(async () => {
     if (!allowView) return
     const w = trendWindow(trendDays)
     const my = ++trendDailySeq.current
     try {
-      const res = await api.incidents.trends(localDayToUtcIso(w.since, false), localDayToUtcIso(w.until, true))
+      const since = localDayToUtcIso(w.since, false)
+      const until = localDayToUtcIso(w.until, true)
+      const res = dailyQ.extra
+        ? await api.incidents.trends({ ...dailyQ.params, since, until, view: 'daily' })
+        : await api.incidents.trends(since, until, { view: 'daily' })
       if (my !== trendDailySeq.current) return   // bayat yanıt — daha yeni bir pencere istendi
       if (res?.success) setTrendDaily(res.data?.daily ?? [])
     } catch { /* sessiz — grafik boş kalır */ }
-  }, [trendDays, allowView])
+  }, [trendDays, dailyKey, allowView]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Seçenek listelerini okur (verilen tipler; varsayılan hepsi). En az biri okunduysa true. */
   const loadOptions = useCallback(async (types = OPTION_TYPES) => {
@@ -241,6 +297,20 @@ export default function IncidentHistoryPage() {
       if (res?.success) { setTeams(res.data ?? []); setTeamsKnown(true) }
     } catch { /* sessiz — yetkisizse liste boş kalır ("tüm takımlar" gibi davranır) */ }
   }, [allowView])
+  const loadFilterTeams = useCallback(async () => {
+    if (!allowView) return
+    try {
+      const res = await Promise.resolve().then(() => api.incidents.teams())
+      if (res?.success && Array.isArray(res.data)) setFilterTeams(res.data)
+    } catch { /* sessiz — eski sunucu / okunamadı: formun takım listesi kullanılır */ }
+  }, [allowView])
+  // Gelişmiş süzgeçlerin seçenek listeleri (alan adı + hata kodu) yalnız süzgeç bölümü ilk açılınca okunur
+  const filterOptsState = useRef('idle')
+  const loadFilterOptions = useCallback(() => {
+    if (filterOptsState.current !== 'idle' || formOptsState.current === 'done') return
+    filterOptsState.current = 'loading'
+    loadOptions(['DOMAIN', 'ERROR_CODE']).then((ok) => { filterOptsState.current = ok ? 'done' : 'idle' })
+  }, [loadOptions])
 
   useEffect(() => { load() }, [load])
   useEffect(() => { loadTrends() }, [loadTrends])
@@ -248,6 +318,7 @@ export default function IncidentHistoryPage() {
   useEffect(() => { if (showSummary) loadTrendDaily() }, [loadTrendDaily, showSummary])
   useEffect(() => { loadOptions(['CHANNEL']) }, [loadOptions])
   useEffect(() => { loadTeams() }, [loadTeams])
+  useEffect(() => { loadFilterTeams() }, [loadFilterTeams])
   useEffect(() => {
     if (!form || formOptsState.current !== 'idle') return
     formOptsState.current = 'loading'
@@ -338,6 +409,28 @@ export default function IncidentHistoryPage() {
     return () => { alive = false }
   }, [allowView])
 
+  // Sekme AÇIKKEN gelen derin bağlantı (2026-11-26, komut paleti olay kaydı): App paramları adrese yazıp `sm:tab-params` yollar
+  // (sekme yeniden bağlanmaz). `incident` tüketilir, ayrıntı tekil uçtan açılır.
+  const openByIdRef = useRef(null)
+  useEffect(() => {
+    if (!allowView) return undefined
+    const on = (e) => {
+      const id = e?.detail?.incident
+      if (id == null || !/^\d{1,18}$/.test(String(id))) return
+      try {
+        const url = new URL(window.location.href)
+        if (url.searchParams.has(LEGACY_DETAIL_KEY)) {
+          url.searchParams.delete(LEGACY_DETAIL_KEY)
+          const qs = url.searchParams.toString()
+          window.history.replaceState(window.history.state, '', url.pathname + (qs ? `?${qs}` : '') + url.hash)
+        }
+      } catch { /* yoksay */ }
+      openByIdRef.current?.(String(id))
+    }
+    window.addEventListener('sm:tab-params', on)
+    return () => window.removeEventListener('sm:tab-params', on)
+  }, [allowView])
+
   // Sayfa kısayolları (2026-11-20, "Hızlı Giriş"): N → yeni olay (tam form), E → açık ayrıntıyı düzenle. Yazı alanında,
   // açık pencerede / menüde (ayrıntı Sheet'i hariç), değiştiriciyle ve genel "g + harf" dizisinin ikinci tuşunda çalışmaz.
   // Eylemler render'da ref'e yazılır (erken dönüşün altındaki işlevler).
@@ -390,10 +483,21 @@ export default function IncidentHistoryPage() {
     if ('q' in p) setQTerm(String(p.q ?? '').trim())   // çip × / Temizle aramayı HEMEN uygular
   }
   const reset = () => { setFilters({ ...FILTER_DEFAULTS }); setQTerm('') }
-  const onCard = (kind) => {
-    setFilters((f) => applyCardFilter(f, kind))
-    setQTerm('')
+  /**
+   * Döküm satırından süzgeç (takım / kanal / kategori) — tarih ve öteki süzgeçler korunur. Takım satırı süzgeç seçicisinde
+   * olmayan bir takımsa (paylaşımla görünen, `/incidents/teams`'te yok — inceleme 2026-11-26) satırdaki adıyla seçeneklere
+   * eklenir: seçici "tüm takımlar" demez, çip "bilinmeyen takım" demez.
+   */
+  const filterFromBreakdown = (p, row) => {
+    if (p?.team_id && row?.teamName) {
+      const id = String(p.team_id)
+      setPickedTeams((m) => (m[id] === row.teamName ? m : { ...m, [id]: row.teamName }))
+    }
+    patch(p)
   }
+  // Kart arama terimini KORUR (applyCardFilter `q`'yu tutar; inceleme 2026-11-26): eskiden ardından `setQTerm('')` arama
+  // kutusu + çip ile istek arasında ayrılık yaratıyordu ("kartlar aramayı korur" ipucuyla çelişki).
+  const onCard = (kind) => setFilters((f) => applyCardFilter(f, kind))
   const isActive = (kind) => isCardActive(kind, effFilters)
   const toggleDay = (day) => setFilters((f) => toggleDayFilter(f, day))
 
@@ -409,6 +513,7 @@ export default function IncidentHistoryPage() {
       else { setDetailId(null); toast.error(res?.error || t('inc.deepLinkFail')) }
     }).catch(() => { setDetailId(null); toast.error(t('inc.deepLinkFail')) })
   }
+  openByIdRef.current = openIncidentById
   const closeDetail = () => {
     detailSeq.current++                 // yoldaki taze okuma artık uygulanmaz
     detailAbort.current?.abort()
@@ -534,6 +639,43 @@ export default function IncidentHistoryPage() {
     else toast.error(res?.error || t('inc.saveError'))
   }
 
+  // ── Dışa aktarım (2026-11-26): listenin süzgeç + sıralaması + kapsamı, tüm sayfalar (en çok 10 000) ──
+  const exportParams = () => ({ ...params, ...(sortParam ? { sort: sortParam } : {}) })
+  async function exportList(format) {
+    if (exporting) return
+    setExporting(format)
+    try {
+      if (format === 'csv') {
+        const res = await api.incidents.exportCsv(exportParams())
+        if (res?.success) {
+          toast.success(res.truncated ? t('inc.export.truncated', res.maxRows ?? 10000) : t('inc.export.done', res.name))
+          if (res.textTruncated) toast.info(t('inc.export.textTruncated'))
+        } else if (isOldServerAnswer(res)) toast.error(t('inc.export.unsupported'))
+        else toast.error(res?.code === 'DOWNLOAD_FAILED' ? t('inc.export.failed') : (res?.error || t('inc.export.failed')), { details: res })
+        return
+      }
+      const res = await api.incidents.exportJson(exportParams())
+      if (!res?.success && isOldServerAnswer(res)) { toast.error(t('inc.export.unsupported')); return }
+      if (!res?.success || !Array.isArray(res.data?.rows)) { toast.error(res?.error || t('inc.export.failed'), { details: res }); return }
+      let mod
+      try { mod = await loadXlsxWriter() } catch (e) {
+        const f = clientFailure(e, { fallback: t('inc.export.failed'), chunk: t('te.pageUpdated') })
+        toast.error(f.message, { details: f.details }); return
+      }
+      const name = historyExportName()
+      const bytes = mod.buildXlsx([historySheet(res.data.columns, res.data.rows, t)])
+      if (!downloadBlob(name, new Blob([bytes], { type: mod.XLSX_MIME }))) { toast.error(t('inc.export.failed')); return }
+      toast.success(res.data.truncated ? t('inc.export.truncated', res.data.max_rows ?? 10000) : t('inc.export.done', name))
+      if (res.data.text_truncated) toast.info(t('inc.export.textTruncated'))
+    } catch (e) {
+      // Tarayıcı metni (Blob / xlsx kurulum hatası) gösterilmez — çevrilmiş metin, ayrıntı "Teknik ayrıntı"da
+      const f = clientFailure(e, { fallback: t('inc.export.failed'), chunk: t('te.pageUpdated') })
+      toast.error(f.message, { details: f.details })
+    } finally {
+      setExporting(null)
+    }
+  }
+
   const toggleSel = (id) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
   const toggleAll = () => setSelected((s) => {
     const writable = rows.filter((r) => r?.can_edit !== false)   // yazılamayan satır seçilmez (2026-10-12)
@@ -589,6 +731,23 @@ export default function IncidentHistoryPage() {
   const activeKind = statItems.find((it) => isActive(it.key))?.key ?? null
   const selectedDay = filters.since && filters.since === filters.until ? filters.since : null
 
+  // Süzgeç takım listesi: `/incidents/teams` okunduysa ve boş değilse o (okuma kapsamı), yoksa formun listesi (bugünkü
+  // davranış — boş yanıt "takım yok" değil, bilinmeyen sayılır; formun listesi de kapsamla süzülmüştür)
+  const baseTeams = Array.isArray(filterTeams) && filterTeams.length > 0 ? filterTeams : teams
+  // Seçicide olmayan etkin takım: dökümden seçildiyse adıyla, değilse (eski derin bağlantı) "bilinmeyen takım" olarak eklenir —
+  // seçici etkin süzgeci "tüm takımlar" diye göstermez
+  const toolbarTeams = (() => {
+    const ids = new Set(baseTeams.map((tm) => String(tm.id)))
+    const extra = []
+    for (const [id, name] of Object.entries(pickedTeams)) {
+      if (!ids.has(id)) { extra.push({ id, name }); ids.add(id) }
+    }
+    const cur = filters.team_id ? String(filters.team_id) : ''
+    if (cur && !ids.has(cur)) extra.push({ id: cur, name: t('inc.teamUnknown') })
+    return extra.length ? [...baseTeams, ...extra] : baseTeams
+  })()
+  const manageTeams = Array.isArray(filterTeams) ? filterTeams.filter((tm) => tm?.can_manage_options === true) : []
+
   // ── Sonuç bölgesi ──
   const hasFilters = activeFilters(effFilters).length > 0
   const initial = loadedKey == null && !error
@@ -626,7 +785,10 @@ export default function IncidentHistoryPage() {
   return (
     <section data-slot="incident-history" className="mb-8 flex min-w-0 flex-col gap-4">
       <HistoryHeader summary={sum} summaryFailed={trendsFailed && !sum} byStatus={byStatus} filters={effFilters} total={sp.total} loading={loading}
-        onRefresh={refreshAll} onNew={openCreate} onQuick={openQuick} allowManage={allowManage} isActive={isActive} onCard={onCard} />
+        onRefresh={refreshAll} onNew={openCreate} onQuick={openQuick} allowManage={allowManage} isActive={isActive} onCard={onCard}
+        filtered={trends?.filtered === true} onExport={exportList} exporting={exporting}
+        onManageOptions={allowManage && manageTeams.length > 0 ? () => setOptionsOpen(true) : undefined}
+        trendsStale={trendsFailed && !!sum} onRetryTrends={loadTrends} trendsUnfiltered={trendsUnfiltered} />
 
       <div className="flex flex-wrap items-center gap-2" data-slot="ih-view-switch">
         <SegmentedControl value={view} onChange={setView} ariaLabel={t('pm.viewLabel')}
@@ -640,13 +802,23 @@ export default function IncidentHistoryPage() {
         hint={t('inc.analysisHint')} toggleLabel={showSummary ? t('inc.analysisHide') : t('inc.analysisShow')}
         contentClassName="mt-3 flex min-w-0 flex-col gap-3">
         <MonitorStatsBar items={statItems} activeFilter={activeKind} onStatClick={onCard} />
+        <HistoryBreakdown trends={trends} failed={trendsFailed} onFilter={filterFromBreakdown} onCard={onCard} />
         <HistoryTrendChart data={dailyChart} days={trendDays} onDays={setTrendDays} selectedDay={selectedDay} onDayClick={toggleDay} />
       </CollapsibleSection>
 
       <HistoryToolbar filters={filters} qApplied={qTerm} onQuery={(v) => setFilters((f) => patchFilters(f, { q: v }))}
         onQueryCommit={() => setQTerm(filters.q.trim())} patch={patch} reset={reset} phone={phone}
-        teams={teams} channels={channelOpts} resultCount={settled ? sp.total : null}
+        teams={toolbarTeams} channels={channelOpts} domains={domainOpts} errorCodes={errorCodeOpts}
+        sort={sort} onSort={setSort} onAdvancedOpen={loadFilterOptions} resultCount={settled ? sp.total : null}
         busy={busy ? <Spinner size={14} label={t('inc.loading')} /> : null} />
+
+      {extUnsupported && (
+        <div data-slot="ih-ext-unsupported">
+          <AlertBanner tone="warning" role="status" title={t('inc.extUnsupportedTitle')} className="mb-0">
+            {t('inc.extUnsupported')}
+          </AlertBanner>
+        </div>
+      )}
 
       {/* Toplu takım aktarımı — seçim varken */}
       {allowManage && selected.size > 0 && (
@@ -688,6 +860,11 @@ export default function IncidentHistoryPage() {
             mdState={mdState} onRetryMarkdown={() => refreshDetail(detail)} />
         )
       })()}
+
+      {optionsOpen && (
+        <OptionsManagerDialog teams={manageTeams} onClose={() => setOptionsOpen(false)}
+          onChanged={() => { refreshAll(); loadOptions(formOptsState.current === 'done' ? OPTION_TYPES : ['CHANNEL']) }} />
+      )}
 
       {pmFor && (
         <PostmortemModal key={`pm:${pmFor.id}`} incident={pmFor} onClose={() => setPmFor(null)} onChanged={refreshAll} />

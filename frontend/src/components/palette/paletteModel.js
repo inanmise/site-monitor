@@ -74,21 +74,21 @@ export const MONITOR_LABEL_KEY = {
 }
 
 /** Sonuç türü → ikon (izleme türleri TAB_META'dan). */
-export const KIND_ICON = { tab: LayoutGrid, certificate: ShieldCheck, team: Users, user: UserRound }
+export const KIND_ICON = { tab: LayoutGrid, certificate: ShieldCheck, team: Users, user: UserRound, incident: FileClock }
 
 export function iconFor(kind) {
   if (KIND_ICON[kind]) return KIND_ICON[kind]
   return TAB_META[kind]?.Icon || Activity
 }
 
-/** Sonuç türü → grup anahtarı (dokuz izleme türü tek "İzlemeler" grubunda). */
+/** Sonuç türü → grup anahtarı (dokuz izleme türü tek "İzlemeler" grubunda; olay kaydı kendi grubunda — 2026-11-26). */
 export function groupOf(kind) {
-  if (kind === 'tab' || kind === 'certificate' || kind === 'team' || kind === 'user' || kind === 'action') return kind
+  if (kind === 'tab' || kind === 'certificate' || kind === 'team' || kind === 'user' || kind === 'action' || kind === 'incident') return kind
   return MONITOR_KINDS.includes(kind) ? 'monitor' : 'monitor'
 }
 
 /** Canlı sonuç gruplarının sabit sırası. */
-export const LIVE_GROUP_ORDER = ['certificate', 'monitor', 'team', 'user']
+export const LIVE_GROUP_ORDER = ['certificate', 'monitor', 'incident', 'team', 'user']
 
 /** Grup başına gösterilen üst sınır; fazlası "+N daha" satırıyla açılır. */
 export const GROUP_CAP = 6

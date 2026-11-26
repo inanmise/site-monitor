@@ -169,9 +169,12 @@ public final class AuditEventCatalog {
             "INCIDENT_COMMENT_DELETE",
             "INCIDENT_CREATE",
             "INCIDENT_DELETE",
+            "INCIDENT_EXPORT",            // Olay ve Hata Geçmişi listesi dışa aktarımı (CSV / JSON — süzgeç + satır sayısı; 2026-11-26)
             "INCIDENT_IMAGE_ADD",
             "INCIDENT_OPTION_ADD",
             "INCIDENT_OPTION_DELETE",
+            "INCIDENT_OPTIONS_MERGE",     // olay seçenek değerleri bir değerde birleştirildi (takımın kayıtları yeniden yazıldı; 2026-11-26)
+            "INCIDENT_OPTIONS_RENAME",    // olay seçenek değeri yeniden adlandırıldı (takımın kayıtları yeniden yazıldı; 2026-11-26)
             "INCIDENT_POSTMORTEM_SAVE",   // postmortem raporu kaydedildi / durumu değişti (2026-10-11)
             "INCIDENT_TRANSFER",
             "INCIDENT_UPDATE",

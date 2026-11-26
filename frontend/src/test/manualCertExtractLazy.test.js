@@ -82,7 +82,9 @@ describe('manuel sertifika ayıklayıcısı — tembel parça kapısı', () => {
     const PAGESPEED_REPORT = 'components/pagespeed/deep/pageSpeedReport.js'
     // 2026-11-15: eksikler penceresi dışa aktarımı (kopyala / Excel) — GapsDialog onu YALNIZ tıklamada import() ile alır (aşağıda)
     const GAPS_EXPORT = 'components/gaps/gapsExport.js'
-    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT, CHANNEL_EXPORT, RESOURCE_SCAN_EXPORT, ACTIVITY_EXPORT, STATS_EXPORT, INCIDENTS_EXPORT, SQL_EXPORT, PAGESPEED_REPORT, GAPS_EXPORT].sort())
+    // 2026-11-26: Olay ve Hata Geçmişi dışa aktarımı — IncidentHistoryPage Excel yazıcısını YALNIZ tıklamada import() ile alır
+    const INCIDENT_HISTORY_EXPORT = 'components/incidenthistory/IncidentHistoryPage.jsx'
+    expect(writerUsers).toEqual(['components/cryptoinv/cryptoInventoryExport.js', 'components/sharedcert/sharedCertExport.js', SETTINGS_EXPORT, CHANNEL_EXPORT, RESOURCE_SCAN_EXPORT, ACTIVITY_EXPORT, STATS_EXPORT, INCIDENTS_EXPORT, SQL_EXPORT, PAGESPEED_REPORT, GAPS_EXPORT, INCIDENT_HISTORY_EXPORT].sort())
     expect(FILES.filter(({ src }) => staticImports(src).some((s) => /gapsExport(\.js)?$/.test(s))).map((x) => x.rel),
       'eksikler dışa aktarımı statik içe aktarılmaz').toEqual([])
     expect(FILES.filter(({ src }) => /import\(\s*'\.\/gapsExport\.js'\s*\)/.test(src)).map((x) => x.rel))
@@ -97,6 +99,10 @@ describe('manuel sertifika ayıklayıcısı — tembel parça kapısı', () => {
       .toEqual(['components/admin/SqlPlayground.jsx', 'components/admin/sql/ResultsPanel.jsx'])
     const incidents = FILES.find((x) => x.rel === INCIDENTS_EXPORT)
     expect(staticImports(incidents.src).filter((s) => /(^|\/)xlsxWriter(\.js)?$/.test(s)), 'Olaylar Excel yazıcısını statik içe aktarmaz').toEqual([])
+    const incidentHistory = FILES.find((x) => x.rel === INCIDENT_HISTORY_EXPORT)
+    expect(staticImports(incidentHistory.src).filter((s) => /(^|\/)xlsxWriter(\.js)?$/.test(s)), 'Olay ve Hata Geçmişi Excel yazıcısını statik içe aktarmaz').toEqual([])
+    expect(staticImports(FILES.find((x) => x.rel === 'components/incidenthistory/historyExport.js').src).filter((s) => /xlsxWriter/.test(s)),
+      'olay geçmişi sayfa modeli Excel yazıcısını içe aktarmaz').toEqual([])
     const stats = FILES.find((x) => x.rel === STATS_EXPORT)
     expect(FILES.filter(({ src }) => staticImports(src).some((s) => /(^|\/)statsExport(\.js)?$/.test(s))).map((x) => x.rel), 'İstatistikler dışa aktarımı statik içe aktarılmaz').toEqual([])
     expect(stats, 'istatistik dışa aktarım modülü bulunur').toBeTruthy()

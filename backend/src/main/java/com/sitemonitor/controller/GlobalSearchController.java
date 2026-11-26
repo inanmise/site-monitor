@@ -24,9 +24,29 @@ public class GlobalSearchController {
 
     private final GlobalSearchService searchService;
 
+    /** Olay kaydı araması (2026-11-26) {@code incidents.view} ister — dilim testlerinde bean yoksa olay araması yapılmaz. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.service.PermissionService permissionService;
+
     @GetMapping("/search")
     public ResponseEntity<Map<String, Object>> search(@RequestParam(defaultValue = "") String q, HttpSession session) {
-        List<GlobalSearchService.Hit> hits = searchService.search(q, teamId -> SessionScope.canViewMonitoring(session, teamId));   // izleme araması: + 7/24 operatörü (2026-10-04)
+        List<GlobalSearchService.Hit> hits = searchService.search(q, teamId -> SessionScope.canViewMonitoring(session, teamId),   // izleme araması: + 7/24 operatörü (2026-10-04)
+                incidentScope(session));
+        return ResponseEntity.ok(Map.of("success", true, "data", rowsOf(hits)));
+    }
+
+    /**
+     * Olay kaydı arama kapsamı — {@code incidents.view} yoksa null (olay araması yok); varsa olay listesinin kapsamı
+     * ({@code IncidentController.incidentViewScope}): global görüntüleyici / 7/24 operatörü tümü, diğerleri görüş + paylaşım
+     * kapsamındaki takımlar.
+     */
+    GlobalSearchService.IncidentScope incidentScope(HttpSession session) {
+        if (permissionService == null || !permissionService.allows(session, "incidents.view", "view")) return null;
+        return new GlobalSearchService.IncidentScope(
+                SessionScope.seesAllMonitoring(session) ? null : SessionScope.viewTeamIdsWithGrants(session));
+    }
+
+    private static List<Map<String, Object>> rowsOf(List<GlobalSearchService.Hit> hits) {
         List<Map<String, Object>> rows = hits.stream().map(h -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("kind", h.kind()); m.put("id", h.id()); m.put("label", h.label()); m.put("sub", h.sub());
@@ -35,6 +55,6 @@ public class GlobalSearchController {
             m.put("team_name", h.teamName()); m.put("group_name", h.groupName()); m.put("tags", h.tags()); m.put("tier", h.tier());
             return m;
         }).toList();
-        return ResponseEntity.ok(Map.of("success", true, "data", rows));
+        return rows;
     }
 }

@@ -1,4 +1,4 @@
-import { Pencil, Clock } from 'lucide-react'
+import { Pencil, Clock, SearchCheck } from 'lucide-react'
 import { formatDate } from '../../api/client'
 import { useT, useDateLocale } from '../../i18n/index.jsx'
 import TeamBadge from '../ui/TeamBadge.jsx'
@@ -52,8 +52,22 @@ function MetaLine({ r, className }) {
       {r.channel && <><span aria-hidden="true">·</span><CsvChips value={r.channel} max={2} /></>}
       {r.service && <><span aria-hidden="true">·</span><CsvChips value={r.service} max={1} chipClassName="max-w-[12rem] font-mono text-[11px]" /></>}
       <PostmortemBadges row={r} className="inline-flex flex-wrap gap-1" />
+      {/* Arama eşleşmesi (2026-11-26, "Bul ve Raporla"): başlık dışında bir alanda bulunduysa hangi alan olduğu söylenir */}
+      {r.match_field && r.match_field !== 'title' && (
+        <span data-slot="ih-match" data-field={r.match_field}
+          className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-800 dark:text-amber-200">
+          <SearchCheck aria-hidden="true" className="size-3 shrink-0" />{t('inc.match.in', matchFieldLabel(r.match_field, t))}
+        </span>
+      )}
     </span>
   )
+}
+
+/** Eşleşen alanın adı — sunucu anahtarı (`IncidentService.MATCH_FIELD_KEYS`) → arayüz etiketi; bilinmeyen anahtar genel ad. */
+function matchFieldLabel(field, t) {
+  const key = 'inc.match.field.' + (field === 'error_code' ? 'ecode' : field)
+  const v = t(key)
+  return v && v !== key ? v : t('inc.match.field.other')
 }
 
 /**
@@ -133,7 +147,7 @@ export default function HistoryList({
                   )}
                   <span className={cn('flex min-w-0 flex-1 items-center gap-2 text-xs', (!allowManage || r?.can_edit === false) && 'pl-1')}>
                     {r.team_name
-                      ? <TeamBadge static teamId={r.team_id} teamName={r.team_name} className="min-w-0" />
+                      ? <TeamBadge static wrap teamId={r.team_id} teamName={r.team_name} className="min-w-0" />
                       : <span className="text-muted-foreground">{t('inc.noTeam')}</span>}
                     <span className="ml-auto text-muted-foreground"><Duration r={r} nowMs={nowMs} /></span>
                   </span>
@@ -206,7 +220,7 @@ export default function HistoryList({
                   </div>
                 </TableCell>
                 <TableCell className="hidden align-top lg:table-cell">
-                  {r.team_name ? <span onClick={(e) => e.stopPropagation()}><TeamBadge teamId={r.team_id} teamName={r.team_name} /></span> : <span className="text-muted-foreground">—</span>}
+                  {r.team_name ? <span onClick={(e) => e.stopPropagation()}><TeamBadge wrap teamId={r.team_id} teamName={r.team_name} /></span> : <span className="text-muted-foreground">—</span>}
                 </TableCell>
                 <TableCell className="align-top">{when(r)}</TableCell>
                 <TableCell className="hidden align-top lg:table-cell"><Duration r={r} nowMs={nowMs} /></TableCell>

@@ -33,6 +33,7 @@ async function mock(page) {
     try {
       localStorage.setItem('sm.tour', JSON.stringify({ status: 'dismissed', version: 99 }))
       localStorage.setItem('site-monitor-lang', 'tr')
+      sessionStorage.setItem('sm.gaps.prompted', 'demo')   // giriş eksikleri penceresi tıklamayı örtmesin
     } catch { /* yoksay */ }
   })
   await page.route((u) => new URL(u).pathname.startsWith('/api/'), async (route) => {

@@ -81,6 +81,14 @@ public class IncidentService {
     private com.sitemonitor.repository.TeamRepository teamRepo;
 
     /**
+     * Teknik hata raporu konularının olay bağları (2026-11-26): seçenek yeniden adlandırma / birleştirme eşleme kaynağına
+     * dokunmaz — bağ durumu "ok" kalsın diye eşit bağlar yeni {@code updated_at}'e taşınır. Bean yoksa (elle kurulan birim
+     * testleri) atlanır.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.sitemonitor.repository.TechErrorReportIncidentRepository techErrorLinks;
+
+    /**
      * Takım adı veritabanından; takım yok / depo yok → boş. Okuma hatası YAKALANMAZ: işlem içinde yutulan depo hatası işlemi
      * "yalnız geri al" işaretler ve kayıt yine düşerdi — hata olduğu gibi yükselir (503 / 500, kayıt yazılmaz).
      */
@@ -104,26 +112,214 @@ public class IncidentService {
     // ── Read ────────────────────────────────────────────────────────────────
 
     /** scope = null → global (admin/AUDIT) tüm olaylar; dolu liste → yalnız o takım(lar)ın olayları
-     *  (teamId VEYA createdByTeamId kapsamda). Boş liste → kapsamsız kullanıcı, hiçbir şey görmez. */
+     *  (teamId VEYA createdByTeamId kapsamda). Boş liste → kapsamsız kullanıcı, hiçbir şey görmez. Eski imza — yeni süzgeçler
+     *  ve sıralama olmadan {@link #list(ListFilter, List, Pageable, String)}. */
     public Page<IncidentRecord> list(String q, String severity, String category, String status,
                                      String service, String channel, String since, String until,
                                      Long teamId, Boolean slaBreached, Boolean open,
                                      List<Long> scope, Pageable pageable) {
-        // Tarih sınırları ÖNCE doğrulanır (2026-11-20, "Sağlam Kayıt"): okunamayan değer alan adlı 400 — eskiden metin
-        // olduğu gibi karşılaştırılıyor, "dün" gibi bir değer sessizce boş liste döndürüyordu.
-        String from = filterStamp(since, "since");
-        String to   = filterStamp(until, "until");
-        boolean scoped = scope != null;
-        if (scoped && scope.isEmpty()) return Page.empty(pageable);
-        List<Long> scopeList = scoped ? scope : List.of(-1L);   // global'de dummy (scoped=false kısa-devre)
-        // LIKE kalıpları: Locale.ROOT ile küçük harf + %, _, ! kaçışlı (sorguda ESCAPE '!') — "%" araması her kaydı bulmaz.
-        String like = likePattern(q);
-        String svc  = likePattern(service);
-        // channel artık CSV saklanabildiğinden TAM eşleşme yerine CSV-içinde-geçen (LIKE) eşleşme.
-        String chn  = likePattern(channel);
-        return repo.findFiltered(like, blankToNull(severity), blankToNull(category), blankToNull(status),
-                svc, chn, from, to, teamId, slaBreached, open,
-                scoped, scopeList, pageable);
+        return list(ListFilter.legacy(q, severity, category, status, service, channel, since, until, teamId, slaBreached, open),
+                scope, pageable, null);
+    }
+
+    // ── Bul ve Raporla (2026-11-26, Paket 3) ─────────────────────────────────────────────────────────────────────────
+
+    /** Postmortem durum süzgecinin değerleri ({@code NONE} = raporu yok). */
+    public static final List<String> POSTMORTEM_FILTERS = List.of("NONE", "DRAFT", "IN_REVIEW", "PUBLISHED");
+    /** Süzgeç metinlerinin (arama, alan, etiket, kod, kaydeden) üst sınırı — aşan değer alan adlı 400. */
+    public static final int MAX_FILTER_TEXT = 200;
+
+    /** Sıralama anahtarları → ORDER BY (beyaz liste; hepsi {@code id DESC} ile biter — sayfalar arası kararlı sıra). */
+    public static final Map<String, String> SORTS;
+    public static final String DEFAULT_SORT = "occurred_desc";
+    static {
+        Map<String, String> s = new LinkedHashMap<>();
+        s.put("occurred_desc", " ORDER BY i.occurredAt DESC, i.id DESC");
+        s.put("occurred_asc", " ORDER BY i.occurredAt ASC, i.id DESC");
+        s.put("severity", " ORDER BY CASE UPPER(i.severity) WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2"
+                + " WHEN 'LOW' THEN 3 ELSE 4 END, i.occurredAt DESC, i.id DESC");
+        s.put("status", " ORDER BY CASE i.status WHEN 'OPEN' THEN 0 WHEN 'INVESTIGATING' THEN 1 WHEN 'MITIGATED' THEN 2"
+                + " WHEN 'RESOLVED' THEN 3 ELSE 4 END, i.occurredAt DESC, i.id DESC");
+        // Süre: en uzun önce; süresiz kayıt sonda (PostgreSQL DESC'te NULL'ı başa koyar — CASE ile açıkça sona)
+        s.put("duration", " ORDER BY CASE WHEN i.durationMinutes IS NULL THEN 1 ELSE 0 END, i.durationMinutes DESC,"
+                + " i.occurredAt DESC, i.id DESC");
+        s.put("updated", " ORDER BY CASE WHEN i.updatedAt IS NULL THEN 1 ELSE 0 END, i.updatedAt DESC, i.id DESC");
+        SORTS = Collections.unmodifiableMap(s);
+    }
+
+    /** Beyaz listedeki sıralama anahtarı; boş / bilinmeyen → varsayılan (eski pod gibi sessizce — hata değil). */
+    public static String sortKey(String raw) {
+        if (raw == null) return DEFAULT_SORT;
+        String k = raw.trim().toLowerCase(Locale.ROOT);
+        return SORTS.containsKey(k) ? k : DEFAULT_SORT;
+    }
+
+    /**
+     * Liste / dışa aktarım / eğilim süzgeci — istemcinin gönderdiği HAM değerler (doğrulama {@link #toQuery}'de). Eski on bir
+     * alan + yeni yedi alan: alan (servis / domain) TAM öğe, kanal TAM öğe (eski {@code channel} alt dize kuralı ayrı kalır),
+     * sorun türü, hata kodu, etiket, kaydeden, postmortem durumu.
+     */
+    public record ListFilter(String q, String severity, String category, String status, String service, String channel,
+                             String since, String until, Long teamId, Boolean slaBreached, Boolean open,
+                             String serviceExact, String channelExact, String problemType, String errorCode, String tag,
+                             String createdBy, String postmortem) {
+
+        public static ListFilter legacy(String q, String severity, String category, String status, String service, String channel,
+                                        String since, String until, Long teamId, Boolean slaBreached, Boolean open) {
+            return new ListFilter(q, severity, category, status, service, channel, since, until, teamId, slaBreached, open,
+                    null, null, null, null, null, null, null);
+        }
+
+        public static ListFilter dates(String since, String until) {
+            return legacy(null, null, null, null, null, null, since, until, null, null, null);
+        }
+
+        /** Tarih aralığı dışında süzgeç var mı — yoksa eğilim bugünkü sorgularla (aynı sayılar) hesaplanır. */
+        public boolean onlyDates() {
+            return blankToNull(q) == null && blankToNull(severity) == null && blankToNull(category) == null
+                    && blankToNull(status) == null && blankToNull(service) == null && blankToNull(channel) == null
+                    && teamId == null && slaBreached == null && open == null
+                    && blankToNull(serviceExact) == null && blankToNull(channelExact) == null && blankToNull(problemType) == null
+                    && blankToNull(errorCode) == null && blankToNull(tag) == null && blankToNull(createdBy) == null
+                    && blankToNull(postmortem) == null;
+        }
+
+        /** Yeni (Paket 3) süzgeçlerden biri var mı — eski sürüm bunları yok sayar, arayüz uyarır. */
+        public boolean hasExtended() {
+            return blankToNull(serviceExact) != null || blankToNull(channelExact) != null || blankToNull(problemType) != null
+                    || blankToNull(errorCode) != null || blankToNull(tag) != null || blankToNull(createdBy) != null
+                    || blankToNull(postmortem) != null;
+        }
+    }
+
+    /**
+     * Ham süzgeç → sorgu süzgeci: tarihler {@link #filterStamp} (okunamayan → alan adlı 400); arama / eski alan / kanal LIKE
+     * kalıbı; yeni metin süzgeçleri en çok {@value #MAX_FILTER_TEXT} karakter (aşan → alan adlı 400); postmortem durumu beyaz
+     * liste. Kapsam olduğu gibi (null = tümü, boş = hiçbiri).
+     */
+    public static com.sitemonitor.repository.IncidentRecordQueries.Filter toQuery(ListFilter f, List<Long> scope) {
+        ListFilter x = f == null ? ListFilter.dates(null, null) : f;
+        String from = filterStamp(x.since(), "since");
+        String to   = filterStamp(x.until(), "until");
+        String q = filterText(x.q(), "q");
+        return new com.sitemonitor.repository.IncidentRecordQueries.Filter(
+                likePattern(q), idQuery(q),
+                blankToNull(x.severity()), blankToNull(x.category()), blankToNull(x.status()),
+                likePattern(x.service()), likePattern(x.channel()),   // eski kural: CSV-içinde-geçen (alt dize)
+                from, to, x.teamId(), x.slaBreached(), x.open(),
+                tokenPattern(filterText(x.serviceExact(), "service_exact")),
+                tokenPattern(filterText(x.channelExact(), "channel_exact")),
+                tokenPattern(filterText(x.problemType(), "problem_type")),
+                tokenPattern(filterText(x.tag(), "tag")),
+                filterText(x.errorCode(), "error_code"),
+                filterText(x.createdBy(), "created_by"),
+                postmortemFilter(x.postmortem()),
+                scope);
+    }
+
+    /**
+     * Süzgeçli liste (2026-11-26). {@code sort} {@link #SORTS} anahtarı (bilinmeyen → varsayılan); sayfa boyutu / numarası
+     * {@code pageable}'dan (onun sıralaması kullanılmaz).
+     */
+    public Page<IncidentRecord> list(ListFilter f, List<Long> scope, Pageable pageable, String sort) {
+        return repo.findFiltered(toQuery(f, scope), pageable, SORTS.get(sortKey(sort)));
+    }
+
+    /** Dışa aktarım planı: süzgeç + sıralama sırasıyla en çok {@code max} kayıt kimliği ve süzgecin toplamı. */
+    public record ExportIds(long total, List<Long> ids) { }
+
+    /**
+     * Dışa aktarımın kimlik listesi (2026-11-26) — TEK dar sorgu ({@code SELECT i.id … ORDER BY …}, en çok {@code max} + 1
+     * satır) ve yalnız tavan aşılınca bir sayım. Kayıtlar sonra kimlik parçalarıyla birincil anahtardan okunur
+     * ({@link #loadOrdered}): ofsetli sayfa (her parçada büyüyen OFFSET + her dolu sayfada yeniden sayım) yerine sabit maliyet.
+     */
+    public ExportIds exportIds(ListFilter f, List<Long> scope, String sort, int max) {
+        com.sitemonitor.repository.IncidentRecordQueries.Filter q = toQuery(f, scope);
+        List<Object[]> rows = repo.selectFiltered("i.id", q, null, SORTS.get(sortKey(sort)), max + 1);
+        List<Long> ids = new ArrayList<>(Math.min(rows.size(), max));
+        for (int k = 0; k < rows.size() && k < max; k++) ids.add(((Number) rows.get(k)[0]).longValue());
+        long total = rows.size() <= max ? rows.size() : repo.countFiltered(q);
+        return new ExportIds(total, ids);
+    }
+
+    /** Kimlik sırasıyla kayıtlar (tek birincil anahtar okuması); arada silinen kayıt atlanır. */
+    public List<IncidentRecord> loadOrdered(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        Map<Long, IncidentRecord> byId = new HashMap<>();
+        for (IncidentRecord e : repo.findAllById(ids)) byId.put(e.getId(), e);
+        List<IncidentRecord> out = new ArrayList<>(ids.size());
+        for (Long id : ids) {
+            IncidentRecord e = byId.get(id);
+            if (e != null) out.add(e);
+        }
+        return out;
+    }
+
+    /** Boş → null; kırpılır; {@value #MAX_FILTER_TEXT} karakteri aşan → alan adlı 400. */
+    static String filterText(String raw, String field) {
+        if (raw == null || raw.isBlank()) return null;
+        String s = raw.trim();
+        if (s.length() > MAX_FILTER_TEXT) {
+            throw new FieldValidationException(field, Msg.t(
+                    "Süzgeç değeri en çok " + MAX_FILTER_TEXT + " karakter olabilir. Daha kısa bir değerle yeniden arayın.",
+                    "A filter value can be at most " + MAX_FILTER_TEXT + " characters. Search again with a shorter value."));
+        }
+        return s;
+    }
+
+    /**
+     * CSV alanında TAM öğe kalıbı: {@code %,değer,%} — {@code !} {@code %} {@code _} kaçışlı (sorguda {@code ESCAPE '!'});
+     * küçük harfe veritabanında (iki taraf {@code LOWER}) çevrilir. Boş → null.
+     */
+    static String tokenPattern(String value) {
+        if (value == null || value.isBlank()) return null;
+        String s = value.trim().replace("!", "!!").replace("%", "!%").replace("_", "!_");
+        return "%," + s + ",%";
+    }
+
+    /** {@code #123} / {@code 123} araması → kayıt kimliği; başka metin → null. */
+    static Long idQuery(String q) {
+        if (q == null) return null;
+        String s = q.trim();
+        if (s.startsWith("#")) s = s.substring(1).trim();
+        if (s.isEmpty() || s.length() > 18) return null;
+        for (int k = 0; k < s.length(); k++) if (s.charAt(k) < '0' || s.charAt(k) > '9') return null;
+        return Long.valueOf(s);
+    }
+
+    /** Postmortem durum süzgeci: boş → null; {@link #POSTMORTEM_FILTERS} dışında → alan adlı 400. */
+    static String postmortemFilter(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        String s = raw.trim().toUpperCase(Locale.ROOT).replace('-', '_');
+        if (!POSTMORTEM_FILTERS.contains(s)) {
+            throw new FieldValidationException("postmortem", Msg.t(
+                    "Postmortem durumu okunamadı. Raporu olmayan, taslak, incelemede ya da yayımlanmış seçeneklerinden birini seçin.",
+                    "The postmortem state could not be read. Choose one of: none, draft, in review or published."));
+        }
+        return s;
+    }
+
+    /** Eşleşen-alan ipucunun anahtarları — {@link com.sitemonitor.repository.IncidentRecordQueries#SEARCH_ATTRIBUTES} sırasıyla. */
+    static final List<String> MATCH_FIELD_KEYS = List.of("title", "service", "rca_summary", "description", "resolution_steps",
+            "business_impact", "tags", "error_code", "function_code", "channel_code", "affected_app", "affected_systems",
+            "affected_services", "problem_types");
+
+    /**
+     * Aramanın bu kayıtta eşleştiği İLK alan ({@link #MATCH_FIELD_KEYS} sırası; kimlik eşleşmesi {@code id}). Eşleşmeyi
+     * veritabanı LOWER'ı yaptığından burada bulunamayan (yerel ayar farkı) kayıt null döner — ipucu yazılmaz.
+     */
+    public static String matchField(IncidentRecord e, String q) {
+        if (e == null || q == null || q.isBlank()) return null;
+        String needle = q.trim().toLowerCase(Locale.ROOT);
+        Long id = idQuery(q);
+        if (id != null && id.equals(e.getId())) return "id";
+        String[] values = {e.getTitle(), e.getService(), e.getRcaSummary(), e.getDescription(), e.getResolutionSteps(),
+                e.getBusinessImpact(), e.getTags(), e.getErrorCode(), e.getFunctionCode(), e.getChannelCode(),
+                e.getAffectedApp(), e.getAffectedSystems(), e.getAffectedServices(), e.getProblemTypes()};
+        for (int k = 0; k < values.length; k++) {
+            if (values[k] != null && values[k].toLowerCase(Locale.ROOT).contains(needle)) return MATCH_FIELD_KEYS.get(k);
+        }
+        return null;
     }
 
     /**
@@ -173,28 +369,132 @@ public class IncidentService {
         return repo.findById(id).orElseThrow(() -> new NoSuchElementException("Incident not found: " + id));
     }
 
-    /** Trend + özet: günlük seri, severity/category kırılımı, özet sayılar. */
+    /** Trend + özet: günlük seri, severity/category kırılımı, özet sayılar. Yalnız tarih aralığı — {@link #trends(ListFilter, List)}. */
     public Map<String, Object> trends(String since, String until, List<Long> scope) {
-        boolean scoped = scope != null;                                          // null = global (admin/AUDIT)
-        List<Long> scopeList = (scope != null && !scope.isEmpty()) ? scope : List.of(-1L); // boş kapsam → hiçbir şey eşleşmez
-        String s = filterStamp(since, "since"), u = filterStamp(until, "until");   // listeyle aynı kural (okunamayan → 400)
+        return trends(ListFilter.dates(since, until), scope);
+    }
 
+    /** Zamanlama satırlarının (MTTD + ortanca MTTR) üst sınırı — en yeni bu kadar kayıt; aşılırsa {@code capped}. */
+    static final int TREND_TIMING_MAX_ROWS = 20_000;
+    /** Süzgeçli günlük serinin okuduğu (UTC saat × önem) grup satırı üst sınırı — en yeni saatler kalır; aşılırsa {@code capped}. */
+    public static final int TREND_DAILY_MAX_ROWS = 200_000;
+    private static final java.time.ZoneId IST = java.time.ZoneId.of("Europe/Istanbul");
+
+    /**
+     * Trend + özet (2026-11-26, "Bul ve Raporla"): listenin süzgeçleriyle. Tarih aralığı DIŞINDA süzgeç yoksa sayılar bugünkü
+     * sorgularla hesaplanır (aynı sonuç); varsa her sayı süzgeçli sorgulardan. İki yolda da ek alanlar: MTTD (tespit − oluş,
+     * ortalama + ortanca), ortanca MTTR, takım kırılımı, etkilenen müşteri toplamı. Ortancalar en yeni
+     * {@value #TREND_TIMING_MAX_ROWS} kayıt üzerinden ({@code capped}). Bilinmeyen değer null (ekranda "—"), uydurma 0 yok.
+     */
+    public Map<String, Object> trends(ListFilter filter, List<Long> scope) {
+        return trends(filter, scope, false);
+    }
+
+    /**
+     * {@code dailyOnly} (inceleme 2026-11-26): günlük grafik yalnız {@code daily}'yi okur — özet sayıları, kırılımlar, MTTD /
+     * ortancalar (20 000 zaman satırı) ve müşteri toplamı HESAPLANMAZ; yanıt {@code {daily, [daily_capped], filtered,
+     * daily_only}} (aramalı süzgeçte ~10 LIKE taraması yerine tek sorgu).
+     */
+    public Map<String, Object> trends(ListFilter filter, List<Long> scope, boolean dailyOnly) {
+        ListFilter lf = filter == null ? ListFilter.dates(null, null) : filter;
+        com.sitemonitor.repository.IncidentRecordQueries.Filter qf = toQuery(lf, scope);   // okunamayan değer → alan adlı 400
+        boolean filtered = !lf.onlyDates();
+        if (dailyOnly) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            if (filtered) {
+                DailyHours dh = filteredDaily(qf);
+                out.put("daily", dh.daily());
+                if (dh.capped()) out.put("daily_capped", true);
+            } else {
+                boolean scoped = scope != null;
+                List<Long> scopeList = (scope != null && !scope.isEmpty()) ? scope : List.of(-1L);
+                out.put("daily", dailyOf(repo.occurredAtSeverityInRange(qf.since(), qf.until(), scoped, scopeList)));
+            }
+            out.put("filtered", filtered);
+            out.put("daily_only", true);
+            return out;
+        }
+        Map<String, Object> out = filtered ? filteredTrends(qf) : legacyTrends(qf.since(), qf.until(), scope);
+        out.put("filtered", filtered);
+        addTrendExtras(out, qf);
+        return out;
+    }
+
+    /** Süzgeçli günlük seri + tavan aşıldı mı. */
+    record DailyHours(List<Map<String, Object>> daily, boolean capped) { }
+
+    /**
+     * Süzgeçli günlük seri: veritabanında UTC SAATİNE göre gruplanır (satır başına değil) — İstanbul sabit UTC+3 olduğundan
+     * saat kovası yerel güne kayıpsız çevrilir; okunan satır sayısı dolu saat × önem sayısından gelir (en çok
+     * {@value #TREND_DAILY_MAX_ROWS}, en yeni saatler kalır).
+     */
+    private DailyHours filteredDaily(com.sitemonitor.repository.IncidentRecordQueries.Filter qf) {
+        List<Object[]> hourRows = repo.selectFiltered("SUBSTRING(i.occurredAt, 1, 13), i.severity, COUNT(i)", qf, null,
+                " GROUP BY SUBSTRING(i.occurredAt, 1, 13), i.severity ORDER BY SUBSTRING(i.occurredAt, 1, 13) DESC",
+                TREND_DAILY_MAX_ROWS + 1);
+        boolean capped = hourRows.size() > TREND_DAILY_MAX_ROWS;
+        if (capped) hourRows = hourRows.subList(0, TREND_DAILY_MAX_ROWS);
+        return new DailyHours(dailyOfHours(hourRows), capped);
+    }
+
+    /** "Bugün / Son 7 gün / Son 30 gün" pencerelerinin başları — İstanbul takvim günü (bugün dahil 1 / 7 / 30 gün). */
+    static String[] windowStarts(java.time.LocalDate today) {
+        return new String[]{
+                ISO.format(today.atStartOfDay(IST).toInstant()),
+                ISO.format(today.minusDays(6).atStartOfDay(IST).toInstant()),
+                ISO.format(today.minusDays(29).atStartOfDay(IST).toInstant())};
+    }
+
+    /**
+     * {@link #dailyOf} ile aynı sonuç, saat kovalarından: satır {@code [UTC "yyyy-MM-ddTHH", önem, sayı]}. Saat ayrıştırılamazsa
+     * ham UTC günü (ilk 10 karakter); 10 karakterden kısa değer sayılmaz (eski kural).
+     */
+    static List<Map<String, Object>> dailyOfHours(List<Object[]> rows) {
+        TreeMap<String, long[]> dayBuckets = new TreeMap<>();   // gün → [critical, high, medium, low, total]
+        for (Object[] row : rows) {
+            String h = (String) row[0];
+            if (h == null || h.length() < 10) continue;
+            long cnt = row.length > 2 && row[2] instanceof Number n ? n.longValue() : 0L;
+            String day;
+            try {
+                java.time.LocalDateTime utc = java.time.LocalDateTime.parse(h.length() >= 13 ? h.substring(0, 13) + ":00:00" : h);
+                day = utc.atZone(java.time.ZoneOffset.UTC).withZoneSameInstant(IST).toLocalDate().toString();
+            } catch (Exception ex) {
+                day = h.substring(0, 10);
+            }
+            long[] b = dayBuckets.computeIfAbsent(day, k -> new long[5]);
+            int idx = severityIndex(row.length > 1 ? (String) row[1] : null);
+            if (idx >= 0) b[idx] += cnt;
+            b[4] += cnt;
+        }
+        List<Map<String, Object>> daily = new ArrayList<>();
+        dayBuckets.forEach((d, b) -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("day", d);
+            m.put("count", b[4]);
+            m.put("critical", b[0]); m.put("high", b[1]); m.put("medium", b[2]); m.put("low", b[3]);
+            daily.add(m);
+        });
+        return daily;
+    }
+
+    /** Günlük trend — olay zamanı UTC'den İstanbul gününe + önem kırılımı. Satır: {@code [occurredAt, severity]}. */
+    private static List<Map<String, Object>> dailyOf(List<Object[]> rows) {
         // Günlük trend — olay zamanını UTC'den Europe/Istanbul'a çevirip YEREL güne göre grupla + ÖNEM kırılımı
         // (tabloda saatler IST gösterildiğinden; ham UTC günü gece-yarısı kayıtlarını bir önceki güne kaydırırdı).
-        java.time.ZoneId ist = java.time.ZoneId.of("Europe/Istanbul");
         TreeMap<String, long[]> dayBuckets = new TreeMap<>();   // gün → [critical, high, medium, low, total]
-        for (Object[] row : repo.occurredAtSeverityInRange(s, u, scoped, scopeList)) {
+        for (Object[] row : rows) {
             String oa = (String) row[0];
             if (oa == null || oa.length() < 10) continue;
             String day;
             try {
                 java.time.LocalDateTime utc = java.time.LocalDateTime.parse(oa.substring(0, Math.min(19, oa.length())));
-                day = utc.atZone(java.time.ZoneOffset.UTC).withZoneSameInstant(ist).toLocalDate().toString();
+                day = utc.atZone(java.time.ZoneOffset.UTC).withZoneSameInstant(IST).toLocalDate().toString();
             } catch (Exception ex) {
                 day = oa.substring(0, 10);   // ayrıştırılamazsa ham UTC günü
             }
             long[] b = dayBuckets.computeIfAbsent(day, k -> new long[5]);
-            int idx = severityIndex((String) row[1]);
+            int idx = severityIndex(row.length > 1 ? (String) row[1] : null);
             if (idx >= 0) b[idx]++;
             b[4]++;
         }
@@ -206,6 +506,15 @@ public class IncidentService {
             m.put("critical", b[0]); m.put("high", b[1]); m.put("medium", b[2]); m.put("low", b[3]);
             daily.add(m);
         });
+        return daily;
+    }
+
+    /** Ek süzgeçsiz yol — bugünkü sorgular (sayılar aynı; yalnız 7 / 30 gün penceresi takvim gününe hizalandı). */
+    private Map<String, Object> legacyTrends(String s, String u, List<Long> scope) {
+        boolean scoped = scope != null;                                          // null = global (admin/AUDIT)
+        List<Long> scopeList = (scope != null && !scope.isEmpty()) ? scope : List.of(-1L); // boş kapsam → hiçbir şey eşleşmez
+
+        List<Map<String, Object>> daily = dailyOf(repo.occurredAtSeverityInRange(s, u, scoped, scopeList));
 
         Map<String, Long> bySeverity = toCountMap(repo.countBySeverity(s, u, scoped, scopeList));
         Map<String, Long> byStatus   = toCountMap(repo.countByStatus(s, u, scoped, scopeList));
@@ -228,10 +537,12 @@ public class IncidentService {
         long resolved = Math.max(0, total - open); // open = status<>RESOLVED → resolved = total - open
         long resolvedWithinSla = repo.countResolvedWithinSla(s, u, scoped, scopeList);
         // Zaman önayar kartları (Bugün / Son 7 / Son 30 gün) — sayfanın tarih filtresinden BAĞIMSIZ sabit pencereler.
-        // Bugün = Europe/Istanbul yerel günün başlangıcından; 7/30 gün = kayan UTC pencere.
-        long today   = repo.countRange(ISO.format(java.time.LocalDate.now(ist).atStartOfDay(ist).toInstant()), null, scoped, scopeList);
-        long last7d  = repo.countRange(ISO.format(java.time.Instant.now().minus(7,  java.time.temporal.ChronoUnit.DAYS)), null, scoped, scopeList);
-        long last30d = repo.countRange(ISO.format(java.time.Instant.now().minus(30, java.time.temporal.ChronoUnit.DAYS)), null, scoped, scopeList);
+        // İstanbul TAKVİM günü (2026-11-26): bugün dahil 1 / 7 / 30 gün. Eskiden 7 / 30 gün kayan UTC penceresiydi, karta
+        // tıklayınca süzgeç 8 takvim günü kuruyordu — kart ile liste farklı sayı gösteriyordu.
+        String[] w = windowStarts(java.time.LocalDate.now(IST));
+        long today   = repo.countRange(w[0], null, scoped, scopeList);
+        long last7d  = repo.countRange(w[1], null, scoped, scopeList);
+        long last30d = repo.countRange(w[2], null, scoped, scopeList);
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("daily", daily);
@@ -264,6 +575,175 @@ public class IncidentService {
         summary.put("mttr_sample", mttrSample);
         out.put("summary", summary);
         return out;
+    }
+
+    /** Çözülmüş-süreli olay koşulu (MTTR nüfusu) — eski {@code resolvedDurationStats} ile aynı. */
+    private static final List<String> RESOLVED_WITH_DURATION = List.of(
+            "i.status = 'RESOLVED'", "i.durationMinutes IS NOT NULL", "i.durationMinutes >= 0");
+
+    /**
+     * Süzgeçli yol — her sayı süzgeçli sorgulardan: önem / durum / kategori / SLA tek gruplu sorguda, kanal ayrı gruplu (CSV
+     * tekil kanallara bölünür), günlük seri dar satırlardan (en çok {@value #TREND_DAILY_MAX_ROWS}), Bugün / 7 / 30 gün
+     * pencereleri süzgeç + pencere başı (tarih aralığından bağımsız).
+     */
+    private Map<String, Object> filteredTrends(com.sitemonitor.repository.IncidentRecordQueries.Filter qf) {
+        DailyHours dh = filteredDaily(qf);
+        boolean dailyCapped = dh.capped();
+        List<Map<String, Object>> daily = dh.daily();
+
+        Map<String, Long> bySeverity = new LinkedHashMap<>();
+        Map<String, Long> byStatus = new LinkedHashMap<>();
+        Map<String, Long> byCategory = new LinkedHashMap<>();
+        long total = 0, sla = 0, open = 0, resolvedWithinSla = 0;
+        for (Object[] r : repo.selectFiltered("i.severity, i.status, i.category, i.slaBreached, COUNT(i)", qf, null,
+                " GROUP BY i.severity, i.status, i.category, i.slaBreached", 0)) {
+            long cnt = r[4] instanceof Number n ? n.longValue() : 0L;
+            String sev = (String) r[0], st = (String) r[1], cat = (String) r[2];
+            Boolean slaB = (Boolean) r[3];
+            if (sev != null) bySeverity.merge(sev, cnt, Long::sum);
+            if (st != null) byStatus.merge(st, cnt, Long::sum);
+            if (cat != null) byCategory.merge(cat, cnt, Long::sum);
+            total += cnt;
+            if (Boolean.TRUE.equals(slaB)) sla += cnt;
+            if (st != null && !"RESOLVED".equals(st)) open += cnt;
+            if ("RESOLVED".equals(st) && Boolean.FALSE.equals(slaB)) resolvedWithinSla += cnt;
+        }
+        Map<String, Long> byChannel = new LinkedHashMap<>();
+        for (Object[] row : repo.selectFiltered("i.channel, COUNT(i)", qf, List.of("i.channel IS NOT NULL"),
+                " GROUP BY i.channel", 0)) {
+            String csv = (String) row[0];
+            long cnt = ((Number) row[1]).longValue();
+            if (csv == null) continue;
+            for (String part : csv.split(",")) {
+                String c = part.trim();
+                if (!c.isEmpty()) byChannel.merge(c, cnt, Long::sum);
+            }
+        }
+        String[] w = windowStarts(java.time.LocalDate.now(IST));
+        long today   = repo.countFiltered(qf.withDates(w[0], null));
+        long last7d  = repo.countFiltered(qf.withDates(w[1], null));
+        long last30d = repo.countFiltered(qf.withDates(w[2], null));
+
+        Long mttrMinutes = null;
+        long mttrSample = 0;
+        List<Object[]> dur = repo.selectFiltered("AVG(i.durationMinutes), COUNT(i)", qf, RESOLVED_WITH_DURATION, null, 0);
+        if (!dur.isEmpty() && dur.get(0) != null) {
+            Object[] row = dur.get(0);
+            if (row.length > 1 && row[1] instanceof Number n) mttrSample = n.longValue();
+            if (row.length > 0 && row[0] instanceof Number avg && mttrSample > 0) mttrMinutes = Math.round(avg.doubleValue());
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("daily", daily);
+        out.put("by_severity", bySeverity);
+        out.put("by_status", byStatus);
+        out.put("by_category", byCategory);
+        out.put("by_channel", byChannel);
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("total", total);
+        summary.put("critical", bySeverity.getOrDefault("CRITICAL", 0L));
+        summary.put("sla_breached", sla);
+        summary.put("open", open);
+        summary.put("resolved", Math.max(0, total - open));
+        summary.put("resolved_within_sla", resolvedWithinSla);
+        summary.put("today", today);
+        summary.put("last_7d", last7d);
+        summary.put("last_30d", last30d);
+        summary.put("mttr_minutes", mttrMinutes);
+        summary.put("mttr_sample", mttrSample);
+        out.put("summary", summary);
+        if (dailyCapped) out.put("daily_capped", true);
+        return out;
+    }
+
+    /**
+     * İki yolda da eklenen alanlar: takım kırılımı ({@code by_team}, en çok kayıt önce, takımsız {@code team_id} null), etkilenen
+     * müşteri toplamı ({@code customers_sum} — değer girilmiş kayıt yoksa null, {@code customers_sample}), MTTD (tespit − oluş;
+     * tespit zamanı olan ve oluştan önce olmayan kayıtlar — ortalama + ortanca, {@code mttd_sample}) ve ortanca MTTR. Ortancalar
+     * en yeni {@value #TREND_TIMING_MAX_ROWS} kayıttan; aşılırsa {@code capped=true} ({@code rows_read}).
+     */
+    @SuppressWarnings("unchecked")
+    private void addTrendExtras(Map<String, Object> out, com.sitemonitor.repository.IncidentRecordQueries.Filter qf) {
+        Map<String, Object> summary = (Map<String, Object>) out.get("summary");
+        List<Map<String, Object>> byTeam = new ArrayList<>();
+        for (Object[] r : repo.selectFiltered("i.teamId, MAX(i.teamName), COUNT(i)", qf, null, " GROUP BY i.teamId", 0)) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("team_id", r[0]);
+            m.put("team_name", r[1]);
+            m.put("count", r[2] instanceof Number n ? n.longValue() : 0L);
+            byTeam.add(m);
+        }
+        java.text.Collator col = java.text.Collator.getInstance(Locale.forLanguageTag("tr"));
+        byTeam.sort((a, b) -> {
+            int c = Long.compare((Long) b.get("count"), (Long) a.get("count"));
+            if (c != 0) return c;
+            if (a.get("team_id") == null) return 1;   // takımsız sonda
+            if (b.get("team_id") == null) return -1;
+            return col.compare(String.valueOf(a.get("team_name")), String.valueOf(b.get("team_name")));
+        });
+        out.put("by_team", byTeam);
+
+        Long customersSum = null;
+        long customersSample = 0;
+        List<Object[]> cust = repo.selectFiltered("SUM(i.affectedCustomers), COUNT(i.affectedCustomers)", qf, null, null, 0);
+        if (!cust.isEmpty() && cust.get(0) != null) {
+            Object[] row = cust.get(0);
+            if (row.length > 1 && row[1] instanceof Number n) customersSample = n.longValue();
+            if (customersSample > 0 && row[0] instanceof Number s) customersSum = s.longValue();
+        }
+        summary.put("customers_sum", customersSum);
+        summary.put("customers_sample", customersSample);
+
+        List<Object[]> timing = repo.selectFiltered("i.occurredAt, i.detectedAt, i.durationMinutes, i.status", qf, null,
+                " ORDER BY i.occurredAt DESC, i.id DESC", TREND_TIMING_MAX_ROWS + 1);
+        boolean capped = timing.size() > TREND_TIMING_MAX_ROWS;
+        if (capped) timing = timing.subList(0, TREND_TIMING_MAX_ROWS);
+        List<Double> detect = new ArrayList<>();
+        List<Double> repair = new ArrayList<>();
+        for (Object[] r : timing) {
+            Double d = minutesBetweenStamps((String) r[0], (String) r[1]);
+            if (d != null) detect.add(d);
+            if ("RESOLVED".equals(r[3]) && r[2] instanceof Number n && n.intValue() >= 0) repair.add(n.doubleValue());
+        }
+        summary.put("mttd_minutes", detect.isEmpty() ? null : Math.round(detect.stream().mapToDouble(Double::doubleValue).average().orElse(0)));
+        summary.put("mttd_median_minutes", median(detect));
+        summary.put("mttd_sample", (long) detect.size());
+        summary.put("mttr_median_minutes", median(repair));
+        out.put("capped", capped || Boolean.TRUE.equals(out.get("daily_capped")));
+        out.put("rows_read", timing.size());
+    }
+
+    /** İki UTC zaman damgası arası dakika (ikinci ilkinden önceyse ya da okunamazsa null). */
+    static Double minutesBetweenStamps(String from, String to) {
+        java.time.LocalDateTime a = timingStamp(from);
+        java.time.LocalDateTime b = timingStamp(to);
+        if (a == null || b == null) return null;
+        long secs = java.time.Duration.between(a, b).getSeconds();
+        return secs < 0 ? null : secs / 60d;
+    }
+
+    /** {@code yyyy-MM-ddTHH:mm[:ss…]} UTC damgası → zaman (saniyesiz eski kayıt ":00" sayılır); okunamazsa null. */
+    static java.time.LocalDateTime timingStamp(String v) {
+        if (v == null) return null;
+        String s = v.trim();
+        if (s.length() >= 19) s = s.substring(0, 19);
+        else if (s.length() == 16) s = s + ":00";
+        else return null;
+        try {
+            return java.time.LocalDateTime.parse(s);
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
+    }
+
+    /** Ortanca (çift sayıda ortadaki ikisinin ortalaması), yuvarlanmış dakika; boş → null. */
+    static Long median(List<Double> values) {
+        if (values == null || values.isEmpty()) return null;
+        List<Double> s = new ArrayList<>(values);
+        Collections.sort(s);
+        int n = s.size();
+        double m = n % 2 == 1 ? s.get(n / 2) : (s.get(n / 2 - 1) + s.get(n / 2)) / 2d;
+        return Math.round(m);
     }
 
     // ── Write ───────────────────────────────────────────────────────────────
@@ -539,6 +1019,303 @@ public class IncidentService {
         if (!found.isEmpty()) optionRepo.deleteAll(found);
     }
 
+    // ── Seçenek yönetimi: yeniden adlandır / birleştir (2026-11-26, "Bul ve Raporla") ────────────────────────────────────
+
+    /** Seçenek türü → olay kaydı özniteliği (CSV alanları birden çok değer taşır). */
+    static final Map<String, String> OPTION_ATTRIBUTE = Map.of(
+            OPT_CHANNEL, "channel", OPT_DOMAIN, "service",
+            OPT_ERROR_CODE, "errorCode", OPT_FUNCTION_CODE, "functionCode", OPT_CHANNEL_CODE, "channelCode");
+    /** Virgülle ayrılmış (çok değerli) seçenek türleri. */
+    static final Set<String> CSV_OPTION_TYPES = Set.of(OPT_CHANNEL, OPT_DOMAIN);
+    /** Tek istekte birleştirilebilecek en çok kaynak değer. */
+    public static final int MAX_RENAME_SOURCES = 20;
+    /** Tek istekte yeniden yazılabilecek en çok kayıt — aşan istek hiçbir şey yazmaz (alan adlı 400). */
+    public static final int MAX_RENAME_RECORDS = 5_000;
+    /** Kullanım listesinin okuduğu en çok kayıt (inceleme 2026-11-26) — aşılırsa sayılar alt sınırdır ({@code truncated}). */
+    public static final int OPTION_USAGE_MAX_ROWS = 20_000;
+    /** Yeniden adlandırma aday taramasının en çok kaydı — aşılırsa hiçbir şey yazılmaz (alan adlı 400). */
+    public static final int RENAME_SCAN_MAX_ROWS = 50_000;
+    /** Okuma tavanları (testler küçültür; üretimde yukarıdaki sabitler). */
+    int optionUsageMaxRows = OPTION_USAGE_MAX_ROWS;
+    int renameScanMaxRows = RENAME_SCAN_MAX_ROWS;
+
+    /** Bir değerin kullanımı: değer (ilk görülen yazım), takımın kayıt sayısı, takım seçeneği mi, genel seçenek mi. */
+    public record OptionUsage(String value, long records, boolean teamOption, boolean globalOption) { }
+
+    /**
+     * Kullanım listesi + okuma tavanı: {@code truncated} = takımın {@link #OPTION_USAGE_MAX_ROWS} kaydından fazlası vardı —
+     * sayılar alt sınırdır, tavanın ötesindeki kayıtlarda geçen değer listede olmayabilir.
+     */
+    public record UsageReport(List<OptionUsage> values, boolean truncated, int rowsRead) { }
+
+    /** Yeniden adlandırma / birleştirme sonucu. */
+    public record RenameResult(String type, Long teamId, String to, boolean merge, int records, Map<String, Integer> perValue,
+                               List<Long> recordIds, int optionsRemoved, List<String> globalKept) { }
+
+    /**
+     * Takımın bir seçenek türündeki değerleri ve kullanım sayıları (2026-11-26): takımın kayıtlarında geçen (CSV alanında her
+     * öğe ayrı) + takımın ve genel seçenek satırları. Eşleşme büyük-küçük harf duyarsız (seçenek karşılaştırmasıyla aynı);
+     * gösterilen yazım: seçenek satırınınki, yoksa kayıtlarda ilk görülen. Takımın kaydı = kaydın takımı bu takım ya da
+     * takımsız kayıtta giren takım bu takım.
+     */
+    public UsageReport optionUsage(String type, Long teamId) {
+        String t = normType(type);
+        Map<String, String> spelling = new LinkedHashMap<>();
+        Map<String, Long> counts = new HashMap<>();
+        Set<String> teamOpt = new HashSet<>(), globalOpt = new HashSet<>();
+        for (IncidentOption o : optionRepo.findByTypeForTeam(t, teamId)) {
+            if (o.getValue() == null || o.getValue().isBlank()) continue;
+            String k = o.getValue().trim().toLowerCase(Locale.ROOT);
+            spelling.putIfAbsent(k, o.getValue().trim());
+            if (o.getTeamId() == null) globalOpt.add(k); else teamOpt.add(k);
+        }
+        boolean csv = CSV_OPTION_TYPES.contains(t);
+        int cap = optionUsageMaxRows;
+        List<Object[]> rows = repo.teamFieldValues(OPTION_ATTRIBUTE.get(t), teamId, cap + 1);
+        boolean truncated = rows.size() > cap;
+        if (truncated) rows = rows.subList(0, cap);
+        for (Object[] r : rows) {
+            Set<String> seen = new HashSet<>();
+            for (String v : csv ? splitCsv((String) r[1]) : List.of(((String) r[1]).trim())) {
+                if (v.isEmpty()) continue;
+                String k = v.toLowerCase(Locale.ROOT);
+                spelling.putIfAbsent(k, v);
+                if (seen.add(k)) counts.merge(k, 1L, Long::sum);
+            }
+        }
+        List<OptionUsage> out = new ArrayList<>();
+        spelling.forEach((k, v) -> out.add(new OptionUsage(v, counts.getOrDefault(k, 0L), teamOpt.contains(k), globalOpt.contains(k))));
+        java.text.Collator col = java.text.Collator.getInstance(Locale.forLanguageTag("tr"));
+        out.sort((a, b) -> col.compare(a.value(), b.value()));
+        return new UsageReport(out, truncated, rows.size());
+    }
+
+    /**
+     * Seçenek değerlerini TEK takımın kayıtlarında yeniden adlandırır / birleştirir (2026-11-26). Kaynak değerlerden biriyle
+     * eşleşen TAM öğe (CSV alanında virgüller arası, kod alanında değerin tamamı; büyük-küçük harf duyarsız, kırpılmış)
+     * hedefle değişir; birleşmede aynı kayıtta iki kez geçen hedef tekilleşir (ilk yerinde kalır). Her yeniden yazılan kayıt
+     * sürümü artırır (iyimser kilit — o anda açık bir düzenleme formu 409 alır), {@code updated_at} / {@code updated_by}
+     * damgalanır. Yazmadan önce satırlar kimlik sırasıyla KİLİTLENİR ve yeni değer güncel değerden hesaplanır (arada kaydedilen
+     * düzenleme ezilmez). {@link IncidentRecordChangedEvent} YAYIMLANMAZ: seçenek alanları teknik hata raporu eşlemesinde yok;
+     * olayla eşit (bayat olmayan) rapor bağlarının {@code incident_updated_at}'i aynı işlemde yeni zamana taşınır
+     * ({@code TechErrorReportIncidentRepository.carryInSyncLinks}) — bağ "güncel" kalır, senkron kuyruğu dolmaz.
+     * Takımın kaynak değerli seçenek satırları silinir, hedef yoksa takıma eklenir;
+     * GENEL seçenek satırlarına dokunulmaz ({@code globalKept}). Hepsi tek işlem: bir kayıt yazılamazsa hiçbiri yazılmaz.
+     */
+    @Transactional
+    public RenameResult renameOptions(String type, Long teamId, List<String> fromRaw, String toRaw, String actor) {
+        String t = normType(type);
+        if (teamId == null) {
+            throw new FieldValidationException("team_id", Msg.t("Takım seçin.", "Choose a team."));
+        }
+        boolean csv = CSV_OPTION_TYPES.contains(t);
+        int maxLen = csv ? 150 : MAX_CODE;
+        String to = toRaw == null ? "" : toRaw.trim();
+        if (to.isEmpty()) {
+            throw new FieldValidationException("to", Msg.t("Yeni değeri yazın.", "Enter the new value."));
+        }
+        if (to.length() > maxLen) {
+            throw new FieldValidationException("to", Msg.t("Yeni değer en çok " + maxLen + " karakter olabilir.",
+                    "The new value can be at most " + maxLen + " characters."));
+        }
+        if (csv && to.indexOf(',') >= 0) {
+            throw new FieldValidationException("to", Msg.t(
+                    "Yeni değer virgül içeremez (virgül değerleri ayırır). Virgülsüz bir ad yazın.",
+                    "The new value can't contain a comma (commas separate values). Enter a name without a comma."));
+        }
+        LinkedHashMap<String, String> from = new LinkedHashMap<>();   // küçük harf → yazım
+        if (fromRaw != null) {
+            for (String f : fromRaw) {
+                if (f == null || f.isBlank()) continue;
+                String v = f.trim();
+                if (v.length() > 150) {
+                    throw new FieldValidationException("from", Msg.t("Eski değer en çok 150 karakter olabilir.",
+                            "An old value can be at most 150 characters."));
+                }
+                from.putIfAbsent(v.toLowerCase(Locale.ROOT), v);
+            }
+        }
+        if (from.isEmpty()) {
+            throw new FieldValidationException("from", Msg.t("Değiştirilecek en az bir değer seçin.", "Choose at least one value to change."));
+        }
+        if (from.size() > MAX_RENAME_SOURCES) {
+            throw new FieldValidationException("from", Msg.t(
+                    "Tek seferde en çok " + MAX_RENAME_SOURCES + " değer birleştirilebilir.",
+                    "At most " + MAX_RENAME_SOURCES + " values can be merged at once."));
+        }
+        String toKey = to.toLowerCase(Locale.ROOT);
+        if (from.size() == 1 && from.containsKey(toKey) && from.get(toKey).equals(to)) {
+            throw new FieldValidationException("to", Msg.t(
+                    "Yeni değer eskisiyle aynı. Farklı bir ad yazın.", "The new value is the same as the old one. Enter a different name."));
+        }
+
+        String attribute = OPTION_ATTRIBUTE.get(t);
+        int fieldMax = csv ? MAX_LIST : MAX_CODE;
+        // 1) Aday tarama — dar izdüşüm (id, değer), kilitsiz: hangi kayıtların değişeceği, sınırlar, birleştirme mi.
+        List<Long> ids = new ArrayList<>();
+        boolean targetUsed = false;
+        int scanCap = renameScanMaxRows;
+        List<Object[]> scan = repo.teamFieldValues(attribute, teamId, scanCap + 1);
+        if (scan.size() > scanCap) {
+            throw new FieldValidationException("from", Msg.t(
+                    "Bu takımda bu alanı dolu " + scanCap + " kayıttan fazlası var; tek seferde taranamıyor. "
+                            + "Hiçbir kayıt değiştirilmedi — sistem yöneticisine başvurun.",
+                    "This team has more than " + scanCap + " records with this field filled; they can't be scanned"
+                            + " at once. No record was changed — contact the system administrator."));
+        }
+        for (Object[] r : scan) {
+            Long id = ((Number) r[0]).longValue();
+            String cur = (String) r[1];
+            OptionRewrite rw = rewriteOption(cur, csv, from, to, toKey);
+            if (rw.targetUsed()) targetUsed = true;
+            if (rw.hits().isEmpty()) continue;
+            requireFits(rw.value(), fieldMax, id, csv);
+            if (!Objects.equals(rw.value(), cur)) ids.add(id);
+        }
+        if (ids.size() > MAX_RENAME_RECORDS) {
+            throw new FieldValidationException("from", Msg.t(
+                    ids.size() + " kayıt değişecek; tek seferde en çok " + MAX_RENAME_RECORDS + " kayıt değiştirilebilir. "
+                            + "Değerleri daha küçük gruplarla birleştirin.",
+                    ids.size() + " records would change; at most " + MAX_RENAME_RECORDS + " records can be changed at once. "
+                            + "Merge the values in smaller groups."));
+        }
+        boolean merge = from.size() > 1 || targetUsed;
+        String ts = now();
+        Map<String, Integer> perValue = new LinkedHashMap<>();
+        for (String k : from.keySet()) perValue.put(from.get(k), 0);
+        List<IncidentRecord> saved = new ArrayList<>();
+        // 2) Yazma — 500'lük parçalar, kimlik sırasıyla: satırlar KİLİTLENİR, yeni değer kilitten sonra okunan GÜNCEL değerden
+        //    yeniden hesaplanır (aday taramadan sonra kaydedilen bir düzenleme sessizce ezilmez; takımı değişen kayıt atlanır).
+        for (int k = 0; k < ids.size(); k += 500) {
+            List<Long> part = ids.subList(k, Math.min(ids.size(), k + 500));
+            repo.lockRows(part);
+            // Önce PLAN: kilitten sonra okunan güncel değerden hangi kayıt gerçekten değişecek (takımı değişen, değeri artık
+            // eşleşmeyen ya da sonucu aynı kalan kayıt atlanır). Varlıklar henüz DEĞİŞTİRİLMEZ — aşağıdaki toplu bağ güncellemesi
+            // otomatik flush yapar; kirli varlık o anda yazılsaydı updated_at önce değişir, bağ "olayla eşit" sayılmazdı.
+            List<IncidentRecord> chunk = repo.findAllById(part);
+            List<IncidentRecord> changed = new ArrayList<>();
+            List<String> values = new ArrayList<>();
+            for (IncidentRecord e : chunk) {
+                boolean teamsRecord = Objects.equals(e.getTeamId(), teamId)
+                        || (e.getTeamId() == null && Objects.equals(e.getCreatedByTeamId(), teamId));
+                if (!teamsRecord) continue;
+                String cur = optionField(e, attribute);
+                OptionRewrite rw = rewriteOption(cur, csv, from, to, toKey);
+                if (rw.hits().isEmpty() || Objects.equals(rw.value(), cur)) continue;
+                requireFits(rw.value(), fieldMax, e.getId(), csv);
+                // Değer başına sayı YALNIZ gerçekten değişen kayıtları sayar (inceleme 2026-11-26): sonucu aynı kalan kayıt
+                // ("ATM" → "ATM") sayılmaz — bildirim ve denetim yazılan kayıtlarla tutarlı.
+                for (String h : rw.hits()) perValue.merge(h, 1, Integer::sum);
+                changed.add(e);
+                values.add(rw.value());
+            }
+            if (changed.isEmpty()) continue;
+            // Teknik hata raporu bağları: seçenek alanları eşleme kaynağında YOK — olay değişti diye bağ bayat görünmesin. Satırlar
+            // kilitliyken ve henüz yazılmadan (eski updated_at veritabanındayken) olayla EŞİT bağlar yeni zamana taşınır; aynı
+            // işlem. YALNIZ değişecek kayıtların bağları (inceleme 2026-11-26: atlanan kaydın updated_at'i değişmez — bağı
+            // taşınsaydı yersiz "bayat" görünürdü). Kilit sırası: olay satırları → bağ satırları. IncidentRecordChangedEvent
+            // BİLEREK yayımlanmaz (eşlenecek bir şey değişmedi; 5 000 olay senkron kuyruğunu taşırırdı).
+            if (techErrorLinks != null) {
+                techErrorLinks.carryInSyncLinks(changed.stream().map(IncidentRecord::getId).toList(), ts);
+            }
+            for (int j = 0; j < changed.size(); j++) {
+                IncidentRecord e = changed.get(j);
+                String v = values.get(j);
+                switch (attribute) {
+                    case "channel" -> e.setChannel(v);
+                    case "service" -> e.setService(v);
+                    case "errorCode" -> e.setErrorCode(v);
+                    case "functionCode" -> e.setFunctionCode(v);
+                    default -> e.setChannelCode(v);
+                }
+                e.setUpdatedAt(ts);
+                e.setUpdatedBy(actor);
+            }
+            saved.addAll(repo.saveAll(changed));
+        }
+        repo.flush();   // satırlar kilitli — sürüm çakışması olmaz; bir kayıt yazılamazsa işlem geri alınır, hiçbiri yazılmaz
+
+        // Seçenek satırları: takımın kaynak değerli satırları silinir (hedefle aynı yazımdaki hariç), hedef yoksa eklenir.
+        int removed = 0;
+        List<String> globalKept = new ArrayList<>();
+        for (IncidentOption o : optionRepo.findByTypeForTeam(t, teamId)) {
+            if (o.getValue() == null) continue;
+            String k = o.getValue().trim().toLowerCase(Locale.ROOT);
+            if (!from.containsKey(k)) continue;
+            if (o.getTeamId() == null) {
+                if (!o.getValue().trim().equals(to)) globalKept.add(o.getValue().trim());
+                continue;
+            }
+            if (o.getValue().trim().equals(to)) continue;
+            optionRepo.delete(o);
+            removed++;
+        }
+        optionRepo.flush();
+        ensureOption(t, to, actor, teamId);
+        List<Long> savedIds = saved.stream().map(IncidentRecord::getId).sorted().toList();
+        return new RenameResult(t, teamId, to, merge, saved.size(), perValue,
+                savedIds.size() > 200 ? savedIds.subList(0, 200) : savedIds, removed, globalKept);
+    }
+
+    /**
+     * Bir alan değerinin yeniden yazımı: {@code hits} = eşleşen kaynak değerlerin (seçilen yazımla) listesi (boş = eşleşme
+     * yok), {@code value} = yeni değer (CSV'de öğeler tekilleşir, ilk yerinde kalır), {@code targetUsed} = hedef zaten bu
+     * değerde ayrı bir öğe olarak geçiyor (birleştirme sayılır).
+     */
+    record OptionRewrite(String value, List<String> hits, boolean targetUsed) { }
+
+    static OptionRewrite rewriteOption(String cur, boolean csv, Map<String, String> from, String to, String toKey) {
+        if (cur == null) return new OptionRewrite(null, List.of(), false);
+        List<String> parts = csv ? splitCsv(cur) : List.of(cur.trim());
+        List<String> hits = new ArrayList<>();
+        boolean targetUsed = false;
+        List<String> next = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (String p : parts) {
+            if (p.isEmpty()) continue;
+            String k = p.toLowerCase(Locale.ROOT);
+            if (k.equals(toKey) && !from.containsKey(k)) targetUsed = true;
+            String v = p;
+            if (from.containsKey(k)) {
+                hits.add(from.get(k));
+                v = to;
+            }
+            if (seen.add(v.toLowerCase(Locale.ROOT))) next.add(v);
+        }
+        String value = csv ? String.join(", ", next) : (next.isEmpty() ? null : next.get(0));
+        return new OptionRewrite(value, hits, targetUsed);
+    }
+
+    private static void requireFits(String value, int max, Long id, boolean csv) {
+        if (value == null || value.length() <= max) return;
+        throw new FieldValidationException("to", Msg.t(
+                "Kayıt #" + id + " için yeni değer alanın sınırını (" + max + " karakter) aşıyor. Daha kısa bir ad yazın;"
+                        + " hiçbir kayıt değiştirilmedi.",
+                "For record #" + id + " the new value exceeds the field limit (" + max + " characters). Enter a shorter"
+                        + " name; no record was changed."));
+    }
+
+    private static String optionField(IncidentRecord e, String attribute) {
+        return switch (attribute) {
+            case "channel" -> e.getChannel();
+            case "service" -> e.getService();
+            case "errorCode" -> e.getErrorCode();
+            case "functionCode" -> e.getFunctionCode();
+            default -> e.getChannelCode();
+        };
+    }
+
+    /** CSV değeri → kırpılmış öğeler (boşlar atılır). */
+    static List<String> splitCsv(String csv) {
+        if (csv == null) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String part : csv.split(",")) {
+            String v = part.trim();
+            if (!v.isEmpty()) out.add(v);
+        }
+        return out;
+    }
+
     /** Açılışta varsayılan kanalları GLOBAL (team_id=null) tohumlar — yalnız hiç CHANNEL seçeneği yoksa
      *  (kullanıcının sildiği varsayılanlar her restart'ta geri gelmesin). */
     @Transactional
@@ -556,8 +1333,15 @@ public class IncidentService {
     }
 
     private static String normType(String type) {
-        String t = type == null ? "" : type.trim().toUpperCase();
-        if (!OPTION_TYPES.contains(t)) throw new IllegalArgumentException("Geçersiz seçenek tipi: " + type);
+        // Locale.ROOT: Türkçe yerel ayarda "domain".toUpperCase() "DOMAİN" olurdu. Bilinmeyen tür girdiyi yansıtmaz (inceleme
+        // 2026-11-26): alan adlı 400, iki dilli metin (FieldValidationException bir IllegalArgumentException — eski yakalayanlar
+        // aynen çalışır).
+        String t = type == null ? "" : type.trim().toUpperCase(Locale.ROOT);
+        if (!OPTION_TYPES.contains(t)) {
+            throw new FieldValidationException("type", Msg.t(
+                    "Seçenek türü tanınmadı. Kanal, alan adı, hata kodu, fonksiyon kodu ya da kanal kodu seçin.",
+                    "The option type was not recognised. Choose channel, domain, error code, function code or channel code."));
+        }
         return t;
     }
 
